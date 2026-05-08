@@ -13978,7 +13978,39 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
 }
 
 /* ── Share to Club ───────────────────────────────────────────────── */
-async function shareActivityToClub(actId) {
+function shareActivityToClub(actId) {
+    // Show custom in-app confirmation modal (no native confirm())
+    var existing = document.getElementById('club-confirm-modal'); if (existing) existing.remove();
+    var modal = document.createElement('div');
+    modal.id = 'club-confirm-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:50000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.55);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
+    modal.innerHTML = `
+        <div style="background:var(--card);border-radius:22px 22px 18px 18px;padding:24px 20px 20px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="club-confirm-inner">
+            <div style="text-align:center;margin-bottom:18px;">
+                <div style="width:52px;height:52px;border-radius:50%;background:var(--crim-lt);border:1.5px solid var(--crim-bd);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;">🏃</div>
+                <div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:6px;">Compartir en el Club</div>
+                <div style="font-size:13px;color:var(--ts);line-height:1.5;">Esta actividad se publicará en el Club y podrán verla tus seguidores.</div>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button onclick="document.getElementById('club-confirm-modal').remove();" style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button>
+                <button id="club-confirm-ok" style="flex:1;background:var(--crimson);border:none;border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Publicar ✓</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+    requestAnimationFrame(function() { requestAnimationFrame(function() {
+        modal.style.opacity = '1';
+        document.getElementById('club-confirm-inner').style.transform = 'translateY(0)';
+    }); });
+
+    document.getElementById('club-confirm-ok').addEventListener('click', function() {
+        modal.style.opacity = '0';
+        setTimeout(function() { if (modal.parentNode) modal.remove(); }, 250);
+        _doShareActivityToClub(actId);
+    });
+    modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.opacity='0'; setTimeout(function(){ if(modal.parentNode) modal.remove(); },250); } });
+}
+
+async function _doShareActivityToClub(actId) {
     const { data: { session } } = await window._sbClient.auth.getSession();
     if (!session) { if (typeof showToast === 'function') showToast('Inicia sesión para compartir', 2000); return; }
     const myId = session.user.id;
@@ -13987,11 +14019,8 @@ async function shareActivityToClub(actId) {
     var act = acts.find(function(a) { return a.id === actId; });
     if (!act) return;
 
-    // Confirmation dialog before posting
-    var confirmed = confirm('¿Compartir esta actividad en el Club?\n\nSe publicará y podrán verla tus seguidores.');
-    if (!confirmed) return;
-
-    if (typeof showToast === 'function') showToast('Publicando en el Club…', 1500);
+    // Show publishing progress
+    _showClubPublishingBanner();
 
     var cleanActData = Object.assign({}, act, {photoB64: null, records: (act.records||[]).slice(0, 800)});
     var photoUrl = null;
@@ -14016,8 +14045,18 @@ async function shareActivityToClub(actId) {
         photo_url: photoUrl
     });
 
+    var pb = document.getElementById('club-publishing-banner'); if (pb) pb.remove();
     if (error) { if (typeof showToast === 'function') showToast('Error al compartir: ' + error.message, 3000); return; }
     _showClubSharedBanner();
+}
+
+function _showClubPublishingBanner() {
+    var ex = document.getElementById('club-publishing-banner'); if (ex) ex.remove();
+    var b = document.createElement('div'); b.id = 'club-publishing-banner';
+    b.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+80px);left:50%;transform:translateX(-50%) translateY(20px);z-index:40000;background:var(--card);border:1.5px solid var(--border);border-radius:16px;padding:14px 20px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);opacity:0;transition:all .3s cubic-bezier(.32,.72,0,1);min-width:220px;';
+    b.innerHTML = '<div style="width:18px;height:18px;border:2.5px solid var(--crimson);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;"></div><div style="font-size:13px;font-weight:600;color:var(--tw);">Publicando en el Club…</div>';
+    document.body.appendChild(b);
+    requestAnimationFrame(function() { requestAnimationFrame(function() { b.style.opacity = '1'; b.style.transform = 'translateX(-50%) translateY(0)'; }); });
 }
 
 function _showClubSharedBanner() {
