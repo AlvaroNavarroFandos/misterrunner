@@ -5514,24 +5514,40 @@
             });
 
             delBg.style.pointerEvents = 'none';
-            delBg.addEventListener('click', e => {
-                e.stopPropagation();
-                const label = getTypeLabel(act.type) + ' · ' + act.distKm.toFixed(2) + ' km · ' + df;
-                if (window.confirm('¿Eliminar esta actividad?\n' + label)) {
-                    const h = wrap.offsetHeight;
-                    wrap.style.transition = 'opacity .2s, max-height .25s, margin .25s';
-                    wrap.style.overflow   = 'hidden';
-                    wrap.style.maxHeight  = h + 'px';
-                    requestAnimationFrame(() => {
-                        wrap.style.maxHeight   = '0';
-                        wrap.style.marginBottom= '0';
-                        wrap.style.opacity     = '0';
-                    });
-                    setTimeout(() => deleteActivity(act.id), 280);
-                } else {
-                    snapBack();
-                }
-            });
+            (function(_act, _wrap, _snapBack, _df) {
+                delBg.addEventListener('click', e => {
+                    e.stopPropagation();
+                    _snapBack();
+                    // Premium in-app confirm modal
+                    var exMod = document.getElementById('del-act-modal'); if (exMod) exMod.remove();
+                    var modal = document.createElement('div');
+                    modal.id = 'del-act-modal';
+                    modal.style.cssText = 'position:fixed;inset:0;z-index:50000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.55);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
+                    var label = getTypeLabel(_act.type) + ' · ' + (_act.distKm > 0 ? _act.distKm.toFixed(2) + ' km' : '') + ' · ' + _df;
+                    modal.innerHTML = '<div style="background:var(--card);border-radius:22px 22px 18px 18px;padding:24px 20px 20px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="del-act-inner"><div style="text-align:center;margin-bottom:18px;"><div style="width:52px;height:52px;border-radius:50%;background:rgba(239,68,68,.12);border:1.5px solid rgba(239,68,68,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:22px;">🗑</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:6px;">Eliminar actividad</div><div style="font-size:12px;color:var(--ts);line-height:1.5;">' + label + '</div></div><div style="display:flex;gap:10px;"><button id="del-act-cancel" style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="del-act-ok" style="flex:1;background:#ef4444;border:none;border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Eliminar</button></div></div>';
+                    document.body.appendChild(modal);
+                    requestAnimationFrame(function() { requestAnimationFrame(function() {
+                        modal.style.opacity = '1';
+                        document.getElementById('del-act-inner').style.transform = 'translateY(0)';
+                    }); });
+                    var closeModal = function() { modal.style.opacity='0'; setTimeout(function(){ if(modal.parentNode) modal.remove(); },250); };
+                    document.getElementById('del-act-cancel').onclick = closeModal;
+                    modal.addEventListener('click', function(ev) { if (ev.target === modal) closeModal(); });
+                    document.getElementById('del-act-ok').onclick = function() {
+                        closeModal();
+                        var h = _wrap.offsetHeight;
+                        _wrap.style.transition = 'opacity .2s, max-height .25s, margin .25s';
+                        _wrap.style.overflow   = 'hidden';
+                        _wrap.style.maxHeight  = h + 'px';
+                        requestAnimationFrame(function() {
+                            _wrap.style.maxHeight    = '0';
+                            _wrap.style.marginBottom = '0';
+                            _wrap.style.opacity      = '0';
+                        });
+                        setTimeout(function() { deleteActivity(_act.id); }, 280);
+                    };
+                });
+            })(act, wrap, snapBack, df);
 
             wrap.appendChild(editBg);
             wrap.appendChild(sliding);
@@ -5835,8 +5851,8 @@
         act.name    = newName;
         act.type    = newType;
         act.shoeId  = newShoeIdNum;
-        act.shoeName = newShoeIdNum ? (shoes.find(s=>s.id===newShoeIdNum)?.name || null) : null;
-        act.shoeColor = newShoeIdNum ? (shoes.find(s=>s.id===newShoeIdNum)?.colorHex || '') : '';
+        act.shoeName = newShoeIdNum ? (shoes.find(s=>+s.id===newShoeIdNum)?.name || null) : null;
+        act.shoeColor = newShoeIdNum ? (shoes.find(s=>+s.id===newShoeIdNum)?.colorHex || '') : '';
         if(window._aeditOutfit) act.outfit = { ...window._aeditOutfit };
         // Photo update
         if(typeof _editPhotoB64 !== 'undefined' && _editPhotoB64 !== null) {
@@ -11052,7 +11068,7 @@
         document.getElementById('share-full-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareFullCard(act), 100); });
         document.getElementById('share-insta-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareInstaCard(act), 100); });
         const clubShareBtn = document.getElementById('share-club-btn');
-        if(clubShareBtn) clubShareBtn.addEventListener('click', () => { closeWithAnim(); setTimeout(() => shareActivityToClub(act.id), 100); });
+        if(clubShareBtn) clubShareBtn.addEventListener('click', () => { closeWithAnim(); setTimeout(() => shareActivityToClub(act.id, act), 100); });
 
         // Button press feedback
         ['share-full-btn','share-insta-btn','share-club-btn'].forEach(id => {
@@ -13863,7 +13879,7 @@ function _buildClubCard(post, myId) {
     /* Media */
     if (hasP || hasT) {
         var mw = document.createElement('div');
-        mw.style.cssText = 'position:relative;flex:1;min-height:180px;background:#0d1520;overflow:hidden;';
+        mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
         if (hasP) {
             var ph = document.createElement('img'); ph.src = post.photo_url;
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
@@ -13959,7 +13975,7 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
 }
 
 /* ── Share to Club ───────────────────────────────────────────────── */
-function shareActivityToClub(actId) {
+function shareActivityToClub(actId, actObj) {
     // Show custom in-app confirmation modal (no native confirm())
     var existing = document.getElementById('club-confirm-modal'); if (existing) existing.remove();
     var modal = document.createElement('div');
@@ -13986,12 +14002,12 @@ function shareActivityToClub(actId) {
     document.getElementById('club-confirm-ok').addEventListener('click', function() {
         modal.style.opacity = '0';
         setTimeout(function() { if (modal.parentNode) modal.remove(); }, 250);
-        _doShareActivityToClub(actId);
+        _doShareActivityToClub(actId, actObj);
     });
     modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.opacity='0'; setTimeout(function(){ if(modal.parentNode) modal.remove(); },250); } });
 }
 
-async function _doShareActivityToClub(actId) {
+async function _doShareActivityToClub(actId, actObj) {
     try {
         var sb = window._sbClient;
         if (!sb) { showToast('Error: cliente no disponible', 3000); return; }
@@ -14000,8 +14016,8 @@ async function _doShareActivityToClub(actId) {
         if (!session) { showToast('Inicia sesión para compartir', 2000); return; }
         const myId = session.user.id;
 
-        var acts = (typeof activities !== 'undefined') ? activities : [];
-        var act = acts.find(function(a) { return a.id === actId; });
+        // Use passed actObj directly, or fallback to lookup
+        var act = actObj || ((typeof activities !== 'undefined') ? activities.find(function(a) { return a.id === actId; }) : null);
         if (!act) { showToast('Actividad no encontrada', 2000); return; }
 
         _showClubPublishingBanner();
