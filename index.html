@@ -1726,7 +1726,7 @@
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                             Lesiones
                         </span>
-                        <button onclick="openInjuryModal()" style="background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;">+ Añadir</button>
+
                     </div>
                     <div id="injuries-list" style="display:flex;flex-direction:column;gap:6px;padding:10px 14px 12px;">
                         <div style="font-size:11px;color:rgba(255,255,255,.4);">Sin lesiones registradas.</div>
@@ -5817,12 +5817,19 @@
         const newType  = document.getElementById('aedit-type').value;
         const newShoeId = document.getElementById('aedit-shoe').value;
         const newShoeIdNum = newShoeId ? +newShoeId : null;
-        // Shoe km adjustment if shoe changed (guard against null vs 0 false positive)
-        if (act.shoeId !== newShoeIdNum && act.distKm > 0) {
-            const oldShoe = shoes.find(s => s.id === act.shoeId);
-            if (oldShoe) { oldShoe.km = Math.max(0, Math.round((oldShoe.km - act.distKm)*10)/10); }
-            const newShoe = shoes.find(s => s.id === +newShoeId);
-            if (newShoe) { newShoe.km = Math.round((newShoe.km + act.distKm)*10)/10; }
+        // Shoe km adjustment: compare as numbers to avoid type mismatch bugs
+        // Use Number() on both sides and treat null/0/NaN as "no shoe"
+        const oldShoeIdNum = act.shoeId ? +act.shoeId : null;
+        const shoeChanged = oldShoeIdNum !== newShoeIdNum;
+        if (shoeChanged && act.distKm > 0) {
+            if (oldShoeIdNum) {
+                const oldShoe = shoes.find(s => +s.id === oldShoeIdNum);
+                if (oldShoe) { oldShoe.km = Math.max(0, Math.round((oldShoe.km - act.distKm)*10)/10); }
+            }
+            if (newShoeIdNum) {
+                const newShoe = shoes.find(s => +s.id === newShoeIdNum);
+                if (newShoe) { newShoe.km = Math.round((newShoe.km + act.distKm)*10)/10; }
+            }
             renderShoes();
         }
         act.name    = newName;
@@ -10595,12 +10602,40 @@
         renderInjuries();
         renderHome();
     }
-    function deleteInjury(idx) {
-        profileData.injuries.splice(idx,1);
+
+    function _clearRehabAndBanner() {
+        // Clear active rehab plan and all related UI
+        activeRehabPlan = null;
+        try { localStorage.removeItem('mr_rehab_plan'); } catch(e) {}
+        // Remove home banner
+        var hb = document.getElementById('rehab-active-banner');
+        if (hb) hb.style.display = 'none';
+        // Update rehab card UI if visible
+        updateRehabUI && updateRehabUI();
+        // Re-render home to remove rehab progress card
+        renderHome && renderHome();
+    }
+
+    function resolveInjury(idx) {
+        if (!confirm('¿Marcar esta lesión como resuelta? Se eliminará el plan de rehabilitación activo si lo hay.')) return;
+        profileData.injuries[idx].status = 'Resuelta';
+        _clearRehabAndBanner();
         saveAppState();
         renderInjuries();
         renderHome();
+        showToast('✓ Lesión marcada como resuelta', 2500);
     }
+
+    function deleteInjury(idx) {
+        if (!confirm('¿Eliminar esta lesión del historial? Se eliminará también el plan de rehabilitación activo si lo hay.')) return;
+        profileData.injuries.splice(idx, 1);
+        _clearRehabAndBanner();
+        saveAppState();
+        renderInjuries();
+        renderHome();
+        showToast('Lesión eliminada', 2000);
+    }
+
     function renderInjuries() {
         const cont = document.getElementById('injuries-list');
         if(!cont) return;
@@ -10615,8 +10650,8 @@
                     <div style="font-size:12px;font-weight:700;color:#fff;">${inj.zone} — ${inj.side}</div>
                     <div style="font-size:10px;color:#c4881e;">${inj.status} · desde ${inj.since?new Date(inj.since+'T12:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}):'—'}</div>
                 </div>
-                <button onclick="openInjuryModal(${i})" style="background:none;border:none;color:rgba(255,255,255,.7);cursor:pointer;font-size:12px;">✏️</button>
-                <button onclick="deleteInjury(${i})" style="background:none;border:none;color:#fca5a5;cursor:pointer;font-size:12px;">🗑</button>
+                ${inj.status !== 'Resuelta' ? `<button onclick="resolveInjury(${i})" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#4ade80;border-radius:7px;padding:4px 8px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✓ Resuelta</button>` : ''}
+                <button onclick="deleteInjury(${i})" style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fca5a5;border-radius:7px;padding:4px 8px;font-size:10px;cursor:pointer;">🗑</button>
             </div>`).join('');
     }
 
@@ -13061,6 +13096,8 @@ function buildManualHTML() {
             id: 'inicio', icon: '🏠', label: 'INICIO',
             sections: [
                 { title: 'Dashboard principal', text: 'Es la primera pantalla que ves cada día. Muestra el saludo personalizado, la fecha y el bloque de "qué toca hoy" con tipo de sesión, distancia y ritmos objetivo extraídos de tu plan activo.' },
+                { title: 'Banner de lesión activa', text: 'Si tienes una lesión activa registrada en Runner → Lesiones, aparece un banner rojo en la parte superior recordándote que escuches tu cuerpo. Desaparece automáticamente cuando marcas la lesión como resuelta.' },
+                { title: 'Banner de rehabilitación activa', text: 'Si tienes un plan de rehabilitación activo, aparece una tarjeta en inicio mostrando el progreso (% completado, semana actual, fase). Desaparece automáticamente al marcar la lesión como resuelta o eliminarla desde Runner.' },
                 { title: 'Calentamiento del día', text: 'Justo debajo del bloque de hoy aparece siempre tu rutina de calentamiento configurada (7-8 min). Tócala para ver todos los ejercicios con descripción y duración. Si aún no la has configurado ve a Runner → Calentamiento.' },
                 { title: 'Km semanales completados', text: 'Si tienes un plan activo, encima del sparkline de 7 días aparece una barra de progreso que muestra los km completados esta semana vs los km planificados. Cambia de color: rojo al inicio, naranja al 65%, verde al completar el 100% con ✓ Semana completada.' },
                 { title: 'Últimos 7 días', text: 'Gráfico de barras con los km de cada día de la última semana. Los puntos de colores encima de cada barra muestran la puntuación IA si la sesión fue evaluada.' },
@@ -13082,14 +13119,14 @@ function buildManualHTML() {
             id: 'biblioteca', icon: '📚', label: 'BIBLIOTECA',
             sections: [
                 { title: 'Importar actividad', text: 'Pulsa el botón + (círculo rojo) o el botón de la pantalla vacía. Selecciona un archivo .fit, .gpx o .csv exportado desde tu reloj GPS. La app extrae distancia, tiempo, ritmo, FC, desnivel, cadencia, temperatura, traza el mapa GPS y detecta automáticamente la marca del reloj.' },
+                { title: 'Añadir foto a la actividad', text: 'Al importar una actividad, puedes añadir una foto opcional (carrera, paisaje, podio…). Aparece una sección "Foto de la actividad" con un botón para seleccionarla desde tu galería. La foto queda guardada con la actividad y aparece en la tarjeta de detalle.' },
                 { title: 'Cómo exportar desde COROS', text: '1. Abre la app COROS en el móvil\n2. Ve a Perfil → Actividades\n3. Toca la actividad que quieres importar\n4. Pulsa el icono de compartir (esquina superior derecha)\n5. Elige "Exportar archivo .fit"\n6. Guarda en Archivos (iOS) o Descargas (Android)\n7. En MisterRunner pulsa + e importa el archivo\n\nAlternativamente: coros.com → Training → Activities → Export FIT' },
                 { title: 'Cómo exportar desde Garmin', text: '1. Abre la app Garmin Connect en el móvil\n2. Ve a Actividades → Todas las actividades\n3. Toca la actividad\n4. Pulsa los tres puntos (···) → Exportar\n5. Elige "Exportar original (.fit)"\n6. Guarda o comparte el archivo\n7. En MisterRunner pulsa + e importa el archivo\n\nAlternativamente: connect.garmin.com → Activities → Export to FIT' },
-                { title: 'Cómo exportar desde Suunto', text: '1. Abre la app Suunto en el móvil\n2. Ve a la actividad que quieres importar\n3. Pulsa los tres puntos (···) → Exportar\n4. Elige formato FIT o GPX\n5. Guarda el archivo\n6. En MisterRunner pulsa + e importa el archivo\n\nAlternativamente: suunto.com → Training Diary → selecciona actividad → Export → FIT' },
-                { title: 'Detección automática de reloj', text: 'Al importar un archivo .fit o .gpx, la app detecta automáticamente la marca del reloj (COROS, Garmin, Suunto, Polar, Wahoo…) a partir del nombre del archivo y el campo creator del GPX. La marca aparece como una etiqueta "From COROS" junto al tipo de actividad en la tarjeta de detalle.' },
-                { title: 'Asignar datos al importar', text: 'Tras importar asigna: tipo de sesión, zapatillas, RPE (esfuerzo del 1 al 10), equilibrio izquierda/derecha y outfit completo (camiseta, pantalón, calcetines y zapatillas con sus colores). Todo queda guardado con la actividad.' },
-                { title: 'Ver detalle de actividad', text: 'Toca el nombre de la actividad para abrir la vista de detalle:\n• Tarjeta 1: Mapa GPS + outfit completo a la derecha (camiseta, pantalón, calcetines y zapatillas en los colores correctos) + estadísticas completas (FC, cadencia, zancada, TRIMP, temperatura, desacople) + gráfica de altimetría.\n• Tarjeta 2: Gráficas de ritmo y FC en el tiempo.\n• Tarjeta 3: Análisis de cadencia y equilibrio.\n• Tarjeta 4 (si evaluada): Puntuación IA y feedback.' },
-                { title: 'Compartir actividad como imagen', text: 'En la vista de detalle, pulsa el icono de compartir (esquina superior derecha). Aparece un selector con dos formatos:\n\n• Tarjeta completa — Captura la tarjeta 1 entera (mapa + outfit + estadísticas + altimetría) en alta resolución. El encabezado muestra el nombre de la actividad, el tipo y los datos clave.\n• Instagram / Stories — Tarjeta minimalista en formato vertical 9:16, optimizada para redes sociales.\n\nEn móvil abre el menú nativo de compartir del sistema. En escritorio descarga el archivo PNG automáticamente.' },
-                { title: 'Editar actividad', text: 'Desliza la tarjeta a la derecha y pulsa ✏. Puedes cambiar el nombre, tipo, zapatillas y outfit completo. Los km de zapatillas se reasignan automáticamente.' },
+                { title: 'Cómo exportar desde Suunto', text: '1. Abre la app Suunto en el móvil\n2. Ve a la actividad que quieres importar\n3. Pulsa los tres puntos (···) → Exportar\n4. Elige formato FIT o GPX\n5. Guarda el archivo\n6. En MisterRunner pulsa + e importa el archivo' },
+                { title: 'Ver detalle de actividad', text: 'Toca el nombre de la actividad para abrir la vista de detalle:\n• Tarjeta 1: Mapa GPS + outfit completo + estadísticas (FC, cadencia, zancada, TRIMP, temperatura) + gráfica de altimetría + foto si la añadiste.\n• Tarjeta 2: Gráficas de ritmo y FC en el tiempo.\n• Tarjeta 3: Análisis de cadencia y equilibrio.\n• Tarjeta 4 (si evaluada): Puntuación IA y feedback.' },
+                { title: 'Compartir actividad como imagen', text: 'En la vista de detalle, pulsa el icono de compartir. Elige formato:\n\n• Tarjeta completa — captura con mapa, outfit, estadísticas y altimetría.\n• Instagram / Stories — formato vertical 9:16 para redes sociales.\n• Compartir al Club 🏃 — publica la actividad en el Club de MisterRunner para que la vean tus seguidores.' },
+                { title: 'Compartir actividad al Club', text: 'Desde el menú de compartir de cualquier actividad, pulsa "Compartir al Club 🏃". Aparecerá una confirmación. Al aceptar, la actividad se publica en el Club y aparece un banner de confirmación con el botón "Ver Club →" para ir directamente a tu post.' },
+                { title: 'Editar actividad', text: 'Desliza la tarjeta a la derecha y pulsa ✏. Puedes cambiar el nombre, tipo, zapatillas y outfit completo. Los km de zapatillas se reasignan automáticamente sin duplicar ni perder km.' },
                 { title: 'Eliminar actividad', text: 'Desliza la tarjeta a la izquierda para eliminarla.' },
             ]
         },
@@ -13099,25 +13136,36 @@ function buildManualHTML() {
                 { title: 'Evaluar actividad', text: 'Selecciona una actividad importada y la IA compara lo planificado con lo ejecutado: ritmos, FC, distribución de carga. Para sesiones de series pulsa "+ Bloque" para describir cada repetición. El resultado incluye una puntuación del 1 al 100 y comentarios específicos.' },
                 { title: 'Crear plan de running', text: 'Elige distancia (10K / Media / Maratón / Maratón+), nombre del plan, fecha de inicio y fecha de carrera. Introduce tu tiempo objetivo y el ritmo se sincroniza automáticamente mostrando los ritmos calculados (Fácil, Umbral, Intervalo, RC). Selecciona los días de entrenamiento y pulsa Generar.' },
                 { title: 'Fuerza / Pliometría', text: 'Activa el plan de fuerza eligiendo equipamiento (Casa: bandas + peso corporal; Gimnasio: máquinas + pesas), días por semana (1-3) y qué días exactos. Se generan 52 semanas de progresión con 5 bloques: cadena posterior, rodilla, cadera, pliometría y core runner. Las sesiones aparecen integradas en el Plan.' },
-                { title: 'Tratamiento y Rehabilitación', text: 'Registra una lesión indicando zona del cuerpo, tipo de lesión y semanas estimadas de baja. El plan sustituye los entrenamientos de running por ejercicios de rehab progresivos. Al cumplirse el plazo, el sistema propone reintroducir el rodaje gradualmente.' },
+                { title: 'Tratamiento y Rehabilitación', text: 'Genera un plan de rehabilitación personalizado indicando la lesión, severidad y lado afectado. El plan sustituye los entrenamientos de running por ejercicios de rehab progresivos organizados en fases. Al completar el plan, el sistema propone reintroducir el rodaje gradualmente.\n\nEl plan de rehab se elimina automáticamente cuando marcas la lesión como resuelta o la eliminas desde Runner → Lesiones.' },
             ]
         },
         {
             id: 'runner', icon: '🏃', label: 'RUNNER',
             sections: [
                 { title: 'Perfil y datos fisiológicos', text: 'Configura nombre, país, fecha de nacimiento, ciudad, peso, talla, sexo y reloj GPS. La FC máxima, FC en reposo y VO2max alimentan el cálculo de zonas de entrenamiento y los ritmos del plan.' },
-                { title: 'VO₂max', text: 'Introduce el dato de VO2max de tu reloj. Se muestra un velocímetro semicircular con 6 niveles: Bajo, Regular, Bueno, Excelente, Superior y Élite (morado). La aguja y los colores corresponden a las tablas ACSM ajustadas por sexo y edad. Puedes llegar a Élite superando el umbral Superior de tu categoría.' },
-                { title: 'Marcas personales y evolución', text: 'Introduce tus mejores tiempos en 5K, 10K, Media y Maratón. El Predictor de Marca calcula predicciones en otras distancias. Cada vez que actualizas una marca se registra en la Evolución de Marcas: una línea del tiempo por distancia que muestra tu progresión con fechas.' },
-                { title: 'Compartir perfil como imagen', text: 'Pulsa el botón dorado "Compartir perfil" bajo el reloj en la cabecera de Runner. Genera una tarjeta premium con: foto o iniciales, nombre y datos, bloque VO2max con categoría en color, tabla de marcas en monospace dorado, zapatillas activas con su color, y barra MisterRunner en la parte inferior. En móvil abre el menú nativo del sistema; en escritorio descarga el PNG.' },
-                { title: 'Hall of Fame — Medallero', text: 'Pulsa el bloque dorado "Hall of Fame" para acceder a tu medallero. Pulsa + para añadir una carrera: nombre, distancia (10K/Media/Maratón), marca en hh:mm:ss y foto de la medalla (recortada automáticamente en círculo). Los filtros de la parte superior permiten ver por distancia. El color de fondo de cada tarjeta indica la distancia: blanco (10K), azul (Media), verde (Maratón).' },
-                { title: 'Calentamiento y estiramientos', text: 'Pulsa el bloque verde "Calentamiento". Elige la zona a proteger si tienes historial de molestias (rodilla, tobillo, aquiles, gemelo, isquios, cuádriceps, cadera, cintilla, fascia, lumbar). La rutina se genera con ejercicios generales primero y específicos de zona al final (7-8 min en total). Aparece siempre en la pantalla de Inicio.' },
-                { title: 'Zapatillas', text: 'Añade cada par con nombre, color y km iniciales. Cada actividad importada acumula km automáticamente. La barra de desgaste es un semáforo: verde (ok), naranja (revisar suela), rojo (cambio recomendado). Si cambias de zapatilla al editar una actividad, los km se reasignan.' },
-                { title: 'Predictor de marca', text: 'Aparece cuando tienes marcas personales registradas. Calcula predicciones en todas las distancias usando las tablas VDOT de Jack Daniels. Basado en la marca más reciente que tengas.' },
+                { title: 'VO₂max', text: 'Introduce el dato de VO2max de tu reloj. Se muestra un velocímetro semicircular con 6 niveles: Bajo, Regular, Bueno, Excelente, Superior y Élite (morado).' },
+                { title: 'Marcas personales y evolución', text: 'Introduce tus mejores tiempos en 5K, 10K, Media y Maratón. El Predictor de Marca calcula predicciones en otras distancias. Cada vez que actualizas una marca se registra en la Evolución de Marcas.' },
+                { title: 'Compartir perfil como imagen', text: 'Pulsa el botón dorado "Compartir perfil". Genera una tarjeta premium con foto o iniciales, nombre, VO2max, marcas, zapatillas activas y barra MisterRunner. En móvil abre el menú nativo del sistema; en escritorio descarga el PNG.' },
+                { title: 'Hall of Fame — Medallero', text: 'Pulsa el bloque dorado "Hall of Fame". Pulsa + para añadir una carrera: nombre, distancia, marca en hh:mm:ss y foto de la medalla (recortada en círculo). Los filtros permiten ver por distancia.' },
+                { title: 'Lesiones', text: 'Historial de lesiones registradas. Cada lesión muestra la zona, el lado y el estado (Activa / En recuperación / Resuelta).\n\n• Botón "✓ Resuelta" — marca la lesión como resuelta y elimina automáticamente el plan de rehabilitación activo y el banner de inicio.\n• Botón 🗑 — elimina la lesión del historial y también elimina el plan de rehabilitación activo.\n\nLas lesiones se registran automáticamente al activar un plan de rehabilitación desde Míster.' },
+                { title: 'Calentamiento y estiramientos', text: 'Pulsa el bloque verde "Calentamiento". Elige la zona a proteger si tienes historial de molestias. La rutina se genera con ejercicios generales primero y específicos de zona al final (7-8 min en total). Aparece siempre en la pantalla de Inicio.' },
+                { title: 'Zapatillas', text: 'Añade cada par con nombre, color y km iniciales. Cada actividad importada acumula km automáticamente. La barra de desgaste es un semáforo: verde (ok), naranja (revisar suela), rojo (cambio recomendado). Si cambias de zapatilla al editar una actividad, los km se reasignan correctamente.' },
                 { title: 'Zonas de FC y Ritmo', text: 'Las zonas de FC se calculan automáticamente desde tu umbral de lactato. Las zonas de ritmo desde tu ritmo umbral. Ambas aparecen en un mismo bloque unificado.' },
                 { title: 'Almacenamiento y Copia de seguridad', text: 'Almacenamiento muestra actividades cargadas y espacio disponible. La copia de seguridad genera un archivo .json con todo: perfil, marcas, historial, medallero, planes, zapatillas, calentamiento y actividades. Para restaurar en otro dispositivo selecciona ese archivo con el botón Restaurar.' },
-                { title: 'Notificaciones y PWA shortcuts', text: 'Activa las notificaciones para recibir un recordatorio diario con el entrenamiento del día. Si la app está instalada en pantalla de inicio (iOS: Compartir → Añadir a pantalla de inicio), al mantener pulsado el icono aparecen accesos rápidos: "Registrar actividad" y "Entrenamiento de hoy".' },
-                { title: 'Configuración', text: 'Accede desde el bloque gris al final de Runner. Editar perfil incluye ahora Umbral de Lactato, Ritmo Umbral y Días de entrenamiento preferidos. Desde aquí también activas notificaciones y cierras sesión.' },
-                { title: '💾 Copia de seguridad (Backup)', text: '¿QUÉ GUARDA?\nEl backup incluye ABSOLUTAMENTE todo tu historial en MisterRunner:\n• Perfil completo (nombre, marcas personales, historial de PR, país, datos fisiológicos, VO2max)\n• Plan de running activo y plan de fuerza\n• Plan de rehabilitación activo\n• Zapatillas y sus km acumulados\n• Medallero (carreras y fotos de medallas)\n• Rutina de calentamiento configurada\n• Avatar y foto de perfil\n• Todas las actividades importadas (GPS, FC, ritmo, laps, evaluaciones IA) — guardadas en IndexedDB\n\nCÓMO HACER UN BACKUP:\n1. Ve a Runner → desplázate hasta la sección "Almacenamiento"\n2. Pulsa "Exportar backup"\n3. Se descarga un archivo .json con fecha: misterrunner-backup-YYYY-MM-DD.json\n4. Guárdalo en una ubicación segura (iCloud, Google Drive, Dropbox…)\n\nCÓMO RESTAURAR EN OTRO DISPOSITIVO:\n1. Abre MisterRunner en el nuevo dispositivo\n2. Ve a Runner → Almacenamiento → "Restaurar backup"\n3. Selecciona el archivo .json descargado antes\n4. Confirma en el diálogo de advertencia\n5. La app recarga automáticamente con todos tus datos\n\n⚠️ IMPORTANTE:\n• Restaurar sobreescribe los datos actuales del dispositivo destino\n• Las actividades (GPS, FC, análisis) NO se pierden — están en el backup\n• El backup NO borra ni modifica las actividades del dispositivo origen\n• Recomendado: hacer backup antes de cambiar de dispositivo o borrar el navegador\n• El archivo .json puede pesar varios MB si tienes muchas actividades' },
+                { title: 'Notificaciones', text: 'Activa las notificaciones para recibir un recordatorio diario con el entrenamiento del día. Si la app está instalada en pantalla de inicio, al mantener pulsado el icono aparecen accesos rápidos: "Registrar actividad" y "Entrenamiento de hoy".' },
+            ]
+        },
+        {
+            id: 'club', icon: '🏃', label: 'CLUB',
+            sections: [
+                { title: '¿Qué es el Club?', text: 'El Club es el espacio social de MisterRunner. Puedes seguir a otros runners, ver sus actividades, dar likes, comentar y enviar mensajes directos. Es una comunidad privada de runners que usan MisterRunner.' },
+                { title: 'Cómo acceder', text: 'Pulsa el icono 🏃 en la barra de navegación inferior. El Club carga tu feed de actividades de los runners que sigues, ordenadas de más reciente a más antigua.' },
+                { title: 'Feed de actividades', text: 'Cada post del feed muestra: avatar y nombre del runner, tipo de actividad, distancia, ritmo y duración. Si el runner añadió foto, aparece en la tarjeta. Puedes dar ❤️ al post o comentar con el icono de burbuja.' },
+                { title: 'Compartir una actividad al Club', text: 'Desde Biblioteca, abre el detalle de cualquier actividad y pulsa el icono de compartir. Elige "Compartir al Club 🏃".\n\n1. Aparece una ventana de confirmación.\n2. Pulsa OK para publicar.\n3. Aparece un banner verde de confirmación con el botón "Ver Club →" para ir directamente a ver tu post en el feed.' },
+                { title: 'Seguir a otros runners', text: 'Pulsa el icono 🔍 (lupa) en la cabecera del Club. Escribe el nombre de usuario y aparecerán los resultados. Pulsa "Seguir" para seguir a ese runner. Sus actividades aparecerán en tu feed.' },
+                { title: 'Mensajes directos', text: 'Pulsa el icono de burbuja 💬 en la cabecera del Club para acceder a tus conversaciones. También puedes iniciar un chat pulsando el botón 💬 que aparece en cada tarjeta de runner en el feed.' },
+                { title: 'Cómo testear el Club siendo el único usuario', text: 'Para probar el Club antes de compartirlo con otros runners:\n\n1. Crea una segunda cuenta con otro email desde "Crear cuenta".\n2. Con esa segunda cuenta, busca tu usuario principal en la lupa y síguelo.\n3. Desde la primera cuenta, comparte una actividad al Club.\n4. Vuelve a la segunda cuenta: la actividad debe aparecer en su feed.\n5. Prueba dar like, comentar y enviar un mensaje directo entre las dos cuentas.\n\nPuedes abrir la segunda cuenta en modo incógnito del navegador para no tener que cerrar sesión.' },
+                { title: 'Privacidad', text: 'El Club es una red cerrada. Solo los usuarios registrados en MisterRunner pueden ver el contenido. Las actividades compartidas solo son visibles para los runners que te siguen.' },
             ]
         },
     ];
@@ -13156,7 +13204,7 @@ function buildManualHTML() {
 }
 window.switchManualTab = function(id) {
     document.querySelectorAll('.m-tab').forEach((b,i) => {
-        const tabId = ['inicio','plan','biblioteca','mister','runner'][i];
+        const tabId = ['inicio','plan','biblioteca','mister','runner','club'][i];
         b.classList.toggle('active', tabId===id);
     });
     document.querySelectorAll('.m-tab-content').forEach(el => {
@@ -13938,6 +13986,12 @@ async function shareActivityToClub(actId) {
     var acts = (typeof activities !== 'undefined') ? activities : [];
     var act = acts.find(function(a) { return a.id === actId; });
     if (!act) return;
+
+    // Confirmation dialog before posting
+    var confirmed = confirm('¿Compartir esta actividad en el Club?\n\nSe publicará y podrán verla tus seguidores.');
+    if (!confirmed) return;
+
+    if (typeof showToast === 'function') showToast('Publicando en el Club…', 1500);
 
     var cleanActData = Object.assign({}, act, {photoB64: null, records: (act.records||[]).slice(0, 800)});
     var photoUrl = null;
