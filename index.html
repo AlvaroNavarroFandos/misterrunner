@@ -13831,7 +13831,7 @@ function _buildClubCard(post, myId) {
     var hasP = !!(post.photo_url);
 
     var card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border-radius:20px;border:1px solid var(--border);overflow:hidden;margin-bottom:14px;display:flex;flex-direction:column;';
+    card.style.cssText = 'background:var(--card);border-radius:20px;border:1px solid var(--border);overflow:hidden;margin-bottom:14px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;';
 
     /* Header */
     var hdr = document.createElement('div');
@@ -13866,12 +13866,29 @@ function _buildClubCard(post, myId) {
         delBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>';
         (function(_pid, _card) {
             delBtn.onclick = function() {
-                if (!confirm('¿Eliminar del Club?')) return;
-                window._sbClient.from('club_posts').update({deleted_at: new Date().toISOString()}).eq('id', _pid).then(() => {
-                    _card.style.cssText += ';opacity:0;transition:opacity .2s;';
-                    setTimeout(() => _card.remove(), 200);
-                    if (typeof showToast === 'function') showToast('Eliminado del Club', 1800);
-                });
+                var exMod = document.getElementById('del-post-modal'); if (exMod) exMod.remove();
+                var modal = document.createElement('div');
+                modal.id = 'del-post-modal';
+                modal.style.cssText = 'position:fixed;inset:0;z-index:60000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.55);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
+                modal.innerHTML = '<div style="background:var(--card);border-radius:22px 22px 18px 18px;padding:24px 20px 20px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="del-post-inner"><div style="text-align:center;margin-bottom:18px;"><div style="width:52px;height:52px;border-radius:50%;background:rgba(239,68,68,.12);border:1.5px solid rgba(239,68,68,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:22px;">🗑</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:6px;">Eliminar del Club</div><div style="font-size:12px;color:var(--ts);line-height:1.5;">Esta actividad desaparecerá del feed de tus seguidores.</div></div><div style="display:flex;gap:10px;"><button id="del-post-cancel" style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="del-post-ok" style="flex:1;background:#ef4444;border:none;border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Eliminar</button></div></div>';
+                document.body.appendChild(modal);
+                requestAnimationFrame(function() { requestAnimationFrame(function() {
+                    modal.style.opacity = '1';
+                    document.getElementById('del-post-inner').style.transform = 'translateY(0)';
+                }); });
+                var closeModal = function() { modal.style.opacity='0'; setTimeout(function(){ if(modal.parentNode) modal.remove(); },250); };
+                document.getElementById('del-post-cancel').onclick = closeModal;
+                modal.addEventListener('click', function(ev) { if (ev.target===modal) closeModal(); });
+                document.getElementById('del-post-ok').onclick = function() {
+                    closeModal();
+                    window._sbClient.from('club_posts').update({deleted_at: new Date().toISOString()}).eq('id', _pid).then(function(res) {
+                        if (res.error) { showToast('Error al eliminar: ' + res.error.message, 3000); return; }
+                        _card.style.opacity = '0';
+                        _card.style.transition = 'opacity .2s';
+                        setTimeout(function() { if (_card.parentNode) _card.remove(); }, 200);
+                        showToast('Eliminado del Club', 1800);
+                    });
+                };
             };
         })(post.id, card);
         rightCol.appendChild(delBtn);
