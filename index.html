@@ -2059,6 +2059,21 @@
     </div>
 
     <!-- MODAL AÑADIR ZAPATILLA -->
+    <div id="club-share-modal" class="sheet-backdrop">
+        <div class="sheet">
+            <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
+            <div class="sheet-title">Compartir en el Club</div>
+            <div style="text-align:center;padding:0 20px 8px;">
+                <div style="font-size:40px;margin-bottom:10px;">🏃</div>
+                <div style="font-size:14px;color:var(--ts);line-height:1.6;">Esta actividad se publicará en el Club y podrán verla tus seguidores.</div>
+            </div>
+            <div style="padding:16px 20px 8px;display:flex;gap:10px;">
+                <button onclick="closeSheet('club-share-modal')" class="btn btn-secondary" style="flex:1;">Cancelar</button>
+                <button id="club-share-confirm-btn" class="btn btn-primary" style="flex:1;">Publicar ✓</button>
+            </div>
+        </div>
+    </div>
+
     <div id="shoe-add-modal" class="sheet-backdrop">
         <div class="sheet">
             <div class="sheet-handle-wrap">
@@ -11093,27 +11108,40 @@
         document.getElementById('share-full-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareFullCard(act), 100); });
         document.getElementById('share-insta-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareInstaCard(act), 100); });
         const clubShareBtn = document.getElementById('share-club-btn');
-        if(clubShareBtn) clubShareBtn.addEventListener('click', async (e) => {
+        if(clubShareBtn) clubShareBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            const _act = act;
             picker.remove();
-            var sb = window._sbClient;
-            var { data:{ session } } = await sb.auth.getSession();
-            if (!session) { showToast('Inicia sesión primero', 2000); return; }
-            var myId = session.user.id;
-            var cleanAct = Object.assign({}, act, {photoB64: null});
-            var photoUrl = null;
-            if (act.photoB64 && act.photoB64.startsWith('data:')) {
+            // Store act reference on the confirm button
+            var confirmBtn = document.getElementById('club-share-confirm-btn');
+            // Remove old listener by cloning
+            var newBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+            newBtn.onclick = async function() {
+                closeSheet('club-share-modal');
+                showToast('Publicando…', 2000);
                 try {
-                    var r = await fetch(act.photoB64); var bl = await r.blob();
-                    var ext = bl.type.includes('png')?'png':'jpg';
-                    var pth = myId+'/post-'+Date.now()+'.'+ext;
-                    var { error:upE } = await sb.storage.from('media').upload(pth, bl);
-                    if (!upE) { var { data:ud } = sb.storage.from('media').getPublicUrl(pth); photoUrl = ud.publicUrl; }
-                } catch(e2) {}
-            }
-            var { error } = await sb.from('club_posts').insert({user_id:myId, act_data:cleanAct, photo_url:photoUrl});
-            if (error) { showToast('❌ Error al publicar', 3000); return; }
-            showToast('✓ Publicado en el Club', 2500);
+                    var sb = window._sbClient;
+                    var { data:{ session } } = await sb.auth.getSession();
+                    if (!session) { showToast('Inicia sesión primero', 2000); return; }
+                    var myId = session.user.id;
+                    var cleanAct = Object.assign({}, _act, {photoB64: null});
+                    var photoUrl = null;
+                    if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
+                        try {
+                            var r = await fetch(_act.photoB64); var bl = await r.blob();
+                            var ext = bl.type.includes('png')?'png':'jpg';
+                            var pth = myId+'/post-'+Date.now()+'.'+ext;
+                            var { error:upE } = await sb.storage.from('media').upload(pth, bl);
+                            if (!upE) { var { data:ud } = sb.storage.from('media').getPublicUrl(pth); photoUrl = ud.publicUrl; }
+                        } catch(e2) {}
+                    }
+                    var { error } = await sb.from('club_posts').insert({user_id:myId, act_data:cleanAct, photo_url:photoUrl});
+                    if (error) { showToast('❌ Error: '+error.message, 4000); return; }
+                    showToast('✓ Publicado en el Club', 2500);
+                } catch(e) { showToast('❌ Error: '+e.message, 4000); }
+            };
+            openSheet('club-share-modal');
         });
 
         // Button press feedback
@@ -13856,7 +13884,7 @@ function _buildClubCard(post, myId) {
     var dur = '--';
     if (act.durationSec > 0) {
         var dh = Math.floor(act.durationSec/3600), dm = Math.floor((act.durationSec%3600)/60), ds = act.durationSec%60;
-        dur = dh > 0 ? dh + ':' + String(dm).padStart(2,'0') : dm + ':' + String(ds).padStart(2,'0');
+        dur = dh > 0 ? dh + ':' + String(dm).padStart(2,'0') + ':' + String(ds).padStart(2,'0') : dm + ':' + String(ds).padStart(2,'0');
     }
     var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera'};
     var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#C9A84C',race:'#e879f9'};
@@ -14309,15 +14337,23 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
 async function _sendMsg(toId) {
     var ta = document.getElementById('chat-input-' + toId);
-    var content = ta?.value?.trim(); if (!content) return;
-    ta.value = ''; ta.style.height = 'auto';
+    if (!ta) { 
+        // Fallback: find textarea in chat view
+        var chatView = document.getElementById('club-chat-view');
+        ta = chatView ? chatView.querySelector('textarea') : null;
+    }
+    var content = ta ? ta.value.trim() : '';
+    if (!content) return;
+    if (ta) { ta.value = ''; ta.style.height = 'auto'; }
     const { data: { session } } = await window._sbClient.auth.getSession();
-    const myId = session?.user?.id; if (!myId) return;
+    const myId = session?.user?.id; if (!myId) { showToast('Sesión expirada', 2000); return; }
     const { data: msg, error } = await window._sbClient.from('messages')
         .insert({from_id: myId, to_id: toId, content}).select().single();
-    if (!error && msg) {
+    if (error) { showToast('Error: ' + error.message, 3000); return; }
+    if (msg) {
         _appendBubble(msg, true, toId);
         var area = document.getElementById('chat-messages-' + toId);
+        if (!area) { var chatView2 = document.getElementById('club-chat-view'); area = chatView2 ? chatView2.querySelector('[id^="chat-messages-"]') : null; }
         if (area) area.scrollTop = area.scrollHeight;
     }
 }
