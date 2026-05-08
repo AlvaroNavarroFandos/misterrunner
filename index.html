@@ -13752,6 +13752,76 @@ async function _initClubSupabase() {
         })
         .subscribe();
 
+    // ── Social notifications ───────────────────────────────────────
+    (async function _initSocialNotifs() {
+        try {
+            var sb = window._sbClient;
+            var { data:{ session } } = await sb.auth.getSession();
+            if (!session) return;
+            var myId = session.user.id;
+
+            function _fireNotif(title, body) {
+                if (Notification.permission !== 'granted') return;
+                var n = new Notification(title, {
+                    body: body,
+                    icon: '/icon-192.png',
+                    badge: '/badge-72.png',
+                    tag: 'mr-social-' + Date.now()
+                });
+                setTimeout(function() { n.close(); }, 6000);
+            }
+
+            // DM notifications
+            sb.channel('mr-dms-' + myId)
+                .on('postgres_changes', {
+                    event: 'INSERT', schema: 'public', table: 'messages',
+                    filter: 'to_id=eq.' + myId
+                }, async function(payload) {
+                    var fromId = payload.new?.from_id;
+                    if (!fromId || fromId === myId) return;
+                    // Don't notify if chat with sender is open
+                    if (typeof _activeChatUserId !== 'undefined' && _activeChatUserId === fromId) return;
+                    var { data: prof } = await sb.from('profiles').select('username').eq('id', fromId).single();
+                    var sender = prof?.username || 'Alguien';
+                    _fireNotif('MisterRunner', '@' + sender + ' te ha enviado un mensaje');
+                    _refreshUnreadBadge && _refreshUnreadBadge();
+                })
+                .subscribe();
+
+            // Reaction notifications
+            sb.channel('mr-reactions-' + myId)
+                .on('postgres_changes', {
+                    event: 'INSERT', schema: 'public', table: 'reactions'
+                }, async function(payload) {
+                    var reactorId = payload.new?.user_id;
+                    if (!reactorId || reactorId === myId) return;
+                    // Check if the post belongs to me
+                    var postId = payload.new?.post_id;
+                    var { data: post } = await sb.from('club_posts').select('user_id').eq('id', postId).single();
+                    if (!post || post.user_id !== myId) return;
+                    var { data: prof } = await sb.from('profiles').select('username').eq('id', reactorId).single();
+                    var who = prof?.username || 'Alguien';
+                    var emoji = payload.new?.emoji || '❤️';
+                    _fireNotif('MisterRunner', '@' + who + ' ha reaccionado a tu post ' + emoji);
+                })
+                .subscribe();
+
+            // Follow notifications
+            sb.channel('mr-follows-' + myId)
+                .on('postgres_changes', {
+                    event: 'INSERT', schema: 'public', table: 'follows',
+                    filter: 'following_id=eq.' + myId
+                }, async function(payload) {
+                    var followerId = payload.new?.follower_id;
+                    if (!followerId || followerId === myId) return;
+                    var { data: prof } = await sb.from('profiles').select('username').eq('id', followerId).single();
+                    var who = prof?.username || 'Alguien';
+                    _fireNotif('MisterRunner', '@' + who + ' ha empezado a seguirte');
+                })
+                .subscribe();
+        } catch(e) {}
+    })();
+
     if (_sbDmChannel) window._sbClient.removeChannel(_sbDmChannel);
     _sbDmChannel = window._sbClient.channel('dm-' + userId)
         .on('postgres_changes', {
@@ -13805,6 +13875,10 @@ function openClub() {
     renderClubFeed();
     _loadClubHeaderStats();
     _initPTR();
+    // Request notification permission if not yet granted
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
 }
 
 async function _loadClubHeaderStats() {
@@ -14373,7 +14447,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Topbar */
     var tb = document.createElement('div');
-    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+8px) 15px 12px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e5e5ea;background:#fff;';
+    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+4px) 15px 10px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e5e5ea;background:#fff;';
     var backBtn = document.createElement('button');
     backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:#f2f2f7;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
     backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
@@ -14418,7 +14492,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Input */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom,0px)+28px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:12px 12px calc(env(safe-area-inset-bottom,0px)+36px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
@@ -14560,39 +14634,42 @@ window.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══ CLUB VIEW ════════════════════════════════════════════════════ -->
     <div id="club-view" style="display:none;position:fixed;inset:0;z-index:20000;background:var(--bg);flex-direction:column;overflow:hidden;transform:translateY(-100%);transition:transform .38s cubic-bezier(.32,.72,0,1);">
-        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 12px;border-bottom:1px solid var(--border);background:var(--bg);">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-                <button onclick="closeClub()" style="width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;border-bottom:1px solid var(--border);background:var(--bg);">
+            <!-- Top row: big back arrow + CLUB title + search -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                <button onclick="closeClub()" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 </button>
                 <div style="font-size:17px;font-weight:800;color:var(--gold);letter-spacing:1px;">CLUB</div>
-                <div style="display:flex;gap:8px;">
-                    <button onclick="openConversations()" id="club-dm-btn" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;" title="Mensajes">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-                    </button>
-                    <button onclick="openClubSearch()" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    </button>
-                </div>
+                <button onclick="openClubSearch()" style="width:38px;height:38px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                </button>
             </div>
-            <div style="display:flex;align-items:center;gap:18px;padding:0 4px;">
-                <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="width:64px;height:64px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:2.5px solid var(--gold-bd);cursor:pointer;"></div>
-                <div style="flex:1;">
-                    <div id="club-hdr-username" style="font-size:16px;font-weight:800;color:var(--tw);margin-bottom:8px;">—</div>
-                    <div style="display:flex;gap:24px;">
+            <!-- Profile row: avatar centered with stats + DM icon to the right -->
+            <div style="display:flex;align-items:center;justify-content:center;gap:20px;">
+                <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:2.5px solid var(--gold-bd);cursor:pointer;"></div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                    <div id="club-hdr-username" style="font-size:15px;font-weight:800;color:var(--tw);">—</div>
+                    <div style="display:flex;gap:20px;">
                         <div style="text-align:center;">
                             <div id="club-stat-posts" style="font-size:15px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:11px;color:var(--tm);">posts</div>
+                            <div style="font-size:10px;color:var(--tm);">posts</div>
                         </div>
                         <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('followers')">
                             <div id="club-stat-followers" style="font-size:15px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:11px;color:var(--tm);">seguidores</div>
+                            <div style="font-size:10px;color:var(--tm);">seguidores</div>
                         </div>
                         <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('following')">
                             <div id="club-stat-following" style="font-size:15px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:11px;color:var(--tm);">seguidos</div>
+                            <div style="font-size:10px;color:var(--tm);">seguidos</div>
                         </div>
                     </div>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                    <button onclick="openConversations()" id="club-dm-btn" style="width:40px;height:40px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;" title="Mensajes">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                    </button>
+                    <div style="font-size:9px;color:var(--tm);margin-top:3px;">DM's</div>
                 </div>
             </div>
         </div>
