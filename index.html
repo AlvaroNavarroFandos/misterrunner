@@ -8727,7 +8727,7 @@
         if(!toast){
             toast=document.createElement('div');
             toast.id='mr-toast';
-            toast.style.cssText='position:fixed;bottom:calc(var(--nav-h)+env(safe-area-inset-bottom,0px)+12px);left:50%;transform:translateX(-50%);background:#1a1612;color:#fff;font-family:var(--f);font-size:11px;font-weight:600;padding:10px 18px;border-radius:999px;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.35);opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center;line-height:1.4;';
+            toast.style.cssText='position:fixed;bottom:calc(var(--nav-h)+env(safe-area-inset-bottom,0px)+12px);left:50%;transform:translateX(-50%);background:#1a1612;color:#fff;font-family:var(--f);font-size:11px;font-weight:600;padding:10px 18px;border-radius:999px;z-index:999999;box-shadow:0 4px 20px rgba(0,0,0,.35);opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center;line-height:1.4;';
             document.body.appendChild(toast);
         }
         toast.textContent=msg;
@@ -13807,7 +13807,85 @@ function openClub() {
     v.style.display = 'flex';
     requestAnimationFrame(function() { requestAnimationFrame(function() { v.style.transform = 'translateY(0)'; }); });
     renderClubFeed();
+    _loadClubHeaderStats();
     _initPTR();
+}
+
+async function _loadClubHeaderStats() {
+    try {
+        var sb = window._sbClient;
+        var { data:{ session } } = await sb.auth.getSession();
+        if (!session) return;
+        var myId = session.user.id;
+        // Avatar + username
+        var avEl = document.getElementById('club-hdr-avatar');
+        var unEl = document.getElementById('club-hdr-username');
+        if (avEl && unEl) {
+            if (profileData.avatar && profileData.avatar.startsWith('data:')) {
+                var img = document.createElement('img');
+                img.src = profileData.avatar;
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                avEl.innerHTML = '';
+                avEl.appendChild(img);
+            } else {
+                avEl.textContent = (profileData.name||'?')[0].toUpperCase();
+            }
+            unEl.textContent = profileData.name || '—';
+        }
+        // Posts count
+        var { count: postCount } = await sb.from('club_posts').select('id', {count:'exact',head:true}).eq('user_id', myId);
+        var postsEl = document.getElementById('club-stat-posts');
+        if (postsEl) postsEl.textContent = postCount || 0;
+        // Followers count
+        var { count: follCount } = await sb.from('follows').select('id', {count:'exact',head:true}).eq('following_id', myId);
+        var follEl = document.getElementById('club-stat-followers');
+        if (follEl) follEl.textContent = follCount || 0;
+        // Following count
+        var { count: followingCount } = await sb.from('follows').select('id', {count:'exact',head:true}).eq('follower_id', myId);
+        var followingEl = document.getElementById('club-stat-following');
+        if (followingEl) followingEl.textContent = followingCount || 0;
+    } catch(e) {}
+}
+
+async function openClubFollowersList(type) {
+    var sb = window._sbClient;
+    var { data:{ session } } = await sb.auth.getSession();
+    if (!session) return;
+    var myId = session.user.id;
+    var title = type === 'followers' ? 'Seguidores' : 'Seguidos';
+    // Fetch list
+    var query = type === 'followers'
+        ? sb.from('follows').select('follower_id, profiles!follows_follower_id_fkey(id,username,avatar_url)').eq('following_id', myId)
+        : sb.from('follows').select('following_id, profiles!follows_following_id_fkey(id,username,avatar_url)').eq('follower_id', myId);
+    var { data } = await query;
+    var users = (data||[]).map(function(r) { return type==='followers' ? r.profiles : r.profiles; }).filter(Boolean);
+    // Build overlay
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:20005;background:var(--bg);display:flex;flex-direction:column;';
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 10px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);';
+    hdr.innerHTML = '<button onclick="this.closest(\'[style*=z-index:20005]\').remove()" style="width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button><div style="font-size:16px;font-weight:800;color:var(--tw);">' + title + '</div>';
+    var list = document.createElement('div');
+    list.style.cssText = 'flex:1;overflow-y:auto;padding:12px 15px;display:flex;flex-direction:column;gap:12px;';
+    if (!users.length) {
+        list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin ' + title.toLowerCase() + ' aún.</div>';
+    } else {
+        users.forEach(function(u) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:12px;';
+            var av = document.createElement('div');
+            av.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;';
+            if (u.avatar_url) { var i=document.createElement('img');i.src=u.avatar_url;i.style.cssText='width:100%;height:100%;object-fit:cover;';av.appendChild(i); }
+            else av.textContent = (u.username||'?')[0].toUpperCase();
+            var name = document.createElement('div');
+            name.style.cssText = 'font-size:14px;font-weight:700;color:var(--tw);flex:1;';
+            name.textContent = u.username || '?';
+            row.appendChild(av); row.appendChild(name);
+            list.appendChild(row);
+        });
+    }
+    ov.appendChild(hdr); ov.appendChild(list);
+    document.body.appendChild(ov);
 }
 function closeClub() {
     var v = document.getElementById('club-view');
@@ -13923,7 +14001,7 @@ function _buildClubCard(post, myId) {
         var dmBtn = document.createElement('button');
         dmBtn.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
         dmBtn.title = 'Mensaje privado';
-        dmBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+        dmBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
         (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
         rightCol.appendChild(dmBtn);
     }
@@ -14271,28 +14349,28 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     if (!chatView) {
         chatView = document.createElement('div');
         chatView.id = 'club-chat-view';
-        chatView.style.cssText = 'position:fixed;inset:0;z-index:20002;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);';
+        chatView.style.cssText = 'position:fixed;inset:0;z-index:20002;background:#fff;display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);';
         document.body.appendChild(chatView);
     }
     chatView.innerHTML = '';
 
     /* Topbar */
     var tb = document.createElement('div');
-    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 10px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);background:var(--bg);';
+    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 10px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e5e5ea;background:#fff;';
     var backBtn = document.createElement('button');
-    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
+    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:#f2f2f7;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
     backBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; _activeChatUserId = null; };
     var avC = document.createElement('div');
     avC.style.cssText = 'width:38px;height:38px;border-radius:50%;background:var(--crimson);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;';
     if (otherAvatar) { var avCI = document.createElement('img'); avCI.src = otherAvatar; avCI.style.cssText = 'width:100%;height:100%;object-fit:cover;'; avC.appendChild(avCI); }
     else avC.textContent = (otherUsername || '?')[0].toUpperCase();
     var nameDiv = document.createElement('div');
-    nameDiv.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--tw);">@' + otherUsername + '</div><div style="font-size:10px;color:var(--tm);">Chat privado</div>';
+    nameDiv.innerHTML = '<div style="font-size:14px;font-weight:700;color:#000;">@' + otherUsername + '</div><div style="font-size:10px;color:#8e8e93;">Chat privado</div>';
 
     /* Messages button in header */
     var msgsHeaderBtn = document.createElement('button');
-    msgsHeaderBtn.style.cssText = 'margin-left:auto;padding:6px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--card);cursor:pointer;font-size:11px;color:var(--ts);font-family:var(--f);';
+    msgsHeaderBtn.style.cssText = 'margin-left:auto;padding:6px 12px;border-radius:20px;border:1.5px solid #e5e5ea;background:#f2f2f7;cursor:pointer;font-size:11px;color:#3c3c43;font-family:var(--f);';
     msgsHeaderBtn.textContent = 'Conversaciones';
     msgsHeaderBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; setTimeout(() => openConversations(), 350); };
     tb.appendChild(backBtn); tb.appendChild(avC); tb.appendChild(nameDiv); tb.appendChild(msgsHeaderBtn);
@@ -14301,16 +14379,16 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     /* Messages */
     var msgsArea = document.createElement('div');
     msgsArea.id = 'chat-messages-' + otherUserId;
-    msgsArea.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 12px 8px;display:flex;flex-direction:column;gap:4px;';
+    msgsArea.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 12px 8px;display:flex;flex-direction:column;gap:4px;background:#fff;';
     chatView.appendChild(msgsArea);
 
     /* Input */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom,0px)+18px);background:var(--bg);border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom,0px)+18px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
-    ta.style.cssText = 'flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:22px;padding:10px 16px;font-family:var(--f);font-size:16px;color:var(--tw);outline:none;resize:none;max-height:120px;line-height:1.4;';
+    ta.style.cssText = 'flex:1;background:#f2f2f7;border:none;border-radius:22px;padding:10px 16px;font-family:var(--f);font-size:16px;color:#000;outline:none;resize:none;max-height:120px;line-height:1.4;';
     ta.oninput = function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; };
     (function(_ouid) { ta.onkeydown = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendMsg(_ouid); } }; })(otherUserId);
     var sendBtn = document.createElement('button');
@@ -14365,15 +14443,13 @@ function _appendBubble(msg, isMine, otherId) {
     var wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isMine?'flex-end':'flex-start') + ';margin-bottom:2px;';
     var bubble = document.createElement('div');
-    // iMessage style: blue/crimson for mine, light gray for theirs
-    var bgColor = isMine ? 'var(--crimson)' : (document.body.classList.contains('dark-mode') ? '#2c2c2e' : '#e9e9eb');
-    var textColor = isMine ? '#fff' : (document.body.classList.contains('dark-mode') ? '#fff' : '#000');
-    // iMessage tail shape
+    var bgColor = isMine ? '#0d2b55' : '#e9e9eb';
+    var textColor = isMine ? '#fff' : '#000';
     var radius = isMine ? '18px 18px 4px 18px' : '18px 18px 18px 4px';
-    bubble.style.cssText = 'max-width:72%;padding:9px 14px;border-radius:' + radius + ';background:' + bgColor + ';color:' + textColor + ';font-size:15px;line-height:1.45;word-break:break-word;box-shadow:0 1px 2px rgba(0,0,0,.08);';
+    bubble.style.cssText = 'max-width:72%;padding:9px 14px;border-radius:' + radius + ';background:' + bgColor + ';color:' + textColor + ';font-size:15px;line-height:1.45;word-break:break-word;';
     bubble.textContent = msg.content;
     var timeEl = document.createElement('div');
-    timeEl.style.cssText = 'font-size:10px;color:var(--tm);margin-top:3px;padding:0 4px;';
+    timeEl.style.cssText = 'font-size:10px;color:#8e8e93;margin-top:3px;padding:0 4px;';
     timeEl.textContent = time;
     wrap.appendChild(bubble);
     wrap.appendChild(timeEl);
@@ -14450,23 +14526,40 @@ window.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══ CLUB VIEW ════════════════════════════════════════════════════ -->
     <div id="club-view" style="display:none;position:fixed;inset:0;z-index:20000;background:var(--bg);flex-direction:column;overflow:hidden;transform:translateY(-100%);transition:transform .38s cubic-bezier(.32,.72,0,1);">
-        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--bg);">
-            <div style="display:flex;align-items:center;gap:10px;">
+        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 12px;border-bottom:1px solid var(--border);background:var(--bg);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
                 <button onclick="closeClub()" style="width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 </button>
-                <div>
-                    <div style="font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:2px;font-weight:700;">MisterRunner</div>
-                    <div style="font-size:18px;font-weight:800;color:var(--tw);">Club 🏃</div>
+                <div style="font-size:17px;font-weight:800;color:var(--gold);letter-spacing:1px;">CLUB</div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="openConversations()" id="club-dm-btn" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;" title="Mensajes">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                    </button>
+                    <button onclick="openClubSearch()" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    </button>
                 </div>
             </div>
-            <div style="display:flex;gap:8px;">
-                <button onclick="openConversations()" id="club-dm-btn" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;" title="Mensajes">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                </button>
-                <button onclick="openClubSearch()" style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                </button>
+            <div style="display:flex;align-items:center;gap:14px;">
+                <div id="club-hdr-avatar" style="width:52px;height:52px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:2px solid var(--gold-bd);"></div>
+                <div style="flex:1;">
+                    <div id="club-hdr-username" style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:6px;">—</div>
+                    <div style="display:flex;gap:20px;">
+                        <div style="text-align:center;">
+                            <div id="club-stat-posts" style="font-size:14px;font-weight:800;color:var(--tw);">0</div>
+                            <div style="font-size:10px;color:var(--tm);">posts</div>
+                        </div>
+                        <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('followers')">
+                            <div id="club-stat-followers" style="font-size:14px;font-weight:800;color:var(--tw);">0</div>
+                            <div style="font-size:10px;color:var(--tm);">seguidores</div>
+                        </div>
+                        <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('following')">
+                            <div id="club-stat-following" style="font-size:14px;font-weight:800;color:var(--tw);">0</div>
+                            <div style="font-size:10px;color:var(--tm);">seguidos</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         <div id="club-feed" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 15px 80px;display:flex;flex-direction:column;">
