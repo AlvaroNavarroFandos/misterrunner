@@ -1,5 +1,5 @@
 /* MisterRunner Service Worker — Production */
-const CACHE = 'mr-v2';
+const CACHE = 'mr-v3';
 const SUPABASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co';
 
 /* ── Cache Strategy ───────────────────────────────────────────────── */
