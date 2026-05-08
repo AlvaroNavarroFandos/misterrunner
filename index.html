@@ -3982,6 +3982,31 @@
         closeSheet('edit-modal');
         saveAppState();
         renderHome();
+        // Sync name and avatar to Supabase profiles table
+        (async function() {
+            try {
+                var sb = window._sbClient;
+                if (!sb) return;
+                var { data:{ session } } = await sb.auth.getSession();
+                if (!session) return;
+                var updateData = { username: profileData.name };
+                // Upload avatar to Supabase Storage if it's a local base64
+                if (profileData.avatar && profileData.avatar.startsWith('data:')) {
+                    try {
+                        var r = await fetch(profileData.avatar);
+                        var bl = await r.blob();
+                        var ext = bl.type.includes('png')?'png':'jpg';
+                        var path = 'avatars/'+session.user.id+'.'+ext;
+                        var { error:upE } = await sb.storage.from('media').upload(path, bl, {upsert:true});
+                        if (!upE) {
+                            var { data:ud } = sb.storage.from('media').getPublicUrl(path);
+                            updateData.avatar_url = ud.publicUrl;
+                        }
+                    } catch(e) {}
+                }
+                await sb.from('profiles').update(updateData).eq('id', session.user.id);
+            } catch(e) {}
+        })();
     }
 
     /* ── AVATAR ── */
@@ -11068,63 +11093,55 @@
         document.getElementById('share-full-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareFullCard(act), 100); });
         document.getElementById('share-insta-btn').addEventListener('click', () => { closeWithAnim(); setTimeout(() => _shareInstaCard(act), 100); });
         const clubShareBtn = document.getElementById('share-club-btn');
-        if(clubShareBtn) clubShareBtn.addEventListener('click', () => {
-            closeWithAnim();
+        if(clubShareBtn) clubShareBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const _act = act;
-            setTimeout(function() {
-                var exM = document.getElementById('mr-club-confirm'); if (exM) exM.remove();
-                var m = document.createElement('div');
-                m.id = 'mr-club-confirm';
-                m.style.position = 'fixed';
-                m.style.inset = '0';
-                m.style.zIndex = '99999';
-                m.style.display = 'flex';
-                m.style.alignItems = 'flex-end';
-                m.style.justifyContent = 'center';
-                m.style.paddingBottom = 'calc(env(safe-area-inset-bottom,0px) + 20px)';
-                m.style.background = 'rgba(0,0,0,.55)';
-                var box = document.createElement('div');
-                box.style.cssText = 'background:var(--card);border-radius:22px 22px 16px 16px;padding:28px 20px 20px;width:calc(100% - 32px);max-width:420px;box-shadow:0 -8px 40px rgba(0,0,0,.2);';
-                box.innerHTML = '<div style="text-align:center;margin-bottom:20px;"><div style="font-size:40px;margin-bottom:10px;">🏃</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:7px;">Compartir en el Club</div><div style="font-size:13px;color:var(--ts);line-height:1.5;">Se publicará y tus seguidores podrán verla.</div></div><div style="display:flex;gap:10px;"><button id="mr-cc" style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="mr-co" style="flex:1;background:var(--crimson);border:none;border-radius:13px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Publicar ✓</button></div>';
-                m.appendChild(box);
-                document.body.appendChild(m);
-                m.onclick = function(e) { if(e.target===m) m.remove(); };
-                document.getElementById('mr-cc').onclick = function() { m.remove(); };
-                document.getElementById('mr-co').onclick = function() {
-                    m.remove();
-                    showToast('Publicando en el Club…', 2500);
-                    (async function() {
-                        try {
-                            var sb = window._sbClient;
-                            var { data:{ session } } = await sb.auth.getSession();
-                            if (!session) { showToast('Inicia sesión primero', 2000); return; }
-                            var myId = session.user.id;
-                            // Strip only the base64 photo to save space, keep ALL GPS records intact
-                            var cleanAct = Object.assign({}, _act, {photoB64: null});
-                            var photoUrl = null;
-                            if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
-                                try {
-                                    var r = await fetch(_act.photoB64);
-                                    var bl = await r.blob();
-                                    var ext = bl.type.includes('png')?'png':'jpg';
-                                    var pth = myId+'/post-'+Date.now()+'.'+ext;
-                                    var { error:upE } = await sb.storage.from('media').upload(pth, bl);
-                                    if (!upE) { var { data:ud } = sb.storage.from('media').getPublicUrl(pth); photoUrl = ud.publicUrl; }
-                                } catch(e) {}
-                            }
-                            var { error } = await sb.from('club_posts').insert({user_id:myId, act_data:cleanAct, photo_url:photoUrl});
-                            if (error) { showToast('Error: '+error.message, 4000); return; }
-                            // Success banner
-                            var bn = document.createElement('div');
-                            bn.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+88px);left:16px;right:16px;z-index:9999;background:var(--card);border:1.5px solid var(--gold-bd);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 24px rgba(0,0,0,.2);';
-                            bn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2eb460" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg><div style="flex:1;font-size:13px;font-weight:700;color:var(--tw);">Publicado en el Club ✓</div><button id="mr-goc" style="background:var(--gold-lt);border:1.5px solid var(--gold-bd);border-radius:10px;padding:8px 14px;font-family:var(--f);font-size:12px;font-weight:700;color:var(--gold);cursor:pointer;white-space:nowrap;">Ver Club →</button>';
-                            document.body.appendChild(bn);
-                            document.getElementById('mr-goc').onclick = function() { bn.remove(); openClub(); };
-                            setTimeout(function(){ if(bn.parentNode) bn.remove(); }, 5000);
-                        } catch(e) { showToast('Error: '+e.message, 4000); }
-                    })();
-                };
-            }, 420);
+            // Remove picker immediately - no animation needed
+            picker.remove();
+            // Show confirm modal
+            var exM = document.getElementById('mr-club-confirm'); if (exM) exM.remove();
+            var m = document.createElement('div');
+            m.id = 'mr-club-confirm';
+            m.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 20px);background:rgba(0,0,0,.55);';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:var(--card);border-radius:22px 22px 16px 16px;padding:28px 20px 20px;width:calc(100% - 32px);max-width:420px;box-shadow:0 -8px 40px rgba(0,0,0,.2);';
+            box.innerHTML = '<div style="text-align:center;margin-bottom:20px;"><div style="font-size:40px;margin-bottom:10px;">🏃</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:7px;">Compartir en el Club</div><div style="font-size:13px;color:var(--ts);line-height:1.5;">Se publicará y tus seguidores podrán verla.</div></div><div style="display:flex;gap:10px;"><button id="mr-cc" style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="mr-co" style="flex:1;background:var(--crimson);border:none;border-radius:13px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Publicar ✓</button></div>';
+            m.appendChild(box);
+            document.body.appendChild(m);
+            m.onclick = function(ev) { if(ev.target===m) m.remove(); };
+            document.getElementById('mr-cc').onclick = function() { m.remove(); };
+            document.getElementById('mr-co').onclick = function() {
+                m.remove();
+                showToast('Publicando en el Club…', 2500);
+                (async function() {
+                    try {
+                        var sb = window._sbClient;
+                        var { data:{ session } } = await sb.auth.getSession();
+                        if (!session) { showToast('Inicia sesión primero', 2000); return; }
+                        var myId = session.user.id;
+                        var cleanAct = Object.assign({}, _act, {photoB64: null});
+                        var photoUrl = null;
+                        if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
+                            try {
+                                var r = await fetch(_act.photoB64);
+                                var bl = await r.blob();
+                                var ext = bl.type.includes('png')?'png':'jpg';
+                                var pth = myId+'/post-'+Date.now()+'.'+ext;
+                                var { error:upE } = await sb.storage.from('media').upload(pth, bl);
+                                if (!upE) { var { data:ud } = sb.storage.from('media').getPublicUrl(pth); photoUrl = ud.publicUrl; }
+                            } catch(e) {}
+                        }
+                        var { error } = await sb.from('club_posts').insert({user_id:myId, act_data:cleanAct, photo_url:photoUrl});
+                        if (error) { showToast('Error: '+error.message, 4000); return; }
+                        var bn = document.createElement('div');
+                        bn.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+88px);left:16px;right:16px;z-index:9999;background:var(--card);border:1.5px solid var(--gold-bd);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 24px rgba(0,0,0,.2);';
+                        bn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2eb460" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg><div style="flex:1;font-size:13px;font-weight:700;color:var(--tw);">Publicado en el Club ✓</div><button id="mr-goc" style="background:var(--gold-lt);border:1.5px solid var(--gold-bd);border-radius:10px;padding:8px 14px;font-family:var(--f);font-size:12px;font-weight:700;color:var(--gold);cursor:pointer;white-space:nowrap;">Ver Club →</button>';
+                        document.body.appendChild(bn);
+                        document.getElementById('mr-goc').onclick = function() { bn.remove(); openClub(); };
+                        setTimeout(function(){ if(bn.parentNode) bn.remove(); }, 5000);
+                    } catch(e) { showToast('Error: '+e.message, 4000); }
+                })();
+            };
         });
 
         // Button press feedback
@@ -13735,9 +13752,6 @@ async function _initClubSupabase() {
     if (_sbFeedChannel) window._sbClient.removeChannel(_sbFeedChannel);
     _sbFeedChannel = window._sbClient.channel('club-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'club_posts' }, () => {
-            if (document.getElementById('club-view')?.style.display !== 'none') renderClubFeed();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, () => {
             if (document.getElementById('club-view')?.style.display !== 'none') renderClubFeed();
         })
         .subscribe();
