@@ -11070,7 +11070,67 @@
         const clubShareBtn = document.getElementById('share-club-btn');
         if(clubShareBtn) clubShareBtn.addEventListener('click', () => {
             closeWithAnim();
-            setTimeout(() => shareActivityToClub(act.id, act), 380);
+            // Capture act reference before picker is removed
+            const _act = act;
+            setTimeout(function() {
+                // Build confirmation modal inline
+                var exM = document.getElementById('mr-club-confirm'); if (exM) exM.remove();
+                var m = document.createElement('div');
+                m.id = 'mr-club-confirm';
+                m.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+24px);background:rgba(0,0,0,.6);opacity:0;transition:opacity .22s;';
+                m.innerHTML = '<div id="mr-club-confirm-box" style="background:#fff;border-radius:22px 22px 16px 16px;padding:28px 20px 20px;width:calc(100% - 32px);max-width:400px;box-shadow:0 -8px 40px rgba(0,0,0,.18);transform:translateY(40px);transition:transform .28s cubic-bezier(.32,.72,0,1);"><div style="text-align:center;margin-bottom:20px;"><div style="width:54px;height:54px;border-radius:50%;background:#f7e8ea;border:1.5px solid #e0b0b8;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:26px;">🏃</div><div style="font-size:18px;font-weight:800;color:#1a1a1a;margin-bottom:7px;">Compartir en el Club</div><div style="font-size:13px;color:#666;line-height:1.5;">Esta actividad se publicará y podrán verla tus seguidores.</div></div><div style="display:flex;gap:10px;"><button id="mr-club-cancel" style="flex:1;background:#f0f0f0;border:none;border-radius:14px;padding:15px;font-size:15px;font-weight:700;color:#444;cursor:pointer;font-family:inherit;">Cancelar</button><button id="mr-club-ok" style="flex:1;background:#8f1a28;border:none;border-radius:14px;padding:15px;font-size:15px;font-weight:700;color:#fff;cursor:pointer;font-family:inherit;">Publicar ✓</button></div></div>';
+                document.body.appendChild(m);
+                requestAnimationFrame(function() { requestAnimationFrame(function() {
+                    m.style.opacity = '1';
+                    document.getElementById('mr-club-confirm-box').style.transform = 'translateY(0)';
+                }); });
+                var closeM = function() { m.style.opacity='0'; setTimeout(function(){ if(m.parentNode) m.remove(); }, 220); };
+                document.getElementById('mr-club-cancel').onclick = closeM;
+                m.onclick = function(e) { if(e.target===m) closeM(); };
+                document.getElementById('mr-club-ok').onclick = function() {
+                    closeM();
+                    // Show publishing spinner
+                    var spin = document.createElement('div');
+                    spin.id = 'mr-club-spin';
+                    spin.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+90px);left:50%;transform:translateX(-50%);z-index:99998;background:#fff;border-radius:16px;padding:14px 22px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 24px rgba(0,0,0,.18);';
+                    spin.innerHTML = '<div style="width:18px;height:18px;border:2.5px solid #8f1a28;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0;"></div><span style="font-size:13px;font-weight:600;color:#1a1a1a;">Publicando en el Club…</span>';
+                    document.body.appendChild(spin);
+                    // Do the actual upload
+                    (async function() {
+                        try {
+                            var sb = window._sbClient;
+                            var { data: { session } } = await sb.auth.getSession();
+                            if (!session) { spin.remove(); showToast('Inicia sesión primero', 2000); return; }
+                            var myId = session.user.id;
+                            var cleanAct = Object.assign({}, _act, {photoB64: null, records: (_act.records||[]).slice(0,800)});
+                            var photoUrl = null;
+                            if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
+                                try {
+                                    var res = await fetch(_act.photoB64);
+                                    var blob = await res.blob();
+                                    var ext = blob.type.includes('png') ? 'png' : 'jpg';
+                                    var path = myId + '/post-' + Date.now() + '.' + ext;
+                                    var { error: upErr } = await sb.storage.from('media').upload(path, blob);
+                                    if (!upErr) { var { data: ud } = sb.storage.from('media').getPublicUrl(path); photoUrl = ud.publicUrl; }
+                                } catch(e) {}
+                            }
+                            var { error } = await sb.from('club_posts').insert({user_id: myId, act_data: cleanAct, photo_url: photoUrl});
+                            spin.remove();
+                            if (error) { showToast('Error: ' + error.message, 4000); return; }
+                            // Success banner
+                            var banner = document.createElement('div');
+                            banner.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+90px);left:50%;transform:translateX(-50%);z-index:99998;background:#fff;border:1.5px solid #c4881e;border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 24px rgba(0,0,0,.18);min-width:260px;max-width:90vw;';
+                            banner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background:rgba(46,180,96,.12);border:1.5px solid rgba(46,180,96,.4);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2eb460" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></div><div style="flex:1;"><div style="font-size:13px;font-weight:700;color:#1a1a1a;">Compartido en el Club ✓</div><div style="font-size:11px;color:#888;margin-top:1px;">Ya visible en el feed</div></div><button id="mr-go-club" style="background:#fdf3dc;border:1.5px solid #c4881e;border-radius:10px;padding:7px 12px;font-size:11px;font-weight:700;color:#c4881e;cursor:pointer;white-space:nowrap;font-family:inherit;">Ver Club →</button>';
+                            document.body.appendChild(banner);
+                            document.getElementById('mr-go-club').onclick = function() { banner.remove(); if(typeof openClub==='function') openClub(); };
+                            setTimeout(function() { if(banner.parentNode) banner.remove(); }, 5000);
+                        } catch(e) {
+                            var sp = document.getElementById('mr-club-spin'); if(sp) sp.remove();
+                            showToast('Error: ' + e.message, 4000);
+                        }
+                    })();
+                };
+            }, 400);
         });
 
         // Button press feedback
@@ -13765,9 +13825,8 @@ async function renderClubFeed() {
         const { data: posts, error } = await window._sbClient
             .from('club_posts')
             .select('*, profiles!club_posts_user_id_fkey(id, username, avatar_url), reactions(id, user_id, emoji)')
-            .is('deleted_at', null)
             .order('created_at', { ascending: false })
-            .limit(30);
+            .limit(50);
 
         if (error) throw error;
 
@@ -13881,7 +13940,7 @@ function _buildClubCard(post, myId) {
                 modal.addEventListener('click', function(ev) { if (ev.target===modal) closeModal(); });
                 document.getElementById('del-post-ok').onclick = function() {
                     closeModal();
-                    window._sbClient.from('club_posts').update({deleted_at: new Date().toISOString()}).eq('id', _pid).then(function(res) {
+                    window._sbClient.from('club_posts').delete().eq('id', _pid).then(function(res) {
                         if (res.error) { showToast('Error al eliminar: ' + res.error.message, 3000); return; }
                         _card.style.opacity = '0';
                         _card.style.transition = 'opacity .2s';
