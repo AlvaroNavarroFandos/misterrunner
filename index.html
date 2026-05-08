@@ -13992,43 +13992,56 @@ function shareActivityToClub(actId) {
 }
 
 async function _doShareActivityToClub(actId) {
-    const { data: { session } } = await window._sbClient.auth.getSession();
-    if (!session) { if (typeof showToast === 'function') showToast('Inicia sesión para compartir', 2000); return; }
-    const myId = session.user.id;
+    try {
+        var sb = window._sbClient;
+        if (!sb) { showToast('Error: cliente no disponible', 3000); return; }
 
-    var acts = (typeof activities !== 'undefined') ? activities : [];
-    var act = acts.find(function(a) { return a.id === actId; });
-    if (!act) return;
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) { showToast('Inicia sesión para compartir', 2000); return; }
+        const myId = session.user.id;
 
-    // Show publishing progress
-    _showClubPublishingBanner();
+        var acts = (typeof activities !== 'undefined') ? activities : [];
+        var act = acts.find(function(a) { return a.id === actId; });
+        if (!act) { showToast('Actividad no encontrada', 2000); return; }
 
-    var cleanActData = Object.assign({}, act, {photoB64: null, records: (act.records||[]).slice(0, 800)});
-    var photoUrl = null;
+        _showClubPublishingBanner();
 
-    if (act.photoB64 && act.photoB64.startsWith('data:')) {
-        try {
-            var res = await fetch(act.photoB64);
-            var blob = await res.blob();
-            var ext = blob.type.includes('png') ? 'png' : 'jpg';
-            var path = myId + '/post-' + Date.now() + '.' + ext;
-            var { error: upErr } = await window._sbClient.storage.from('media').upload(path, blob);
-            if (!upErr) {
-                var { data: urlData } = window._sbClient.storage.from('media').getPublicUrl(path);
-                photoUrl = urlData.publicUrl;
-            }
-        } catch(e) { console.warn('[Club] Photo upload failed:', e); }
+        var cleanActData = Object.assign({}, act, {photoB64: null, records: (act.records||[]).slice(0, 800)});
+        var photoUrl = null;
+
+        if (act.photoB64 && act.photoB64.startsWith('data:')) {
+            try {
+                var res = await fetch(act.photoB64);
+                var blob = await res.blob();
+                var ext = blob.type.includes('png') ? 'png' : 'jpg';
+                var path = myId + '/post-' + Date.now() + '.' + ext;
+                var { error: upErr } = await sb.storage.from('media').upload(path, blob);
+                if (!upErr) {
+                    var { data: urlData } = sb.storage.from('media').getPublicUrl(path);
+                    photoUrl = urlData.publicUrl;
+                }
+            } catch(e) { console.warn('[Club] Photo upload failed:', e); }
+        }
+
+        const { data: inserted, error } = await sb.from('club_posts').insert({
+            user_id: myId,
+            act_data: cleanActData,
+            photo_url: photoUrl
+        }).select();
+
+        var pb = document.getElementById('club-publishing-banner'); if (pb) pb.remove();
+
+        if (error) {
+            console.error('[Club] Insert error:', error);
+            showToast('Error: ' + (error.message || JSON.stringify(error)), 4000);
+            return;
+        }
+        _showClubSharedBanner();
+    } catch(e) {
+        var pb2 = document.getElementById('club-publishing-banner'); if (pb2) pb2.remove();
+        console.error('[Club] Share error:', e);
+        showToast('Error inesperado: ' + e.message, 4000);
     }
-
-    const { error } = await window._sbClient.from('club_posts').insert({
-        user_id: myId,
-        act_data: cleanActData,
-        photo_url: photoUrl
-    });
-
-    var pb = document.getElementById('club-publishing-banner'); if (pb) pb.remove();
-    if (error) { if (typeof showToast === 'function') showToast('Error al compartir: ' + error.message, 3000); return; }
-    _showClubSharedBanner();
 }
 
 function _showClubPublishingBanner() {
