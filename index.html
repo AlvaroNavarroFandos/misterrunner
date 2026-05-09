@@ -10031,15 +10031,8 @@
                 req.onsuccess = e => {
                     const myKey = APP_KEY_OVERRIDE || APP_KEY;
                     const all = e.target.result || [];
-                    // Filter to current user's activities only.
-                    // Untagged (_owner absent) are treated as belonging to myKey ONLY when
-                    // APP_KEY_OVERRIDE is null (first-boot legacy migration). Once a user
-                    // is logged in (APP_KEY_OVERRIDE set), untagged records are ignored so
-                    // they never bleed across accounts.
-                    const mine = all.filter(a => {
-                        if (a._owner) return a._owner === myKey;
-                        return !APP_KEY_OVERRIDE; // legacy: no owner tag means pre-multi-user data
-                    });
+                    // Filter to current user's activities only
+                    const mine = all.filter(a => !a._owner || a._owner === myKey);
                     // Strip _owner before returning
                     resolve(mine.map(a => { const c = Object.assign({}, a); delete c._owner; return c; }));
                 };
@@ -13987,12 +13980,14 @@ async function openUserProfile(userId, username, avatarUrl) {
     var { data:{ session } } = await sb.auth.getSession();
     if (!session) return;
     var myId = session.user.id;
+
+    // ── Construir el overlay igual que antes ──────────────────────
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:20015;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
+
+    // Cabecera
     var hdr = document.createElement('div');
     hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
-
-    // Top row: back + @username centered + spacer (identical to Club top row)
     var topRow = document.createElement('div');
     topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;';
     var bb = document.createElement('button');
@@ -14006,10 +14001,8 @@ async function openUserProfile(userId, username, avatarUrl) {
     topRow.appendChild(bb); topRow.appendChild(titleEl); topRow.appendChild(spacer);
     hdr.appendChild(topRow);
 
-    // Profile row: avatar (68px) + stats + follow button (identical to Club profile row)
     var profRow = document.createElement('div');
     profRow.style.cssText = 'display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;';
-
     var av = document.createElement('div');
     av.style.cssText = 'width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;border:3px solid var(--gold-bd);flex-shrink:0;cursor:pointer;';
     if (avatarUrl) {
@@ -14023,11 +14016,9 @@ async function openUserProfile(userId, username, avatarUrl) {
         };
     } else av.textContent=(username||'?')[0].toUpperCase();
 
-    // Stats identical to Club own header
     var statsDiv = document.createElement('div');
-    statsDiv.innerHTML = '<div style="display:flex;gap:22px;"><div style="text-align:center;"><div id="up-posts" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">posts</div></div><div style="text-align:center;cursor:pointer;" onclick=""><div id="up-followers" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidores</div></div><div style="text-align:center;"><div id="up-following" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidos</div></div></div>';
+    statsDiv.innerHTML = '<div style="display:flex;gap:22px;"><div style="text-align:center;"><div id="up-posts" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">posts</div></div><div style="text-align:center;cursor:pointer;"><div id="up-followers" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidores</div></div><div style="text-align:center;"><div id="up-following" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidos</div></div></div>';
 
-    // Follow button
     var amFollowing = false;
     var fBtn = document.createElement('button');
     fBtn.style.cssText = 'padding:8px 14px;border-radius:18px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
@@ -14039,54 +14030,63 @@ async function openUserProfile(userId, username, avatarUrl) {
         var {count:fc}=await sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId);
         document.getElementById('up-followers').textContent=fc||0;
     };
-
     profRow.appendChild(av); profRow.appendChild(statsDiv); profRow.appendChild(fBtn);
     hdr.appendChild(profRow);
 
+    // ── Feed: mismo div que club-feed pero dentro del overlay ──────
+    // Lo ponemos con el mismo id temporal para que _buildClubCard funcione igual
     var feed = document.createElement('div');
-    feed.id = 'profile-feed-' + userId;
-    feed.style.cssText = 'flex:1;overflow-y:auto;padding:10px 15px 40px;display:block;';
+    feed.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 15px 80px;display:flex;flex-direction:column;';
     feed.innerHTML = '<div style="text-align:center;padding:20px;color:var(--tm);">Cargando posts...</div>';
+
     ov.appendChild(hdr); ov.appendChild(feed);
+    // CLAVE: meter en el DOM ANTES de cualquier await para que el layout exista
     document.body.appendChild(ov);
 
-    const [{count:pc},{count:flc},{count:fgc},{data:fchk}] = await Promise.all([
+    // Cargar stats y posts en paralelo
+    const [{count:pc},{count:flc},{count:fgc},{data:fchk},{data:posts}] = await Promise.all([
         sb.from('club_posts').select('id',{count:'exact',head:true}).eq('user_id',userId),
         sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId),
         sb.from('follows').select('id',{count:'exact',head:true}).eq('follower_id',userId),
-        sb.from('follows').select('id').eq('follower_id',myId).eq('following_id',userId)
+        sb.from('follows').select('id').eq('follower_id',myId).eq('following_id',userId),
+        sb.from('club_posts')
+            .select('*, profiles!club_posts_user_id_fkey(id,username,avatar_url), reactions(id,user_id,emoji)')
+            .eq('user_id',userId).order('created_at',{ascending:false}).limit(30)
     ]);
-    document.getElementById('up-posts').textContent=pc||0;
-    document.getElementById('up-followers').textContent=flc||0;
-    document.getElementById('up-following').textContent=fgc||0;
-    amFollowing=(fchk||[]).length>0; updFBtn();
 
-    var {data:posts} = await sb.from('club_posts')
-        .select('*, profiles!club_posts_user_id_fkey(id,username,avatar_url), reactions(id,user_id,emoji)')
-        .eq('user_id',userId).order('created_at',{ascending:false}).limit(30);
+    document.getElementById('up-posts').textContent = pc||0;
+    document.getElementById('up-followers').textContent = flc||0;
+    document.getElementById('up-following').textContent = fgc||0;
+    amFollowing = (fchk||[]).length > 0; updFBtn();
 
-    feed.innerHTML='';
-    if(!posts||!posts.length){
-        feed.innerHTML='<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';
-    } else {
-        // Añadir cards y dibujar tracks -- igual que renderClubFeed
-        posts.forEach(function(p) {
-            feed.appendChild(_buildClubCard(p, myId, new Set()));
-        });
-        // El canvas ya tiene width/height seteados en _buildClubCard con window.innerWidth.
-        // Llamamos drawTrack directamente -- el canvas está en el DOM (ov ya está en body).
+    feed.innerHTML = '';
+    if (!posts || !posts.length) {
+        feed.innerHTML = '<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';
+        return;
+    }
+
+    // Insertar cards -- IDENTICO a renderClubFeed
+    posts.forEach(function(p) { feed.appendChild(_buildClubCard(p, myId, new Set())); });
+
+    // Dibujar tracks -- IDENTICO a renderClubFeed (mismo setTimeout 150ms)
+    setTimeout(function() {
         posts.forEach(function(p) {
             var actData = p.act_data || {};
             if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
                 var cv = document.getElementById('club-map-' + p.id);
-                if (cv && cv.width > 0 && cv.height > 0) {
-                    try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) { console.error('drawTrack profile:', e); }
+                if (cv) {
+                    var pw = cv.parentElement ? cv.parentElement.offsetWidth : 0;
+                    var ph = cv.parentElement ? cv.parentElement.offsetHeight : 0;
+                    if (!pw || pw < 10) pw = Math.round(window.innerWidth);
+                    if (!ph || ph < 10) ph = 220;
+                    cv.width = pw;
+                    cv.height = ph;
+                    try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
                 }
             }
         });
-    }
+    }, 150);
 }
-
 async function _checkClubDots() {
     try {
         var sb=window._sbClient;
@@ -14252,23 +14252,20 @@ async function renderClubFeed() {
         container.innerHTML = '';
         posts.forEach(post => container.appendChild(_buildClubCard(post, myId, mutualSet)));
 
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                posts.forEach(post => {
-                    const actData = post.act_data || {};
-                    if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
-                        const cv = document.getElementById('club-map-' + post.id);
-                        if (cv) {
-                            const pw = cv.parentElement?.offsetWidth || Math.round(window.innerWidth);
-                            const ph = cv.dataset.mini ? 120 : (cv.parentElement?.offsetHeight || 220);
-                            cv.width = pw;
-                            cv.height = ph;
-                            try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
-                        }
+        setTimeout(function() {
+            posts.forEach(function(post) {
+                var actData = post.act_data || {};
+                if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
+                    var cv = document.getElementById('club-map-' + post.id);
+                    if (cv) {
+                        // Usar innerWidth como fuente de verdad — offsetWidth puede ser 0 si layout no calculado
+                        cv.width  = cv.parentElement && cv.parentElement.offsetWidth > 10 ? cv.parentElement.offsetWidth : Math.round(window.innerWidth);
+                        cv.height = cv.parentElement && cv.parentElement.offsetHeight > 10 ? cv.parentElement.offsetHeight : (cv.dataset.mini ? 120 : 220);
+                        try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
                     }
-                });
+                }
             });
-        });
+        }, 150);
     } catch(err) {
         container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger);font-size:13px;">Error al cargar. Desliza hacia abajo para reintentar.</div>';
         console.error('[Club] Feed error:', err);
@@ -14394,7 +14391,6 @@ function _buildClubCard(post, myId, mutualSet) {
                 mo.style.cssText = 'position:absolute;bottom:12px;right:12px;width:120px;height:120px;border-radius:16px;overflow:hidden;border:2px solid rgba(255,255,255,.3);box-shadow:0 4px 24px rgba(0,0,0,.7);background:#0d1520;';
                 var cvo = document.createElement('canvas');
                 cvo.id = 'club-map-' + post.id;
-                cvo.dataset.mini = '1';
                 cvo.width = 120; cvo.height = 120;
                 cvo.style.cssText = 'width:100%;height:100%;display:block;';
                 mo.appendChild(cvo); mw.appendChild(mo);
