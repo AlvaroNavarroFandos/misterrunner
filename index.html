@@ -10007,16 +10007,15 @@
     async function saveActivitiesToIDB() {
         try {
             const db = await openIDB();
+            const myKey = APP_KEY_OVERRIDE || APP_KEY;
             const tx = db.transaction(IDB_STORE, 'readwrite');
             const store = tx.objectStore(IDB_STORE);
-            // Only clear activities belonging to current user, then rewrite
+            // Get all, delete ones belonging to current user, then rewrite with owner tag
             const allReq = store.getAll();
             await new Promise((res) => { allReq.onsuccess = res; allReq.onerror = res; });
-            const allActs = allReq.result || [];
-            const myKey = APP_KEY_OVERRIDE || APP_KEY;
-            // Delete only current user's activities
-            allActs.forEach(a => { if (!a._owner || a._owner === myKey) store.delete(a.id); });
-            // Save current activities with owner tag
+            const others = (allReq.result || []).filter(a => a._owner && a._owner !== myKey);
+            store.clear();
+            others.forEach(a => store.put(a));
             activities.forEach(a => store.put(Object.assign({}, a, {_owner: myKey})));
             return new Promise((res,rej) => { tx.oncomplete=res; tx.onerror=rej; });
         } catch(e) { console.warn('saveActivitiesToIDB:', e); }
@@ -13326,6 +13325,7 @@ window.switchManualTab = function(id) {
         el.classList.toggle('active', el.id === 'mtab-'+id);
     });
 };
+window.drawTrack = drawTrack;
 </script>
 
     <!-- MODAL IMPORTAR ACTIVIDAD -->
@@ -14063,17 +14063,19 @@ async function openUserProfile(userId, username, avatarUrl) {
         feed.innerHTML='<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';
     } else {
         posts.forEach(function(p){ feed.appendChild(_buildClubCard(p,myId,new Set())); });
+        // Draw tracks: use window.innerWidth (always correct) instead of offsetWidth (may be 0)
         setTimeout(function() {
             posts.forEach(function(p) {
                 const actData = p.act_data || {};
-                if (actData.records?.length > 10 && typeof drawTrack === 'function') {
+                if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + p.id);
                     if (cv) {
-                        const pw = cv.parentElement?.offsetWidth || 300;
-                        const ph = cv.parentElement?.offsetHeight || 200;
-                        cv.width = pw;
-                        cv.height = ph;
-                        try { drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
+                        // mw has fixed height:220px; width = full screen width
+                        if (!cv.width || cv.width < 10) {
+                            cv.width = Math.round(window.innerWidth);
+                            cv.height = 220;
+                        }
+                        try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
                     }
                 }
             });
@@ -14249,14 +14251,14 @@ async function renderClubFeed() {
         setTimeout(() => {
             posts.forEach(post => {
                 const actData = post.act_data || {};
-                if (actData.records?.length > 10 && typeof drawTrack === 'function') {
+                if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
                     if (cv) {
                         const pw = cv.parentElement?.offsetWidth || 300;
                         const ph = cv.parentElement?.offsetHeight || 200;
                         cv.width = pw;
                         cv.height = ph;
-                        try { drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
+                        try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
                     }
                 }
             });
