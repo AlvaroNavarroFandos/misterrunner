@@ -14020,9 +14020,13 @@ async function openUserProfile(userId, username, avatarUrl) {
     setTimeout(function(){
         (posts||[]).forEach(function(p){
             var actData=p.act_data||{};
-            if((actData.records||[]).length>1){
-                var c=document.getElementById('track-'+p.id);
-                if(c && typeof drawTrack==='function') drawTrack(c,actData.records);
+            if((actData.records||[]).length>10){
+                var c=document.getElementById('club-map-'+p.id);
+                if(c && typeof drawTrack==='function'){
+                    c.width = c.parentElement?.offsetWidth || 300;
+                    c.height = c.parentElement?.offsetHeight || 200;
+                    try { drawTrack(c,actData.records,actData.shoeColor||''); } catch(e){}
+                }
             }
         });
     },200);
@@ -14625,15 +14629,20 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     }
     chatView.innerHTML = '';
 
-    /* Topbar */
+    /* Topbar - iMessage style: centered avatar + name */
     var tb = document.createElement('div');
-    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+2px) 15px 8px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e5e5ea;background:#fff;';
+    tb.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+6px) 15px 10px;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;border-bottom:1px solid #e5e5ea;background:#fff;';
+    
     var backBtn = document.createElement('button');
-    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:#f2f2f7;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:#f2f2f7;cursor:pointer;display:flex;align-items:center;justify-content:center;';
     backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
     backBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; _activeChatUserId = null; };
+
+    // Center column: avatar + name stacked
+    var centerCol = document.createElement('div');
+    centerCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
     var avC = document.createElement('div');
-    avC.style.cssText = 'width:46px;height:46px;border-radius:50%;background:var(--crimson);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;cursor:pointer;';
+    avC.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;cursor:pointer;';
     if (otherAvatar) {
         var avCI = document.createElement('img');
         avCI.src = otherAvatar;
@@ -14653,15 +14662,18 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
             document.body.appendChild(ov2);
         };
     } else avC.textContent = (otherUsername || '?')[0].toUpperCase();
-    var nameDiv = document.createElement('div');
-    nameDiv.innerHTML = '<div style="font-size:15px;font-weight:700;color:#000;">@' + otherUsername + '</div>';
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:12px;font-weight:700;color:#000;';
+    nameEl.textContent = '@' + otherUsername;
+    centerCol.appendChild(avC); centerCol.appendChild(nameEl);
 
-    /* Messages button in header */
+    /* DM's button right */
     var msgsHeaderBtn = document.createElement('button');
-    msgsHeaderBtn.style.cssText = 'margin-left:auto;padding:6px 12px;border-radius:20px;border:1.5px solid #e5e5ea;background:#f2f2f7;cursor:pointer;font-size:11px;color:#3c3c43;font-family:var(--f);';
+    msgsHeaderBtn.style.cssText = 'padding:5px 10px;border-radius:16px;border:1.5px solid #e5e5ea;background:#f2f2f7;cursor:pointer;font-size:10px;color:#3c3c43;font-family:var(--f);justify-self:end;';
     msgsHeaderBtn.textContent = "DM's";
     msgsHeaderBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; setTimeout(() => openConversations(), 350); };
-    tb.appendChild(backBtn); tb.appendChild(avC); tb.appendChild(nameDiv); tb.appendChild(msgsHeaderBtn);
+    
+    tb.appendChild(backBtn); tb.appendChild(centerCol); tb.appendChild(msgsHeaderBtn);
     chatView.appendChild(tb);
 
     /* Messages */
@@ -14672,7 +14684,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Input */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:10px 12px calc(max(env(safe-area-inset-bottom,0px),20px)+12px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(env(safe-area-inset-bottom,0px)+8px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
@@ -14821,7 +14833,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 <button onclick="closeClub()" style="width:38px;height:38px;border-radius:50%;border:none;background:rgba(0,0,0,.15);cursor:pointer;display:flex;align-items:center;justify-content:center;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 </button>
-                <div style="font-size:19px;font-weight:900;color:#8f1a28;letter-spacing:1.5px;">CLUB</div>
+                <div style="font-size:22px;font-weight:900;color:#8f1a28;letter-spacing:2px;text-align:center;">CLUB</div>
                 <div style="display:flex;gap:8px;">
                     <!-- Notifications bell -->
                     <div style="position:relative;">
