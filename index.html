@@ -3828,7 +3828,7 @@
         if(window._sbClient){window._sbClient.auth.signOut().catch(()=>{});}
         currentUser=null;APP_KEY_OVERRIDE=null;activePlan=null;activeStrengthPlan=null;activities=[];
         profileData={name:'',flag:'🏃',meta:'',watch:'',avatar:'',dob:'',city:'',weight:'',height:'',sex:'H',vo2max:null,marcas:{'5k':'','10k':'','hm':'','m':''},hrMax:195,hrRest:50,weeksExp:0,weeksExpSavedAt:null,trainingDays:['L','M','J','V','D'],injuries:[]};
-        try{openIDB().then(db=>{const tx=db.transaction('activities','readwrite');tx.objectStore('activities').clear();});}catch(e){}
+        // Don't clear IDB - each user's activities are tagged with _owner and will be filtered on load
         const ls=document.getElementById('login-screen'),nav=document.getElementById('nav');
         if(nav)nav.style.display='none';
         if(ls){ls.style.display='';ls.style.removeProperty('display');requestAnimationFrame(()=>{ls.style.opacity='1';ls.style.pointerEvents='';});}
@@ -10009,9 +10009,15 @@
             const db = await openIDB();
             const tx = db.transaction(IDB_STORE, 'readwrite');
             const store = tx.objectStore(IDB_STORE);
-            // Clear and rewrite all (simple approach, fast for <10k activities)
-            store.clear();
-            activities.forEach(a => store.put(a));
+            // Only clear activities belonging to current user, then rewrite
+            const allReq = store.getAll();
+            await new Promise((res) => { allReq.onsuccess = res; allReq.onerror = res; });
+            const allActs = allReq.result || [];
+            const myKey = APP_KEY_OVERRIDE || APP_KEY;
+            // Delete only current user's activities
+            allActs.forEach(a => { if (!a._owner || a._owner === myKey) store.delete(a.id); });
+            // Save current activities with owner tag
+            activities.forEach(a => store.put(Object.assign({}, a, {_owner: myKey})));
             return new Promise((res,rej) => { tx.oncomplete=res; tx.onerror=rej; });
         } catch(e) { console.warn('saveActivitiesToIDB:', e); }
     }
@@ -10023,8 +10029,15 @@
                 const tx    = db.transaction(IDB_STORE, 'readonly');
                 const store = tx.objectStore(IDB_STORE);
                 const req   = store.getAll();
-                req.onsuccess = e => resolve(e.target.result || []);
-                req.onerror   = () => resolve([]);
+                req.onsuccess = e => {
+                    const myKey = APP_KEY_OVERRIDE || APP_KEY;
+                    const all = e.target.result || [];
+                    // Filter to current user's activities only
+                    const mine = all.filter(a => !a._owner || a._owner === myKey);
+                    // Strip _owner before returning
+                    resolve(mine.map(a => { const c = Object.assign({}, a); delete c._owner; return c; }));
+                };
+                req.onerror = () => resolve([]);
             });
         } catch(e) { return []; }
     }
@@ -13970,21 +13983,28 @@ async function openUserProfile(userId, username, avatarUrl) {
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:20015;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+14px) 15px 18px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
 
-    // Single compact row: back + avatar + name+stats + follow btn
-    var profRow = document.createElement('div');
-    profRow.style.cssText = 'display:flex;align-items:center;gap:12px;';
-
-    // Back button
+    // Top row: back + @username centered + spacer (identical to Club top row)
+    var topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;';
     var bb = document.createElement('button');
-    bb.style.cssText = 'width:32px;height:32px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    bb.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
+    bb.style.cssText = 'width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    bb.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
     bb.onclick = function(){ _setThemeColor('#8f1a28'); ov.remove(); };
+    var titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-size:17px;font-weight:900;color:var(--crimson);letter-spacing:1px;';
+    titleEl.textContent = username || '?';
+    var spacer = document.createElement('div'); spacer.style.width = '38px';
+    topRow.appendChild(bb); topRow.appendChild(titleEl); topRow.appendChild(spacer);
+    hdr.appendChild(topRow);
 
-    // Avatar - clickable to expand
+    // Profile row: avatar (68px) + stats + follow button (identical to Club profile row)
+    var profRow = document.createElement('div');
+    profRow.style.cssText = 'display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;';
+
     var av = document.createElement('div');
-    av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff;overflow:hidden;border:2.5px solid var(--gold-bd);flex-shrink:0;cursor:pointer;';
+    av.style.cssText = 'width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;border:3px solid var(--gold-bd);flex-shrink:0;cursor:pointer;';
     if (avatarUrl) {
         var ai=document.createElement('img'); ai.src=avatarUrl; ai.style.cssText='width:100%;height:100%;object-fit:cover;'; av.appendChild(ai);
         av.onclick = function() {
@@ -13996,17 +14016,14 @@ async function openUserProfile(userId, username, avatarUrl) {
         };
     } else av.textContent=(username||'?')[0].toUpperCase();
 
-    // Info: name + stats
-    var info = document.createElement('div'); info.style.cssText='flex:1;min-width:0;';
-    var unEl = document.createElement('div'); unEl.style.cssText='font-size:14px;font-weight:800;color:var(--tw);margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'; unEl.textContent=username||'?';
-    var sr = document.createElement('div'); sr.style.cssText='display:flex;gap:14px;';
-    sr.innerHTML = '<div style="text-align:center;"><div id="up-posts" style="font-size:13px;font-weight:800;color:var(--tw);">—</div><div style="font-size:9px;color:var(--tm);">posts</div></div><div style="text-align:center;"><div id="up-followers" style="font-size:13px;font-weight:800;color:var(--tw);">—</div><div style="font-size:9px;color:var(--tm);">seguidores</div></div><div style="text-align:center;"><div id="up-following" style="font-size:13px;font-weight:800;color:var(--tw);">—</div><div style="font-size:9px;color:var(--tm);">seguidos</div></div>';
-    info.appendChild(unEl); info.appendChild(sr);
+    // Stats identical to Club own header
+    var statsDiv = document.createElement('div');
+    statsDiv.innerHTML = '<div style="display:flex;gap:22px;"><div style="text-align:center;"><div id="up-posts" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">posts</div></div><div style="text-align:center;cursor:pointer;" onclick=""><div id="up-followers" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidores</div></div><div style="text-align:center;"><div id="up-following" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidos</div></div></div>';
 
-    // Follow button - smaller
+    // Follow button
     var amFollowing = false;
     var fBtn = document.createElement('button');
-    fBtn.style.cssText = 'padding:7px 12px;border-radius:16px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
+    fBtn.style.cssText = 'padding:8px 14px;border-radius:18px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
     var updFBtn = function(){ fBtn.style.background=amFollowing?'#22c55e':'#ef4444'; fBtn.style.color='#fff'; fBtn.textContent=amFollowing?'Siguiendo':'Seguir'; };
     fBtn.onclick = async function() {
         if(amFollowing){ await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId); amFollowing=false; }
@@ -14016,7 +14033,7 @@ async function openUserProfile(userId, username, avatarUrl) {
         document.getElementById('up-followers').textContent=fc||0;
     };
 
-    profRow.appendChild(bb); profRow.appendChild(av); profRow.appendChild(info); profRow.appendChild(fBtn);
+    profRow.appendChild(av); profRow.appendChild(statsDiv); profRow.appendChild(fBtn);
     hdr.appendChild(profRow);
 
     var feed = document.createElement('div');
@@ -14898,7 +14915,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
             <!-- Profile row -->
-            <div style="display:flex;align-items:center;gap:20px;justify-content:center;">
+            <div style="display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;">
                 <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:3px solid var(--gold-bd);cursor:pointer;"></div>
                 <div>
                     <div id="club-hdr-username" style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">—</div>
