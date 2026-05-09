@@ -14069,23 +14069,20 @@ async function openUserProfile(userId, username, avatarUrl) {
     if(!posts||!posts.length){
         feed.innerHTML='<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';
     } else {
-        posts.forEach(function(p){ feed.appendChild(_buildClubCard(p,myId,new Set())); });
-        // Draw tracks: double-rAF ensures DOM is painted before canvas draw
-        requestAnimationFrame(function() {
-            requestAnimationFrame(function() {
-                posts.forEach(function(p) {
-                    const actData = p.act_data || {};
-                    if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
-                        const cv = document.getElementById('club-map-' + p.id);
-                        if (cv) {
-                            // Always set explicit pixel size (innerWidth is always valid)
-                            cv.width  = Math.round(window.innerWidth);
-                            cv.height = cv.dataset.mini ? 120 : 220;
-                            try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
-                        }
-                    }
-                });
-            });
+        // Añadir cards y dibujar tracks -- igual que renderClubFeed
+        posts.forEach(function(p) {
+            feed.appendChild(_buildClubCard(p, myId, new Set()));
+        });
+        // El canvas ya tiene width/height seteados en _buildClubCard con window.innerWidth.
+        // Llamamos drawTrack directamente -- el canvas está en el DOM (ov ya está en body).
+        posts.forEach(function(p) {
+            var actData = p.act_data || {};
+            if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
+                var cv = document.getElementById('club-map-' + p.id);
+                if (cv && cv.width > 0 && cv.height > 0) {
+                    try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) { console.error('drawTrack profile:', e); }
+                }
+            }
         });
     }
 }
