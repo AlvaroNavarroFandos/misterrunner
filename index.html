@@ -14029,23 +14029,36 @@ async function openUserProfile(userId, username, avatarUrl) {
     feed.innerHTML='';
     if(!posts||!posts.length){feed.innerHTML='<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';}
     else posts.forEach(function(p){feed.appendChild(_buildClubCard(p,myId,new Set()));});
-    // Draw GPS tracks after DOM renders
-    setTimeout(function(){
-        (posts||[]).forEach(function(p){
-            var actData=p.act_data||{};
-            if((actData.records||[]).length>10 && typeof drawTrack==='function'){
-                var c=document.getElementById('club-map-'+p.id);
-                if(c){
-                    var pw = c.parentElement ? c.parentElement.offsetWidth : 0;
-                    var ph2 = c.parentElement ? c.parentElement.offsetHeight : 0;
-                    // Always set canvas pixel dimensions (CSS 100% doesn't set canvas buffer size)
-                    c.width = pw || (c.width > 10 ? c.width : 300);
-                    c.height = ph2 || (c.height > 10 ? c.height : 200);
-                    try { drawTrack(c, actData.records, actData.shoeColor||''); } catch(e){ console.warn('drawTrack err',e); }
+
+    // Draw GPS tracks — use multiple RAF to ensure layout is complete
+    function _drawProfileTracks(attempt) {
+        if (!posts) return;
+        var allDone = true;
+        posts.forEach(function(p){
+            var actData = p.act_data||{};
+            if((actData.records||[]).length > 10 && typeof drawTrack === 'function'){
+                var c = document.getElementById('club-map-'+p.id);
+                if(c) {
+                    // Walk up to find container with real dimensions
+                    var el = c.parentElement;
+                    var w = 0, h = 0;
+                    while (el && (w === 0 || h === 0)) {
+                        w = el.offsetWidth || 0;
+                        h = el.offsetHeight || 0;
+                        el = el.parentElement;
+                    }
+                    if (w === 0) { allDone = false; return; } // not laid out yet
+                    c.width = w;
+                    c.height = h || 220;
+                    try { drawTrack(c, actData.records, actData.shoeColor||''); } catch(e){}
                 }
             }
         });
-    }, 400);
+        if (!allDone && attempt < 8) {
+            setTimeout(function(){ requestAnimationFrame(function(){ _drawProfileTracks(attempt+1); }); }, 100);
+        }
+    }
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){ _drawProfileTracks(0); }); });
 }
 
 async function _checkClubDots() {
@@ -14711,7 +14724,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Input */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(env(safe-area-inset-bottom,0px)+10px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) - 40px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
