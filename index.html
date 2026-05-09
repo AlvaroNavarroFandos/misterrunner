@@ -14036,16 +14036,16 @@ async function openUserProfile(userId, username, avatarUrl) {
             if((actData.records||[]).length>10 && typeof drawTrack==='function'){
                 var c=document.getElementById('club-map-'+p.id);
                 if(c){
-                    // If canvas has no explicit width set (full-width case), set it from parent
-                    if(!c.width || c.width < 10) {
-                        c.width = c.parentElement?.offsetWidth || 300;
-                        c.height = c.parentElement?.offsetHeight || 200;
-                    }
-                    try { drawTrack(c, actData.records, actData.shoeColor||''); } catch(e){}
+                    var pw = c.parentElement ? c.parentElement.offsetWidth : 0;
+                    var ph2 = c.parentElement ? c.parentElement.offsetHeight : 0;
+                    // Always set canvas pixel dimensions (CSS 100% doesn't set canvas buffer size)
+                    c.width = pw || (c.width > 10 ? c.width : 300);
+                    c.height = ph2 || (c.height > 10 ? c.height : 200);
+                    try { drawTrack(c, actData.records, actData.shoeColor||''); } catch(e){ console.warn('drawTrack err',e); }
                 }
             }
         });
-    }, 300);
+    }, 400);
 }
 
 async function _checkClubDots() {
@@ -14218,13 +14218,15 @@ async function renderClubFeed() {
                 if (actData.records?.length > 10 && typeof drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
                     if (cv) {
-                        cv.width = cv.parentElement?.offsetWidth || 300;
-                        cv.height = cv.parentElement?.offsetHeight || 200;
+                        const pw = cv.parentElement?.offsetWidth || 300;
+                        const ph = cv.parentElement?.offsetHeight || 200;
+                        cv.width = pw;
+                        cv.height = ph;
                         try { drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
                     }
                 }
             });
-        }, 100);
+        }, 150);
     } catch(err) {
         container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger);font-size:13px;">Error al cargar. Desliza hacia abajo para reintentar.</div>';
         console.error('[Club] Feed error:', err);
@@ -14647,35 +14649,40 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Topbar - fully integrated with status bar like iMessage */
     var tb = document.createElement('div');
-    tb.style.cssText = 'flex-shrink:0;background:#fff;padding-top:env(safe-area-inset-top,0px);border-bottom:1px solid #e5e5ea;';
+    tb.style.cssText = 'flex-shrink:0;background:#f9f9f9;border-bottom:1px solid #e5e5ea;';
+
+    // Safe area spacer
+    var safeTop = document.createElement('div');
+    safeTop.style.cssText = 'height:env(safe-area-inset-top,0px);background:#f9f9f9;';
+    tb.appendChild(safeTop);
 
     var tbInner = document.createElement('div');
-    tbInner.style.cssText = 'display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:8px 10px 10px;';
+    tbInner.style.cssText = 'display:grid;grid-template-columns:52px 1fr 52px;align-items:center;padding:6px 8px 8px;';
 
     var backBtn = document.createElement('button');
-    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;';
-    backBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
+    backBtn.style.cssText = 'border:none;background:none;cursor:pointer;display:flex;align-items:center;gap:2px;padding:6px 4px;color:#007AFF;font-size:16px;font-family:var(--f);';
+    backBtn.innerHTML = '<svg width="10" height="17" viewBox="0 0 10 17" fill="none"><path d="M9 1L1 8.5L9 16" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     backBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; _activeChatUserId = null; };
 
     // Center: avatar + name
     var centerCol = document.createElement('div');
-    centerCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;';
+    centerCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;';
     var avC = document.createElement('div');
-    avC.style.cssText = 'width:38px;height:38px;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;cursor:pointer;';
+    avC.style.cssText = 'width:36px;height:36px;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;';
     if (otherAvatar) {
         var avCI = document.createElement('img');
         avCI.src = otherAvatar;
         avCI.style.cssText = 'width:100%;height:100%;object-fit:cover;';
         avC.appendChild(avCI);
-        avC.onclick = function() {
+        centerCol.onclick = function() {
             var ov2 = document.createElement('div');
             ov2.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;';
             ov2.onclick = function() { ov2.remove(); };
             var img2 = document.createElement('img');
             img2.src = otherAvatar;
-            img2.style.cssText = 'width:240px;height:240px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.2);';
+            img2.style.cssText = 'width:220px;height:220px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.2);';
             var nm2 = document.createElement('div');
-            nm2.style.cssText = 'color:#fff;font-size:18px;font-weight:700;';
+            nm2.style.cssText = 'color:#fff;font-size:17px;font-weight:700;';
             nm2.textContent = otherUsername || '';
             ov2.appendChild(img2); ov2.appendChild(nm2);
             document.body.appendChild(ov2);
@@ -14683,13 +14690,12 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     } else avC.textContent = (otherUsername || '?')[0].toUpperCase();
 
     var nameEl = document.createElement('div');
-    nameEl.style.cssText = 'font-size:11px;font-weight:600;color:#000;';
-    nameEl.textContent = '@' + otherUsername;
+    nameEl.style.cssText = 'font-size:11px;font-weight:600;color:#007AFF;letter-spacing:-.1px;';
+    nameEl.textContent = otherUsername;
     centerCol.appendChild(avC); centerCol.appendChild(nameEl);
 
-    /* DM's button right */
     var msgsHeaderBtn = document.createElement('button');
-    msgsHeaderBtn.style.cssText = 'padding:4px 8px;border-radius:12px;border:none;background:#f2f2f7;cursor:pointer;font-size:10px;color:#007AFF;font-family:var(--f);font-weight:600;justify-self:end;';
+    msgsHeaderBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:15px;color:#007AFF;font-family:var(--f);font-weight:400;justify-self:end;padding:6px 4px;white-space:nowrap;';
     msgsHeaderBtn.textContent = "DM's";
     msgsHeaderBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; setTimeout(() => openConversations(), 350); };
 
@@ -14705,7 +14711,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Input */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom,0px)+16px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(env(safe-area-inset-bottom,0px)+10px);background:#fff;border-top:1px solid #e5e5ea;display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
