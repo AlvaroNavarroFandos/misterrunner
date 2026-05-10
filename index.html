@@ -14079,23 +14079,30 @@ async function openUserProfile(userId, username, avatarUrl) {
     if(!posts||!posts.length){
         feed.innerHTML='<div style="text-align:center;padding:40px;color:var(--tm);font-size:13px;">Sin posts aún.</div>';
     } else {
-        posts.forEach(function(p){ feed.appendChild(_buildClubCard(p,myId,new Set())); });
+        // Insertar cards con ids de canvas únicos para el perfil (prefijo 'prof-')
+        // para evitar conflicto con los canvas del feed que tienen el mismo post id
+        posts.forEach(function(p) {
+            var card = _buildClubCard(p, myId, new Set());
+            // Renombrar el canvas para que no colisione con el del feed
+            var cv = card.querySelector('[id="club-map-' + p.id + '"]');
+            if (cv) cv.id = 'prof-map-' + p.id;
+            feed.appendChild(card);
+        });
 
-        // Dibujar tracks en el perfil.
-        // Estrategia: intentar copiar el canvas ya renderizado del feed (si el post está visible ahí).
-        // Si no está en el feed, dibujar directamente con drawTrack usando offsetWidth tras 500ms.
+        // Copiar el track del feed al perfil, o dibujarlo si no está en el feed
         function _drawProfileTrack(p) {
             var actData = p.act_data || {};
             if (!actData.records || actData.records.length <= 10) return;
             if (typeof window.drawTrack !== 'function') return;
 
-            var cv = document.getElementById('club-map-' + p.id);
+            // Canvas del perfil (id renombrado)
+            var cv = document.getElementById('prof-map-' + p.id);
             if (!cv) return;
 
-            // Intentar copiar del feed si existe un canvas ya pintado ahí
-            var feedCanvas = document.querySelector('#club-feed #club-map-' + p.id);
+            // Canvas del feed (id original) — puede tener el track ya pintado
+            var feedCanvas = document.getElementById('club-map-' + p.id);
             if (feedCanvas && feedCanvas.width > 10 && feedCanvas.height > 10) {
-                // El feed ya tiene este canvas pintado — copiarlo directamente
+                // Copiar del feed al perfil — canvas distintos, sin conflicto
                 try {
                     cv.width  = feedCanvas.width;
                     cv.height = feedCanvas.height;
@@ -14104,32 +14111,20 @@ async function openUserProfile(userId, username, avatarUrl) {
                 } catch(e) {}
             }
 
-            // No está en el feed — dibujar con drawTrack
-            // El overlay lleva tiempo montado, offsetWidth ya debería tener valor
+            // No está en el feed — dibujar directamente
             var pw = (cv.parentElement && cv.parentElement.offsetWidth > 10)
-                ? cv.parentElement.offsetWidth
-                : Math.round(window.innerWidth);
+                ? cv.parentElement.offsetWidth : Math.round(window.innerWidth);
             var ph = (cv.parentElement && cv.parentElement.offsetHeight > 10)
-                ? cv.parentElement.offsetHeight
-                : 220;
+                ? cv.parentElement.offsetHeight : 220;
             cv.width  = pw;
             cv.height = ph;
             try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
         }
 
-        // Primera pasada a 200ms (el overlay ya tiene layout)
-        setTimeout(function() {
-            posts.forEach(_drawProfileTrack);
-        }, 200);
-
-        // Segunda pasada a 800ms (por si la imagen satelital no estaba cacheada aún)
-        setTimeout(function() {
-            posts.forEach(function(p) {
-                var cv = document.getElementById('club-map-' + p.id);
-                if (!cv || cv.width < 2) return; // solo si no se dibujó antes
-                _drawProfileTrack(p);
-            });
-        }, 800);
+        // Pasada a 200ms: el overlay ya tiene layout y el feed ya habrá pintado sus tracks (setTimeout 150ms)
+        setTimeout(function() { posts.forEach(_drawProfileTrack); }, 200);
+        // Pasada a 900ms: seguro para imagen satelital no cacheada
+        setTimeout(function() { posts.forEach(_drawProfileTrack); }, 900);
     }
 }
 
