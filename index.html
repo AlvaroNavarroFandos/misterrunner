@@ -14096,21 +14096,29 @@ async function openUserProfile(userId, username, avatarUrl) {
     } else {
         posts.forEach(function(p){ feed.appendChild(_buildClubCard(p,myId,new Set())); });
 
-        // Dibujar tracks: drawTrack es internamente asíncrono (carga imagen satelital con callback).
-        // NO usamos setTimeout — lo llamamos directamente para cada post.
-        // El canvas ya tiene width/height correctos grabados en dataset al crearse en _buildClubCard.
-        posts.forEach(function(p) {
-            var actData = p.act_data || {};
-            if (!actData.records || actData.records.length <= 10) return;
-            if (typeof window.drawTrack !== 'function') return;
-            var cv = document.getElementById('club-map-' + p.id);
-            if (!cv) return;
-            var pw = parseInt(cv.dataset.trackW) || Math.round(window.innerWidth);
-            var ph = parseInt(cv.dataset.trackH) || 220;
-            cv.width  = pw;
-            cv.height = ph;
-            try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
-        });
+        // Dibujar tracks en el perfil.
+        // Usamos los valores de dataset grabados al crear el canvas — independientes del layout.
+        // Llamamos drawTrack directamente (es asíncrono internamente con _getSatelliteImg).
+        // Doble pasada: inmediata + 600ms por si la imagen satelital tarda en cargar la primera vez.
+        function _drawProfileTracks() {
+            posts.forEach(function(p) {
+                var actData = p.act_data || {};
+                if (!actData.records || actData.records.length <= 10) return;
+                if (typeof window.drawTrack !== 'function') return;
+                var cv = document.getElementById('club-map-' + p.id);
+                if (!cv) return;
+                // Usar offsetWidth del padre si tiene layout, sino ancho de pantalla
+                var pw = (cv.parentElement && cv.parentElement.offsetWidth > 10)
+                    ? cv.parentElement.offsetWidth
+                    : Math.round(window.innerWidth);
+                var ph = parseInt(cv.dataset.trackH) || 220;
+                cv.width  = pw;
+                cv.height = ph;
+                try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
+            });
+        }
+        _drawProfileTracks();
+        setTimeout(_drawProfileTracks, 600);
     }
 }
 
@@ -14285,8 +14293,9 @@ async function renderClubFeed() {
                 if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
                     if (cv) {
-                        // Dataset tiene los valores correctos grabados al crear el canvas
-                        const pw = parseInt(cv.dataset.trackW) || cv.parentElement?.offsetWidth || Math.round(window.innerWidth);
+                        // Usar offsetWidth del padre: ya tiene layout real tras 150ms en el DOM
+                        // Esto garantiza que canvas.width == ancho visual == coordenadas correctas
+                        const pw = cv.parentElement?.offsetWidth || cv.parentElement?.clientWidth || Math.round(window.innerWidth);
                         const ph = parseInt(cv.dataset.trackH) || cv.parentElement?.offsetHeight || 220;
                         cv.width = pw;
                         cv.height = ph;
@@ -14421,13 +14430,12 @@ function _buildClubCard(post, myId, mutualSet) {
 
             // Track (mitad derecha)
             var trackSide = document.createElement('div');
-            trackSide.style.cssText = 'flex:1;position:relative;overflow:hidden;background:#0d1520;';
+            trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;display:flex;align-items:stretch;';
             var cvo = document.createElement('canvas');
             cvo.id = 'club-map-' + post.id;
-            cvo.width = halfW; cvo.height = 220;
-            cvo.dataset.trackW = String(halfW);
+            cvo.width = 1; cvo.height = 220; // tamaño real asignado en setTimeout tras layout
             cvo.dataset.trackH = '220';
-            cvo.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
+            cvo.style.cssText = 'width:100%;height:100%;display:block;flex:1;';
             trackSide.appendChild(cvo);
             mw.appendChild(trackSide);
 
@@ -14446,9 +14454,7 @@ function _buildClubCard(post, myId, mutualSet) {
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
-            cvFull.width = Math.round(window.innerWidth);
-            cvFull.height = 220;
-            cvFull.dataset.trackW = String(Math.round(window.innerWidth));
+            cvFull.width = 1; cvFull.height = 220; // tamaño real se asigna en setTimeout tras layout
             cvFull.dataset.trackH = '220';
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
@@ -14636,7 +14642,17 @@ function _showClubSharedBanner() {
         if (inner) inner.style.transform = 'translateY(0)';
     }); });
     var close = function() { b.style.opacity = '0'; setTimeout(function() { if (b.parentNode) b.remove(); }, 250); };
-    document.getElementById('club-shared-go').onclick = function() { close(); openClub(); };
+    document.getElementById('club-shared-go').onclick = function() {
+        close();
+        // Cerrar tarjeta de detalle de actividad si está abierta
+        var detOverlay = document.getElementById('act-detail-overlay');
+        if (detOverlay) detOverlay.remove();
+        var detOverlay2 = document.getElementById('act-edit-overlay');
+        if (detOverlay2) detOverlay2.remove();
+        // Cerrar cualquier sheet abierto
+        document.querySelectorAll('.sheet-backdrop').forEach(function(s) { s.classList.remove('open'); });
+        openClub();
+    };
     document.getElementById('club-shared-close').onclick = close;
     b.addEventListener('click', function(e) { if (e.target === b) close(); });
 }
