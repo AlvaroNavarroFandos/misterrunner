@@ -8739,9 +8739,6 @@
     function acceptPlan() {
         if(!generatedPlanData) return;
         activePlan = generatedPlanData;
-
-        // Si existe plan de fuerza, reconstruirlo ajustado al nuevo plan de running
-        // (las fechas del plan nuevo pueden diferir completamente del anterior)
         if(activeStrengthPlan && activeStrengthPlan.strengthDays && activeStrengthPlan.strengthDays.length) {
             var days     = activeStrengthPlan.strengthDays;
             var equip    = activeStrengthPlan.strengthEquip || 'gym';
@@ -8749,41 +8746,29 @@
             var session  = buildStrengthSession(equip);
             var startDate = (activePlan.weeks && activePlan.weeks[0]) ? activePlan.weeks[0].weekStart : localDateStr(new Date());
             var numWeeks  = activePlan.weeks ? activePlan.weeks.length : 52;
-
-            // Reconstruir activeStrengthPlan con las nuevas fechas
             var sWeeks = buildStrengthWeeks(days, session, equipLbl, startDate, numWeeks);
             activeStrengthPlan = {
                 name: 'Fuerza Runner · ' + equipLbl,
-                type: 'strength',
-                weeks: sWeeks,
-                strengthEquip: equip,
-                strengthDays: days,
+                type: 'strength', weeks: sWeeks,
+                strengthEquip: equip, strengthDays: days,
                 createdAt: activeStrengthPlan.createdAt || new Date().toISOString()
             };
             saveStrengthPlanToStorage();
-
-            // Merge en el plan de running
             activePlan.weeks.forEach(function(wk, idx) {
                 wk.sessions = wk.sessions.filter(function(s){ return !s.isStrength; });
                 var strWk = activeStrengthPlan.weeks[idx];
                 if(strWk) {
                     strWk.sessions.forEach(function(ss){ wk.sessions.push(ss); });
-                    wk.sessions.sort(function(a,b){
-                        return new Date(a.dateStr+'T12:00:00') - new Date(b.dateStr+'T12:00:00');
-                    });
+                    wk.sessions.sort(function(a,b){ return new Date(a.dateStr+'T12:00:00')-new Date(b.dateStr+'T12:00:00'); });
                 }
             });
             activePlan.hasStrengthPlan = true;
             activePlan.strengthEquip   = equip;
             activePlan.strengthDays    = days;
         }
-
         planCurrentWeek = 0;
-        savePlanToStorage();
-        saveAppState();
-        _renderActivePlanWeek(0);
-        updatePlanNav();
-        renderMisterPlanCard();
+        savePlanToStorage(); saveAppState();
+        _renderActivePlanWeek(0); updatePlanNav(); renderMisterPlanCard();
         showToast('✅ Plan guardado — visítalo en la pestaña PLAN cuando quieras', 5000);
     }
 
@@ -11171,7 +11156,7 @@
                     var { data:{ session } } = await sb.auth.getSession();
                     if (!session) return;
                     var myId = session.user.id;
-                    var cleanAct = Object.assign({}, _act, {photoB64: null, records: (_act.records||[]).slice(0,800)});
+                    var cleanAct = Object.assign({}, _act, {photoB64: null});
                     var photoUrl = null;
                     if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
                         try {
@@ -14097,28 +14082,54 @@ async function openUserProfile(userId, username, avatarUrl) {
         posts.forEach(function(p){ feed.appendChild(_buildClubCard(p,myId,new Set())); });
 
         // Dibujar tracks en el perfil.
-        // Usamos los valores de dataset grabados al crear el canvas — independientes del layout.
-        // Llamamos drawTrack directamente (es asíncrono internamente con _getSatelliteImg).
-        // Doble pasada: inmediata + 600ms por si la imagen satelital tarda en cargar la primera vez.
-        function _drawProfileTracks() {
-            posts.forEach(function(p) {
-                var actData = p.act_data || {};
-                if (!actData.records || actData.records.length <= 10) return;
-                if (typeof window.drawTrack !== 'function') return;
-                var cv = document.getElementById('club-map-' + p.id);
-                if (!cv) return;
-                // Usar offsetWidth del padre si tiene layout, sino ancho de pantalla
-                var pw = (cv.parentElement && cv.parentElement.offsetWidth > 10)
-                    ? cv.parentElement.offsetWidth
-                    : Math.round(window.innerWidth);
-                var ph = parseInt(cv.dataset.trackH) || 220;
-                cv.width  = pw;
-                cv.height = ph;
-                try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
-            });
+        // Estrategia: intentar copiar el canvas ya renderizado del feed (si el post está visible ahí).
+        // Si no está en el feed, dibujar directamente con drawTrack usando offsetWidth tras 500ms.
+        function _drawProfileTrack(p) {
+            var actData = p.act_data || {};
+            if (!actData.records || actData.records.length <= 10) return;
+            if (typeof window.drawTrack !== 'function') return;
+
+            var cv = document.getElementById('club-map-' + p.id);
+            if (!cv) return;
+
+            // Intentar copiar del feed si existe un canvas ya pintado ahí
+            var feedCanvas = document.querySelector('#club-feed #club-map-' + p.id);
+            if (feedCanvas && feedCanvas.width > 10 && feedCanvas.height > 10) {
+                // El feed ya tiene este canvas pintado — copiarlo directamente
+                try {
+                    cv.width  = feedCanvas.width;
+                    cv.height = feedCanvas.height;
+                    cv.getContext('2d').drawImage(feedCanvas, 0, 0);
+                    return;
+                } catch(e) {}
+            }
+
+            // No está en el feed — dibujar con drawTrack
+            // El overlay lleva tiempo montado, offsetWidth ya debería tener valor
+            var pw = (cv.parentElement && cv.parentElement.offsetWidth > 10)
+                ? cv.parentElement.offsetWidth
+                : Math.round(window.innerWidth);
+            var ph = (cv.parentElement && cv.parentElement.offsetHeight > 10)
+                ? cv.parentElement.offsetHeight
+                : 220;
+            cv.width  = pw;
+            cv.height = ph;
+            try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
         }
-        _drawProfileTracks();
-        setTimeout(_drawProfileTracks, 600);
+
+        // Primera pasada a 200ms (el overlay ya tiene layout)
+        setTimeout(function() {
+            posts.forEach(_drawProfileTrack);
+        }, 200);
+
+        // Segunda pasada a 800ms (por si la imagen satelital no estaba cacheada aún)
+        setTimeout(function() {
+            posts.forEach(function(p) {
+                var cv = document.getElementById('club-map-' + p.id);
+                if (!cv || cv.width < 2) return; // solo si no se dibujó antes
+                _drawProfileTrack(p);
+            });
+        }, 800);
     }
 }
 
@@ -14293,10 +14304,8 @@ async function renderClubFeed() {
                 if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
                     if (cv) {
-                        // Usar offsetWidth del padre: ya tiene layout real tras 150ms en el DOM
-                        // Esto garantiza que canvas.width == ancho visual == coordenadas correctas
-                        const pw = cv.parentElement?.offsetWidth || cv.parentElement?.clientWidth || Math.round(window.innerWidth);
-                        const ph = parseInt(cv.dataset.trackH) || cv.parentElement?.offsetHeight || 220;
+                        const pw = cv.parentElement?.offsetWidth || 300;
+                        const ph = cv.parentElement?.offsetHeight || 200;
                         cv.width = pw;
                         cv.height = ph;
                         try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
@@ -14414,33 +14423,21 @@ function _buildClubCard(post, myId, mutualSet) {
     /* Media */
     if (hasP || hasT) {
         var mw = document.createElement('div');
-
         if (hasP && hasT) {
-            // ── Foto izquierda + Track derecha, lado a lado ──────────────
-            var halfW = Math.round(window.innerWidth / 2);
             mw.style.cssText = 'display:flex;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
-
-            // Foto (mitad izquierda)
             var photoSide = document.createElement('div');
             photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;';
             var ph = document.createElement('img'); ph.src = post.photo_url;
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
-            photoSide.appendChild(ph);
-            mw.appendChild(photoSide);
-
-            // Track (mitad derecha)
+            photoSide.appendChild(ph); mw.appendChild(photoSide);
             var trackSide = document.createElement('div');
-            trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;display:flex;align-items:stretch;';
+            trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;';
             var cvo = document.createElement('canvas');
             cvo.id = 'club-map-' + post.id;
-            cvo.width = 1; cvo.height = 220; // tamaño real asignado en setTimeout tras layout
-            cvo.dataset.trackH = '220';
-            cvo.style.cssText = 'width:100%;height:100%;display:block;flex:1;';
-            trackSide.appendChild(cvo);
-            mw.appendChild(trackSide);
-
+            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 220;
+            cvo.style.cssText = 'width:100%;height:100%;display:block;';
+            trackSide.appendChild(cvo); mw.appendChild(trackSide);
         } else if (hasP) {
-            // ── Solo foto ────────────────────────────────────────────────
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var ph = document.createElement('img'); ph.src = post.photo_url;
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
@@ -14448,18 +14445,15 @@ function _buildClubCard(post, myId, mutualSet) {
             var gb = document.createElement('div');
             gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
             mw.appendChild(gb);
-
         } else {
-            // ── Solo track, ancho completo ───────────────────────────────
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
-            cvFull.width = 1; cvFull.height = 220; // tamaño real se asigna en setTimeout tras layout
-            cvFull.dataset.trackH = '220';
+            cvFull.width = Math.round(window.innerWidth);
+            cvFull.height = 220;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
         }
-
         card.appendChild(mw);
     }
 
@@ -14625,7 +14619,6 @@ function _showClubPublishingBanner() {
 
 function _showClubSharedBanner() {
     var ex = document.getElementById('club-shared-banner'); if (ex) ex.remove();
-    // Modal centrado de éxito, más prominente que un toast
     var b = document.createElement('div'); b.id = 'club-shared-banner';
     b.style.cssText = 'position:fixed;inset:0;z-index:60001;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.5);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
     b.innerHTML = '<div id="club-shared-inner" style="background:var(--card);border-radius:28px 28px 20px 20px;padding:28px 22px 22px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);text-align:center;">'
@@ -14641,20 +14634,16 @@ function _showClubSharedBanner() {
         var inner = document.getElementById('club-shared-inner');
         if (inner) inner.style.transform = 'translateY(0)';
     }); });
-    var close = function() { b.style.opacity = '0'; setTimeout(function() { if (b.parentNode) b.remove(); }, 250); };
+    var close = function() { b.style.opacity='0'; setTimeout(function(){if(b.parentNode)b.remove();},250); };
     document.getElementById('club-shared-go').onclick = function() {
         close();
-        // Cerrar tarjeta de detalle de actividad si está abierta
         var detOverlay = document.getElementById('act-detail-overlay');
         if (detOverlay) detOverlay.remove();
-        var detOverlay2 = document.getElementById('act-edit-overlay');
-        if (detOverlay2) detOverlay2.remove();
-        // Cerrar cualquier sheet abierto
-        document.querySelectorAll('.sheet-backdrop').forEach(function(s) { s.classList.remove('open'); });
+        document.querySelectorAll('.sheet-backdrop').forEach(function(s){s.classList.remove('open');});
         openClub();
     };
     document.getElementById('club-shared-close').onclick = close;
-    b.addEventListener('click', function(e) { if (e.target === b) close(); });
+    b.addEventListener('click', function(e){if(e.target===b)close();});
 }
 
 /* ── User search ─────────────────────────────────────────────────── */
@@ -14914,122 +14903,54 @@ async function openConversations() {
     if (!convs || !convs.length) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--tm);">No tienes conversaciones aún.<br><small>Usa el 💬 en las tarjetas del Club.</small></div>'; return; }
     list.innerHTML = '';
     convs.forEach(c => {
-        // ── Wrapper con swipe-to-delete ────────────────────────────────
         var wrap = document.createElement('div');
         wrap.style.cssText = 'position:relative;overflow:hidden;border-bottom:1px solid var(--bsoft);';
-
-        // Fondo rojo de eliminar (detrás)
         var delBg = document.createElement('div');
         delBg.style.cssText = 'position:absolute;inset:0;background:#ef4444;display:flex;align-items:center;justify-content:end;padding-right:24px;opacity:0;transition:opacity .15s;pointer-events:none;';
         delBg.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
         wrap.appendChild(delBg);
-
-        // Fila deslizante
         var el = document.createElement('div');
         el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:13px 0;cursor:pointer;background:var(--bg);transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
-
         (function(_id, _un, _ua, _wrap) {
-            var startX = 0, startY = 0, curX = 0, swiping = false, swipeAxis = null, revealed = false;
-            var THRESHOLD = 80;
-
-            el.addEventListener('touchstart', function(e) {
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-                curX = 0; swiping = true; swipeAxis = null;
-                el.style.transition = 'none';
-            }, {passive: true});
-
-            el.addEventListener('touchmove', function(e) {
-                if (!swiping) return;
-                var dx = e.touches[0].clientX - startX;
-                var dy = e.touches[0].clientY - startY;
-                if (!swipeAxis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-                    swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v';
-                }
-                if (swipeAxis !== 'h') return;
-                if (dx < 0 && !revealed) {
-                    curX = Math.max(-THRESHOLD, dx);
-                    el.style.transform = 'translateX(' + curX + 'px)';
-                    delBg.style.opacity = String(Math.min(1, Math.abs(curX) / THRESHOLD));
-                } else if (revealed && dx > 0) {
-                    curX = Math.min(0, dx - THRESHOLD);
-                    el.style.transform = 'translateX(' + curX + 'px)';
-                    delBg.style.opacity = String(Math.max(0, 1 + curX / THRESHOLD));
-                }
-            }, {passive: true});
-
-            el.addEventListener('touchend', function() {
-                swiping = false;
-                el.style.transition = 'transform .25s cubic-bezier(.25,.46,.45,.94)';
-                if (curX < -THRESHOLD * 0.55 && !revealed) {
-                    el.style.transform = 'translateX(-' + THRESHOLD + 'px)';
-                    delBg.style.opacity = '1';
-                    delBg.style.pointerEvents = 'auto';
-                    revealed = true;
-                } else if (revealed && curX > -THRESHOLD * 0.5) {
-                    el.style.transform = 'translateX(0)';
-                    delBg.style.opacity = '0';
-                    delBg.style.pointerEvents = 'none';
-                    revealed = false;
-                } else if (!revealed) {
-                    el.style.transform = 'translateX(0)';
-                    delBg.style.opacity = '0';
-                }
+            var startX=0,startY=0,curX=0,swiping=false,swipeAxis=null,revealed=false;
+            el.addEventListener('touchstart',function(e){startX=e.touches[0].clientX;startY=e.touches[0].clientY;curX=0;swiping=true;swipeAxis=null;el.style.transition='none';},{passive:true});
+            el.addEventListener('touchmove',function(e){
+                if(!swiping)return;
+                var dx=e.touches[0].clientX-startX,dy=e.touches[0].clientY-startY;
+                if(!swipeAxis&&(Math.abs(dx)>6||Math.abs(dy)>6))swipeAxis=Math.abs(dx)>Math.abs(dy)*1.2?'h':'v';
+                if(swipeAxis!=='h')return;
+                if(dx<0&&!revealed){curX=Math.max(-80,dx);el.style.transform='translateX('+curX+'px)';delBg.style.opacity=String(Math.min(1,Math.abs(curX)/80));}
+                else if(revealed&&dx>0){curX=Math.min(0,dx-80);el.style.transform='translateX('+curX+'px)';delBg.style.opacity=String(Math.max(0,1+curX/80));}
+            },{passive:true});
+            el.addEventListener('touchend',function(){
+                swiping=false;el.style.transition='transform .25s cubic-bezier(.25,.46,.45,.94)';
+                if(curX<-44&&!revealed){el.style.transform='translateX(-80px)';delBg.style.opacity='1';delBg.style.pointerEvents='auto';revealed=true;}
+                else if(revealed&&curX>-40){el.style.transform='translateX(0)';delBg.style.opacity='0';delBg.style.pointerEvents='none';revealed=false;}
+                else if(!revealed){el.style.transform='translateX(0)';delBg.style.opacity='0';}
             });
-
-            // Tap cuando no hay swipe: abrir chat
-            el.onclick = function() {
-                if (revealed) {
-                    el.style.transform = 'translateX(0)';
-                    delBg.style.opacity = '0';
-                    delBg.style.pointerEvents = 'none';
-                    revealed = false;
-                    return;
-                }
-                convView.style.transform = 'translateX(100%)';
-                setTimeout(() => openChat(_id, _un, _ua), 350);
+            el.onclick=function(){
+                if(revealed){el.style.transform='translateX(0)';delBg.style.opacity='0';delBg.style.pointerEvents='none';revealed=false;return;}
+                convView.style.transform='translateX(100%)';setTimeout(()=>openChat(_id,_un,_ua),350);
             };
-
-            // Tap en el fondo rojo: eliminar conversación
-            delBg.addEventListener('click', async function() {
-                if (!confirm('¿Eliminar esta conversación?')) {
-                    el.style.transform = 'translateX(0)';
-                    delBg.style.opacity = '0';
-                    delBg.style.pointerEvents = 'none';
-                    revealed = false;
-                    return;
-                }
-                var { data: { session } } = await window._sbClient.auth.getSession();
-                if (!session) return;
-                // Borrar todos los mensajes entre los dos usuarios
-                await window._sbClient.from('messages')
-                    .delete()
-                    .or('and(from_id.eq.' + session.user.id + ',to_id.eq.' + _id + '),and(from_id.eq.' + _id + ',to_id.eq.' + session.user.id + ')');
-                _wrap.style.transition = 'opacity .2s, max-height .3s';
-                _wrap.style.opacity = '0';
-                _wrap.style.maxHeight = '0';
-                _wrap.style.overflow = 'hidden';
-                setTimeout(function() { if (_wrap.parentNode) _wrap.remove(); }, 300);
-                showToast('Conversación eliminada', 1800);
+            delBg.addEventListener('click',async function(){
+                if(!confirm('¿Eliminar esta conversación?')){el.style.transform='translateX(0)';delBg.style.opacity='0';delBg.style.pointerEvents='none';revealed=false;return;}
+                var{data:{session}}=await window._sbClient.auth.getSession();if(!session)return;
+                await window._sbClient.from('messages').delete().or('and(from_id.eq.'+session.user.id+',to_id.eq.'+_id+'),and(from_id.eq.'+_id+',to_id.eq.'+session.user.id+')');
+                _wrap.style.transition='opacity .2s,max-height .3s';_wrap.style.opacity='0';_wrap.style.maxHeight='0';_wrap.style.overflow='hidden';
+                setTimeout(function(){if(_wrap.parentNode)_wrap.remove();},300);
+                showToast('Conversación eliminada',1800);
             });
-        })(c.other_id, c.other_username, c.other_avatar, wrap);
-
+        })(c.other_id,c.other_username,c.other_avatar,wrap);
         var av = document.createElement('div');
         av.style.cssText = 'width:46px;height:46px;border-radius:50%;background:var(--crimson);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:#fff;position:relative;';
-        if (c.other_avatar) { var ai = document.createElement('img'); ai.src = c.other_avatar; ai.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(ai); }
-        else av.textContent = (c.other_username || '?')[0].toUpperCase();
-        if (c.unread_count > 0) {
-            var ub = document.createElement('span');
-            ub.style.cssText = 'position:absolute;top:-2px;right:-2px;min-width:16px;height:16px;border-radius:8px;background:var(--crimson);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg);';
-            ub.textContent = String(c.unread_count); av.appendChild(ub);
-        }
-        var info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;';
-        var lastAt = new Date(c.last_at).toLocaleDateString('es-ES', {day:'numeric',month:'short'});
-        var msgW = c.unread_count > 0 ? 'font-size:12px;color:var(--tw);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;' : 'font-size:12px;color:var(--ts);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;';
-        info.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;font-weight:700;color:var(--tw);">@' + c.other_username + '</span><span style="font-size:10px;color:var(--tm);">' + lastAt + '</span></div><div style="' + msgW + '">' + (c.last_message || '') + '</div>';
-        el.appendChild(av); el.appendChild(info);
-        wrap.appendChild(el);
-        list.appendChild(wrap);
+        if (c.other_avatar){var ai=document.createElement('img');ai.src=c.other_avatar;ai.style.cssText='width:100%;height:100%;object-fit:cover;';av.appendChild(ai);}
+        else av.textContent=(c.other_username||'?')[0].toUpperCase();
+        if(c.unread_count>0){var ub=document.createElement('span');ub.style.cssText='position:absolute;top:-2px;right:-2px;min-width:16px;height:16px;border-radius:8px;background:var(--crimson);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg);';ub.textContent=String(c.unread_count);av.appendChild(ub);}
+        var info=document.createElement('div');info.style.cssText='flex:1;min-width:0;';
+        var lastAt=new Date(c.last_at).toLocaleDateString('es-ES',{day:'numeric',month:'short'});
+        var msgW=c.unread_count>0?'font-size:12px;color:var(--tw);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;':'font-size:12px;color:var(--ts);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;';
+        info.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;font-weight:700;color:var(--tw);">@'+c.other_username+'</span><span style="font-size:10px;color:var(--tm);">'+lastAt+'</span></div><div style="'+msgW+'">'+(c.last_message||'')+'</div>';
+        el.appendChild(av);el.appendChild(info);wrap.appendChild(el);list.appendChild(wrap);
     });
 }
 
