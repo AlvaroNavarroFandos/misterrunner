@@ -2315,7 +2315,7 @@
 
     // ── STORAGE ──────────────────────────────────────────────────────────
     function saveRehabPlanToStorage() {
-        try { localStorage.setItem('mr_rehab_plan', JSON.stringify(activeRehabPlan)); } catch(e){}
+        try { localStorage.setItem('mr_rehab_plan', JSON.stringify(activeRehabPlan)); } catch(e){} setTimeout(function(){_syncPlansToSupabase();},500);
     }
     function loadRehabPlanOnBoot() {
         try { var r=localStorage.getItem('mr_rehab_plan'); if(r) activeRehabPlan=JSON.parse(r); } catch(e){}
@@ -6893,9 +6893,11 @@
 
     function savePlanToStorage() {
         try { localStorage.setItem('mr_plan', JSON.stringify(activePlan)); } catch(e){}
+        setTimeout(function() { _syncPlansToSupabase(); }, 500);
     }
     function saveStrengthPlanToStorage() {
         try { localStorage.setItem('mr_strength_plan', JSON.stringify(activeStrengthPlan)); } catch(e){}
+        setTimeout(function() { _syncPlansToSupabase(); }, 500);
     }
     function loadPlanFromStorage() {
         try {
@@ -9732,7 +9734,7 @@
         document.body.appendChild(modal);
     }
 
-    function savePlanToStorage(){try{localStorage.setItem('mr_plan',JSON.stringify(activePlan));}catch(e){}}
+    function savePlanToStorage(){try{localStorage.setItem('mr_plan',JSON.stringify(activePlan));}catch(e){} setTimeout(function(){_syncPlansToSupabase();},500);}
     function loadPlanFromStorage(){
         try{const s=localStorage.getItem('mr_plan');if(s){activePlan=JSON.parse(s);renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();}}catch(e){}
     }
@@ -11755,17 +11757,84 @@
     
 
     // ── PUSH NOTIFICATIONS (PWA) ─────────────────────────────────────
+    // ── VAPID Push Registration ───────────────────────────────────────
+    const _VAPID_PUBLIC_KEY = 'BOfVXe86vHT_DvfK2ZxKbk8QkCmH2LCsJ73T4_OrCtaUNSb74MjPFphE8KDUzrruyXyUSQ8KIOMxYTo82mNBSHo';
+
+    function _urlBase64ToUint8Array(b64) {
+        var padding = '='.repeat((4 - b64.length % 4) % 4);
+        var base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+        var raw = atob(base64);
+        return new Uint8Array([...raw].map(function(c) { return c.charCodeAt(0); }));
+    }
+
+    async function _registerVapidPush() {
+        try {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+            if (Notification.permission !== 'granted') return;
+            var reg = await navigator.serviceWorker.ready;
+            var existing = await reg.pushManager.getSubscription();
+            if (existing) {
+                // Ya suscrito — aseguramos que está guardado en Supabase
+                var { data: { session } } = await window._sbClient.auth.getSession();
+                if (!session) return;
+                await window._sbClient.from('push_subscriptions').upsert(
+                    { user_id: session.user.id, subscription: existing.toJSON() },
+                    { onConflict: 'user_id,subscription' }
+                );
+                return;
+            }
+            var sub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: _urlBase64ToUint8Array(_VAPID_PUBLIC_KEY)
+            });
+            var { data: { session } } = await window._sbClient.auth.getSession();
+            if (!session) return;
+            await window._sbClient.from('push_subscriptions').upsert(
+                { user_id: session.user.id, subscription: sub.toJSON() },
+                { onConflict: 'user_id,subscription' }
+            );
+        } catch(e) { console.warn('[Push] registro VAPID:', e); }
+    }
+
+    // Sincronizar planes con Supabase para que el cron job pueda enviar notificaciones con app cerrada
+    async function _syncPlansToSupabase() {
+        try {
+            if (!window._sbClient) return;
+            var { data: { session } } = await window._sbClient.auth.getSession();
+            if (!session) return;
+            await window._sbClient.from('user_plans').upsert({
+                user_id: session.user.id,
+                running_plan:  (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null,
+                strength_plan: (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? activeStrengthPlan : null,
+                rehab_plan:    (typeof activeRehabPlan !== 'undefined' && activeRehabPlan) ? activeRehabPlan : null,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id' });
+        } catch(e) { console.warn('[Plans] sync:', e); }
+    }
+
+    async function _sendPushToUser(targetUserId, title, body, data) {
+        try {
+            await window._sbClient.functions.invoke('send-push', {
+                body: { target_user_id: targetUserId, title, body, data }
+            });
+        } catch(e) { console.warn('[Push] envío:', e); }
+    }
+
     async function requestNotificationPermission() {
         if(!('Notification' in window)) {
             showToast('Tu navegador no soporta notificaciones', 3000);
             return false;
         }
-        if(Notification.permission === 'granted') return true;
+        if(Notification.permission === 'granted') {
+            await _registerVapidPush();
+            return true;
+        }
         if(Notification.permission === 'denied') {
             showToast('Notificaciones bloqueadas — actívalas en ajustes del navegador', 4000);
             return false;
         }
         const perm = await Notification.requestPermission();
+        if (perm === 'granted') await _registerVapidPush();
         return perm === 'granted';
     }
 
@@ -11780,52 +11849,122 @@
         return null;
     }
 
-    function scheduleTrainingReminder() {
-        if(Notification.permission !== 'granted') return;
-        const sess = getTodaySession();
-        // Build a clean single-line body: type · dist · pace hint
-        let title = 'MisterRunner · Entrena hoy 🏃';
-        let body = '';
-        if(sess) {
-            const typeLabel = {easy:'Easy Run 🟢',recovery:'Recovery 🔵',series:'Series 🔴',long:'Long Run 🟡',race:'MARATÓN 🏅',strength:'Fuerza 💪'};
-            const tLabel = typeLabel[sess.type] || 'Entrenamiento';
-            const distLine = sess.dist ? ' · ' + sess.dist + ' km' : '';
-            // Get pace hint from plan session if available
-            let paceHint = '';
-            if(activePlan) {
-                const todayStr2 = localDateStr(new Date());
-                for(const wk of activePlan.weeks) {
-                    const s = wk.sessions.find(s=>s.dateStr===todayStr2);
-                    if(s && s.paceRange) { paceHint = ' · ' + s.paceRange; break; }
+    // ── Notificaciones de entreno ──────────────────────────────────────
+    // Construye el texto del entreno de hoy
+    function _buildTodayTrainingPayload() {
+        var todayStr = localDateStr(new Date());
+        var sess = getTodaySession(); // running
+        var hasRunning = !!sess;
+        var isRestDay = !sess; // asumimos descanso si no hay sesión running
+
+        var hasStrength = false;
+        var strengthBody = '';
+        if (activeStrengthPlan && activeStrengthPlan.weeks) {
+            hasStrength = activeStrengthPlan.weeks.some(function(wk) {
+                return wk.sessions && wk.sessions.some(function(s) { return s.dateStr === todayStr; });
+            });
+            if (hasStrength) strengthBody = '💪 Fuerza · Sesión de hoy';
+        }
+
+        var hasRehab = false;
+        var rehabBody = '';
+        if (activeRehabPlan && activeRehabPlan.status === 'active') {
+            hasRehab = true;
+            rehabBody = '🩺 Rehabilitación · Sesión de hoy';
+        }
+
+        // Día libre: no hay nada
+        if (!hasRunning && !hasStrength && !hasRehab) {
+            return { title: 'MisterRunner', body: '🛋️ Hoy es día libre — descansa y recarga', type: 'rest', isRunning: false };
+        }
+
+        var parts = [];
+        var isRunning = false;
+
+        if (sess) {
+            isRunning = true;
+            var typeLabel = { easy:'Easy Run 🟢', recovery:'Recovery 🔵', series:'Series 🔴', long:'Long Run 🟡', race:'Carrera 🏅' };
+            var tLabel = typeLabel[sess.type] || 'Running 🏃';
+            var distLine = sess.dist ? ' · ' + sess.dist + ' km' : '';
+            var paceHint = '';
+            if (activePlan) {
+                for (var wi = 0; wi < activePlan.weeks.length; wi++) {
+                    var s2 = activePlan.weeks[wi].sessions && activePlan.weeks[wi].sessions.find(function(s) { return s.dateStr === todayStr; });
+                    if (s2 && s2.paceRange) { paceHint = ' · ' + s2.paceRange; break; }
                 }
             }
-            body = tLabel + distLine + paceHint;
-            // Add strength if also today
-            if(activeStrengthPlan && activeStrengthPlan.weeks) {
-                const todayStr2 = localDateStr(new Date());
-                const hasStr = activeStrengthPlan.weeks.some(wk => wk.sessions.some(s=>s.dateStr===todayStr2));
-                if(hasStr && sess.type !== 'strength') body += ' + 💪 Fuerza';
-            }
-        } else {
-            // Check strength only
-            if(activeStrengthPlan && activeStrengthPlan.weeks) {
-                const todayStr2 = localDateStr(new Date());
-                const hasStr = activeStrengthPlan.weeks.some(wk => wk.sessions.some(s=>s.dateStr===todayStr2));
-                if(hasStr) { body = 'Fuerza 💪 · Sesión de 30 min'; }
-            }
-            if(!body && activeRehabPlan && activeRehabPlan.status === 'active') {
-                body = 'Rehabilitación 🩺 · Sesión de hoy';
-            }
-            if(!body) return; // nothing today
+            parts.push(tLabel + distLine + paceHint);
         }
-        new Notification(title, {
-            body,
-            icon: '/favicon.ico',
-            badge: '/favicon.ico',
-            tag: 'mr-training-reminder',
-            requireInteraction: false,
-            silent: false,
-        });
+        if (hasStrength) parts.push(strengthBody);
+        if (hasRehab) parts.push(rehabBody);
+
+        return {
+            title: 'MisterRunner',
+            body: '🏋️ Entreno de hoy: ' + parts.join(' + '),
+            type: 'training',
+            isRunning: isRunning
+        };
+    }
+
+    // Programa notificación de entreno para una hora HH:MM del día actual
+    function _scheduleLocalNotifAt(hour, minute, buildFn, tag) {
+        var now = new Date();
+        var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+        var delay = target - now;
+        if (delay < 0) return; // ya pasó la hora hoy
+        setTimeout(function() {
+            if (Notification.permission !== 'granted') return;
+            var payload = buildFn();
+            if (!payload) return;
+            new Notification(payload.title, {
+                body: payload.body,
+                icon: '/icon-192.png',
+                badge: '/badge-72.png',
+                tag: tag,
+                data: { url: payload.url || '/' }
+            });
+        }, delay);
+    }
+
+    function scheduleTrainingReminder() {
+        if (Notification.permission !== 'granted') return;
+
+        // Notificación de entreno del día a las 8:00h
+        _scheduleLocalNotifAt(8, 0, function() {
+            var p = _buildTodayTrainingPayload();
+            p.url = '/';
+            return p;
+        }, 'mr-training-today');
+
+        // Recordatorio de importar running a las 21:00h (solo si hay running hoy)
+        _scheduleLocalNotifAt(21, 0, function() {
+            var todayStr = localDateStr(new Date());
+            var sess = getTodaySession();
+            var hasRunning = !!sess;
+            if (!hasRunning) return null; // no molestar si no hay running
+            return {
+                title: 'MisterRunner',
+                body: '📲 ¿Ya importaste tu entreno de hoy? Hazlo antes de que se olvide',
+                url: '/biblioteca',
+                type: 'import-reminder'
+            };
+        }, 'mr-import-reminder');
+
+        // Si ya son las 8+ y no se ha mostrado la de entreno, mostramos ahora
+        var now = new Date();
+        if (now.getHours() >= 8 && now.getHours() < 21) {
+            var p = _buildTodayTrainingPayload();
+            if (p && !sessionStorage.getItem('mr-training-shown-' + localDateStr(now))) {
+                new Notification(p.title, {
+                    body: p.body,
+                    icon: '/icon-192.png',
+                    badge: '/badge-72.png',
+                    tag: 'mr-training-today',
+                    data: { url: '/' }
+                });
+                try { sessionStorage.setItem('mr-training-shown-' + localDateStr(now), '1'); } catch(e) {}
+            }
+        }
     }
 
     async function enableNotifications() {
@@ -13775,6 +13914,13 @@ async function _initClubSupabase() {
 
     _refreshUnreadBadge();
 
+    // Registrar push VAPID si el usuario ya tiene notificaciones concedidas
+    if (Notification.permission === 'granted') {
+        setTimeout(function() { _registerVapidPush(); }, 1000);
+    }
+    // Sincronizar planes al iniciar sesión
+    setTimeout(function() { _syncPlansToSupabase(); }, 2000);
+
     if (_sbFeedChannel) window._sbClient.removeChannel(_sbFeedChannel);
     _sbFeedChannel = window._sbClient.channel('club-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'club_posts' }, () => {
@@ -13809,11 +13955,15 @@ async function _initClubSupabase() {
                 }, async function(payload) {
                     var fromId = payload.new?.from_id;
                     if (!fromId || fromId === myId) return;
-                    // Don't notify if chat with sender is open
-                    if (typeof _activeChatUserId !== 'undefined' && _activeChatUserId === fromId) return;
                     var { data: prof } = await sb.from('profiles').select('username').eq('id', fromId).single();
                     var sender = prof?.username || 'Alguien';
-                    _fireNotif('MisterRunner', '@' + sender + ' te ha enviado un mensaje');
+                    var msgBody = '@' + sender + ': ' + (payload.new?.content || 'Mensaje nuevo').substring(0, 80);
+                    // Notif local si app abierta y chat no está activo
+                    if (typeof _activeChatUserId === 'undefined' || _activeChatUserId !== fromId) {
+                        _fireNotif('MisterRunner', msgBody);
+                    }
+                    // Push VAPID para cuando la app está cerrada — lo envía el remitente via Edge Function
+                    // (se llama desde _sendMsg — aquí solo actualizamos badge)
                     _refreshUnreadBadge && _refreshUnreadBadge();
                 })
                 .subscribe();
@@ -13825,14 +13975,13 @@ async function _initClubSupabase() {
                 }, async function(payload) {
                     var reactorId = payload.new?.user_id;
                     if (!reactorId || reactorId === myId) return;
-                    // Check if the post belongs to me
                     var postId = payload.new?.post_id;
                     var { data: post } = await sb.from('club_posts').select('user_id').eq('id', postId).single();
                     if (!post || post.user_id !== myId) return;
                     var { data: prof } = await sb.from('profiles').select('username').eq('id', reactorId).single();
                     var who = prof?.username || 'Alguien';
                     var emoji = payload.new?.emoji || '❤️';
-                    _fireNotif('MisterRunner', '@' + who + ' ha reaccionado a tu post ' + emoji);
+                    _fireNotif('MisterRunner', '@' + who + ' reaccionó con ' + emoji + ' a tu actividad');
                 })
                 .subscribe();
 
@@ -14026,8 +14175,20 @@ async function openUserProfile(userId, username, avatarUrl) {
     fBtn.style.cssText = 'padding:8px 14px;border-radius:18px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
     var updFBtn = function(){ fBtn.style.background=amFollowing?'#22c55e':'#ef4444'; fBtn.style.color='#fff'; fBtn.textContent=amFollowing?'Siguiendo':'Seguir'; };
     fBtn.onclick = async function() {
-        if(amFollowing){ await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId); amFollowing=false; }
-        else { await sb.from('follows').insert({follower_id:myId,following_id:userId}); amFollowing=true; }
+        if(amFollowing){
+            await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId);
+            amFollowing=false;
+        } else {
+            await sb.from('follows').insert({follower_id:myId,following_id:userId});
+            amFollowing=true;
+            // Push VAPID al usuario seguido
+            var senderUN = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
+            _sendPushToUser(userId,
+                'MisterRunner',
+                '@' + senderUN + ' ha empezado a seguirte',
+                { type: 'follow' }
+            );
+        }
         updFBtn();
         var {count:fc}=await sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId);
         document.getElementById('up-followers').textContent=fc||0;
@@ -14456,7 +14617,20 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
                 if (_iMine) {
                     window._sbClient.from('reactions').delete().eq('post_id',_pid).eq('user_id',myId).eq('emoji',_em).then(() => {});
                 } else {
-                    window._sbClient.from('reactions').insert({post_id:_pid,user_id:myId,emoji:_em}).then(() => {});
+                    window._sbClient.from('reactions').insert({post_id:_pid,user_id:myId,emoji:_em}).then(async () => {
+                        // Push VAPID al autor del post
+                        try {
+                            var { data: post } = await window._sbClient.from('club_posts').select('user_id').eq('id',_pid).single();
+                            if (post && post.user_id !== myId) {
+                                var senderUN = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
+                                _sendPushToUser(post.user_id,
+                                    'MisterRunner',
+                                    '@' + senderUN + ' reaccionó con ' + _em + ' a tu actividad',
+                                    { type: 'reaction', postId: _pid }
+                                );
+                            }
+                        } catch(e) {}
+                    });
                 }
             };
         })(em, postId, iMine, reactions, bar);
@@ -14795,6 +14969,13 @@ async function _sendMsg(toId) {
         var area = document.getElementById('chat-messages-' + toId);
         if (!area) { var chatView2 = document.getElementById('club-chat-view'); area = chatView2 ? chatView2.querySelector('[id^="chat-messages-"]') : null; }
         if (area) area.scrollTop = area.scrollHeight;
+        // Enviar push VAPID al destinatario (funciona con app cerrada)
+        var senderUsername = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
+        _sendPushToUser(toId,
+            'MisterRunner',
+            '@' + senderUsername + ': ' + content.substring(0, 80),
+            { type: 'message', fromId: myId }
+        );
     }
 }
 
