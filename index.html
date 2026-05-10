@@ -2315,7 +2315,7 @@
 
     // ── STORAGE ──────────────────────────────────────────────────────────
     function saveRehabPlanToStorage() {
-        try { localStorage.setItem('mr_rehab_plan', JSON.stringify(activeRehabPlan)); } catch(e){} setTimeout(function(){_syncPlansToSupabase();},500);
+        try { localStorage.setItem('mr_rehab_plan', JSON.stringify(activeRehabPlan)); } catch(e){}
     }
     function loadRehabPlanOnBoot() {
         try { var r=localStorage.getItem('mr_rehab_plan'); if(r) activeRehabPlan=JSON.parse(r); } catch(e){}
@@ -6893,11 +6893,9 @@
 
     function savePlanToStorage() {
         try { localStorage.setItem('mr_plan', JSON.stringify(activePlan)); } catch(e){}
-        setTimeout(function() { _syncPlansToSupabase(); }, 500);
     }
     function saveStrengthPlanToStorage() {
         try { localStorage.setItem('mr_strength_plan', JSON.stringify(activeStrengthPlan)); } catch(e){}
-        setTimeout(function() { _syncPlansToSupabase(); }, 500);
     }
     function loadPlanFromStorage() {
         try {
@@ -8741,22 +8739,45 @@
     function acceptPlan() {
         if(!generatedPlanData) return;
         activePlan = generatedPlanData;
-        // If strength plan already exists, merge its sessions into the new running plan
-        if(activeStrengthPlan && activeStrengthPlan.weeks) {
+
+        // Si existe plan de fuerza, reconstruirlo ajustado al nuevo plan de running
+        // (las fechas del plan nuevo pueden diferir completamente del anterior)
+        if(activeStrengthPlan && activeStrengthPlan.strengthDays && activeStrengthPlan.strengthDays.length) {
+            var days     = activeStrengthPlan.strengthDays;
+            var equip    = activeStrengthPlan.strengthEquip || 'gym';
+            var equipLbl = (equip === 'gym') ? 'Gimnasio' : 'Casa';
+            var session  = buildStrengthSession(equip);
+            var startDate = (activePlan.weeks && activePlan.weeks[0]) ? activePlan.weeks[0].weekStart : localDateStr(new Date());
+            var numWeeks  = activePlan.weeks ? activePlan.weeks.length : 52;
+
+            // Reconstruir activeStrengthPlan con las nuevas fechas
+            var sWeeks = buildStrengthWeeks(days, session, equipLbl, startDate, numWeeks);
+            activeStrengthPlan = {
+                name: 'Fuerza Runner · ' + equipLbl,
+                type: 'strength',
+                weeks: sWeeks,
+                strengthEquip: equip,
+                strengthDays: days,
+                createdAt: activeStrengthPlan.createdAt || new Date().toISOString()
+            };
+            saveStrengthPlanToStorage();
+
+            // Merge en el plan de running
             activePlan.weeks.forEach(function(wk, idx) {
-                var strWk = activeStrengthPlan.weeks[idx];
-                if(!strWk) return;
-                // Remove any old strength sessions first
                 wk.sessions = wk.sessions.filter(function(s){ return !s.isStrength; });
-                // Add strength sessions
-                strWk.sessions.forEach(function(ss) { wk.sessions.push(ss); });
-                wk.sessions.sort(function(a,b){
-                    return new Date(a.dateStr+'T12:00:00') - new Date(b.dateStr+'T12:00:00');
-                });
+                var strWk = activeStrengthPlan.weeks[idx];
+                if(strWk) {
+                    strWk.sessions.forEach(function(ss){ wk.sessions.push(ss); });
+                    wk.sessions.sort(function(a,b){
+                        return new Date(a.dateStr+'T12:00:00') - new Date(b.dateStr+'T12:00:00');
+                    });
+                }
             });
             activePlan.hasStrengthPlan = true;
-            activePlan.strengthEquip   = activeStrengthPlan.strengthEquip;
+            activePlan.strengthEquip   = equip;
+            activePlan.strengthDays    = days;
         }
+
         planCurrentWeek = 0;
         savePlanToStorage();
         saveAppState();
@@ -9734,7 +9755,7 @@
         document.body.appendChild(modal);
     }
 
-    function savePlanToStorage(){try{localStorage.setItem('mr_plan',JSON.stringify(activePlan));}catch(e){} setTimeout(function(){_syncPlansToSupabase();},500);}
+    function savePlanToStorage(){try{localStorage.setItem('mr_plan',JSON.stringify(activePlan));}catch(e){}}
     function loadPlanFromStorage(){
         try{const s=localStorage.getItem('mr_plan');if(s){activePlan=JSON.parse(s);renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();}}catch(e){}
     }
@@ -11757,84 +11778,17 @@
     
 
     // ── PUSH NOTIFICATIONS (PWA) ─────────────────────────────────────
-    // ── VAPID Push Registration ───────────────────────────────────────
-    const _VAPID_PUBLIC_KEY = 'BOfVXe86vHT_DvfK2ZxKbk8QkCmH2LCsJ73T4_OrCtaUNSb74MjPFphE8KDUzrruyXyUSQ8KIOMxYTo82mNBSHo';
-
-    function _urlBase64ToUint8Array(b64) {
-        var padding = '='.repeat((4 - b64.length % 4) % 4);
-        var base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-        var raw = atob(base64);
-        return new Uint8Array([...raw].map(function(c) { return c.charCodeAt(0); }));
-    }
-
-    async function _registerVapidPush() {
-        try {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-            if (Notification.permission !== 'granted') return;
-            var reg = await navigator.serviceWorker.ready;
-            var existing = await reg.pushManager.getSubscription();
-            if (existing) {
-                // Ya suscrito — aseguramos que está guardado en Supabase
-                var { data: { session } } = await window._sbClient.auth.getSession();
-                if (!session) return;
-                await window._sbClient.from('push_subscriptions').upsert(
-                    { user_id: session.user.id, subscription: existing.toJSON() },
-                    { onConflict: 'user_id,subscription' }
-                );
-                return;
-            }
-            var sub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: _urlBase64ToUint8Array(_VAPID_PUBLIC_KEY)
-            });
-            var { data: { session } } = await window._sbClient.auth.getSession();
-            if (!session) return;
-            await window._sbClient.from('push_subscriptions').upsert(
-                { user_id: session.user.id, subscription: sub.toJSON() },
-                { onConflict: 'user_id,subscription' }
-            );
-        } catch(e) { console.warn('[Push] registro VAPID:', e); }
-    }
-
-    // Sincronizar planes con Supabase para que el cron job pueda enviar notificaciones con app cerrada
-    async function _syncPlansToSupabase() {
-        try {
-            if (!window._sbClient) return;
-            var { data: { session } } = await window._sbClient.auth.getSession();
-            if (!session) return;
-            await window._sbClient.from('user_plans').upsert({
-                user_id: session.user.id,
-                running_plan:  (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null,
-                strength_plan: (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? activeStrengthPlan : null,
-                rehab_plan:    (typeof activeRehabPlan !== 'undefined' && activeRehabPlan) ? activeRehabPlan : null,
-                updated_at: new Date().toISOString()
-            }, { onConflict: 'user_id' });
-        } catch(e) { console.warn('[Plans] sync:', e); }
-    }
-
-    async function _sendPushToUser(targetUserId, title, body, data) {
-        try {
-            await window._sbClient.functions.invoke('send-push', {
-                body: { target_user_id: targetUserId, title, body, data }
-            });
-        } catch(e) { console.warn('[Push] envío:', e); }
-    }
-
     async function requestNotificationPermission() {
         if(!('Notification' in window)) {
             showToast('Tu navegador no soporta notificaciones', 3000);
             return false;
         }
-        if(Notification.permission === 'granted') {
-            await _registerVapidPush();
-            return true;
-        }
+        if(Notification.permission === 'granted') return true;
         if(Notification.permission === 'denied') {
             showToast('Notificaciones bloqueadas — actívalas en ajustes del navegador', 4000);
             return false;
         }
         const perm = await Notification.requestPermission();
-        if (perm === 'granted') await _registerVapidPush();
         return perm === 'granted';
     }
 
@@ -11849,122 +11803,60 @@
         return null;
     }
 
-    // ── Notificaciones de entreno ──────────────────────────────────────
-    // Construye el texto del entreno de hoy
-    function _buildTodayTrainingPayload() {
-        var todayStr = localDateStr(new Date());
-        var sess = getTodaySession(); // running
-        var hasRunning = !!sess;
-        var isRestDay = !sess; // asumimos descanso si no hay sesión running
-
-        var hasStrength = false;
-        var strengthBody = '';
-        if (activeStrengthPlan && activeStrengthPlan.weeks) {
-            hasStrength = activeStrengthPlan.weeks.some(function(wk) {
-                return wk.sessions && wk.sessions.some(function(s) { return s.dateStr === todayStr; });
-            });
-            if (hasStrength) strengthBody = '💪 Fuerza · Sesión de hoy';
-        }
-
-        var hasRehab = false;
-        var rehabBody = '';
-        if (activeRehabPlan && activeRehabPlan.status === 'active') {
-            hasRehab = true;
-            rehabBody = '🩺 Rehabilitación · Sesión de hoy';
-        }
-
-        // Día libre: no hay nada
-        if (!hasRunning && !hasStrength && !hasRehab) {
-            return { title: 'MisterRunner', body: '🛋️ Hoy es día libre — descansa y recarga', type: 'rest', isRunning: false };
-        }
-
-        var parts = [];
-        var isRunning = false;
-
-        if (sess) {
-            isRunning = true;
-            var typeLabel = { easy:'Easy Run 🟢', recovery:'Recovery 🔵', series:'Series 🔴', long:'Long Run 🟡', race:'Carrera 🏅' };
-            var tLabel = typeLabel[sess.type] || 'Running 🏃';
-            var distLine = sess.dist ? ' · ' + sess.dist + ' km' : '';
-            var paceHint = '';
-            if (activePlan) {
-                for (var wi = 0; wi < activePlan.weeks.length; wi++) {
-                    var s2 = activePlan.weeks[wi].sessions && activePlan.weeks[wi].sessions.find(function(s) { return s.dateStr === todayStr; });
-                    if (s2 && s2.paceRange) { paceHint = ' · ' + s2.paceRange; break; }
+    function scheduleTrainingReminder() {
+        if(Notification.permission !== 'granted') return;
+        const sess = getTodaySession();
+        // Build a clean single-line body: type · dist · pace hint
+        let title = 'MisterRunner';
+        let body = '';
+        if(sess) {
+            const typeLabel = {easy:'Easy Run 🟢',recovery:'Recovery 🔵',series:'Series 🔴',long:'Long Run 🟡',race:'MARATÓN 🏅',strength:'Fuerza 💪'};
+            const tLabel = typeLabel[sess.type] || 'Entrenamiento';
+            const distLine = sess.dist ? ' · ' + sess.dist + ' km' : '';
+            // Get pace hint from plan session if available
+            let paceHint = '';
+            if(activePlan) {
+                const todayStr2 = localDateStr(new Date());
+                for(const wk of activePlan.weeks) {
+                    const s = wk.sessions.find(s=>s.dateStr===todayStr2);
+                    if(s && s.paceRange) { paceHint = ' · ' + s.paceRange; break; }
                 }
             }
-            parts.push(tLabel + distLine + paceHint);
-        }
-        if (hasStrength) parts.push(strengthBody);
-        if (hasRehab) parts.push(rehabBody);
-
-        return {
-            title: 'MisterRunner',
-            body: '🏋️ Entreno de hoy: ' + parts.join(' + '),
-            type: 'training',
-            isRunning: isRunning
-        };
-    }
-
-    // Programa notificación de entreno para una hora HH:MM del día actual
-    function _scheduleLocalNotifAt(hour, minute, buildFn, tag) {
-        var now = new Date();
-        var target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
-        var delay = target - now;
-        if (delay < 0) return; // ya pasó la hora hoy
-        setTimeout(function() {
-            if (Notification.permission !== 'granted') return;
-            var payload = buildFn();
-            if (!payload) return;
-            new Notification(payload.title, {
-                body: payload.body,
-                icon: '/icon-192.png',
-                badge: '/badge-72.png',
-                tag: tag,
-                data: { url: payload.url || '/' }
-            });
-        }, delay);
-    }
-
-    function scheduleTrainingReminder() {
-        if (Notification.permission !== 'granted') return;
-
-        // Notificación de entreno del día a las 8:00h
-        _scheduleLocalNotifAt(8, 0, function() {
-            var p = _buildTodayTrainingPayload();
-            p.url = '/';
-            return p;
-        }, 'mr-training-today');
-
-        // Recordatorio de importar running a las 21:00h (solo si hay running hoy)
-        _scheduleLocalNotifAt(21, 0, function() {
-            var todayStr = localDateStr(new Date());
-            var sess = getTodaySession();
-            var hasRunning = !!sess;
-            if (!hasRunning) return null; // no molestar si no hay running
-            return {
-                title: 'MisterRunner',
-                body: '📲 ¿Ya importaste tu entreno de hoy? Hazlo antes de que se olvide',
-                url: '/biblioteca',
-                type: 'import-reminder'
-            };
-        }, 'mr-import-reminder');
-
-        // Si ya son las 8+ y no se ha mostrado la de entreno, mostramos ahora
-        var now = new Date();
-        if (now.getHours() >= 8 && now.getHours() < 21) {
-            var p = _buildTodayTrainingPayload();
-            if (p && !sessionStorage.getItem('mr-training-shown-' + localDateStr(now))) {
-                new Notification(p.title, {
-                    body: p.body,
+            body = 'Entreno de hoy: ' + tLabel + distLine + paceHint;
+            // Add strength if also today
+            if(activeStrengthPlan && activeStrengthPlan.weeks) {
+                const todayStr2 = localDateStr(new Date());
+                const hasStr = activeStrengthPlan.weeks.some(wk => wk.sessions.some(s=>s.dateStr===todayStr2));
+                if(hasStr && sess.type !== 'strength') body += ' + 💪 Fuerza';
+            }
+        } else {
+            // Check strength only
+            if(activeStrengthPlan && activeStrengthPlan.weeks) {
+                const todayStr2 = localDateStr(new Date());
+                const hasStr = activeStrengthPlan.weeks.some(wk => wk.sessions.some(s=>s.dateStr===todayStr2));
+                if(hasStr) { body = 'Fuerza 💪 · Sesión de 30 min'; }
+            }
+            if(!body && activeRehabPlan && activeRehabPlan.status === 'active') {
+                body = 'Rehabilitación 🩺 · Sesión de hoy';
+            }
+            if(!body) {
+                new Notification('MisterRunner', {
+                    body: 'Día libre — descansa y recarga pilas 🔋',
                     icon: '/icon-192.png',
                     badge: '/badge-72.png',
-                    tag: 'mr-training-today',
-                    data: { url: '/' }
+                    tag: 'mr-training-reminder',
                 });
-                try { sessionStorage.setItem('mr-training-shown-' + localDateStr(now), '1'); } catch(e) {}
+                return;
             }
         }
+        new Notification(title, {
+            body,
+            icon: '/icon-192.png',
+            badge: '/badge-72.png',
+            tag: 'mr-training-reminder',
+            requireInteraction: false,
+            silent: false,
+        });
     }
 
     async function enableNotifications() {
@@ -13914,13 +13806,6 @@ async function _initClubSupabase() {
 
     _refreshUnreadBadge();
 
-    // Registrar push VAPID si el usuario ya tiene notificaciones concedidas
-    if (Notification.permission === 'granted') {
-        setTimeout(function() { _registerVapidPush(); }, 1000);
-    }
-    // Sincronizar planes al iniciar sesión
-    setTimeout(function() { _syncPlansToSupabase(); }, 2000);
-
     if (_sbFeedChannel) window._sbClient.removeChannel(_sbFeedChannel);
     _sbFeedChannel = window._sbClient.channel('club-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'club_posts' }, () => {
@@ -13955,15 +13840,11 @@ async function _initClubSupabase() {
                 }, async function(payload) {
                     var fromId = payload.new?.from_id;
                     if (!fromId || fromId === myId) return;
+                    // Don't notify if chat with sender is open
+                    if (typeof _activeChatUserId !== 'undefined' && _activeChatUserId === fromId) return;
                     var { data: prof } = await sb.from('profiles').select('username').eq('id', fromId).single();
                     var sender = prof?.username || 'Alguien';
-                    var msgBody = '@' + sender + ': ' + (payload.new?.content || 'Mensaje nuevo').substring(0, 80);
-                    // Notif local si app abierta y chat no está activo
-                    if (typeof _activeChatUserId === 'undefined' || _activeChatUserId !== fromId) {
-                        _fireNotif('MisterRunner', msgBody);
-                    }
-                    // Push VAPID para cuando la app está cerrada — lo envía el remitente via Edge Function
-                    // (se llama desde _sendMsg — aquí solo actualizamos badge)
+                    _fireNotif('MisterRunner', '@' + sender + ': ' + (payload.new?.content || 'Mensaje nuevo').substring(0, 80));
                     _refreshUnreadBadge && _refreshUnreadBadge();
                 })
                 .subscribe();
@@ -13975,13 +13856,14 @@ async function _initClubSupabase() {
                 }, async function(payload) {
                     var reactorId = payload.new?.user_id;
                     if (!reactorId || reactorId === myId) return;
+                    // Check if the post belongs to me
                     var postId = payload.new?.post_id;
                     var { data: post } = await sb.from('club_posts').select('user_id').eq('id', postId).single();
                     if (!post || post.user_id !== myId) return;
                     var { data: prof } = await sb.from('profiles').select('username').eq('id', reactorId).single();
                     var who = prof?.username || 'Alguien';
                     var emoji = payload.new?.emoji || '❤️';
-                    _fireNotif('MisterRunner', '@' + who + ' reaccionó con ' + emoji + ' a tu actividad');
+                    _fireNotif('MisterRunner', '@' + who + ' ha reaccionado a tu post ' + emoji);
                 })
                 .subscribe();
 
@@ -14132,7 +14014,7 @@ async function openUserProfile(userId, username, avatarUrl) {
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:20015;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 20px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
 
     // Top row: back + @username centered + spacer (identical to Club top row)
     var topRow = document.createElement('div');
@@ -14150,7 +14032,7 @@ async function openUserProfile(userId, username, avatarUrl) {
 
     // Profile row: avatar (68px) + stats + follow button (identical to Club profile row)
     var profRow = document.createElement('div');
-    profRow.style.cssText = 'display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;';
+    profRow.style.cssText = 'display:flex;align-items:center;gap:20px;justify-content:center;padding-top:12px;';
 
     var av = document.createElement('div');
     av.style.cssText = 'width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;border:3px solid var(--gold-bd);flex-shrink:0;cursor:pointer;';
@@ -14175,20 +14057,8 @@ async function openUserProfile(userId, username, avatarUrl) {
     fBtn.style.cssText = 'padding:8px 14px;border-radius:18px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
     var updFBtn = function(){ fBtn.style.background=amFollowing?'#22c55e':'#ef4444'; fBtn.style.color='#fff'; fBtn.textContent=amFollowing?'Siguiendo':'Seguir'; };
     fBtn.onclick = async function() {
-        if(amFollowing){
-            await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId);
-            amFollowing=false;
-        } else {
-            await sb.from('follows').insert({follower_id:myId,following_id:userId});
-            amFollowing=true;
-            // Push VAPID al usuario seguido
-            var senderUN = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
-            _sendPushToUser(userId,
-                'MisterRunner',
-                '@' + senderUN + ' ha empezado a seguirte',
-                { type: 'follow' }
-            );
-        }
+        if(amFollowing){ await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId); amFollowing=false; }
+        else { await sb.from('follows').insert({follower_id:myId,following_id:userId}); amFollowing=true; }
         updFBtn();
         var {count:fc}=await sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId);
         document.getElementById('up-followers').textContent=fc||0;
@@ -14199,7 +14069,7 @@ async function openUserProfile(userId, username, avatarUrl) {
 
     var feed = document.createElement('div');
     feed.id = 'profile-feed-' + userId;
-    feed.style.cssText = 'flex:1;overflow-y:auto;padding:10px 15px 40px;display:block;';
+    feed.style.cssText = 'flex:1;overflow-y:auto;padding:10px 0 80px;display:block;';
     feed.innerHTML = '<div style="text-align:center;padding:20px;color:var(--tm);">Cargando posts...</div>';
     ov.appendChild(hdr); ov.appendChild(feed);
     document.body.appendChild(ov);
@@ -14231,11 +14101,10 @@ async function openUserProfile(userId, username, avatarUrl) {
                 if (actData.records && actData.records.length > 10 && typeof window.drawTrack === 'function') {
                     var cv = document.getElementById('club-map-' + p.id);
                     if (cv) {
-                        // Reasignamos siempre (igual que el feed) — esto resetea el contexto del canvas
-                        // Para canvas pequeño (con foto): padre tiene 120x120
-                        // Para canvas grande (sin foto): padre tiene ancho completo x 220
-                        var pw = cv.parentElement ? (cv.parentElement.offsetWidth  || cv.width  || 120) : (cv.width  || Math.round(window.innerWidth));
-                        var ph = cv.parentElement ? (cv.parentElement.offsetHeight || cv.height || 120) : (cv.height || 220);
+                        // Usar dataset — valores grabados en el momento de crear el canvas,
+                        // independientes del layout del DOM (offsetWidth puede ser 0 en overlays recién montados)
+                        var pw = parseInt(cv.dataset.trackW) || Math.round(window.innerWidth);
+                        var ph = parseInt(cv.dataset.trackH) || 220;
                         cv.width  = pw;
                         cv.height = ph;
                         try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
@@ -14417,8 +14286,9 @@ async function renderClubFeed() {
                 if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
                     if (cv) {
-                        const pw = cv.parentElement?.offsetWidth || 300;
-                        const ph = cv.parentElement?.offsetHeight || 200;
+                        // Dataset tiene los valores correctos grabados al crear el canvas
+                        const pw = parseInt(cv.dataset.trackW) || cv.parentElement?.offsetWidth || Math.round(window.innerWidth);
+                        const ph = parseInt(cv.dataset.trackH) || cv.parentElement?.offsetHeight || 220;
                         cv.width = pw;
                         cv.height = ph;
                         try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
@@ -14536,33 +14406,55 @@ function _buildClubCard(post, myId, mutualSet) {
     /* Media */
     if (hasP || hasT) {
         var mw = document.createElement('div');
-        mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
-        if (hasP) {
+
+        if (hasP && hasT) {
+            // ── Foto izquierda + Track derecha, lado a lado ──────────────
+            var halfW = Math.round(window.innerWidth / 2);
+            mw.style.cssText = 'display:flex;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
+
+            // Foto (mitad izquierda)
+            var photoSide = document.createElement('div');
+            photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;';
+            var ph = document.createElement('img'); ph.src = post.photo_url;
+            ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
+            photoSide.appendChild(ph);
+            mw.appendChild(photoSide);
+
+            // Track (mitad derecha)
+            var trackSide = document.createElement('div');
+            trackSide.style.cssText = 'flex:1;position:relative;overflow:hidden;background:#0d1520;';
+            var cvo = document.createElement('canvas');
+            cvo.id = 'club-map-' + post.id;
+            cvo.width = halfW; cvo.height = 220;
+            cvo.dataset.trackW = String(halfW);
+            cvo.dataset.trackH = '220';
+            cvo.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
+            trackSide.appendChild(cvo);
+            mw.appendChild(trackSide);
+
+        } else if (hasP) {
+            // ── Solo foto ────────────────────────────────────────────────
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var ph = document.createElement('img'); ph.src = post.photo_url;
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
             mw.appendChild(ph);
             var gb = document.createElement('div');
             gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
             mw.appendChild(gb);
+
+        } else {
+            // ── Solo track, ancho completo ───────────────────────────────
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            var cvFull = document.createElement('canvas');
+            cvFull.id = 'club-map-' + post.id;
+            cvFull.width = Math.round(window.innerWidth);
+            cvFull.height = 220;
+            cvFull.dataset.trackW = String(Math.round(window.innerWidth));
+            cvFull.dataset.trackH = '220';
+            cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
+            mw.appendChild(cvFull);
         }
-        if (hasT) {
-            if (hasP) {
-                var mo = document.createElement('div');
-                mo.style.cssText = 'position:absolute;bottom:12px;right:12px;width:120px;height:120px;border-radius:16px;overflow:hidden;border:2px solid rgba(255,255,255,.3);box-shadow:0 4px 24px rgba(0,0,0,.7);background:#0d1520;';
-                var cvo = document.createElement('canvas');
-                cvo.id = 'club-map-' + post.id;
-                cvo.width = 120; cvo.height = 120;
-                cvo.style.cssText = 'width:100%;height:100%;display:block;';
-                mo.appendChild(cvo); mw.appendChild(mo);
-            } else {
-                var cvFull = document.createElement('canvas');
-                cvFull.id = 'club-map-' + post.id;
-                cvFull.width = Math.round(window.innerWidth);
-                cvFull.height = 220;
-                cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
-                mw.appendChild(cvFull);
-            }
-        }
+
         card.appendChild(mw);
     }
 
@@ -14617,20 +14509,7 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
                 if (_iMine) {
                     window._sbClient.from('reactions').delete().eq('post_id',_pid).eq('user_id',myId).eq('emoji',_em).then(() => {});
                 } else {
-                    window._sbClient.from('reactions').insert({post_id:_pid,user_id:myId,emoji:_em}).then(async () => {
-                        // Push VAPID al autor del post
-                        try {
-                            var { data: post } = await window._sbClient.from('club_posts').select('user_id').eq('id',_pid).single();
-                            if (post && post.user_id !== myId) {
-                                var senderUN = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
-                                _sendPushToUser(post.user_id,
-                                    'MisterRunner',
-                                    '@' + senderUN + ' reaccionó con ' + _em + ' a tu actividad',
-                                    { type: 'reaction', postId: _pid }
-                                );
-                            }
-                        } catch(e) {}
-                    });
+                    window._sbClient.from('reactions').insert({post_id:_pid,user_id:myId,emoji:_em}).then(() => {});
                 }
             };
         })(em, postId, iMine, reactions, bar);
@@ -14652,7 +14531,7 @@ function shareActivityToClub(actId, actObj) {
     var modal = document.createElement('div');
     modal.id = 'club-confirm-modal';
     modal.style.cssText = 'position:fixed;inset:0;z-index:60000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.55);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
-    modal.innerHTML = '<div style="background:var(--card);border-radius:22px 22px 18px 18px;padding:24px 20px 20px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="club-confirm-inner"><div style="text-align:center;margin-bottom:18px;"><div style="width:52px;height:52px;border-radius:50%;background:var(--crim-lt);border:1.5px solid var(--crim-bd);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:24px;">🏃</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:6px;">Compartir en el Club</div><div style="font-size:13px;color:var(--ts);line-height:1.5;">Esta actividad se publicará en el Club y podrán verla tus seguidores.</div></div><div style="display:flex;gap:10px;"><button id="club-cancel-btn" style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="club-confirm-ok" style="flex:1;background:var(--crimson);border:none;border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Publicar ✓</button></div></div>';
+    modal.innerHTML = '<div style="background:var(--card);border-radius:28px 28px 20px 20px;padding:28px 22px 22px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="club-confirm-inner"><div style="text-align:center;margin-bottom:22px;"><div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,rgba(196,136,30,.18),rgba(196,136,30,.06));border:2px solid var(--gold-bd);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;font-size:28px;box-shadow:0 4px 20px rgba(196,136,30,.2);">🏃</div><div style="font-size:19px;font-weight:900;color:var(--tw);margin-bottom:8px;letter-spacing:-.3px;">Compartir en el Club</div><div style="font-size:13px;color:var(--ts);line-height:1.6;">Esta actividad se publicará en el Club<br>y podrán verla tus seguidores.</div></div><div style="display:flex;flex-direction:column;gap:10px;"><button id="club-confirm-ok" style="width:100%;background:linear-gradient(135deg,var(--gold) 0%,#b87800 100%);border:none;border-radius:16px;padding:16px;font-family:var(--f);font-size:15px;font-weight:800;color:#fff;cursor:pointer;letter-spacing:.3px;box-shadow:0 4px 16px rgba(196,136,30,.4);">Publicar en el Club ✓</button><button id="club-cancel-btn" style="width:100%;background:transparent;border:1.5px solid var(--border);border-radius:16px;padding:14px;font-family:var(--f);font-size:14px;font-weight:600;color:var(--ts);cursor:pointer;">Cancelar</button></div></div>';
     document.body.appendChild(modal);
     requestAnimationFrame(function() { requestAnimationFrame(function() {
         modal.style.opacity = '1';
@@ -14741,19 +14620,26 @@ function _showClubPublishingBanner() {
 
 function _showClubSharedBanner() {
     var ex = document.getElementById('club-shared-banner'); if (ex) ex.remove();
+    // Modal centrado de éxito, más prominente que un toast
     var b = document.createElement('div'); b.id = 'club-shared-banner';
-    b.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+80px);left:50%;transform:translateX(-50%) translateY(20px);z-index:40000;background:var(--card);border:1.5px solid var(--gold-bd);border-radius:16px;padding:14px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);opacity:0;transition:all .3s cubic-bezier(.32,.72,0,1);min-width:260px;max-width:90vw;';
-    var chk = document.createElement('div'); chk.style.cssText = 'width:36px;height:36px;border-radius:50%;background:rgba(46,180,96,.15);border:1.5px solid rgba(46,180,96,.4);display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    chk.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2eb460" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
-    var txt = document.createElement('div'); txt.style.cssText = 'flex:1;min-width:0;';
-    txt.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--tw);">Compartido en el Club ✓</div><div style="font-size:11px;color:var(--tm);margin-top:1px;">Visible para tus seguidores</div>';
-    var goBtn = document.createElement('button');
-    goBtn.style.cssText = 'background:var(--gold-lt);border:1.5px solid var(--gold-bd);border-radius:10px;padding:7px 12px;font-family:var(--f);font-size:11px;font-weight:700;color:var(--gold);cursor:pointer;white-space:nowrap;flex-shrink:0;';
-    goBtn.textContent = 'Ver Club →'; goBtn.onclick = function() { b.remove(); openClub(); };
-    b.appendChild(chk); b.appendChild(txt); b.appendChild(goBtn);
+    b.style.cssText = 'position:fixed;inset:0;z-index:60001;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.5);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
+    b.innerHTML = '<div id="club-shared-inner" style="background:var(--card);border-radius:28px 28px 20px 20px;padding:28px 22px 22px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);text-align:center;">'
+        + '<div style="width:64px;height:64px;border-radius:50%;background:rgba(46,180,96,.12);border:2px solid rgba(46,180,96,.35);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;font-size:28px;">✅</div>'
+        + '<div style="font-size:19px;font-weight:900;color:var(--tw);margin-bottom:6px;">¡Publicado en el Club!</div>'
+        + '<div style="font-size:13px;color:var(--ts);line-height:1.6;margin-bottom:22px;">Tu actividad ya está visible<br>para tus seguidores.</div>'
+        + '<button id="club-shared-go" style="width:100%;background:linear-gradient(135deg,var(--gold) 0%,#b87800 100%);border:none;border-radius:16px;padding:16px;font-family:var(--f);font-size:15px;font-weight:800;color:#fff;cursor:pointer;letter-spacing:.3px;box-shadow:0 4px 16px rgba(196,136,30,.4);margin-bottom:10px;">Ir al Club →</button>'
+        + '<button id="club-shared-close" style="width:100%;background:transparent;border:1.5px solid var(--border);border-radius:16px;padding:13px;font-family:var(--f);font-size:14px;font-weight:600;color:var(--ts);cursor:pointer;">Cerrar</button>'
+        + '</div>';
     document.body.appendChild(b);
-    requestAnimationFrame(function() { requestAnimationFrame(function() { b.style.opacity = '1'; b.style.transform = 'translateX(-50%) translateY(0)'; }); });
-    setTimeout(function() { if (b.parentNode) { b.style.opacity = '0'; b.style.transform = 'translateX(-50%) translateY(10px)'; setTimeout(function() { if (b.parentNode) b.remove(); }, 300); } }, 4500);
+    requestAnimationFrame(function() { requestAnimationFrame(function() {
+        b.style.opacity = '1';
+        var inner = document.getElementById('club-shared-inner');
+        if (inner) inner.style.transform = 'translateY(0)';
+    }); });
+    var close = function() { b.style.opacity = '0'; setTimeout(function() { if (b.parentNode) b.remove(); }, 250); };
+    document.getElementById('club-shared-go').onclick = function() { close(); openClub(); };
+    document.getElementById('club-shared-close').onclick = close;
+    b.addEventListener('click', function(e) { if (e.target === b) close(); });
 }
 
 /* ── User search ─────────────────────────────────────────────────── */
@@ -14969,13 +14855,6 @@ async function _sendMsg(toId) {
         var area = document.getElementById('chat-messages-' + toId);
         if (!area) { var chatView2 = document.getElementById('club-chat-view'); area = chatView2 ? chatView2.querySelector('[id^="chat-messages-"]') : null; }
         if (area) area.scrollTop = area.scrollHeight;
-        // Enviar push VAPID al destinatario (funciona con app cerrada)
-        var senderUsername = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : 'Alguien';
-        _sendPushToUser(toId,
-            'MisterRunner',
-            '@' + senderUsername + ': ' + content.substring(0, 80),
-            { type: 'message', fromId: myId }
-        );
     }
 }
 
@@ -15020,9 +14899,106 @@ async function openConversations() {
     if (!convs || !convs.length) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--tm);">No tienes conversaciones aún.<br><small>Usa el 💬 en las tarjetas del Club.</small></div>'; return; }
     list.innerHTML = '';
     convs.forEach(c => {
+        // ── Wrapper con swipe-to-delete ────────────────────────────────
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'position:relative;overflow:hidden;border-bottom:1px solid var(--bsoft);';
+
+        // Fondo rojo de eliminar (detrás)
+        var delBg = document.createElement('div');
+        delBg.style.cssText = 'position:absolute;inset:0;background:#ef4444;display:flex;align-items:center;justify-content:end;padding-right:24px;opacity:0;transition:opacity .15s;pointer-events:none;';
+        delBg.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+        wrap.appendChild(delBg);
+
+        // Fila deslizante
         var el = document.createElement('div');
-        el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--bsoft);cursor:pointer;';
-        (function(_id, _un, _ua) { el.onclick = function() { convView.style.transform = 'translateX(100%)'; setTimeout(() => openChat(_id, _un, _ua), 350); }; })(c.other_id, c.other_username, c.other_avatar);
+        el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:13px 0;cursor:pointer;background:var(--bg);transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
+
+        (function(_id, _un, _ua, _wrap) {
+            var startX = 0, startY = 0, curX = 0, swiping = false, swipeAxis = null, revealed = false;
+            var THRESHOLD = 80;
+
+            el.addEventListener('touchstart', function(e) {
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+                curX = 0; swiping = true; swipeAxis = null;
+                el.style.transition = 'none';
+            }, {passive: true});
+
+            el.addEventListener('touchmove', function(e) {
+                if (!swiping) return;
+                var dx = e.touches[0].clientX - startX;
+                var dy = e.touches[0].clientY - startY;
+                if (!swipeAxis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+                    swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v';
+                }
+                if (swipeAxis !== 'h') return;
+                if (dx < 0 && !revealed) {
+                    curX = Math.max(-THRESHOLD, dx);
+                    el.style.transform = 'translateX(' + curX + 'px)';
+                    delBg.style.opacity = String(Math.min(1, Math.abs(curX) / THRESHOLD));
+                } else if (revealed && dx > 0) {
+                    curX = Math.min(0, dx - THRESHOLD);
+                    el.style.transform = 'translateX(' + curX + 'px)';
+                    delBg.style.opacity = String(Math.max(0, 1 + curX / THRESHOLD));
+                }
+            }, {passive: true});
+
+            el.addEventListener('touchend', function() {
+                swiping = false;
+                el.style.transition = 'transform .25s cubic-bezier(.25,.46,.45,.94)';
+                if (curX < -THRESHOLD * 0.55 && !revealed) {
+                    el.style.transform = 'translateX(-' + THRESHOLD + 'px)';
+                    delBg.style.opacity = '1';
+                    delBg.style.pointerEvents = 'auto';
+                    revealed = true;
+                } else if (revealed && curX > -THRESHOLD * 0.5) {
+                    el.style.transform = 'translateX(0)';
+                    delBg.style.opacity = '0';
+                    delBg.style.pointerEvents = 'none';
+                    revealed = false;
+                } else if (!revealed) {
+                    el.style.transform = 'translateX(0)';
+                    delBg.style.opacity = '0';
+                }
+            });
+
+            // Tap cuando no hay swipe: abrir chat
+            el.onclick = function() {
+                if (revealed) {
+                    el.style.transform = 'translateX(0)';
+                    delBg.style.opacity = '0';
+                    delBg.style.pointerEvents = 'none';
+                    revealed = false;
+                    return;
+                }
+                convView.style.transform = 'translateX(100%)';
+                setTimeout(() => openChat(_id, _un, _ua), 350);
+            };
+
+            // Tap en el fondo rojo: eliminar conversación
+            delBg.addEventListener('click', async function() {
+                if (!confirm('¿Eliminar esta conversación?')) {
+                    el.style.transform = 'translateX(0)';
+                    delBg.style.opacity = '0';
+                    delBg.style.pointerEvents = 'none';
+                    revealed = false;
+                    return;
+                }
+                var { data: { session } } = await window._sbClient.auth.getSession();
+                if (!session) return;
+                // Borrar todos los mensajes entre los dos usuarios
+                await window._sbClient.from('messages')
+                    .delete()
+                    .or('and(from_id.eq.' + session.user.id + ',to_id.eq.' + _id + '),and(from_id.eq.' + _id + ',to_id.eq.' + session.user.id + ')');
+                _wrap.style.transition = 'opacity .2s, max-height .3s';
+                _wrap.style.opacity = '0';
+                _wrap.style.maxHeight = '0';
+                _wrap.style.overflow = 'hidden';
+                setTimeout(function() { if (_wrap.parentNode) _wrap.remove(); }, 300);
+                showToast('Conversación eliminada', 1800);
+            });
+        })(c.other_id, c.other_username, c.other_avatar, wrap);
+
         var av = document.createElement('div');
         av.style.cssText = 'width:46px;height:46px;border-radius:50%;background:var(--crimson);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:#fff;position:relative;';
         if (c.other_avatar) { var ai = document.createElement('img'); ai.src = c.other_avatar; ai.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(ai); }
@@ -15036,7 +15012,9 @@ async function openConversations() {
         var lastAt = new Date(c.last_at).toLocaleDateString('es-ES', {day:'numeric',month:'short'});
         var msgW = c.unread_count > 0 ? 'font-size:12px;color:var(--tw);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;' : 'font-size:12px;color:var(--ts);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;';
         info.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;font-weight:700;color:var(--tw);">@' + c.other_username + '</span><span style="font-size:10px;color:var(--tm);">' + lastAt + '</span></div><div style="' + msgW + '">' + (c.last_message || '') + '</div>';
-        el.appendChild(av); el.appendChild(info); list.appendChild(el);
+        el.appendChild(av); el.appendChild(info);
+        wrap.appendChild(el);
+        list.appendChild(wrap);
     });
 }
 
@@ -15071,7 +15049,7 @@ window.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══ CLUB VIEW ════════════════════════════════════════════════════ -->
     <div id="club-view" style="display:none;position:fixed;inset:0;z-index:20000;background:var(--bg);flex-direction:column;overflow:hidden;transform:translateY(-100%);transition:transform .38s cubic-bezier(.32,.72,0,1);">
-        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;border-bottom:2px solid var(--gold-bd);background:var(--bg);">
+        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 20px;border-bottom:2px solid var(--gold-bd);background:var(--bg);">
             <!-- Top row -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
                 <button onclick="closeClub()" style="width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
@@ -15100,7 +15078,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
             <!-- Profile row -->
-            <div style="display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;">
+            <div style="display:flex;align-items:center;gap:20px;justify-content:center;padding-top:12px;">
                 <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:3px solid var(--gold-bd);cursor:pointer;"></div>
                 <div>
                     <div id="club-hdr-username" style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">—</div>
