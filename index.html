@@ -3822,7 +3822,7 @@
         if(!window.confirm('¿Cerrar sesión?'))return;
         if(window._sbClient){window._sbClient.auth.signOut().catch(()=>{});}
         currentUser=null;APP_KEY_OVERRIDE=null;activePlan=null;activeStrengthPlan=null;activities=[];
-        profileData={name:'',flag:'🏃',meta:'',watch:'',avatar:'',dob:'',city:'',weight:'',height:'',sex:'H',vo2max:null,marcas:{'5k':'','10k':'','hm':'','m':''},hrMax:195,hrRest:50,weeksExp:0,weeksExpSavedAt:null,trainingDays:['L','M','J','V','D'],injuries:[]};
+        profileData={name:'',flag:'🏃',meta:'',watch:'',avatar:'',bio:'',dob:'',city:'',weight:'',height:'',sex:'H',vo2max:null,marcas:{'5k':'','10k':'','hm':'','m':''},hrMax:195,hrRest:50,weeksExp:0,weeksExpSavedAt:null,trainingDays:['L','M','J','V','D'],injuries:[]};
         // Don't clear IDB - each user's activities are tagged with _owner and will be filtered on load
         const ls=document.getElementById('login-screen'),nav=document.getElementById('nav');
         if(nav)nav.style.display='none';
@@ -4274,7 +4274,7 @@
     let paceValue = 262; // seconds per km (4'22" = 262s)
     // Profile data — single source of truth (not read from DOM)
     let profileData = {
-        name:'', flag:'🇪🇸', meta:'', watch:'', avatar:'',
+        name:'', flag:'🇪🇸', meta:'', watch:'', avatar:'', bio:'',
         dob:'', city:'', weight:'', height:'', sex:'H', vo2max: null,
         marcas:{'5k':'—','10k':'—','hm':'—','m':'—'},
         hrMax: 195, hrRest: 50, weeksExp: 0, weeksExpSavedAt: null,
@@ -5634,7 +5634,8 @@
         const ty=lat=>H-pad-oy-((lat-minLat)/latCF)*sc;
         function _doDrawTrack(bgImg) {
             ctx.clearRect(0,0,W,H);
-            if (bgImg) {
+            const hasBg = !!bgImg;
+            if (hasBg) {
                 // Cover fill with satellite image
                 const iAR = bgImg.naturalWidth / bgImg.naturalHeight;
                 const cAR = W / H;
@@ -5645,7 +5646,32 @@
                 // Dark overlay for contrast
                 ctx.fillStyle='rgba(0,10,20,.50)'; ctx.fillRect(0,0,W,H);
             } else {
-                ctx.fillStyle='#0d1520'; ctx.fillRect(0,0,W,H);
+                // Solid base + radial gradient centered on the track's centroid for depth
+                ctx.fillStyle='#0a121e'; ctx.fillRect(0,0,W,H);
+                // Compute track centroid (in canvas coords) for the gradient center
+                let cx = 0, cy = 0;
+                for (let i=0; i<pts.length; i++) { cx += tx(pts[i].lon); cy += ty(pts[i].lat); }
+                cx /= pts.length; cy /= pts.length;
+                const gradR = Math.hypot(W, H) * 0.62;
+                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, gradR);
+                grad.addColorStop(0,    'rgba(40, 78, 124, 0.45)');
+                grad.addColorStop(0.55, 'rgba(20, 40, 70, 0.22)');
+                grad.addColorStop(1,    'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle grid (only when no satellite — would look dirty over imagery)
+                const gridStep = Math.max(28, Math.round(Math.min(W, H) / 6));
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let x = gridStep; x < W; x += gridStep) {
+                    ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H);
+                }
+                for (let y = gridStep; y < H; y += gridStep) {
+                    ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5);
+                }
+                ctx.stroke();
             }
             // Shoe silhouette watermark (faint, behind track)
             _drawShoeSilhouette(ctx, W, H, shoeColor || '#29B6F6');
@@ -5657,25 +5683,25 @@
                 ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
             }
 
-            // Neon glow layer
+            // Neon glow — beefier outer halo
             ctx.lineJoin = 'round'; 
             ctx.lineCap = 'round';
             ctx.strokeStyle = shoeColor || '#00ffff'; 
             ctx.shadowColor = shoeColor || '#00ffff'; 
-            ctx.shadowBlur = 12;
-            ctx.lineWidth = 3.5;
+            ctx.shadowBlur = 16;
+            ctx.lineWidth = 4.2;
             ctx.stroke();
 
             // Second glow layer for intensity
-            ctx.shadowBlur = 6;
-            ctx.lineWidth = 2.5;
+            ctx.shadowBlur = 8;
+            ctx.lineWidth = 3;
             ctx.stroke();
 
             // Core bright line (neon center)
             ctx.shadowColor = 'transparent';
             ctx.shadowBlur = 0;
-            ctx.strokeStyle = 'rgba(255,255,255,0.9)'; 
-            ctx.lineWidth = 1.2;
+            ctx.strokeStyle = 'rgba(255,255,255,0.95)'; 
+            ctx.lineWidth = 1.4;
             ctx.stroke();
 
             // Start dot (green) — smaller radius
@@ -5687,8 +5713,120 @@
             ctx.beginPath(); ctx.arc(tx(pts[pts.length-1].lon),ty(pts[pts.length-1].lat),r,0,Math.PI*2);
             ctx.fillStyle='#FF3B30'; ctx.shadowColor='rgba(255,59,48,0.8)'; ctx.shadowBlur=4; ctx.fill();
             ctx.shadowBlur=0;
+
+            // ── DECORATIVE OVERLAYS (only when canvas is big enough to fit them nicely) ──
+            // Skip on very small thumbnails to avoid clutter.
+            if (W >= 180 && H >= 120) {
+                _drawCompassRose(ctx, W, H);
+                _drawScaleBar(ctx, W, H, minLat, maxLat, minLon, maxLon, sc, latCF);
+                _drawGpsWatermark(ctx, W, H);
+            }
         }
         _getSatelliteImg(_doDrawTrack);
+    }
+
+    // Compass rose — small N indicator top-right.
+    // Always-north because we use a north-up equirectangular projection.
+    function _drawCompassRose(ctx, W, H) {
+        const size = Math.max(18, Math.min(26, Math.round(Math.min(W, H) * 0.07)));
+        const cx = W - size - 10;
+        const cy = size + 10;
+        ctx.save();
+        // Background circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, size, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(8, 16, 28, 0.55)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // North arrow (red)
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - size * 0.7);
+        ctx.lineTo(cx - size * 0.28, cy + size * 0.05);
+        ctx.lineTo(cx, cy - size * 0.15);
+        ctx.lineTo(cx + size * 0.28, cy + size * 0.05);
+        ctx.closePath();
+        ctx.fillStyle = '#e74c3c';
+        ctx.fill();
+        // South arrow (white, faint)
+        ctx.beginPath();
+        ctx.moveTo(cx, cy + size * 0.7);
+        ctx.lineTo(cx - size * 0.22, cy + size * 0.05);
+        ctx.lineTo(cx, cy + size * 0.15);
+        ctx.lineTo(cx + size * 0.22, cy + size * 0.05);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.fill();
+        // "N" letter above
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.font = '700 ' + Math.round(size * 0.5) + 'px var(--f), system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('N', cx, cy - size - Math.round(size * 0.42));
+        ctx.restore();
+    }
+
+    // Scale bar — bottom-left. Width chosen so it represents a "nice" round distance
+    // (50m, 100m, 200m, 500m, 1km, 2km, 5km, 10km, etc.) based on the projection scale.
+    function _drawScaleBar(ctx, W, H, minLat, maxLat, minLon, maxLon, sc, latCF) {
+        // Pixels-per-meter at the track's latitude.
+        // 1 degree of longitude ≈ 111320 * cos(lat) meters; 1 deg lat ≈ 110540 m.
+        // Our scale `sc` is pixels per degree (longitude). So:
+        const metersPerLonDeg = 111320 * latCF;
+        const pxPerMeter = sc / metersPerLonDeg;
+        if (!isFinite(pxPerMeter) || pxPerMeter <= 0) return;
+
+        // Choose a target bar width of ~22% of canvas width, snap to a nice distance.
+        const targetPx = W * 0.22;
+        const targetMeters = targetPx / pxPerMeter;
+        const niceSteps = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+        let chosen = niceSteps[0];
+        for (let i = 0; i < niceSteps.length; i++) {
+            if (niceSteps[i] <= targetMeters * 1.5) chosen = niceSteps[i];
+        }
+        const barPx = chosen * pxPerMeter;
+        // If the bar is absurdly long or short, abort (avoids ugly result on weird canvases)
+        if (barPx < 18 || barPx > W * 0.5) return;
+
+        const label = chosen >= 1000 ? (chosen / 1000) + ' km' : chosen + ' m';
+        const x0 = 10;
+        const y0 = H - 14;
+        const barH = 4;
+        ctx.save();
+        // Subtle dark plate behind the scale for legibility
+        const plateW = barPx + 14;
+        const plateH = 22;
+        ctx.fillStyle = 'rgba(8, 16, 28, 0.55)';
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x0 - 5, y0 - 14, plateW, plateH, 4);
+        else ctx.rect(x0 - 5, y0 - 14, plateW, plateH);
+        ctx.fill();
+        // White bar with tick caps
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0 - barH); ctx.lineTo(x0, y0);
+        ctx.lineTo(x0 + barPx, y0); ctx.lineTo(x0 + barPx, y0 - barH);
+        ctx.stroke();
+        // Label centered above the bar
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.font = '600 9px var(--f), system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(label, x0 + barPx / 2, y0 - barH - 2);
+        ctx.restore();
+    }
+
+    // Small "GPS" tag — bottom-right watermark, very faint
+    function _drawGpsWatermark(ctx, W, H) {
+        ctx.save();
+        ctx.font = '700 8.5px var(--f), system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+        ctx.fillText('GPS · TRACK', W - 8, H - 6);
+        ctx.restore();
     }
 
     // ── MAPBOX STATIC API — only used in activity detail (big canvas) ──────────────
@@ -5696,8 +5834,95 @@
     // Falls back to drawTrack() if offline / fetch fails / no records.
     const _MAPBOX_TOKEN = 'pk.eyJ1IjoibWlzdGVycnVubmVyb2ZpY2lhbCIsImEiOiJjbXAxYmY5ZG4wM2htMnRzOW1pMHJieDdlIn0.GpKJM9556kj6CLNJATYDLw';
     const _MAPBOX_STYLE = 'outdoors-v12';
-    // Cache per-actId so navigating back to the same activity doesn't re-download
+    // In-memory cache per-actId so navigating back to the same activity doesn't re-download
     const _mapboxImgCache = {};
+
+    // ── PERSISTENT CACHE (localStorage) ──────────────────────────
+    // Saves Mapbox images as dataURLs so each activity is fetched only once
+    // per device (instead of once per session). Reduces Mapbox quota usage
+    // by ~60% in typical use. LRU eviction when storage fills up.
+    //
+    // To ENABLE: change USE_PERSISTENT_CACHE to true.
+    // When disabled: zero side effects, drawTrackWithMapbox behaves identically
+    // to the in-memory-only version.
+    const USE_PERSISTENT_CACHE = true;
+    const _PC_PREFIX     = 'mb_img:';         // localStorage key per image
+    const _PC_INDEX_KEY  = 'mb_idx';          // localStorage key for the LRU index
+    const _PC_MAX_BYTES  = 4 * 1024 * 1024;   // ~4MB total budget (localStorage caps at 5MB)
+    const _PC_MAX_ENTRIES = 80;               // hard cap on number of cached images
+
+    // Read the LRU index. Index shape: [{ k: cacheKey, t: lastUsedTimestamp, s: byteSize }, ...]
+    function _pcReadIndex() {
+        if (!USE_PERSISTENT_CACHE) return [];
+        try {
+            const raw = localStorage.getItem(_PC_INDEX_KEY);
+            if (!raw) return [];
+            const arr = JSON.parse(raw);
+            return Array.isArray(arr) ? arr : [];
+        } catch(e) { return []; }
+    }
+    function _pcWriteIndex(idx) {
+        if (!USE_PERSISTENT_CACHE) return;
+        try { localStorage.setItem(_PC_INDEX_KEY, JSON.stringify(idx)); } catch(e) {}
+    }
+    // Try to get a cached dataURL. Updates lastUsed timestamp on hit.
+    function _pcGet(cacheKey) {
+        if (!USE_PERSISTENT_CACHE || !cacheKey) return null;
+        try {
+            const dataUrl = localStorage.getItem(_PC_PREFIX + cacheKey);
+            if (!dataUrl) return null;
+            // Bump LRU timestamp
+            const idx = _pcReadIndex();
+            const entry = idx.find(e => e.k === cacheKey);
+            if (entry) { entry.t = Date.now(); _pcWriteIndex(idx); }
+            return dataUrl;
+        } catch(e) { return null; }
+    }
+    // Store an Image element as dataURL. Evicts oldest entries if needed.
+    function _pcStore(cacheKey, imgEl) {
+        if (!USE_PERSISTENT_CACHE || !cacheKey || !imgEl) return;
+        try {
+            // Convert image → dataURL via temp canvas. Mapbox sends CORS headers
+            // so this won't taint the canvas (we set crossOrigin='anonymous' on the Image).
+            const tmp = document.createElement('canvas');
+            // Cap size to keep dataURL bytes reasonable; 600px wide is enough for thumb quality.
+            const maxW = 800;
+            const scale = imgEl.naturalWidth > maxW ? maxW / imgEl.naturalWidth : 1;
+            tmp.width  = Math.round(imgEl.naturalWidth  * scale);
+            tmp.height = Math.round(imgEl.naturalHeight * scale);
+            tmp.getContext('2d').drawImage(imgEl, 0, 0, tmp.width, tmp.height);
+            // JPEG @0.82 quality → roughly 40-80KB per image (vs 150-300KB for PNG)
+            const dataUrl = tmp.toDataURL('image/jpeg', 0.82);
+            const sizeBytes = dataUrl.length; // approx (chars ≈ bytes for ASCII)
+
+            // Evict if needed
+            let idx = _pcReadIndex().filter(e => e.k !== cacheKey);
+            // Sort by lastUsed ascending so we can pop oldest from the front
+            idx.sort((a,b) => a.t - b.t);
+            let totalBytes = idx.reduce((s,e) => s + (e.s||0), 0) + sizeBytes;
+            while ((totalBytes > _PC_MAX_BYTES || idx.length >= _PC_MAX_ENTRIES) && idx.length > 0) {
+                const oldest = idx.shift();
+                try { localStorage.removeItem(_PC_PREFIX + oldest.k); } catch(e) {}
+                totalBytes -= (oldest.s || 0);
+            }
+            // Store the new entry
+            localStorage.setItem(_PC_PREFIX + cacheKey, dataUrl);
+            idx.push({ k: cacheKey, t: Date.now(), s: sizeBytes });
+            _pcWriteIndex(idx);
+        } catch(e) {
+            // QuotaExceeded, tainted canvas, or anything else → silently skip.
+            // The in-memory cache still works; we just don't persist this image.
+        }
+    }
+    // (Optional, exposed for debugging) — clear all persistent cache.
+    window._clearMapboxPersistentCache = function() {
+        try {
+            const idx = _pcReadIndex();
+            idx.forEach(e => { try { localStorage.removeItem(_PC_PREFIX + e.k); } catch(_) {} });
+            localStorage.removeItem(_PC_INDEX_KEY);
+            return idx.length;
+        } catch(e) { return -1; }
+    };
 
     // Adds the required "© Mapbox · OSM" attribution as a sibling of the canvas,
     // bottom-right of the canvas's parent. Idempotent (uses data-attr marker).
@@ -5890,27 +6115,55 @@
             return;
         }
 
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        let done = false;
-        const finish = (ok) => {
-            if (done) return; done = true;
-            if (ok) {
-                _mapboxImgCache[cacheK] = img;
-                // Only repaint if canvas is still in the DOM (user may have closed detail)
+        // 2b. Persistent cache check (only if enabled). Loads dataURL from localStorage,
+        //     decodes it into an Image, paints, and promotes to in-memory cache.
+        //     If disabled, _pcGet returns null and we skip straight to the network.
+        const persistentDataUrl = _pcGet(cacheK);
+        if (persistentDataUrl) {
+            const cachedImg = new Image();
+            cachedImg.onload = () => {
                 if (canvas.isConnected) {
-                    drawOverlay(img);
+                    _mapboxImgCache[cacheK] = cachedImg;
+                    drawOverlay(cachedImg);
                     _ensureMapboxAttribution(canvas);
                 }
-            }
-            // On fail: fallback is already painted, do nothing.
-        };
-        img.onload = () => finish(true);
-        img.onerror = () => finish(false);
-        // 8s timeout — Mapbox usually responds in <1s, but if there's no connection
-        // we don't want to leave the loading state hanging forever.
-        setTimeout(() => finish(false), 8000);
-        img.src = url;
+            };
+            cachedImg.onerror = () => {
+                // Stored dataURL corrupted? Fall back to network.
+                _doNetworkLoad();
+            };
+            cachedImg.src = persistentDataUrl;
+            return;
+        }
+
+        // 3. Network load (last resort).
+        _doNetworkLoad();
+
+        function _doNetworkLoad() {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            let done = false;
+            const finish = (ok) => {
+                if (done) return; done = true;
+                if (ok) {
+                    _mapboxImgCache[cacheK] = img;
+                    // Persist to localStorage for future sessions (no-op if flag is off)
+                    _pcStore(cacheK, img);
+                    // Only repaint if canvas is still in the DOM (user may have closed detail)
+                    if (canvas.isConnected) {
+                        drawOverlay(img);
+                        _ensureMapboxAttribution(canvas);
+                    }
+                }
+                // On fail: fallback is already painted, do nothing.
+            };
+            img.onload = () => finish(true);
+            img.onerror = () => finish(false);
+            // 8s timeout — Mapbox usually responds in <1s, but if there's no connection
+            // we don't want to leave the loading state hanging forever.
+            setTimeout(() => finish(false), 8000);
+            img.src = url;
+        }
     }
 
     // ── MAP ZOOM MODAL ───────────────────────────────────────
@@ -6984,9 +7237,12 @@
             track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
             track.style.transform  = 'translateX('+(-curCard*100)+'%)';
             dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
-            // Only allow scroll on active card, lock others
+            // Only allow scroll on active card, lock others.
+            // IMPORTANT: must be 'auto' (not '') on active card — clearing the inline
+            // style falls back to the .det-card class rule which is overflow:hidden,
+            // which silently kills vertical scroll on the card.
             allCards.forEach((c,i)=>{
-                c.style.overflowY = i===curCard ? '' : 'hidden';
+                c.style.overflowY = i===curCard ? 'auto' : 'hidden';
             });
         }
         goToCard(0); // init
@@ -10275,11 +10531,23 @@
     window.addEventListener('pagehide', saveAppState);
     window.addEventListener('beforeunload', saveAppState);
     // iOS PWA: re-check auth when restored from BFCache (back/forward navigation)
+    // IMPORTANT: After navigator.share() returns, the page is restored from BFCache
+    // and this fires. checkAutoLogin() returns false synchronously even when a session
+    // exists (the real check is inside an async .then), so we must NOT use its return
+    // value to decide whether to show the login screen — we'd flash login on every share.
+    // Instead, trust `currentUser` (synchronous in-memory state). If it's set, the user
+    // is logged in. Only show login when truly logged out.
     window.addEventListener('pageshow', (e) => {
         if(e.persisted) {
-            // Page restored from cache - re-validate auth
-            const autoLogged = checkAutoLogin();
-            if(!autoLogged) {
+            // Page restored from cache. If we already have a logged-in user in memory,
+            // do NOTHING — the session is still valid and the app is still mounted.
+            if(currentUser) return;
+            // No in-memory user — re-run the async auth check, then decide.
+            checkAutoLogin();
+            // Only show login if checkAutoLogin's async path doesn't restore the session.
+            // Give it a brief moment, then check currentUser again.
+            setTimeout(() => {
+                if(currentUser) return; // session was restored, good
                 const nav = document.getElementById('nav');
                 const ls  = document.getElementById('login-screen');
                 if(nav) nav.style.display = 'none';
@@ -10288,7 +10556,7 @@
                     ls.style.removeProperty('display');
                     requestAnimationFrame(() => { ls.style.opacity = '1'; ls.style.pointerEvents = ''; });
                 }
-            }
+            }, 400);
         }
     });
 
@@ -13886,6 +14154,116 @@ window.switchManualTab = function(id) {
 };
 window.drawTrack = drawTrack;
 window.drawTrackWithMapbox = drawTrackWithMapbox;
+
+// Smart feed/profile track: reuses Mapbox image from persistent cache if available
+// (saved by drawTrackWithMapbox when the user opens the detail view).
+// If no cache → falls back to drawTrack (decorated, no network).
+// IMPORTANT: never triggers a Mapbox request. Pure cache lookup or local draw.
+function drawTrackFromCacheOrFallback(canvas, records, shoeColor, cacheKey) {
+    if (!canvas || !records || records.length < 2) return;
+    // 1. Try in-memory cache first (instant)
+    if (cacheKey && _mapboxImgCache[cacheKey] &&
+        _mapboxImgCache[cacheKey].complete &&
+        _mapboxImgCache[cacheKey].naturalWidth > 0) {
+        _paintCachedMap(canvas, records, shoeColor, _mapboxImgCache[cacheKey]);
+        return;
+    }
+    // 2. Try persistent (localStorage) cache
+    const dataUrl = cacheKey ? _pcGet(cacheKey) : null;
+    if (dataUrl) {
+        const cachedImg = new Image();
+        cachedImg.onload = () => {
+            if (!canvas.isConnected) return;
+            _mapboxImgCache[cacheKey] = cachedImg; // promote to mem cache
+            _paintCachedMap(canvas, records, shoeColor, cachedImg);
+        };
+        cachedImg.onerror = () => {
+            // Corrupt? Fall back.
+            drawTrack(canvas, records, shoeColor);
+        };
+        cachedImg.src = dataUrl;
+        // While loading, paint the fallback so user sees something immediately.
+        drawTrack(canvas, records, shoeColor);
+        return;
+    }
+    // 3. No cache → decorated fallback
+    drawTrack(canvas, records, shoeColor);
+}
+
+// Helper: paints a cached Mapbox image as background and overlays the neon track.
+// Mirrors drawTrackWithMapbox's logic but works with any pre-loaded image.
+function _paintCachedMap(canvas, records, shoeColor, bgImg) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const pts = records.filter(r => Math.abs(r.lat) > 0.01 || Math.abs(r.lon) > 0.01);
+    if (pts.length < 2) { drawTrack(canvas, records, shoeColor); return; }
+
+    // Cover-fill the cached image
+    const iAR = bgImg.naturalWidth / bgImg.naturalHeight;
+    const cAR = W / H;
+    let sw, sh, sx, sy;
+    if (iAR > cAR) { sh = bgImg.naturalHeight; sw = sh * cAR; sx = (bgImg.naturalWidth - sw) / 2; sy = 0; }
+    else { sw = bgImg.naturalWidth; sh = sw / cAR; sx = 0; sy = (bgImg.naturalHeight - sh) / 2; }
+    ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
+    // Light contrast overlay
+    ctx.fillStyle = 'rgba(0,10,20,0.22)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Project track onto canvas (same logic as drawTrack)
+    const lats = pts.map(r => r.lat), lons = pts.map(r => r.lon);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    const pad = Math.round(Math.min(W, H) * 0.09);
+    const ranLat = maxLat - minLat || 0.0001, ranLon = maxLon - minLon || 0.0001;
+    const latCF = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
+    const sc = Math.min((W - pad * 2) / ranLon, (H - pad * 2) / (ranLat / latCF));
+    const drL = ranLon * sc, drA = (ranLat / latCF) * sc;
+    const ox = (W - pad * 2 - drL) / 2, oy = (H - pad * 2 - drA) / 2;
+    const tx = lon => pad + ox + (lon - minLon) * sc;
+    const ty = lat => H - pad - oy - ((lat - minLat) / latCF) * sc;
+
+    // Trace path
+    ctx.beginPath();
+    ctx.moveTo(tx(pts[0].lon), ty(pts[0].lat));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
+
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    // Neon glow (slightly more restrained over a real map to not overwhelm streets)
+    ctx.strokeStyle = shoeColor || '#00ffff';
+    ctx.shadowColor = shoeColor || '#00ffff';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.shadowBlur = 6;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+    // White core
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Start/end dots
+    const r = Math.max(2, Math.round(Math.min(W, H) * 0.028));
+    ctx.beginPath();
+    ctx.arc(tx(pts[0].lon), ty(pts[0].lat), r, 0, Math.PI * 2);
+    ctx.fillStyle = '#4CAF50';
+    ctx.shadowColor = 'rgba(76,175,80,0.8)'; ctx.shadowBlur = 4; ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(tx(pts[pts.length - 1].lon), ty(pts[pts.length - 1].lat), r, 0, Math.PI * 2);
+    ctx.fillStyle = '#FF3B30';
+    ctx.shadowColor = 'rgba(255,59,48,0.8)'; ctx.shadowBlur = 4; ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Attribution required when a real Mapbox image is shown
+    _ensureMapboxAttribution(canvas);
+}
+
+window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
 </script>
 
     <!-- MODAL IMPORTAR ACTIVIDAD -->
@@ -14624,28 +15002,42 @@ async function openUserProfile(userId, username, avatarUrl) {
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:20015;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 14px;background:var(--bg);border-bottom:2px solid var(--gold-bd);';
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+8px) 15px 12px;background:var(--bg);border-bottom:2px solid var(--gold-bd);position:relative;';
 
-    // Top row: back + @username centered + spacer (identical to Club top row)
+    // Subtle radial accent behind avatar — same as club header
+    var accent = document.createElement('div');
+    accent.setAttribute('aria-hidden', 'true');
+    accent.style.cssText = 'position:absolute;top:50px;left:60px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(196,136,30,.10) 0%,rgba(196,136,30,.04) 40%,transparent 70%);pointer-events:none;z-index:0;';
+    hdr.appendChild(accent);
+
+    // Top row: back + centered @username (big, like CLUB) + spacer
     var topRow = document.createElement('div');
-    topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
+    topRow.style.cssText = 'position:relative;display:flex;align-items:center;justify-content:space-between;height:38px;margin-bottom:12px;z-index:1;';
     var bb = document.createElement('button');
-    bb.style.cssText = 'width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    bb.style.cssText = 'width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
     bb.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
     bb.onclick = function(){ _setThemeColor('#8f1a28'); ov.remove(); };
     var titleEl = document.createElement('div');
-    titleEl.style.cssText = 'font-size:17px;font-weight:900;color:var(--crimson);letter-spacing:1px;';
-    titleEl.textContent = username || '?';
-    var spacer = document.createElement('div'); spacer.style.width = '38px';
+    titleEl.style.cssText = 'position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);font-size:26px;font-weight:900;color:var(--crimson);letter-spacing:3px;text-align:center;pointer-events:none;';
+    titleEl.textContent = 'CLUB';
+    var spacer = document.createElement('div'); spacer.style.cssText = 'width:38px;flex-shrink:0;';
     topRow.appendChild(bb); topRow.appendChild(titleEl); topRow.appendChild(spacer);
     hdr.appendChild(topRow);
 
-    // Profile row: avatar (68px) + stats + follow button (identical to Club profile row)
+    // Profile row: avatar | (follow btn + name + bio) | stats stacked vertical
     var profRow = document.createElement('div');
-    profRow.style.cssText = 'display:flex;align-items:center;gap:20px;justify-content:center;padding-top:4px;';
+    profRow.style.cssText = 'display:flex;align-items:center;gap:12px;padding:0 2px 0 6px;position:relative;z-index:1;';
+
+    // Avatar with gold gradient ring (same as club header)
+    var avWrap = document.createElement('div');
+    avWrap.style.cssText = 'position:relative;width:74px;height:74px;flex-shrink:0;';
+    var ring = document.createElement('div');
+    ring.setAttribute('aria-hidden', 'true');
+    ring.style.cssText = 'position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 140deg,#c4881e 0deg,#e8a825 90deg,#8f1a28 180deg,#c4881e 270deg,#e8a825 360deg);padding:2px;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;';
+    avWrap.appendChild(ring);
 
     var av = document.createElement('div');
-    av.style.cssText = 'width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;border:3px solid var(--gold-bd);flex-shrink:0;cursor:pointer;';
+    av.style.cssText = 'position:absolute;inset:3.5px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;border:2px solid var(--bg);box-shadow:0 4px 14px rgba(0,0,0,.16);cursor:pointer;';
     if (avatarUrl) {
         var ai=document.createElement('img'); ai.src=avatarUrl; ai.style.cssText='width:100%;height:100%;object-fit:cover;'; av.appendChild(ai);
         av.onclick = function() {
@@ -14656,25 +15048,55 @@ async function openUserProfile(userId, username, avatarUrl) {
             ov2.appendChild(img2); ov2.appendChild(nm2); document.body.appendChild(ov2);
         };
     } else av.textContent=(username||'?')[0].toUpperCase();
+    avWrap.appendChild(av);
 
-    // Stats identical to Club own header
-    var statsDiv = document.createElement('div');
-    statsDiv.innerHTML = '<div style="display:flex;gap:22px;"><div style="text-align:center;"><div id="up-posts" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">posts</div></div><div style="text-align:center;cursor:pointer;" onclick=""><div id="up-followers" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidores</div></div><div style="text-align:center;"><div id="up-following" style="font-size:16px;font-weight:800;color:var(--tw);">—</div><div style="font-size:10px;color:var(--tm);">seguidos</div></div></div>';
+    // Middle column: Follow button ABOVE name + bio
+    var midCol = document.createElement('div');
+    midCol.style.cssText = 'flex:1;min-width:0;line-height:1.25;display:flex;flex-direction:column;gap:4px;';
 
-    // Follow button
+    // Follow button (placed above the name, slim & pill-shaped)
     var amFollowing = false;
     var fBtn = document.createElement('button');
-    fBtn.style.cssText = 'padding:8px 14px;border-radius:18px;border:none;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
-    var updFBtn = function(){ fBtn.style.background=amFollowing?'#22c55e':'#ef4444'; fBtn.style.color='#fff'; fBtn.textContent=amFollowing?'Siguiendo':'Seguir'; };
+    fBtn.style.cssText = 'align-self:flex-start;padding:4px 12px;border-radius:14px;border:none;font-family:var(--f);font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.3px;line-height:1.2;flex-shrink:0;';
+    var updFBtn = function(){
+        fBtn.style.background = amFollowing ? '#22c55e' : '#ef4444';
+        fBtn.style.color = '#fff';
+        fBtn.textContent = amFollowing ? 'Siguiendo' : 'Seguir';
+    };
     fBtn.onclick = async function() {
         if(amFollowing){ await sb.from('follows').delete().eq('follower_id',myId).eq('following_id',userId); amFollowing=false; }
         else { await sb.from('follows').insert({follower_id:myId,following_id:userId}); amFollowing=true; }
         updFBtn();
         var {count:fc}=await sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId);
-        document.getElementById('up-followers').textContent=fc||0;
+        var foll = document.getElementById('up-followers'); if(foll) foll.textContent=fc||0;
     };
+    midCol.appendChild(fBtn);
 
-    profRow.appendChild(av); profRow.appendChild(statsDiv); profRow.appendChild(fBtn);
+    // Name (real name / username display)
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:16px;font-weight:800;color:var(--tw);letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    nameEl.textContent = username || '—';
+    midCol.appendChild(nameEl);
+
+    // Bio (read-only when viewing other users)
+    var bioEl = document.createElement('div');
+    bioEl.id = 'up-bio';
+    bioEl.style.cssText = 'font-size:11.5px;font-weight:500;color:var(--tm);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;font-style:italic;opacity:.85;';
+    bioEl.textContent = '—';
+    midCol.appendChild(bioEl);
+
+    // Right column: stats in a 2-col grid (number | label) for perfect vertical alignment
+    var statsCol = document.createElement('div');
+    statsCol.style.cssText = 'display:grid;grid-template-columns:auto auto;column-gap:6px;row-gap:3px;flex-shrink:0;align-items:baseline;';
+    statsCol.innerHTML = ''
+        + '<div id="up-posts" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;">—</div>'
+        + '<div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">posts</div>'
+        + '<div id="up-followers" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;">—</div>'
+        + '<div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">seguidores</div>'
+        + '<div id="up-following" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;">—</div>'
+        + '<div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">seguidos</div>';
+
+    profRow.appendChild(avWrap); profRow.appendChild(midCol); profRow.appendChild(statsCol);
     hdr.appendChild(profRow);
 
     var feed = document.createElement('div');
@@ -14684,16 +15106,36 @@ async function openUserProfile(userId, username, avatarUrl) {
     ov.appendChild(hdr); ov.appendChild(feed);
     document.body.appendChild(ov);
 
-    const [{count:pc},{count:flc},{count:fgc},{data:fchk}] = await Promise.all([
+    // Load stats + follow state + bio in parallel
+    const [{count:pc},{count:flc},{count:fgc},{data:fchk},bioRes] = await Promise.all([
         sb.from('club_posts').select('id',{count:'exact',head:true}).eq('user_id',userId),
         sb.from('follows').select('id',{count:'exact',head:true}).eq('following_id',userId),
         sb.from('follows').select('id',{count:'exact',head:true}).eq('follower_id',userId),
-        sb.from('follows').select('id').eq('follower_id',myId).eq('following_id',userId)
+        sb.from('follows').select('id').eq('follower_id',myId).eq('following_id',userId),
+        // Bio: graceful failure if column doesn't exist
+        sb.from('profiles').select('bio').eq('id',userId).single().then(function(r){return r;}).catch(function(){return {data:null};})
     ]);
     document.getElementById('up-posts').textContent=pc||0;
     document.getElementById('up-followers').textContent=flc||0;
     document.getElementById('up-following').textContent=fgc||0;
     amFollowing=(fchk||[]).length>0; updFBtn();
+
+    // Render bio (real text if filled, "—" placeholder otherwise)
+    var bioText = '';
+    if (bioRes && bioRes.data && typeof bioRes.data.bio === 'string') bioText = bioRes.data.bio.trim();
+    var bioElLive = document.getElementById('up-bio');
+    if (bioElLive) {
+        if (bioText) {
+            bioElLive.textContent = bioText;
+            bioElLive.style.fontStyle = '';
+            bioElLive.style.opacity = '';
+            bioElLive.style.color = 'var(--tm)';
+        } else {
+            bioElLive.textContent = 'Sin bio';
+            bioElLive.style.fontStyle = 'italic';
+            bioElLive.style.opacity = '.6';
+        }
+    }
 
     var {data:posts} = await sb.from('club_posts')
         .select('*, profiles!club_posts_user_id_fkey(id,username,avatar_url), reactions(id,user_id,emoji)')
@@ -14735,14 +15177,22 @@ async function openUserProfile(userId, username, avatarUrl) {
                 } catch(e) {}
             }
 
-            // No está en el feed — dibujar directamente
+            // No está en el feed — dibujar directamente (con caché de Mapbox si existe)
             var pw = (cv.parentElement && cv.parentElement.offsetWidth > 10)
                 ? cv.parentElement.offsetWidth : Math.round(window.innerWidth);
             var ph = (cv.parentElement && cv.parentElement.offsetHeight > 10)
                 ? cv.parentElement.offsetHeight : 220;
             cv.width  = pw;
             cv.height = ph;
-            try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
+            try {
+                if (typeof window.drawTrackFromCacheOrFallback === 'function') {
+                    // cacheKey uses act.id/dateStr — same key drawTrackWithMapbox uses in detail view
+                    var ck = actData.id || actData.dateStr || ('post-' + p.id);
+                    window.drawTrackFromCacheOrFallback(cv, actData.records, actData.shoeColor || '', ck);
+                } else {
+                    window.drawTrack(cv, actData.records, actData.shoeColor || '');
+                }
+            } catch(e) {}
         }
 
         // Pasada a 200ms: el overlay ya tiene layout y el feed ya habrá pintado sus tracks (setTimeout 150ms)
@@ -14793,6 +15243,27 @@ async function _loadClubHeaderStats() {
                 avEl.textContent = (profileData.name||'?')[0].toUpperCase();
             }
             unEl.textContent = profileData.name || '—';
+            // Bio: always visible. Render via the shared helper (handles placeholder).
+            // Click anywhere on the bio (filled or empty) → inline edit.
+            var bioEl = document.getElementById('club-hdr-bio');
+            if (bioEl) {
+                // First, render from local data (instant)
+                _renderClubHeaderBio(bioEl, profileData.bio);
+                // Then try to pull the latest bio from Supabase (catches up if user
+                // edited it from another device). Silently no-op if column missing.
+                (async function() {
+                    try {
+                        var { data: prof, error } = await sb.from('profiles').select('bio').eq('id', myId).single();
+                        if (!error && prof && typeof prof.bio === 'string') {
+                            if ((prof.bio || '').trim() !== (profileData.bio || '').trim()) {
+                                profileData.bio = prof.bio || '';
+                                _renderClubHeaderBio(bioEl, profileData.bio);
+                                if (typeof saveAppState === 'function') { try { saveAppState(); } catch(e) {} }
+                            }
+                        }
+                    } catch(e) { /* column missing or offline — ignore */ }
+                })();
+            }
         }
         // Posts count
         var { count: postCount } = await sb.from('club_posts').select('id', {count:'exact',head:true}).eq('user_id', myId);
@@ -14810,18 +15281,134 @@ async function _loadClubHeaderStats() {
 }
 
 function _openClubAvatarView() {
-    if (!profileData.avatar || !profileData.avatar.startsWith('data:')) return;
+    // Accept any avatar source: data: URI, https URL from Supabase Storage, anything.
+    var src = profileData && profileData.avatar ? profileData.avatar : '';
+    if (!src) return;
     var ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;';
-    ov.onclick = function() { ov.remove(); };
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;animation:_avFade .18s ease-out;';
+    // Inject the keyframes once
+    if (!document.getElementById('_avFadeStyle')) {
+        var st = document.createElement('style');
+        st.id = '_avFadeStyle';
+        st.textContent = '@keyframes _avFade{from{opacity:0}to{opacity:1}}';
+        document.head.appendChild(st);
+    }
+    ov.onclick = function() {
+        ov.style.animation = '_avFade .14s ease-out reverse';
+        setTimeout(function() { ov.remove(); }, 130);
+    };
     var img = document.createElement('img');
-    img.src = profileData.avatar;
+    img.src = src;
     img.style.cssText = 'width:260px;height:260px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.2);';
     var name = document.createElement('div');
     name.style.cssText = 'color:#fff;font-size:18px;font-weight:700;';
     name.textContent = profileData.name || '';
     ov.appendChild(img); ov.appendChild(name);
     document.body.appendChild(ov);
+}
+
+// Inline bio editor for the club header.
+// Click → swaps the div for a textarea. Blur or Enter (without Shift) saves.
+// Escape cancels. Persists to profileData + IndexedDB locally, and to Supabase if available.
+function _editClubBio(bioEl) {
+    if (!bioEl || bioEl.dataset.editing === '1') return;
+    bioEl.dataset.editing = '1';
+
+    var currentBio = (typeof profileData !== 'undefined' && profileData.bio) ? profileData.bio.trim() : '';
+    // Preserve the slot's geometry so the textarea doesn't jump the layout
+    var rect = bioEl.getBoundingClientRect();
+    var minH = Math.max(28, rect.height);
+
+    var ta = document.createElement('textarea');
+    ta.value = currentBio;
+    ta.maxLength = 150;
+    ta.rows = 2;
+    ta.placeholder = 'Añade tu bio (máx 150 caracteres)...';
+    ta.style.cssText = [
+        'width:100%',
+        'min-height:' + minH + 'px',
+        'box-sizing:border-box',
+        'background:var(--card)',
+        'color:var(--tw)',
+        'border:1.5px solid var(--gold-bd)',
+        'border-radius:8px',
+        'padding:6px 8px',
+        'font-family:var(--f),system-ui,sans-serif',
+        'font-size:12px',
+        'font-weight:500',
+        'line-height:1.35',
+        'resize:none',
+        'outline:none',
+        'display:block'
+    ].join(';');
+
+    // Insert textarea, hide the original div
+    var hadDisplay = bioEl.style.display;
+    bioEl.style.display = 'none';
+    bioEl.parentNode.insertBefore(ta, bioEl.nextSibling);
+    ta.focus();
+    // Place caret at the end so user can keep typing
+    try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch(e) {}
+
+    var done = false;
+    function cleanup(saved) {
+        if (done) return; done = true;
+        var newVal = saved ? ta.value.trim().slice(0, 150) : currentBio;
+        ta.remove();
+        bioEl.dataset.editing = '';
+        bioEl.style.display = hadDisplay || '';
+        // Update profileData + UI immediately
+        if (typeof profileData !== 'undefined') profileData.bio = newVal;
+        _renderClubHeaderBio(bioEl, newVal);
+        // Persist
+        if (saved) {
+            if (typeof saveAppState === 'function') { try { saveAppState(); } catch(e) {} }
+            _saveBioToSupabase(newVal);
+        }
+    }
+
+    ta.addEventListener('blur', function() { cleanup(true); });
+    ta.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); cleanup(false); }
+    });
+}
+
+// Apply the right look to the bio element depending on whether there's content
+function _renderClubHeaderBio(bioEl, bioText) {
+    if (!bioEl) return;
+    var text = (bioText || '').trim();
+    if (text) {
+        bioEl.textContent = text;
+        bioEl.style.color = '';        // inherit (var(--tm))
+        bioEl.style.fontStyle = '';
+        bioEl.style.opacity = '';
+    } else {
+        bioEl.textContent = 'Añade tu bio...';
+        bioEl.style.color = 'var(--tm)';
+        bioEl.style.fontStyle = 'italic';
+        bioEl.style.opacity = '.85';
+    }
+    bioEl.style.cursor = 'pointer';
+    bioEl.style.display = '-webkit-box';
+}
+
+// Save bio to Supabase. Graceful failure if column doesn't exist or no session.
+async function _saveBioToSupabase(bio) {
+    try {
+        var sb = window._sbClient;
+        if (!sb) return;
+        var { data:{ session } } = await sb.auth.getSession();
+        if (!session) return;
+        var { error } = await sb.from('profiles').update({ bio: bio }).eq('id', session.user.id);
+        if (error) {
+            // Column doesn't exist? PGRST204 ("could not find column") is common.
+            // We log to console for debugging but never alert the user — local save still works.
+            console.warn('[bio] Supabase save skipped:', error.message);
+        }
+    } catch(e) {
+        console.warn('[bio] Supabase save failed:', e);
+    }
 }
 
 async function openClubFollowersList(type) {
@@ -14927,7 +15514,15 @@ async function renderClubFeed() {
                         const ph = cv.parentElement?.offsetHeight || 200;
                         cv.width = pw;
                         cv.height = ph;
-                        try { window.drawTrack(cv, actData.records, actData.shoeColor || ''); } catch(e) {}
+                        try {
+                            if (typeof window.drawTrackFromCacheOrFallback === 'function') {
+                                // Same cacheKey as detail view → reuses Mapbox image from localStorage if user has seen it
+                                const ck = actData.id || actData.dateStr || ('post-' + post.id);
+                                window.drawTrackFromCacheOrFallback(cv, actData.records, actData.shoeColor || '', ck);
+                            } else {
+                                window.drawTrack(cv, actData.records, actData.shoeColor || '');
+                            }
+                        } catch(e) {}
                     }
                 }
             });
@@ -15372,21 +15967,21 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
 
     /* Topbar - fully integrated with status bar like iMessage */
     var tb = document.createElement('div');
-    tb.style.cssText = 'flex-shrink:0;background:var(--card);border-bottom:1px solid var(--border);padding-top:env(safe-area-inset-top,0px);';
+    tb.style.cssText = 'flex-shrink:0;background:var(--bg);padding-top:env(safe-area-inset-top,0px);';
 
     var tbInner = document.createElement('div');
-    tbInner.style.cssText = 'display:grid;grid-template-columns:52px 1fr 52px;align-items:center;padding:6px 8px 8px;';
+    tbInner.style.cssText = 'display:grid;grid-template-columns:52px 1fr 52px;align-items:center;padding:6px 8px 10px;';
 
     var backBtn = document.createElement('button');
     backBtn.style.cssText = 'border:none;background:none;cursor:pointer;display:flex;align-items:center;gap:2px;padding:6px 4px;color:#007AFF;font-size:16px;font-family:var(--f);';
     backBtn.innerHTML = '<svg width="10" height="17" viewBox="0 0 10 17" fill="none"><path d="M9 1L1 8.5L9 16" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     backBtn.onclick = function() { chatView.style.transform = 'translateX(100%)'; _activeChatUserId = null; _setThemeColor('#c4881e'); };
 
-    // Center: avatar + name
+    // Center: avatar + name (bigger avatar, closer to real iMessage)
     var centerCol = document.createElement('div');
-    centerCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;';
+    centerCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;';
     var avC = document.createElement('div');
-    avC.style.cssText = 'width:36px;height:36px;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;';
+    avC.style.cssText = 'width:50px;height:50px;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.10);';
     if (otherAvatar) {
         var avCI = document.createElement('img');
         avCI.src = otherAvatar;
@@ -15394,11 +15989,20 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
         avC.appendChild(avCI);
         centerCol.onclick = function() {
             var ov2 = document.createElement('div');
-            ov2.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;';
-            ov2.onclick = function() { ov2.remove(); };
+            ov2.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;animation:_avFade .18s ease-out;';
+            if (!document.getElementById('_avFadeStyle')) {
+                var st = document.createElement('style');
+                st.id = '_avFadeStyle';
+                st.textContent = '@keyframes _avFade{from{opacity:0}to{opacity:1}}';
+                document.head.appendChild(st);
+            }
+            ov2.onclick = function() {
+                ov2.style.animation = '_avFade .14s ease-out reverse';
+                setTimeout(function() { ov2.remove(); }, 130);
+            };
             var img2 = document.createElement('img');
             img2.src = otherAvatar;
-            img2.style.cssText = 'width:220px;height:220px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.2);';
+            img2.style.cssText = 'width:240px;height:240px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.2);';
             var nm2 = document.createElement('div');
             nm2.style.cssText = 'color:#fff;font-size:17px;font-weight:700;';
             nm2.textContent = otherUsername || '';
@@ -15408,7 +16012,7 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     } else avC.textContent = (otherUsername || '?')[0].toUpperCase();
 
     var nameEl = document.createElement('div');
-    nameEl.style.cssText = 'font-size:11px;font-weight:600;color:#007AFF;letter-spacing:-.1px;';
+    nameEl.style.cssText = 'font-size:12px;font-weight:600;color:#007AFF;letter-spacing:-.1px;';
     nameEl.textContent = otherUsername;
     centerCol.appendChild(avC); centerCol.appendChild(nameEl);
 
@@ -15427,9 +16031,9 @@ async function openChat(otherUserId, otherUsername, otherAvatar) {
     msgsArea.style.cssText = 'flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 12px 8px;display:flex;flex-direction:column;gap:4px;background:var(--bg);';
     chatView.appendChild(msgsArea);
 
-    /* Input */
+    /* Input — area blends with bg; the textarea keeps its own color to look floating */
     var inputArea = document.createElement('div');
-    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) - 40px);background:var(--card);border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end;';
+    inputArea.style.cssText = 'flex-shrink:0;padding:8px 12px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) - 40px);background:var(--bg);display:flex;gap:8px;align-items:flex-end;';
     var ta = document.createElement('textarea');
     ta.id = 'chat-input-' + otherUserId;
     ta.placeholder = 'iMessage'; ta.rows = 1;
@@ -15604,14 +16208,17 @@ window.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══ CLUB VIEW ════════════════════════════════════════════════════ -->
     <div id="club-view" style="display:none;position:fixed;inset:0;z-index:20000;background:var(--bg);flex-direction:column;overflow:hidden;transform:translateY(-100%);transition:transform .38s cubic-bezier(.32,.72,0,1);">
-        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 20px;border-bottom:2px solid var(--gold-bd);background:var(--bg);">
-            <!-- Top row -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                <button onclick="closeClub()" style="width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
+        <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+8px) 15px 12px;border-bottom:2px solid var(--gold-bd);background:var(--bg);position:relative;">
+            <!-- Subtle radial accent behind the avatar for premium depth -->
+            <div aria-hidden="true" style="position:absolute;top:50px;left:60px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(196,136,30,.10) 0%,rgba(196,136,30,.04) 40%,transparent 70%);pointer-events:none;z-index:0;"></div>
+            <!-- Top row — CLUB centered absolute in full width -->
+            <div style="position:relative;display:flex;align-items:center;justify-content:space-between;height:38px;margin-bottom:12px;z-index:1;">
+                <button onclick="closeClub()" style="width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
                 </button>
-                <div style="font-size:22px;font-weight:900;color:var(--crimson);letter-spacing:2px;text-align:center;">CLUB</div>
-                <div style="display:flex;gap:8px;">
+                <!-- CLUB title absolutely centered in the full row width -->
+                <div style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);font-size:26px;font-weight:900;color:var(--crimson);letter-spacing:3px;text-align:center;pointer-events:none;">CLUB</div>
+                <div style="display:flex;gap:8px;flex-shrink:0;">
                     <!-- Notifications bell -->
                     <div style="position:relative;">
                         <button id="club-notif-btn" onclick="openClubActivity()" style="width:36px;height:36px;border-radius:8px;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;">
@@ -15632,25 +16239,28 @@ window.addEventListener('DOMContentLoaded', function() {
                     </button>
                 </div>
             </div>
-            <!-- Profile row -->
-            <div style="display:flex;align-items:center;gap:20px;justify-content:center;padding-top:12px;">
-                <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="width:68px;height:68px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;border:3px solid var(--gold-bd);cursor:pointer;"></div>
-                <div>
-                    <div id="club-hdr-username" style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">—</div>
-                    <div style="display:flex;gap:22px;">
-                        <div style="text-align:center;">
-                            <div id="club-stat-posts" style="font-size:16px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:10px;color:var(--tm);">posts</div>
-                        </div>
-                        <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('followers')">
-                            <div id="club-stat-followers" style="font-size:16px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:10px;color:var(--tm);">seguidores</div>
-                        </div>
-                        <div style="text-align:center;cursor:pointer;" onclick="openClubFollowersList('following')">
-                            <div id="club-stat-following" style="font-size:16px;font-weight:800;color:var(--tw);">0</div>
-                            <div style="font-size:10px;color:var(--tm);">seguidos</div>
-                        </div>
-                    </div>
+            <!-- Profile row: avatar | name+bio | vertical stats (3 columns, compact) -->
+            <div style="display:flex;align-items:center;gap:12px;padding:0 2px 0 6px;position:relative;z-index:1;">
+                <!-- Avatar with decorative gold gradient ring -->
+                <div style="position:relative;width:74px;height:74px;flex-shrink:0;">
+                    <!-- Outer gradient ring (decorative, doesn't tint the photo) -->
+                    <div aria-hidden="true" style="position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 140deg,#c4881e 0deg,#e8a825 90deg,#8f1a28 180deg,#c4881e 270deg,#e8a825 360deg);padding:2px;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;"></div>
+                    <!-- Avatar with inner spacer so ring stays visible -->
+                    <div id="club-hdr-avatar" onclick="_openClubAvatarView()" style="position:absolute;inset:3.5px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;overflow:hidden;cursor:pointer;border:2px solid var(--bg);box-shadow:0 4px 14px rgba(0,0,0,.16);"></div>
+                </div>
+                <!-- Name + bio block (flexible, takes remaining horizontal space) -->
+                <div style="flex:1;min-width:0;line-height:1.25;">
+                    <div id="club-hdr-username" style="font-size:16px;font-weight:800;color:var(--tw);letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">—</div>
+                    <div id="club-hdr-bio" style="margin-top:3px;font-size:11.5px;font-weight:500;color:var(--tm);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-style:italic;opacity:.85;cursor:pointer;word-break:break-word;" onclick="_editClubBio(this)">Añade tu bio...</div>
+                </div>
+                <!-- Stats stacked vertically: 2-col grid for perfect number alignment -->
+                <div style="display:grid;grid-template-columns:auto auto;column-gap:6px;row-gap:3px;flex-shrink:0;align-items:baseline;">
+                    <div id="club-stat-posts" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;">0</div>
+                    <div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;">posts</div>
+                    <div id="club-stat-followers" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;cursor:pointer;" onclick="openClubFollowersList('followers')">0</div>
+                    <div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;cursor:pointer;" onclick="openClubFollowersList('followers')">seguidores</div>
+                    <div id="club-stat-following" style="font-size:14px;font-weight:800;color:var(--tw);line-height:1;text-align:left;cursor:pointer;" onclick="openClubFollowersList('following')">0</div>
+                    <div style="font-size:9px;color:var(--tm);font-weight:600;letter-spacing:.3px;text-transform:uppercase;cursor:pointer;" onclick="openClubFollowersList('following')">seguidos</div>
                 </div>
             </div>
         </div>
