@@ -12529,6 +12529,11 @@
                     var { data:{ session } } = await sb.auth.getSession();
                     if (!session) return;
                     var myId = session.user.id;
+                    // Preguntar destinos antes de subir foto / insertar
+                    var dest = (typeof pickPublishDestinations === 'function')
+                        ? await pickPublishDestinations()
+                        : { toPublic: true, crewIds: [] };
+                    if (!dest) return; // canceló
                     // Stamp watch name on the activity so other users can see it in the post header.
                     // Old posts without `watch` simply won't show the watch chip — fully retro-compatible.
                     var cleanAct = Object.assign({}, _act, {
@@ -12545,8 +12550,12 @@
                             if (!upE) { var { data:ud } = sb.storage.from('media').getPublicUrl(pth); photoUrl = ud.publicUrl; }
                         } catch(e2) {}
                     }
-                    var { error:insErr } = await sb.from('club_posts').insert({user_id:myId, act_data:cleanAct, photo_url:photoUrl});
-                    if (!insErr) { _showClubSharedBanner(); }
+                    var basePost = { user_id: myId, act_data: cleanAct, photo_url: photoUrl };
+                    var res = await _insertPostToDestinations(basePost, dest);
+                    if (res.ok > 0) { _showClubSharedBanner(); }
+                    if (res.errors.length) {
+                        console.error('[MR] club share errors:', res.errors);
+                    }
                 } catch(e) {}
             };
             openSheet('club-share-modal');
@@ -15558,8 +15567,22 @@ async function _initClubSupabase() {
 
     if (_sbFeedChannel) window._sbClient.removeChannel(_sbFeedChannel);
     _sbFeedChannel = window._sbClient.channel('club-feed')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'club_posts' }, () => {
-            if (document.getElementById('club-view')?.style.display !== 'none') renderClubFeed();
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'club_posts' }, (payload) => {
+            // Si está abierto el detalle de un crew y el nuevo post pertenece a ese crew, refrescar su feed
+            var det = document.getElementById('crew-detail-view');
+            if (det && payload && payload.new && payload.new.crew_id
+                && det.dataset.crewId === payload.new.crew_id
+                && det.dataset.activeTab === 'feed') {
+                var feedTarget = document.getElementById('crew-feed-' + det.dataset.crewId);
+                if (feedTarget && typeof renderClubFeed === 'function') {
+                    renderClubFeed({ crewId: det.dataset.crewId, target: feedTarget });
+                }
+            }
+            // Si la vista del Club no está visible, no hacemos nada con el feed global
+            if (document.getElementById('club-view')?.style.display === 'none') return;
+            // Si la pestaña activa es Crews, no sobrescribir la lista
+            var _tab = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+            if (_tab !== 'crews') renderClubFeed();
         })
         .subscribe();
 
@@ -15650,6 +15673,36 @@ async function _initClubSupabase() {
                     _fireNotif('MisterRunner', '@' + who + ' ha empezado a seguirte');
                 })
                 .subscribe();
+
+            // Crew invite notifications: cuando alguien me invita, refresca
+            // el array global y, si estoy mirando la pestaña Crews, repinta
+            // para que aparezca el banner de invitaciones pendientes.
+            sb.channel('mr-crew-invites-' + myId)
+                .on('postgres_changes', {
+                    event: 'INSERT', schema: 'public', table: 'crew_invites',
+                    filter: 'invited_user_id=eq.' + myId
+                }, async function(payload) {
+                    try {
+                        var inviterId = payload.new?.invited_by;
+                        var crewId = payload.new?.crew_id;
+                        // Sacar nombres para la notif
+                        var [ { data: inviter }, { data: crew } ] = await Promise.all([
+                            sb.from('profiles').select('username').eq('id', inviterId).single(),
+                            sb.from('crews').select('name').eq('id', crewId).single()
+                        ]);
+                        var who   = (inviter && inviter.username) || 'Alguien';
+                        var crewN = (crew    && crew.name)        || 'un crew';
+                        _fireNotif('MisterRunner', '@' + who + ' te ha invitado a ' + crewN);
+                        // Refrescar memoria + pestaña Crews si está visible
+                        if (typeof _refreshMyCrewInvites === 'function') await _refreshMyCrewInvites();
+                        var _tab = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+                        if (_tab === 'crews' && document.getElementById('club-feed')
+                            && typeof renderClubCrewsList === 'function') {
+                            renderClubCrewsList();
+                        }
+                    } catch(e) {}
+                })
+                .subscribe();
         } catch(e) {}
     })();
 
@@ -15669,8 +15722,2021 @@ async function _initClubSupabase() {
         })
         .subscribe();
 
+    // ── BLOQUEOS Y SILENCIOS ──────────────────────────────────────
+    // Cargamos al iniciar sesión los user_id que el usuario actual ha
+    // bloqueado o silenciado, y también quiénes le han bloqueado a él.
+    // Mantenemos Sets en memoria para que los filtros del feed sean O(1).
+    await _refreshBlockSets();
+
+    // ── CREWS (grupos privados) ───────────────────────────────────
+    // Cargamos los crews a los que pertenece el usuario para poder
+    // filtrar feeds, mostrar selectores de destino al publicar, etc.
+    await _refreshMyCrews();
+    // Y las invitaciones pendientes que tengo
+    await _refreshMyCrewInvites();
+
     console.log('[MR] Club Supabase OK. User:', userId);
 }
+
+// Sets globales: bloqueados por mí, silenciados por mí, gente que me bloqueó.
+// Se rellenan en _refreshBlockSets() y se usan en filtros de feed/perfil/DM.
+window._myBlocks = new Set();    // userIds que YO he bloqueado
+window._myMutes  = new Set();    // userIds que YO he silenciado
+window._blockedMe = new Set();   // userIds que ME han bloqueado a mí
+
+async function _refreshBlockSets() {
+    var sb = window._sbClient;
+    try {
+        var { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        var myId = session.user.id;
+        // Mis bloqueos y silencios
+        var { data: mine, error: e1 } = await sb.from('user_blocks')
+            .select('target_id, type').eq('user_id', myId);
+        if (e1) { console.warn('[MR] user_blocks read mine:', e1); }
+        window._myBlocks = new Set((mine||[]).filter(r => r.type === 'block').map(r => r.target_id));
+        window._myMutes  = new Set((mine||[]).filter(r => r.type === 'mute').map(r => r.target_id));
+        // Quien me ha bloqueado (para no mostrarles mis posts ni permitirles chatear)
+        var { data: theirs, error: e2 } = await sb.from('user_blocks')
+            .select('user_id').eq('target_id', myId).eq('type', 'block');
+        if (e2) { console.warn('[MR] user_blocks read theirs:', e2); }
+        window._blockedMe = new Set((theirs||[]).map(r => r.user_id));
+    } catch (e) {
+        console.warn('[MR] _refreshBlockSets failed:', e);
+    }
+}
+window._refreshBlockSets = _refreshBlockSets;
+
+// Helpers públicos
+function isBlocked(uid)   { return window._myBlocks  && window._myBlocks.has(uid); }
+function isMuted(uid)     { return window._myMutes   && window._myMutes.has(uid); }
+function blockedMe(uid)   { return window._blockedMe && window._blockedMe.has(uid); }
+// Para el feed: filtramos cualquier post de gente bloqueada o silenciada,
+// y también lo bloqueado mutuamente (cinturón + tirantes).
+function hiddenByMe(uid)  { return isBlocked(uid) || isMuted(uid) || blockedMe(uid); }
+window.isBlocked = isBlocked;
+window.isMuted   = isMuted;
+window.blockedMe = blockedMe;
+window.hiddenByMe = hiddenByMe;
+
+// ── CREWS (grupos privados) ───────────────────────────────────────
+// Estado en memoria: los crews a los que pertenezco. Se rellena en
+// _refreshMyCrews() al iniciar sesión. _myCrews guarda objetos con
+// los datos del crew + mi rol; _myCrewIds es un Set para lookup O(1).
+window._myCrews   = [];          // [{id, name, avatar_url, owner_id, role}, ...]
+window._myCrewIds = new Set();   // Set<crewId> para isMemberOf() rápido
+
+async function _refreshMyCrews() {
+    var sb = window._sbClient;
+    try {
+        var { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        var myId = session.user.id;
+        // Leemos mis filas en crew_members y hacemos join con crews para
+        // traer nombre, foto, descripción y owner en una sola query.
+        var { data, error } = await sb.from('crew_members')
+            .select('role, crew:crews(id, name, description, avatar_url, owner_id)')
+            .eq('user_id', myId);
+        if (error) {
+            // Si la tabla aún no existe en Supabase, no queremos romper el
+            // resto de la app: dejamos arrays vacíos y avisamos por consola.
+            console.warn('[MR] crew_members read failed (¿tabla creada?):', error);
+            window._myCrews   = [];
+            window._myCrewIds = new Set();
+            return;
+        }
+        var rows = (data || []).filter(r => r.crew); // descarta huérfanos
+        window._myCrews = rows.map(r => ({
+            id:          r.crew.id,
+            name:        r.crew.name,
+            description: r.crew.description,
+            avatar_url:  r.crew.avatar_url,
+            owner_id:    r.crew.owner_id,
+            role:        r.role
+        }));
+        window._myCrewIds = new Set(window._myCrews.map(c => c.id));
+    } catch (e) {
+        console.warn('[MR] _refreshMyCrews failed:', e);
+        window._myCrews   = [];
+        window._myCrewIds = new Set();
+    }
+}
+window._refreshMyCrews = _refreshMyCrews;
+
+// ── INVITACIONES PENDIENTES ──────────────────────────────────────
+// Carga las invitaciones pendientes que tengo para mostrarlas en
+// la pestaña Crews. Patrón defensivo: si la tabla no existe, dejo
+// el array vacío y aviso, sin romper nada.
+window._myCrewInvites = [];   // [{id, crew_id, crew, invited_by, inviter}, ...]
+async function _refreshMyCrewInvites() {
+    var sb = window._sbClient;
+    try {
+        var { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        var myId = session.user.id;
+        var { data: invs, error } = await sb.from('crew_invites')
+            .select('id, crew_id, invited_by, created_at')
+            .eq('invited_user_id', myId)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
+        if (error) {
+            console.warn('[MR] crew_invites read failed (¿tabla creada?):', error);
+            window._myCrewInvites = [];
+            return;
+        }
+        if (!invs || !invs.length) {
+            window._myCrewInvites = [];
+            return;
+        }
+        // Enriquecer con datos del crew y del invitador (dos queries en bloque)
+        var crewIds   = [...new Set(invs.map(function(i) { return i.crew_id; }))];
+        var inviterIds = [...new Set(invs.map(function(i) { return i.invited_by; }))];
+        var [{ data: crewsData }, { data: inviters }] = await Promise.all([
+            sb.from('crews').select('id, name, avatar_url').in('id', crewIds),
+            sb.from('profiles').select('id, username, avatar_url').in('id', inviterIds)
+        ]);
+        var crewMap    = {}; (crewsData || []).forEach(function(c) { crewMap[c.id] = c; });
+        var inviterMap = {}; (inviters || []).forEach(function(p) { inviterMap[p.id] = p; });
+        window._myCrewInvites = invs.map(function(i) {
+            return {
+                id:         i.id,
+                crew_id:    i.crew_id,
+                crew:       crewMap[i.crew_id]   || null,
+                invited_by: i.invited_by,
+                inviter:    inviterMap[i.invited_by] || null,
+                created_at: i.created_at
+            };
+        }).filter(function(i) { return i.crew; }); // descartar inválidas
+    } catch (e) {
+        console.warn('[MR] _refreshMyCrewInvites failed:', e);
+        window._myCrewInvites = [];
+    }
+}
+window._refreshMyCrewInvites = _refreshMyCrewInvites;
+
+function getMyCrewInvites() { return window._myCrewInvites || []; }
+window.getMyCrewInvites = getMyCrewInvites;
+
+// Helpers públicos para uso desde otros bloques <script>.
+function isMemberOf(crewId) { return window._myCrewIds && window._myCrewIds.has(crewId); }
+function getMyCrews()       { return window._myCrews || []; }
+window.isMemberOf = isMemberOf;
+window.getMyCrews = getMyCrews;
+
+// ── PANTALLA "MIS CREWS" ──────────────────────────────────────────
+// Overlay full-screen con la lista de mis crews. Si no tengo, estado
+// vacío con CTA. Botón "+ Crear crew" en la cabecera (handler del
+// modal de creación se conectará en el PASO 3).
+async function openMyCrews() {
+    // Si ya está abierto, no duplicar
+    if (document.getElementById('club-crews-view')) return;
+
+    // Refrescamos por si el usuario ha cambiado algo desde otra pestaña
+    if (typeof _refreshMyCrews === 'function') {
+        try { await _refreshMyCrews(); } catch (e) {}
+    }
+    var crews = getMyCrews();
+
+    var ov = document.createElement('div');
+    ov.id = 'club-crews-view';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:20005;background:var(--bg);display:flex;flex-direction:column;'
+        + 'transform:translateX(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);';
+
+    // ─── Cabecera ───
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 12px;'
+        + 'display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);background:var(--bg);';
+    var backBtn = document.createElement('button');
+    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
+    backBtn.onclick = function() {
+        ov.style.transform = 'translateX(100%)';
+        setTimeout(function() { ov.remove(); }, 320);
+    };
+    var titleEl = document.createElement('div');
+    titleEl.style.cssText = 'flex:1;font-size:17px;font-weight:800;color:var(--tw);letter-spacing:.2px;';
+    titleEl.textContent = 'Mis Crews';
+    // Pildorita verde con el nº de crews
+    var countPill = document.createElement('div');
+    countPill.style.cssText = 'height:24px;padding:0 9px;border-radius:12px;background:linear-gradient(135deg,#6b7a44,#8a9c57);'
+        + 'color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;flex-shrink:0;';
+    countPill.textContent = String(crews.length);
+    hdr.appendChild(backBtn);
+    hdr.appendChild(titleEl);
+    hdr.appendChild(countPill);
+
+    // ─── Cuerpo (lista o estado vacío) ───
+    var body = document.createElement('div');
+    body.style.cssText = 'flex:1;overflow-y:auto;padding:14px 15px 90px;display:flex;flex-direction:column;gap:10px;';
+
+    if (!crews.length) {
+        // Estado vacío con CTA
+        var empty = document.createElement('div');
+        empty.style.cssText = 'margin-top:40px;text-align:center;padding:30px 20px;display:flex;flex-direction:column;align-items:center;gap:14px;';
+        empty.innerHTML =
+            '<div style="width:84px;height:84px;border-radius:50%;background:linear-gradient(135deg,rgba(107,122,68,.18),rgba(138,156,87,.10));border:2px dashed rgba(107,122,68,.45);display:flex;align-items:center;justify-content:center;">'
+              + '<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#6b7a44" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+              + '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+              + '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+              + '</svg>'
+            + '</div>'
+            + '<div style="font-size:16px;font-weight:800;color:var(--tw);">Aún no estás en ningún Crew</div>'
+            + '<div style="font-size:12.5px;color:var(--tm);max-width:280px;line-height:1.45;">'
+              + 'Los Crews son grupos privados de runners. Comparte rutas, planes o cervezas post-tirada solo con los tuyos.'
+            + '</div>';
+        body.appendChild(empty);
+    } else {
+        // Lista de crews
+        crews.forEach(function(c) {
+            var card = document.createElement('div');
+            card.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;'
+                + 'background:var(--card);border:1px solid var(--border);cursor:pointer;'
+                + 'transition:transform .15s ease, box-shadow .15s ease;';
+            card.onmouseenter = function() { card.style.boxShadow = '0 2px 10px rgba(0,0,0,.08)'; };
+            card.onmouseleave = function() { card.style.boxShadow = ''; };
+            card.onclick = function() {
+                // Pasamos el crew completo al detalle (incluye role/desc/avatar)
+                openCrewDetail(c);
+            };
+            // Avatar (foto o iniciales sobre verde oliva)
+            var av = document.createElement('div');
+            av.style.cssText = 'width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#6b7a44,#8a9c57);'
+                + 'display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;'
+                + 'overflow:hidden;flex-shrink:0;';
+            if (c.avatar_url) {
+                var img = document.createElement('img');
+                img.src = c.avatar_url; img.loading = 'lazy';
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                av.appendChild(img);
+            } else {
+                av.textContent = (c.name || '?')[0].toUpperCase();
+            }
+            // Texto
+            var info = document.createElement('div');
+            info.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;';
+            var nameEl = document.createElement('div');
+            nameEl.style.cssText = 'font-size:14.5px;font-weight:800;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+            nameEl.textContent = c.name || 'Crew';
+            var roleEl = document.createElement('div');
+            roleEl.style.cssText = 'font-size:10.5px;color:var(--tm);display:flex;align-items:center;gap:6px;';
+            var roleLabel = c.role === 'owner' ? 'Propietario' : (c.role === 'admin' ? 'Admin' : 'Miembro');
+            var roleColor = c.role === 'owner' ? '#c4881e' : (c.role === 'admin' ? '#6b7a44' : 'var(--tm)');
+            roleEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + roleColor + ';"></span>'
+                + '<span style="font-weight:700;color:' + roleColor + ';letter-spacing:.2px;">' + roleLabel + '</span>';
+            info.appendChild(nameEl);
+            info.appendChild(roleEl);
+            // Botón "Editar" — sólo visible si soy owner del crew
+            if (c.role === 'owner') {
+                var editBtn = document.createElement('button');
+                editBtn.setAttribute('aria-label', 'Editar crew');
+                editBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;border:1px solid var(--border);'
+                    + 'background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+                editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7a44" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+                editBtn.onclick = function(ev) {
+                    ev.stopPropagation(); // evitar abrir detalle al pulsar editar
+                    openCrewEditor({
+                        id: c.id,
+                        name: c.name,
+                        description: c.description || '',
+                        avatar_url: c.avatar_url || null
+                    });
+                };
+                card.appendChild(editBtn);
+            }
+            // Chevron
+            var chev = document.createElement('div');
+            chev.style.cssText = 'flex-shrink:0;opacity:.5;';
+            chev.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+            card.appendChild(av);
+            card.appendChild(info);
+            card.appendChild(chev);
+            body.appendChild(card);
+        });
+    }
+
+    // ─── Botón flotante "+ Crear crew" ───
+    var fab = document.createElement('button');
+    fab.style.cssText = 'position:absolute;bottom:calc(env(safe-area-inset-bottom,0px)+22px);left:50%;transform:translateX(-50%);'
+        + 'height:48px;padding:0 22px;border-radius:24px;border:none;cursor:pointer;'
+        + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;font-family:var(--f);'
+        + 'font-size:14px;font-weight:800;letter-spacing:.3px;display:flex;align-items:center;gap:8px;'
+        + 'box-shadow:0 4px 14px rgba(60,70,30,.35);';
+    fab.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+        + '<span>Crear crew</span>';
+    fab.onclick = function() {
+        // Modo "crear": sin argumentos
+        openCrewEditor();
+    };
+
+    ov.appendChild(hdr);
+    ov.appendChild(body);
+    ov.appendChild(fab);
+    document.body.appendChild(ov);
+    // Slide-in
+    requestAnimationFrame(function() { ov.style.transform = 'translateX(0)'; });
+}
+window.openMyCrews = openMyCrews;
+
+// ── BANNER DE INVITACIONES PENDIENTES ─────────────────────────────
+// Tarjeta desplegable que se muestra arriba de la lista de crews
+// cuando hay invitaciones a las que aún no he respondido.
+function _buildCrewInvitesBanner(invites) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'background:linear-gradient(135deg,rgba(196,136,30,.12),rgba(232,168,37,.06));'
+        + 'border:1.5px solid rgba(196,136,30,.45);border-radius:14px;overflow:hidden;'
+        + 'margin-bottom:4px;';
+
+    // Cabecera del banner (siempre visible, toca para desplegar)
+    var head = document.createElement('button');
+    head.style.cssText = 'width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;'
+        + 'background:transparent;border:none;cursor:pointer;font-family:var(--f);text-align:left;';
+    var dot = document.createElement('div');
+    dot.style.cssText = 'width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#c4881e,#e8a825);'
+        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;'
+        + 'box-shadow:0 2px 8px rgba(196,136,30,.35);';
+    dot.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>';
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    var ttl = document.createElement('div');
+    ttl.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);letter-spacing:.1px;';
+    ttl.textContent = invites.length === 1
+        ? '1 invitación pendiente'
+        : invites.length + ' invitaciones pendientes';
+    var sub = document.createElement('div');
+    sub.style.cssText = 'font-size:10.5px;color:var(--tm);margin-top:1px;';
+    sub.textContent = 'Toca para revisar';
+    info.appendChild(ttl);
+    info.appendChild(sub);
+    var chev = document.createElement('div');
+    chev.style.cssText = 'flex-shrink:0;transition:transform .25s ease;';
+    chev.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.4" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>';
+    head.appendChild(dot);
+    head.appendChild(info);
+    head.appendChild(chev);
+
+    // Lista (oculta al principio)
+    var list = document.createElement('div');
+    list.style.cssText = 'max-height:0;opacity:0;overflow:hidden;'
+        + 'transition:max-height .3s ease,opacity .25s ease,padding .25s ease;'
+        + 'padding:0 12px;border-top:1px solid rgba(196,136,30,.25);';
+    invites.forEach(function(inv, idx) {
+        var row = _buildCrewInviteRow(inv);
+        if (idx === invites.length - 1) row.style.borderBottom = 'none';
+        list.appendChild(row);
+    });
+
+    var open = false;
+    head.onclick = function() {
+        open = !open;
+        if (open) {
+            list.style.maxHeight = (invites.length * 88 + 16) + 'px';
+            list.style.opacity = '1';
+            list.style.padding = '10px 12px 12px';
+            chev.style.transform = 'rotate(180deg)';
+        } else {
+            list.style.maxHeight = '0';
+            list.style.opacity = '0';
+            list.style.padding = '0 12px';
+            chev.style.transform = '';
+        }
+    };
+
+    wrap.appendChild(head);
+    wrap.appendChild(list);
+    return wrap;
+}
+
+// Fila individual de invitación (avatar crew + texto + Aceptar/Rechazar)
+function _buildCrewInviteRow(inv) {
+    var row = document.createElement('div');
+    row.dataset.inviteId = inv.id;
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;'
+        + 'border-bottom:1px solid rgba(196,136,30,.15);';
+    // (último sin border-bottom — lo hacemos con :last-child equivalente via JS)
+    var av = document.createElement('div');
+    av.style.cssText = 'width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#6b7a44,#8a9c57);'
+        + 'display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#fff;'
+        + 'overflow:hidden;flex-shrink:0;';
+    if (inv.crew && inv.crew.avatar_url) {
+        var img = document.createElement('img');
+        img.src = inv.crew.avatar_url; img.loading = 'lazy';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        av.appendChild(img);
+    } else {
+        av.textContent = (inv.crew && inv.crew.name || '?')[0].toUpperCase();
+    }
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;line-height:1.25;';
+    var crewName = document.createElement('div');
+    crewName.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);'
+        + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    crewName.textContent = (inv.crew && inv.crew.name) || 'Crew';
+    var byLine = document.createElement('div');
+    byLine.style.cssText = 'font-size:10.5px;color:var(--tm);margin-top:2px;';
+    byLine.textContent = 'Invitado por @' + (inv.inviter && inv.inviter.username || '?');
+    info.appendChild(crewName);
+    info.appendChild(byLine);
+
+    var actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:5px;flex-shrink:0;';
+    var rejectBtn = document.createElement('button');
+    rejectBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:1px solid rgba(239,68,68,.35);'
+        + 'background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    rejectBtn.setAttribute('aria-label', 'Rechazar');
+    rejectBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    var acceptBtn = document.createElement('button');
+    acceptBtn.style.cssText = 'height:30px;padding:0 12px;border-radius:15px;border:none;cursor:pointer;'
+        + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;'
+        + 'font-family:var(--f);font-size:11px;font-weight:800;letter-spacing:.3px;';
+    acceptBtn.textContent = 'Aceptar';
+    actions.appendChild(rejectBtn);
+    actions.appendChild(acceptBtn);
+
+    acceptBtn.onclick = function() { _acceptCrewInvite(inv, row, acceptBtn, rejectBtn); };
+    rejectBtn.onclick = function() { _rejectCrewInvite(inv, row, acceptBtn, rejectBtn); };
+
+    row.appendChild(av);
+    row.appendChild(info);
+    row.appendChild(actions);
+    return row;
+}
+
+// ── Aceptar invitación ────────────────────────────────────────────
+async function _acceptCrewInvite(inv, row, acceptBtn, rejectBtn) {
+    var sb = window._sbClient;
+    acceptBtn.disabled = true; rejectBtn.disabled = true;
+    acceptBtn.style.opacity = '.6';
+    acceptBtn.textContent = 'Entrando…';
+    try {
+        var { error } = await sb.rpc('accept_crew_invite', { _invite_id: inv.id });
+        if (error) throw error;
+        // Refrescar estado y repintar lista entera
+        await _refreshMyCrews();
+        await _refreshMyCrewInvites();
+        if (typeof showToast === 'function') {
+            showToast('Te has unido a ' + (inv.crew && inv.crew.name || 'el crew'), 2200);
+        }
+        // Repintar la pestaña Crews si está visible
+        if (typeof renderClubCrewsList === 'function') renderClubCrewsList();
+    } catch (e) {
+        console.error('[MR] accept invite failed:', e);
+        alert('No se pudo aceptar la invitación.\n' + (e.message || e));
+        acceptBtn.disabled = false; rejectBtn.disabled = false;
+        acceptBtn.style.opacity = '1';
+        acceptBtn.textContent = 'Aceptar';
+    }
+}
+window._acceptCrewInvite = _acceptCrewInvite;
+
+// ── Rechazar invitación ───────────────────────────────────────────
+async function _rejectCrewInvite(inv, row, acceptBtn, rejectBtn) {
+    var sb = window._sbClient;
+    acceptBtn.disabled = true; rejectBtn.disabled = true;
+    rejectBtn.style.opacity = '.5';
+    try {
+        // Borramos la invitación (la policy permite al invitado borrarla)
+        var { error } = await sb.from('crew_invites').delete().eq('id', inv.id);
+        if (error) throw error;
+        await _refreshMyCrewInvites();
+        // Animación de salida de la fila
+        row.style.transition = 'opacity .25s ease, transform .25s ease, max-height .25s ease, margin .25s ease, padding .25s ease';
+        row.style.opacity = '0';
+        row.style.maxHeight = '0';
+        row.style.padding = '0';
+        row.style.margin = '0';
+        setTimeout(function() {
+            // Si ya no quedan invitaciones, repintar para quitar el banner entero
+            if (!getMyCrewInvites().length && typeof renderClubCrewsList === 'function') {
+                renderClubCrewsList();
+            } else {
+                row.remove();
+            }
+        }, 260);
+    } catch (e) {
+        console.error('[MR] reject invite failed:', e);
+        alert('No se pudo rechazar.\n' + (e.message || e));
+        acceptBtn.disabled = false; rejectBtn.disabled = false;
+        rejectBtn.style.opacity = '1';
+    }
+}
+window._rejectCrewInvite = _rejectCrewInvite;
+
+// ── LISTA DE CREWS INLINE EN EL FEED ───────────────────────────────
+// Cuando la pestaña "Crews" está activa, el contenedor #club-feed se
+// sustituye por esta lista. Tap en una tarjeta → openCrewDetail.
+// Botón "+ Crear crew" al final.
+async function renderClubCrewsList() {
+    var container = document.getElementById('club-feed');
+    if (!container) return;
+    container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--tm);font-size:13px;">Cargando crews…</div>';
+
+    // Refrescamos desde BD por si algo cambió en otro dispositivo
+    if (typeof _refreshMyCrews === 'function') {
+        try { await _refreshMyCrews(); } catch (e) {}
+    }
+    if (typeof _refreshMyCrewInvites === 'function') {
+        try { await _refreshMyCrewInvites(); } catch (e) {}
+    }
+    var crews = getMyCrews();
+    var invites = getMyCrewInvites();
+
+    container.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'padding:4px 0 20px;display:flex;flex-direction:column;gap:10px;';
+
+    // ─── Banner de invitaciones pendientes (si hay) ───
+    if (invites.length) {
+        var banner = _buildCrewInvitesBanner(invites);
+        wrap.appendChild(banner);
+    }
+
+    if (!crews.length) {
+        // Estado vacío
+        var empty = document.createElement('div');
+        empty.style.cssText = 'margin-top:30px;text-align:center;padding:30px 20px;display:flex;flex-direction:column;align-items:center;gap:14px;';
+        empty.innerHTML =
+            '<div style="width:84px;height:84px;border-radius:50%;background:linear-gradient(135deg,rgba(107,122,68,.18),rgba(138,156,87,.10));border:2px dashed rgba(107,122,68,.45);display:flex;align-items:center;justify-content:center;">'
+              + '<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#6b7a44" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+              + '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+              + '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+              + '</svg>'
+            + '</div>'
+            + '<div style="font-size:16px;font-weight:800;color:var(--tw);">Aún no estás en ningún Crew</div>'
+            + '<div style="font-size:12.5px;color:var(--tm);max-width:280px;line-height:1.45;">'
+              + 'Los Crews son grupos privados de runners. Comparte rutas, planes o cervezas post-tirada solo con los tuyos.'
+            + '</div>';
+        wrap.appendChild(empty);
+    } else {
+        // Cabecera mini con contador
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:0 2px 4px;';
+        var ct = document.createElement('div');
+        ct.style.cssText = 'font-size:11px;font-weight:800;color:var(--tm);letter-spacing:.4px;';
+        ct.textContent = crews.length + ' CREW' + (crews.length === 1 ? '' : 'S');
+        hdr.appendChild(ct);
+        wrap.appendChild(hdr);
+
+        // Tarjetas
+        crews.forEach(function(c) {
+            var card = document.createElement('div');
+            card.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;'
+                + 'background:var(--card);border:1px solid var(--border);cursor:pointer;'
+                + 'transition:transform .15s ease, box-shadow .15s ease;';
+            card.onmouseenter = function() { card.style.boxShadow = '0 2px 10px rgba(0,0,0,.08)'; };
+            card.onmouseleave = function() { card.style.boxShadow = ''; };
+            card.onclick = function() { openCrewDetail(c); };
+
+            // Avatar verde oliva
+            var av = document.createElement('div');
+            av.style.cssText = 'width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#6b7a44,#8a9c57);'
+                + 'display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;'
+                + 'overflow:hidden;flex-shrink:0;';
+            if (c.avatar_url) {
+                var img = document.createElement('img');
+                img.src = c.avatar_url; img.loading = 'lazy';
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                av.appendChild(img);
+            } else {
+                av.textContent = (c.name || '?')[0].toUpperCase();
+            }
+            // Info
+            var info = document.createElement('div');
+            info.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;';
+            var nameEl = document.createElement('div');
+            nameEl.style.cssText = 'font-size:14.5px;font-weight:800;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+            nameEl.textContent = c.name || 'Crew';
+            var roleEl = document.createElement('div');
+            roleEl.style.cssText = 'font-size:10.5px;color:var(--tm);display:flex;align-items:center;gap:6px;';
+            var roleLabel = c.role === 'owner' ? 'Propietario' : (c.role === 'admin' ? 'Admin' : 'Miembro');
+            var roleColor = c.role === 'owner' ? '#c4881e' : (c.role === 'admin' ? '#6b7a44' : 'var(--tm)');
+            roleEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + roleColor + ';"></span>'
+                + '<span style="font-weight:700;color:' + roleColor + ';letter-spacing:.2px;">' + roleLabel + '</span>';
+            info.appendChild(nameEl);
+            info.appendChild(roleEl);
+
+            // Botón Editar (sólo owner)
+            if (c.role === 'owner') {
+                var editBtn = document.createElement('button');
+                editBtn.setAttribute('aria-label', 'Editar crew');
+                editBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;border:1px solid var(--border);'
+                    + 'background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+                editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7a44" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+                editBtn.onclick = function(ev) {
+                    ev.stopPropagation();
+                    openCrewEditor({
+                        id: c.id,
+                        name: c.name,
+                        description: c.description || '',
+                        avatar_url: c.avatar_url || null
+                    });
+                };
+                card.appendChild(av);
+                card.appendChild(info);
+                card.appendChild(editBtn);
+            } else {
+                var chev = document.createElement('div');
+                chev.style.cssText = 'flex-shrink:0;opacity:.5;';
+                chev.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>';
+                card.appendChild(av);
+                card.appendChild(info);
+                card.appendChild(chev);
+            }
+            wrap.appendChild(card);
+        });
+    }
+
+    // Botón "+ Crear crew" siempre visible al final
+    var createBtn = document.createElement('button');
+    createBtn.style.cssText = 'margin-top:6px;height:46px;border-radius:23px;border:none;cursor:pointer;'
+        + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;font-family:var(--f);'
+        + 'font-size:14px;font-weight:800;letter-spacing:.3px;display:flex;align-items:center;justify-content:center;gap:7px;'
+        + 'box-shadow:0 3px 10px rgba(60,70,30,.25);';
+    createBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+        + '<span>Crear crew</span>';
+    createBtn.onclick = function() { openCrewEditor(); };
+    wrap.appendChild(createBtn);
+
+    container.appendChild(wrap);
+}
+window.renderClubCrewsList = renderClubCrewsList;
+
+// Helper unificado: tras crear/editar/eliminar/salir, repinta la vista
+// de crews que esté visible (la pestaña inline o el overlay legado).
+function _refreshCrewsListIfVisible() {
+    // Caso 1: overlay legado abierto
+    var crewsView = document.getElementById('club-crews-view');
+    if (crewsView) {
+        crewsView.remove();
+        setTimeout(function() { openMyCrews(); }, 60);
+        return;
+    }
+    // Caso 2: pestaña Crews activa dentro del Club
+    var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+    if (mode === 'crews' && document.getElementById('club-feed')) {
+        renderClubCrewsList();
+    }
+}
+window._refreshCrewsListIfVisible = _refreshCrewsListIfVisible;
+
+// ── MODAL CREAR / EDITAR CREW ─────────────────────────────────────
+// Si se llama sin parámetros: modo "crear". Si se le pasa un objeto
+// crew (id, name, description, avatar_url): modo "editar".
+async function openCrewEditor(existing) {
+    var isEdit = !!(existing && existing.id);
+    var sb = window._sbClient;
+
+    // Evitar duplicados si pulsan el botón dos veces
+    if (document.getElementById('crew-editor-modal')) return;
+
+    // Backdrop oscuro a pantalla completa
+    var backdrop = document.createElement('div');
+    backdrop.id = 'crew-editor-modal';
+    backdrop.style.cssText = 'position:fixed;inset:0;z-index:20020;background:rgba(0,0,0,.55);'
+        + 'display:flex;align-items:center;justify-content:center;padding:18px;'
+        + 'opacity:0;transition:opacity .2s ease;';
+
+    // Tarjeta del modal
+    var card = document.createElement('div');
+    card.style.cssText = 'width:100%;max-width:380px;background:var(--bg);border-radius:18px;'
+        + 'padding:18px 18px 14px;display:flex;flex-direction:column;gap:14px;'
+        + 'max-height:90vh;overflow-y:auto;'
+        + 'box-shadow:0 12px 40px rgba(0,0,0,.4);'
+        + 'transform:translateY(20px);transition:transform .25s cubic-bezier(.32,.72,0,1);';
+
+    // Cabecera
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    head.innerHTML =
+        '<div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#6b7a44,#8a9c57);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+          + '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+          + '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+          + '</svg>'
+        + '</div>'
+        + '<div style="flex:1;">'
+          + '<div style="font-size:16px;font-weight:800;color:var(--tw);">' + (isEdit ? 'Editar crew' : 'Nuevo crew') + '</div>'
+          + '<div style="font-size:11px;color:var(--tm);">' + (isEdit ? 'Cambia los detalles de tu crew' : 'Crea un grupo privado de runners') + '</div>'
+        + '</div>';
+    var closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label', 'Cerrar');
+    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:none;background:var(--card);cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    head.appendChild(closeBtn);
+
+    // ─── Selector de foto (round, tap para elegir) ───
+    var photoWrap = document.createElement('div');
+    photoWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;';
+    var photoBtn = document.createElement('button');
+    photoBtn.type = 'button';
+    photoBtn.style.cssText = 'width:92px;height:92px;border-radius:50%;border:2px dashed rgba(107,122,68,.55);'
+        + 'background:linear-gradient(135deg,rgba(107,122,68,.18),rgba(138,156,87,.10));cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;position:relative;';
+    var photoIcon = document.createElement('div');
+    photoIcon.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px;color:#6b7a44;';
+    photoIcon.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#6b7a44" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>'
+        + '<span style="font-size:9.5px;font-weight:700;letter-spacing:.3px;">FOTO</span>';
+    photoBtn.appendChild(photoIcon);
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+    photoWrap.appendChild(photoBtn);
+    var photoHint = document.createElement('div');
+    photoHint.style.cssText = 'font-size:10.5px;color:var(--tm);';
+    photoHint.textContent = 'Toca para elegir foto (opcional)';
+    photoWrap.appendChild(photoHint);
+    photoWrap.appendChild(fileInput);
+
+    // Estado en memoria de la foto: o bien una URL ya subida (al editar)
+    // o bien un Blob nuevo pendiente de subir.
+    var pendingPhotoBlob = null;
+    var existingAvatarUrl = isEdit ? (existing.avatar_url || null) : null;
+
+    function renderPhotoPreview(src) {
+        photoBtn.innerHTML = '';
+        var img = document.createElement('img');
+        img.src = src;
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        photoBtn.appendChild(img);
+    }
+    if (existingAvatarUrl) renderPhotoPreview(existingAvatarUrl);
+
+    photoBtn.onclick = function() { fileInput.click(); };
+    fileInput.onchange = function() {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        if (f.size > 5 * 1024 * 1024) { alert('La foto es muy grande (máximo 5 MB).'); return; }
+        pendingPhotoBlob = f;
+        var reader = new FileReader();
+        reader.onload = function(e) { renderPhotoPreview(e.target.result); };
+        reader.readAsDataURL(f);
+    };
+
+    // ─── Campo nombre ───
+    var nameLbl = document.createElement('label');
+    nameLbl.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+    nameLbl.innerHTML = '<span style="font-size:11px;font-weight:700;color:var(--tm);letter-spacing:.4px;">NOMBRE *</span>';
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 40;
+    nameInput.placeholder = 'Ej. Coleguitas, Trail Madrid...';
+    nameInput.value = isEdit ? (existing.name || '') : '';
+    nameInput.style.cssText = 'height:42px;padding:0 12px;border-radius:10px;border:1.5px solid var(--border);'
+        + 'background:var(--card);color:var(--tw);font-family:var(--f);font-size:14px;font-weight:600;outline:none;'
+        + 'transition:border-color .15s ease;';
+    nameInput.onfocus = function() { nameInput.style.borderColor = '#6b7a44'; };
+    nameInput.onblur  = function() { nameInput.style.borderColor = 'var(--border)'; };
+    nameLbl.appendChild(nameInput);
+
+    // ─── Campo descripción ───
+    var descLbl = document.createElement('label');
+    descLbl.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+    descLbl.innerHTML = '<span style="font-size:11px;font-weight:700;color:var(--tm);letter-spacing:.4px;">DESCRIPCIÓN</span>';
+    var descInput = document.createElement('textarea');
+    descInput.maxLength = 200;
+    descInput.rows = 3;
+    descInput.placeholder = 'De qué va este crew (opcional)';
+    descInput.value = isEdit ? (existing.description || '') : '';
+    descInput.style.cssText = 'padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);'
+        + 'background:var(--card);color:var(--tw);font-family:var(--f);font-size:13.5px;font-weight:500;outline:none;'
+        + 'resize:none;line-height:1.4;transition:border-color .15s ease;';
+    descInput.onfocus = function() { descInput.style.borderColor = '#6b7a44'; };
+    descInput.onblur  = function() { descInput.style.borderColor = 'var(--border)'; };
+    descLbl.appendChild(descInput);
+
+    // ─── Botonera (Guardar + Eliminar si es edit) ───
+    var actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:4px;';
+
+    var saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.style.cssText = 'height:46px;border-radius:23px;border:none;cursor:pointer;'
+        + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;'
+        + 'font-family:var(--f);font-size:14px;font-weight:800;letter-spacing:.4px;'
+        + 'display:flex;align-items:center;justify-content:center;gap:7px;'
+        + 'box-shadow:0 3px 10px rgba(60,70,30,.25);';
+    saveBtn.innerHTML = '<span>' + (isEdit ? 'Guardar cambios' : 'Crear crew') + '</span>';
+    actions.appendChild(saveBtn);
+
+    if (isEdit) {
+        var delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.style.cssText = 'height:38px;border-radius:19px;border:1.5px solid rgba(239,68,68,.4);background:transparent;'
+            + 'color:#ef4444;font-family:var(--f);font-size:12.5px;font-weight:800;letter-spacing:.3px;cursor:pointer;';
+        delBtn.textContent = 'Eliminar crew';
+        delBtn.onclick = function() { _deleteCrewWithConfirm(existing, backdrop); };
+        actions.appendChild(delBtn);
+    }
+
+    // Cerrar modal con animación
+    function closeModal() {
+        backdrop.style.opacity = '0';
+        card.style.transform = 'translateY(20px)';
+        setTimeout(function() { backdrop.remove(); }, 220);
+    }
+    closeBtn.onclick = closeModal;
+    backdrop.onclick = function(e) { if (e.target === backdrop) closeModal(); };
+
+    // ─── Submit ───
+    saveBtn.onclick = async function() {
+        var name = (nameInput.value || '').trim();
+        if (name.length < 2) {
+            nameInput.style.borderColor = '#ef4444';
+            nameInput.focus();
+            return;
+        }
+        var desc = (descInput.value || '').trim() || null;
+
+        // Bloquear botón mientras se procesa
+        saveBtn.disabled = true;
+        saveBtn.style.opacity = '0.65';
+        saveBtn.innerHTML = '<span>Guardando…</span>';
+
+        try {
+            var { data:{ session } } = await sb.auth.getSession();
+            if (!session) throw new Error('No session');
+            var myId = session.user.id;
+
+            // 1) Crear o actualizar fila en `crews`
+            var crewId;
+            if (isEdit) {
+                crewId = existing.id;
+                var { error: upErr } = await sb.from('crews')
+                    .update({ name: name, description: desc })
+                    .eq('id', crewId);
+                if (upErr) throw upErr;
+            } else {
+                // Crear crew + añadir owner como miembro de forma ATÓMICA
+                // vía función SECURITY DEFINER en Supabase. Evita el 403 que
+                // daba el SELECT post-INSERT (la policy de read pide ser
+                // miembro, y todavía no lo eres en ese microsegundo).
+                var { data: newId, error: rpcErr } = await sb.rpc('create_crew', {
+                    _name: name,
+                    _description: desc
+                });
+                if (rpcErr) throw rpcErr;
+                crewId = newId;
+            }
+
+            // 2) Subir foto nueva si hay
+            if (pendingPhotoBlob) {
+                try {
+                    var ext = pendingPhotoBlob.type.includes('png') ? 'png' : 'jpg';
+                    var path = 'crew-avatars/' + crewId + '.' + ext;
+                    var { error: upE } = await sb.storage.from('media')
+                        .upload(path, pendingPhotoBlob, { upsert: true, contentType: pendingPhotoBlob.type });
+                    if (!upE) {
+                        var { data: ud } = sb.storage.from('media').getPublicUrl(path);
+                        // Truco anti-caché para que el avatar se vea recién subido
+                        var newUrl = ud.publicUrl + '?t=' + Date.now();
+                        await sb.from('crews').update({ avatar_url: newUrl }).eq('id', crewId);
+                    } else {
+                        console.warn('[MR] crew photo upload error:', upE);
+                    }
+                } catch (e) {
+                    console.warn('[MR] crew photo upload failed:', e);
+                }
+            }
+
+            // 3) Refrescar lista y cerrar
+            if (typeof _refreshMyCrews === 'function') await _refreshMyCrews();
+            closeModal();
+            // Repintar la vista de crews que esté abierta (pestaña o overlay)
+            if (typeof _refreshCrewsListIfVisible === 'function') _refreshCrewsListIfVisible();
+
+        } catch (e) {
+            console.error('[MR] crew save failed:', e);
+            alert('No se pudo guardar el crew.\n' + (e.message || e));
+            saveBtn.disabled = false;
+            saveBtn.style.opacity = '1';
+            saveBtn.innerHTML = '<span>' + (isEdit ? 'Guardar cambios' : 'Crear crew') + '</span>';
+        }
+    };
+
+    // Montar
+    card.appendChild(head);
+    card.appendChild(photoWrap);
+    card.appendChild(nameLbl);
+    card.appendChild(descLbl);
+    card.appendChild(actions);
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(function() {
+        backdrop.style.opacity = '1';
+        card.style.transform = 'translateY(0)';
+    });
+    // Auto-focus al nombre si es crear
+    if (!isEdit) setTimeout(function() { nameInput.focus(); }, 280);
+}
+window.openCrewEditor = openCrewEditor;
+
+// ── Eliminar crew con confirmación doble (escribir el nombre) ────
+async function _deleteCrewWithConfirm(crew, parentBackdrop) {
+    var sb = window._sbClient;
+
+    // Modal de confirmación encima del editor
+    var bk = document.createElement('div');
+    bk.style.cssText = 'position:fixed;inset:0;z-index:20030;background:rgba(0,0,0,.7);'
+        + 'display:flex;align-items:center;justify-content:center;padding:18px;'
+        + 'opacity:0;transition:opacity .2s ease;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:100%;max-width:340px;background:var(--bg);border-radius:18px;'
+        + 'padding:20px;display:flex;flex-direction:column;gap:14px;'
+        + 'box-shadow:0 12px 40px rgba(0,0,0,.45);'
+        + 'transform:translateY(20px);transition:transform .25s cubic-bezier(.32,.72,0,1);';
+    card.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;">'
+          + '<div style="width:36px;height:36px;border-radius:50%;background:rgba(239,68,68,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            + '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+          + '</div>'
+          + '<div style="flex:1;font-size:15px;font-weight:800;color:var(--tw);">Eliminar crew</div>'
+        + '</div>'
+        + '<div style="font-size:12.5px;color:var(--tm);line-height:1.45;">'
+          + 'Esto borrará el crew <b style="color:var(--tw);">' + (crew.name || '') + '</b>, '
+          + 'todos sus miembros y todos los posts publicados en él. <b>No se puede deshacer.</b>'
+        + '</div>'
+        + '<div style="font-size:11.5px;color:var(--tm);">'
+          + 'Para confirmar, escribe el nombre del crew:'
+        + '</div>';
+    var confirmInput = document.createElement('input');
+    confirmInput.type = 'text';
+    confirmInput.placeholder = crew.name || '';
+    confirmInput.style.cssText = 'height:40px;padding:0 12px;border-radius:10px;border:1.5px solid var(--border);'
+        + 'background:var(--card);color:var(--tw);font-family:var(--f);font-size:13.5px;font-weight:600;outline:none;';
+    confirmInput.onfocus = function() { confirmInput.style.borderColor = '#ef4444'; };
+    confirmInput.onblur  = function() { confirmInput.style.borderColor = 'var(--border)'; };
+    card.appendChild(confirmInput);
+
+    var btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:2px;';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.style.cssText = 'flex:1;height:42px;border-radius:21px;border:1.5px solid var(--border);background:transparent;'
+        + 'color:var(--tw);font-family:var(--f);font-size:13px;font-weight:700;cursor:pointer;';
+    cancelBtn.textContent = 'Cancelar';
+    var confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.disabled = true;
+    confirmBtn.style.cssText = 'flex:1;height:42px;border-radius:21px;border:none;'
+        + 'background:#ef4444;color:#fff;font-family:var(--f);font-size:13px;font-weight:800;'
+        + 'cursor:not-allowed;opacity:.5;transition:opacity .15s ease;';
+    confirmBtn.textContent = 'Eliminar';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(confirmBtn);
+    card.appendChild(btnRow);
+
+    // Habilitar el botón solo cuando el nombre coincide exactamente
+    confirmInput.oninput = function() {
+        var match = confirmInput.value.trim() === (crew.name || '').trim() && confirmInput.value.trim().length > 0;
+        confirmBtn.disabled = !match;
+        confirmBtn.style.opacity = match ? '1' : '.5';
+        confirmBtn.style.cursor = match ? 'pointer' : 'not-allowed';
+    };
+
+    function closeMe() {
+        bk.style.opacity = '0';
+        card.style.transform = 'translateY(20px)';
+        setTimeout(function() { bk.remove(); }, 220);
+    }
+    cancelBtn.onclick = closeMe;
+    bk.onclick = function(e) { if (e.target === bk) closeMe(); };
+
+    confirmBtn.onclick = async function() {
+        if (confirmBtn.disabled) return;
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '.5';
+        confirmBtn.textContent = 'Eliminando…';
+        try {
+            // El delete sobre crews dispara CASCADE en crew_members y club_posts
+            var { error } = await sb.from('crews').delete().eq('id', crew.id);
+            if (error) throw error;
+            if (typeof _refreshMyCrews === 'function') await _refreshMyCrews();
+            // Cerrar este modal y el editor padre
+            closeMe();
+            if (parentBackdrop) parentBackdrop.remove();
+            // Si estaba abierto el detalle de ESTE crew, cerrarlo (ya no existe)
+            var det = document.getElementById('crew-detail-view');
+            if (det && det.dataset.crewId === crew.id) {
+                det.style.transform = 'translateX(100%)';
+                setTimeout(function() { det.remove(); }, 320);
+            }
+            // Repintar la vista de crews
+            if (typeof _refreshCrewsListIfVisible === 'function') _refreshCrewsListIfVisible();
+        } catch (e) {
+            console.error('[MR] crew delete failed:', e);
+            alert('No se pudo eliminar el crew.\n' + (e.message || e));
+            confirmBtn.disabled = false;
+            confirmBtn.style.opacity = '1';
+            confirmBtn.textContent = 'Eliminar';
+        }
+    };
+
+    bk.appendChild(card);
+    document.body.appendChild(bk);
+    requestAnimationFrame(function() {
+        bk.style.opacity = '1';
+        card.style.transform = 'translateY(0)';
+    });
+}
+
+// ── DETALLE DEL CREW ──────────────────────────────────────────────
+// Pantalla full-screen con cabecera del crew, tabs Feed/Miembros y
+// (en sub-pasos siguientes) contenido real. Por ahora solo el chasis
+// navegable: back funcional, tabs intercambiables, placeholders.
+async function openCrewDetail(crew) {
+    if (!crew || !crew.id) return;
+    // Evitar duplicados si se pulsa dos veces seguidas
+    if (document.getElementById('crew-detail-view')) return;
+
+    var sb = window._sbClient;
+    // Refresco rápido para tener los datos del crew lo más actuales
+    // (por si el nombre/foto cambió desde otra pestaña)
+    if (typeof _refreshMyCrews === 'function') {
+        try { await _refreshMyCrews(); } catch (e) {}
+    }
+    // Buscamos la versión "fresca" del crew en _myCrews; si no está
+    // (raro) usamos la que nos pasaron
+    var fresh = (getMyCrews() || []).find(function(c) { return c.id === crew.id; });
+    var c = fresh || crew;
+
+    var ov = document.createElement('div');
+    ov.id = 'crew-detail-view';
+    ov.dataset.crewId = c.id;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:20010;background:var(--bg);display:flex;flex-direction:column;'
+        + 'transform:translateX(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);overflow:hidden;';
+
+    // ─── CABECERA ───
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+10px) 15px 0;'
+        + 'border-bottom:1px solid var(--border);background:var(--bg);';
+
+    // Top row: back + título centrado + (placeholder espacio derecho)
+    var topRow = document.createElement('div');
+    topRow.style.cssText = 'position:relative;display:flex;align-items:center;gap:10px;height:38px;margin-bottom:12px;';
+    var backBtn = document.createElement('button');
+    backBtn.setAttribute('aria-label', 'Volver');
+    backBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;border:none;background:var(--card);cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;z-index:1;';
+    backBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>';
+    backBtn.onclick = function() {
+        ov.style.transform = 'translateX(100%)';
+        setTimeout(function() { ov.remove(); }, 320);
+    };
+    var topTitle = document.createElement('div');
+    topTitle.style.cssText = 'position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);'
+        + 'font-size:13px;font-weight:800;color:var(--tm);text-align:center;letter-spacing:1.5px;'
+        + 'pointer-events:none;text-transform:uppercase;';
+    topTitle.textContent = 'CREW';
+    // Píldora Tablón (mismo estilo que en el Club global pero contextual)
+    var boardBtn = document.createElement('button');
+    boardBtn.id = 'crew-board-btn';
+    boardBtn.style.cssText = 'height:30px;padding:0 10px;border-radius:15px;'
+        + 'border:1.5px solid var(--gold-bd);background:linear-gradient(135deg,#c4881e,#e8a825);'
+        + 'cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;'
+        + 'font-family:var(--f);z-index:1;';
+    boardBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="14" y2="13"/></svg>'
+        + '<span style="font-size:10.5px;font-weight:800;color:#000;letter-spacing:.4px;">Tablón</span>';
+    boardBtn.onclick = function() {
+        toggleClubBoard({ crewId: c.id, crewName: c.name });
+    };
+    // Espaciador derecho para mantener simetría visual (ancho ~Tablón)
+    var topSpace = document.createElement('div');
+    topSpace.style.cssText = 'width:34px;height:30px;flex-shrink:0;';
+    topRow.appendChild(backBtn);
+    topRow.appendChild(boardBtn);
+    topRow.appendChild(topTitle);
+    topRow.appendChild(document.createElement('div')).style.cssText = 'flex:1;';
+    topRow.appendChild(topSpace);
+
+    // Bloque identidad: foto grande + nombre + descripción
+    var ident = document.createElement('div');
+    ident.style.cssText = 'display:flex;align-items:center;gap:14px;padding:0 2px 14px;';
+    var av = document.createElement('div');
+    av.style.cssText = 'width:62px;height:62px;border-radius:18px;background:linear-gradient(135deg,#6b7a44,#8a9c57);'
+        + 'display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#fff;'
+        + 'overflow:hidden;flex-shrink:0;box-shadow:0 4px 12px rgba(60,70,30,.25);';
+    if (c.avatar_url) {
+        var img = document.createElement('img');
+        img.src = c.avatar_url; img.loading = 'lazy';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        av.appendChild(img);
+    } else {
+        av.textContent = (c.name || '?')[0].toUpperCase();
+    }
+    var identText = document.createElement('div');
+    identText.style.cssText = 'flex:1;min-width:0;';
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:19px;font-weight:900;color:var(--tw);letter-spacing:.2px;'
+        + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.15;';
+    nameEl.textContent = c.name || 'Crew';
+    identText.appendChild(nameEl);
+    if (c.description) {
+        var descEl = document.createElement('div');
+        descEl.style.cssText = 'margin-top:4px;font-size:12px;color:var(--tm);line-height:1.35;'
+            + 'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;';
+        descEl.textContent = c.description;
+        identText.appendChild(descEl);
+    }
+    // Mini-pildorita rol (alineada bajo el nombre)
+    var roleMini = document.createElement('div');
+    var roleLabel = c.role === 'owner' ? 'Propietario' : (c.role === 'admin' ? 'Admin' : 'Miembro');
+    var roleColor = c.role === 'owner' ? '#c4881e' : (c.role === 'admin' ? '#6b7a44' : 'var(--tm)');
+    roleMini.style.cssText = 'margin-top:6px;display:inline-flex;align-items:center;gap:5px;'
+        + 'font-size:10px;font-weight:800;color:' + roleColor + ';letter-spacing:.3px;';
+    roleMini.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + roleColor + ';"></span>'
+        + '<span>' + roleLabel.toUpperCase() + '</span>';
+    identText.appendChild(roleMini);
+    ident.appendChild(av);
+    ident.appendChild(identText);
+
+    // Tabs
+    var tabsRow = document.createElement('div');
+    tabsRow.style.cssText = 'display:flex;gap:0;border-top:1px solid var(--border);margin:0 -15px;padding:0 15px;';
+    function makeTab(id, label) {
+        var t = document.createElement('button');
+        t.dataset.tab = id;
+        t.style.cssText = 'flex:1;height:42px;border:none;background:transparent;cursor:pointer;'
+            + 'font-family:var(--f);font-size:13px;font-weight:800;color:var(--tm);letter-spacing:.4px;'
+            + 'position:relative;transition:color .15s ease;';
+        t.textContent = label;
+        return t;
+    }
+    var tabFeed = makeTab('feed', 'Feed');
+    var tabMembers = makeTab('members', 'Miembros');
+    tabsRow.appendChild(tabFeed);
+    tabsRow.appendChild(tabMembers);
+
+    hdr.appendChild(topRow);
+    hdr.appendChild(ident);
+    hdr.appendChild(tabsRow);
+
+    // ─── CUERPO (cambia según tab) ───
+    var body = document.createElement('div');
+    body.id = 'crew-detail-body';
+    body.style.cssText = 'flex:1;overflow-y:auto;';
+
+    // Estados placeholder (sub-pasos 4.B y 4.C los rellenan)
+    function renderTabFeed() {
+        // Contenedor con id único para este crew. renderClubFeed acepta
+        // un target opcional para escribir aquí en lugar de #club-feed.
+        body.innerHTML = '<div id="crew-feed-' + c.id + '" style="padding:12px 12px 30px;"></div>';
+        var target = document.getElementById('crew-feed-' + c.id);
+        if (target && typeof renderClubFeed === 'function') {
+            renderClubFeed({ crewId: c.id, target: target });
+        }
+    }
+    async function renderTabMembers() {
+        // Placeholder mientras carga
+        body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--tm);font-size:12px;">Cargando miembros…</div>';
+
+        var sb = window._sbClient;
+        try {
+            var { data: { session } } = await sb.auth.getSession();
+            if (!session) {
+                body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--tm);">Inicia sesión.</div>';
+                return;
+            }
+            var myId = session.user.id;
+            var amOwner = (c.owner_id === myId) || c.role === 'owner';
+
+            // Traer miembros del crew (sin join — más robusto que depender
+            // del nombre exacto de la FK en el schema cache de Supabase)
+            var { data: members, error } = await sb.from('crew_members')
+                .select('user_id, role, joined_at')
+                .eq('crew_id', c.id)
+                .order('joined_at', { ascending: true });
+            if (error) throw error;
+
+            // Segunda query: traer perfiles en bloque por sus IDs
+            var memberIds = (members || []).map(function(m) { return m.user_id; });
+            var profilesById = {};
+            if (memberIds.length) {
+                var { data: profs, error: pErr } = await sb.from('profiles')
+                    .select('id, username, avatar_url')
+                    .in('id', memberIds);
+                if (pErr) throw pErr;
+                (profs || []).forEach(function(p) { profilesById[p.id] = p; });
+            }
+
+            // Construimos una lista enriquecida {user_id, role, joined_at, profiles}
+            var list = (members || []).map(function(m) {
+                return {
+                    user_id:   m.user_id,
+                    role:      m.role,
+                    joined_at: m.joined_at,
+                    profiles:  profilesById[m.user_id] || null
+                };
+            }).filter(function(m) { return m.profiles; });
+
+            // ─── Render ───
+            body.innerHTML = '';
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'padding:14px 15px 100px;display:flex;flex-direction:column;gap:8px;';
+
+            // Cabecera con contador + botón Invitar (sólo owner)
+            var headRow = document.createElement('div');
+            headRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
+            var countEl = document.createElement('div');
+            countEl.style.cssText = 'font-size:11px;font-weight:800;color:var(--tm);letter-spacing:.4px;';
+            countEl.textContent = list.length + ' MIEMBRO' + (list.length === 1 ? '' : 'S');
+            headRow.appendChild(countEl);
+            if (amOwner) {
+                var inviteBtn = document.createElement('button');
+                inviteBtn.style.cssText = 'height:30px;padding:0 12px;border-radius:15px;'
+                    + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;border:none;cursor:pointer;'
+                    + 'font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.3px;'
+                    + 'display:flex;align-items:center;gap:5px;';
+                inviteBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Invitar</span>';
+                inviteBtn.onclick = function() {
+                    // Conectado en el sub-paso 4.D
+                    if (typeof openCrewInviteModal === 'function') {
+                        openCrewInviteModal(c);
+                    } else {
+                        alert('Invitar runners (sub-paso 4.D — próximamente)');
+                    }
+                };
+                headRow.appendChild(inviteBtn);
+            }
+            wrap.appendChild(headRow);
+
+            // Lista de miembros
+            list.forEach(function(m) {
+                var p = m.profiles;
+                var isMe   = p.id === myId;
+                var isHim  = m.role === 'owner';
+
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;gap:11px;padding:10px 12px;'
+                    + 'background:var(--card);border:1px solid var(--border);border-radius:12px;';
+
+                // Avatar
+                var av = document.createElement('div');
+                av.style.cssText = 'width:42px;height:42px;border-radius:50%;background:var(--crimson);'
+                    + 'display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;'
+                    + 'overflow:hidden;flex-shrink:0;cursor:pointer;';
+                if (p.avatar_url) {
+                    var img = document.createElement('img');
+                    img.src = p.avatar_url; img.loading = 'lazy';
+                    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                    av.appendChild(img);
+                } else {
+                    av.textContent = (p.username || '?')[0].toUpperCase();
+                }
+                // Tap en avatar → abrir perfil del runner (si existe la función)
+                av.onclick = function() {
+                    if (typeof openClubUserProfile === 'function' && !isMe) {
+                        openClubUserProfile(p.id);
+                    }
+                };
+
+                // Texto
+                var info = document.createElement('div');
+                info.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;';
+                var nameLine = document.createElement('div');
+                nameLine.style.cssText = 'display:flex;align-items:center;gap:6px;';
+                var nameEl = document.createElement('span');
+                nameEl.style.cssText = 'font-size:14px;font-weight:800;color:var(--tw);'
+                    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                nameEl.textContent = p.username || '?';
+                nameLine.appendChild(nameEl);
+                if (isMe) {
+                    var meTag = document.createElement('span');
+                    meTag.style.cssText = 'font-size:9.5px;font-weight:800;color:var(--gold);'
+                        + 'background:rgba(196,136,30,.18);padding:2px 6px;border-radius:8px;letter-spacing:.4px;';
+                    meTag.textContent = 'TÚ';
+                    nameLine.appendChild(meTag);
+                }
+                info.appendChild(nameLine);
+
+                var roleEl = document.createElement('div');
+                roleEl.style.cssText = 'font-size:10.5px;color:var(--tm);display:flex;align-items:center;gap:5px;';
+                var roleLabel = m.role === 'owner' ? 'Propietario' : (m.role === 'admin' ? 'Admin' : 'Miembro');
+                var roleColor = m.role === 'owner' ? '#c4881e' : (m.role === 'admin' ? '#6b7a44' : 'var(--tm)');
+                roleEl.innerHTML = '<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:' + roleColor + ';"></span>'
+                    + '<span style="font-weight:700;color:' + roleColor + ';letter-spacing:.2px;">' + roleLabel + '</span>';
+                info.appendChild(roleEl);
+
+                row.appendChild(av);
+                row.appendChild(info);
+
+                // Botón expulsar (solo owner sobre no-owners)
+                if (amOwner && !isHim && !isMe) {
+                    var kickBtn = document.createElement('button');
+                    kickBtn.setAttribute('aria-label', 'Expulsar');
+                    kickBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;'
+                        + 'border:1px solid rgba(239,68,68,.35);background:transparent;cursor:pointer;'
+                        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+                    kickBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+                    kickBtn.onclick = function() {
+                        _kickCrewMember(c, p);
+                    };
+                    row.appendChild(kickBtn);
+                }
+
+                wrap.appendChild(row);
+            });
+
+            // Botón "Salir del crew" abajo (sólo si NO soy owner)
+            if (!amOwner) {
+                var leaveBtn = document.createElement('button');
+                leaveBtn.style.cssText = 'margin-top:16px;height:42px;border-radius:21px;'
+                    + 'border:1.5px solid rgba(239,68,68,.4);background:transparent;color:#ef4444;'
+                    + 'font-family:var(--f);font-size:13px;font-weight:800;letter-spacing:.3px;cursor:pointer;';
+                leaveBtn.textContent = 'Salir del crew';
+                leaveBtn.onclick = function() { _leaveCrew(c); };
+                wrap.appendChild(leaveBtn);
+            }
+
+            body.appendChild(wrap);
+        } catch (e) {
+            console.error('[MR] crew members load failed:', e);
+            body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--danger);font-size:12px;">No se pudieron cargar los miembros.</div>';
+        }
+    }
+    function setActiveTab(name) {
+        // Estilo activo: color + barra inferior verde oliva
+        [tabFeed, tabMembers].forEach(function(t) {
+            var active = t.dataset.tab === name;
+            t.style.color = active ? '#6b7a44' : 'var(--tm)';
+            // Limpiar/poner barra inferior
+            var existingBar = t.querySelector('[data-tab-bar]');
+            if (existingBar) existingBar.remove();
+            if (active) {
+                var bar = document.createElement('div');
+                bar.setAttribute('data-tab-bar', '1');
+                bar.style.cssText = 'position:absolute;left:18%;right:18%;bottom:0;height:3px;'
+                    + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);border-radius:2px 2px 0 0;';
+                t.appendChild(bar);
+            }
+        });
+        ov.dataset.activeTab = name;
+        if (name === 'feed') renderTabFeed();
+        else renderTabMembers();
+    }
+    tabFeed.onclick    = function() { setActiveTab('feed'); };
+    tabMembers.onclick = function() { setActiveTab('members'); };
+
+    ov.appendChild(hdr);
+    ov.appendChild(body);
+    document.body.appendChild(ov);
+
+    // Estado inicial: tab Feed
+    setActiveTab('feed');
+
+    // Slide-in
+    requestAnimationFrame(function() { ov.style.transform = 'translateX(0)'; });
+}
+window.openCrewDetail = openCrewDetail;
+
+// ── Expulsar miembro del crew (sólo owner) ───────────────────────
+async function _kickCrewMember(crew, profile) {
+    var sb = window._sbClient;
+    var ok = confirm('¿Expulsar a @' + (profile.username || 'este runner') + ' de "' + crew.name + '"?');
+    if (!ok) return;
+    try {
+        var { error } = await sb.from('crew_members')
+            .delete()
+            .eq('crew_id', crew.id)
+            .eq('user_id', profile.id);
+        if (error) throw error;
+        // Refrescar tab Miembros si está abierto
+        var view = document.getElementById('crew-detail-view');
+        if (view && view.dataset.activeTab === 'members') {
+            // Re-disparar el tab clic para repintar
+            var tabBtn = view.querySelector('button[data-tab="members"]');
+            if (tabBtn) tabBtn.click();
+        }
+    } catch (e) {
+        console.error('[MR] kick member failed:', e);
+        alert('No se pudo expulsar.\n' + (e.message || e));
+    }
+}
+window._kickCrewMember = _kickCrewMember;
+
+// ── Salir del crew (sólo miembros no-owner) ──────────────────────
+async function _leaveCrew(crew) {
+    var sb = window._sbClient;
+    var ok = confirm('¿Salir del crew "' + crew.name + '"?\nDejarás de ver sus posts.');
+    if (!ok) return;
+    try {
+        var { data: { session } } = await sb.auth.getSession();
+        if (!session) throw new Error('No session');
+        var myId = session.user.id;
+        var { error } = await sb.from('crew_members')
+            .delete()
+            .eq('crew_id', crew.id)
+            .eq('user_id', myId);
+        if (error) throw error;
+        // Refrescar Sets globales y cerrar el detalle
+        if (typeof _refreshMyCrews === 'function') await _refreshMyCrews();
+        var view = document.getElementById('crew-detail-view');
+        if (view) {
+            view.style.transform = 'translateX(100%)';
+            setTimeout(function() { view.remove(); }, 320);
+        }
+        // Repintar la vista de crews que esté abierta
+        if (typeof _refreshCrewsListIfVisible === 'function') _refreshCrewsListIfVisible();
+    } catch (e) {
+        console.error('[MR] leave crew failed:', e);
+        alert('No se pudo salir del crew.\n' + (e.message || e));
+    }
+}
+window._leaveCrew = _leaveCrew;
+
+// ── MODAL DE INVITAR A UN CREW ─────────────────────────────────────
+// Dos sub-pestañas: "Buscar" (por username via RPC) y "Seguidos"
+// (atajo desde la gente que sigo). Cada fila lleva un botón Invitar
+// que inserta una fila en crew_invites con status='pending'.
+async function openCrewInviteModal(crew) {
+    if (!crew || !crew.id) return;
+    if (document.getElementById('crew-invite-modal')) return;
+    var sb = window._sbClient;
+
+    var { data: { session } } = await sb.auth.getSession();
+    if (!session) return;
+    var myId = session.user.id;
+
+    // Backdrop
+    var bk = document.createElement('div');
+    bk.id = 'crew-invite-modal';
+    bk.style.cssText = 'position:fixed;inset:0;z-index:20025;background:rgba(0,0,0,.55);'
+        + 'display:flex;align-items:flex-end;justify-content:center;'
+        + 'opacity:0;transition:opacity .22s ease;';
+
+    // Sheet desde abajo (estilo mobile)
+    var sheet = document.createElement('div');
+    sheet.style.cssText = 'width:100%;max-width:480px;background:var(--bg);'
+        + 'border-radius:20px 20px 0 0;padding:14px 16px 22px;'
+        + 'display:flex;flex-direction:column;gap:12px;max-height:88vh;'
+        + 'box-shadow:0 -8px 30px rgba(0,0,0,.35);'
+        + 'transform:translateY(40px);transition:transform .28s cubic-bezier(.32,.72,0,1);';
+
+    // Handle visual de drag (no funcional, sólo affordance)
+    var handle = document.createElement('div');
+    handle.style.cssText = 'width:42px;height:4px;border-radius:2px;background:var(--border);margin:2px auto 4px;';
+
+    // Cabecera
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    head.innerHTML =
+        '<div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#6b7a44,#8a9c57);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+          + '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>'
+          + '<line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>'
+          + '</svg>'
+        + '</div>'
+        + '<div style="flex:1;">'
+          + '<div style="font-size:16px;font-weight:800;color:var(--tw);">Invitar a "' + (crew.name || 'Crew') + '"</div>'
+          + '<div style="font-size:11px;color:var(--tm);">Los invitados verán tu invitación pendiente</div>'
+        + '</div>';
+    var closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label', 'Cerrar');
+    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:none;background:var(--card);cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    head.appendChild(closeBtn);
+
+    // Tabs Buscar / Seguidos
+    var tabsRow = document.createElement('div');
+    tabsRow.style.cssText = 'display:flex;gap:6px;background:var(--card);padding:4px;border-radius:12px;';
+    function makeSubTab(id, label) {
+        var b = document.createElement('button');
+        b.dataset.tab = id;
+        b.style.cssText = 'flex:1;height:32px;border:none;border-radius:9px;cursor:pointer;'
+            + 'font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.2px;'
+            + 'background:transparent;color:var(--tm);transition:background .15s, color .15s;';
+        b.textContent = label;
+        return b;
+    }
+    var tabSearch  = makeSubTab('search',  'Buscar');
+    var tabFollows = makeSubTab('follows', 'Seguidos');
+    tabsRow.appendChild(tabSearch);
+    tabsRow.appendChild(tabFollows);
+
+    // Input de búsqueda (sólo visible en tab Buscar)
+    var searchWrap = document.createElement('div');
+    searchWrap.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 12px;'
+        + 'background:var(--card);border:1.5px solid var(--border);border-radius:12px;height:42px;';
+    searchWrap.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+    var searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Username (ej. alvaro)';
+    searchInput.style.cssText = 'flex:1;border:none;background:transparent;outline:none;'
+        + 'color:var(--tw);font-family:var(--f);font-size:14px;font-weight:600;';
+    searchWrap.appendChild(searchInput);
+
+    // Contenedor de resultados (cambia entre Buscar y Seguidos)
+    var results = document.createElement('div');
+    results.style.cssText = 'min-height:200px;max-height:50vh;overflow-y:auto;'
+        + 'display:flex;flex-direction:column;gap:8px;padding-right:2px;';
+
+    // Estado para no duplicar invitaciones en la misma sesión:
+    // tras pulsar Invitar, marcamos el ID localmente y deshabilitamos el botón.
+    var invitedLocal = new Set();
+
+    // ─── Lógica de renderizado de una fila de candidato ───
+    function buildRow(user) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;'
+            + 'background:var(--card);border:1px solid var(--border);border-radius:12px;';
+        var av = document.createElement('div');
+        av.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);'
+            + 'display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;'
+            + 'overflow:hidden;flex-shrink:0;';
+        if (user.avatar_url) {
+            var img = document.createElement('img');
+            img.src = user.avatar_url; img.loading = 'lazy';
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+            av.appendChild(img);
+        } else {
+            av.textContent = (user.username || '?')[0].toUpperCase();
+        }
+        var info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0;';
+        var nm = document.createElement('div');
+        nm.style.cssText = 'font-size:13.5px;font-weight:800;color:var(--tw);'
+            + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        nm.textContent = '@' + (user.username || '?');
+        info.appendChild(nm);
+
+        var btn = document.createElement('button');
+        btn.style.cssText = 'height:32px;padding:0 14px;border-radius:16px;'
+            + 'background:linear-gradient(135deg,#6b7a44,#8a9c57);color:#fff;border:none;cursor:pointer;'
+            + 'font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.3px;flex-shrink:0;';
+        btn.textContent = 'Invitar';
+
+        if (invitedLocal.has(user.id)) {
+            btn.disabled = true;
+            btn.style.opacity = '.5';
+            btn.style.cursor = 'default';
+            btn.textContent = 'Invitado';
+        }
+
+        btn.onclick = async function() {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.style.opacity = '.6';
+            btn.textContent = 'Enviando…';
+            try {
+                var { error } = await sb.from('crew_invites').insert({
+                    crew_id: crew.id,
+                    invited_user_id: user.id,
+                    invited_by: myId
+                });
+                if (error) throw error;
+                invitedLocal.add(user.id);
+                btn.textContent = '✓ Invitado';
+                btn.style.opacity = '.7';
+                btn.style.cursor = 'default';
+                if (typeof showToast === 'function') {
+                    showToast('Invitación enviada a @' + user.username, 2000);
+                }
+            } catch (e) {
+                console.error('[MR] invite failed:', e);
+                // Si ya existía una invitación pendiente (UNIQUE constraint), tratarlo como éxito
+                if (e && (e.code === '23505' || /duplicate/i.test(e.message || ''))) {
+                    invitedLocal.add(user.id);
+                    btn.textContent = '✓ Invitado';
+                    btn.style.opacity = '.7';
+                    btn.style.cursor = 'default';
+                } else {
+                    alert('No se pudo enviar la invitación.\n' + (e.message || e));
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.textContent = 'Invitar';
+                }
+            }
+        };
+
+        row.appendChild(av);
+        row.appendChild(info);
+        row.appendChild(btn);
+        return row;
+    }
+
+    // ─── Tab "Buscar" ───
+    var _searchTimer = null;
+    function runSearch(q) {
+        q = (q || '').trim();
+        results.innerHTML = '';
+        if (q.length < 2) {
+            results.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--tm);font-size:12px;line-height:1.5;">'
+                + 'Escribe al menos 2 letras<br><span style="opacity:.6;">Aparecen runners que aún no son miembros ni tienen invitación pendiente</span>'
+                + '</div>';
+            return;
+        }
+        results.innerHTML = '<div style="text-align:center;padding:20px;color:var(--tm);font-size:12px;">Buscando…</div>';
+        sb.rpc('search_users_for_crew_invite', { _crew_id: crew.id, _query: q })
+          .then(function(r) {
+            if (r.error) throw r.error;
+            var users = r.data || [];
+            results.innerHTML = '';
+            if (!users.length) {
+                results.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--tm);font-size:12px;">Sin resultados para "' + q + '"</div>';
+                return;
+            }
+            users.forEach(function(u) { results.appendChild(buildRow(u)); });
+          })
+          .catch(function(e) {
+            console.error('[MR] invite search failed:', e);
+            results.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger);font-size:12px;">Error al buscar.</div>';
+          });
+    }
+
+    // ─── Tab "Seguidos" ───
+    async function loadFollows() {
+        results.innerHTML = '<div style="text-align:center;padding:20px;color:var(--tm);font-size:12px;">Cargando…</div>';
+        try {
+            // A quién sigo
+            var { data: followsData, error: fErr } = await sb.from('follows')
+                .select('following_id')
+                .eq('follower_id', myId);
+            if (fErr) throw fErr;
+            var followIds = (followsData || []).map(function(r) { return r.following_id; });
+            if (!followIds.length) {
+                results.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--tm);font-size:12px;line-height:1.5;">'
+                    + 'No sigues a nadie aún<br><span style="opacity:.6;">Sigue a runners desde el Club para invitarlos más rápido</span>'
+                    + '</div>';
+                return;
+            }
+            // Excluir miembros actuales del crew y gente con invitación pendiente
+            var { data: mem } = await sb.from('crew_members').select('user_id').eq('crew_id', crew.id);
+            var memberSet = new Set((mem || []).map(function(m) { return m.user_id; }));
+            var { data: pend } = await sb.from('crew_invites')
+                .select('invited_user_id').eq('crew_id', crew.id).eq('status', 'pending');
+            var pendSet = new Set((pend || []).map(function(p) { return p.invited_user_id; }));
+            var elegibles = followIds.filter(function(id) {
+                return !memberSet.has(id) && !pendSet.has(id);
+            });
+            if (!elegibles.length) {
+                results.innerHTML = '<div style="text-align:center;padding:30px 20px;color:var(--tm);font-size:12px;">'
+                    + 'Ya invitaste a todos los que sigues, o ya son miembros 🙌'
+                    + '</div>';
+                return;
+            }
+            // Cargar profiles en bloque
+            var { data: profs, error: pErr } = await sb.from('profiles')
+                .select('id, username, avatar_url')
+                .in('id', elegibles);
+            if (pErr) throw pErr;
+            results.innerHTML = '';
+            (profs || []).sort(function(a, b) {
+                return (a.username || '').localeCompare(b.username || '');
+            }).forEach(function(u) { results.appendChild(buildRow(u)); });
+        } catch (e) {
+            console.error('[MR] follows load failed:', e);
+            results.innerHTML = '<div style="text-align:center;padding:30px;color:var(--danger);font-size:12px;">No se pudieron cargar tus seguidos.</div>';
+        }
+    }
+
+    // ─── Cambio de sub-tab ───
+    function setSubTab(name) {
+        [tabSearch, tabFollows].forEach(function(b) {
+            var active = b.dataset.tab === name;
+            b.style.background = active ? 'linear-gradient(135deg,#6b7a44,#8a9c57)' : 'transparent';
+            b.style.color = active ? '#fff' : 'var(--tm)';
+            b.style.fontWeight = active ? '800' : '700';
+        });
+        if (name === 'search') {
+            searchWrap.style.display = 'flex';
+            runSearch(searchInput.value);
+            setTimeout(function() { searchInput.focus(); }, 60);
+        } else {
+            searchWrap.style.display = 'none';
+            loadFollows();
+        }
+    }
+    tabSearch.onclick  = function() { setSubTab('search'); };
+    tabFollows.onclick = function() { setSubTab('follows'); };
+
+    // Debounce del input
+    searchInput.oninput = function() {
+        clearTimeout(_searchTimer);
+        var v = searchInput.value;
+        _searchTimer = setTimeout(function() { runSearch(v); }, 280);
+    };
+
+    // Cerrar
+    function closeMe() {
+        bk.style.opacity = '0';
+        sheet.style.transform = 'translateY(40px)';
+        setTimeout(function() { bk.remove(); }, 240);
+        // Tras cerrar el modal, repintar tab Miembros si está abierto
+        // (por si invitamos y refrescamos contadores futuros)
+        var view = document.getElementById('crew-detail-view');
+        if (view && view.dataset.activeTab === 'members') {
+            var t = view.querySelector('button[data-tab="members"]');
+            if (t) t.click();
+        }
+    }
+    closeBtn.onclick = closeMe;
+    bk.onclick = function(e) { if (e.target === bk) closeMe(); };
+
+    // Montar
+    sheet.appendChild(handle);
+    sheet.appendChild(head);
+    sheet.appendChild(tabsRow);
+    sheet.appendChild(searchWrap);
+    sheet.appendChild(results);
+    bk.appendChild(sheet);
+    document.body.appendChild(bk);
+    requestAnimationFrame(function() {
+        bk.style.opacity = '1';
+        sheet.style.transform = 'translateY(0)';
+    });
+
+    // Estado inicial: tab Buscar
+    setSubTab('search');
+}
+window.openCrewInviteModal = openCrewInviteModal;
+
+// ── SELECTOR DE DESTINOS AL PUBLICAR ──────────────────────────────
+// Muestra un bottom sheet con checklist: "Club público" + cada crew
+// del que soy miembro. Devuelve una Promise con un objeto:
+//   { toPublic: boolean, crewIds: string[] }
+// El caller decide cuántos inserts hacer (1 por destino).
+// Si el usuario cierra sin confirmar, resuelve con null.
+function pickPublishDestinations(opts) {
+    opts = opts || {};
+    return new Promise(function(resolve) {
+        // Refrescamos para tener crews actualizados (no bloqueante si falla)
+        Promise.resolve(
+            typeof _refreshMyCrews === 'function' ? _refreshMyCrews() : null
+        ).finally(function() {
+            var crews = (typeof getMyCrews === 'function') ? getMyCrews() : [];
+
+            // Si no tengo crews, no tiene sentido mostrar selector:
+            // publicamos directo al Club público.
+            if (!crews.length) {
+                resolve({ toPublic: true, crewIds: [] });
+                return;
+            }
+
+            // Estado: por defecto solo Club público marcado
+            var toPublic = true;
+            var selectedCrewIds = new Set();
+
+            // ─── Backdrop + sheet ───
+            var bk = document.createElement('div');
+            // El z-index debe estar por encima de cualquier otro modal:
+            // el heatmap overlay vive en 99999, así que vamos a 100001.
+            bk.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.55);'
+                + 'display:flex;align-items:flex-end;justify-content:center;'
+                + 'opacity:0;transition:opacity .22s ease;';
+            var sheet = document.createElement('div');
+            sheet.style.cssText = 'width:100%;max-width:480px;background:var(--bg);'
+                + 'border-radius:20px 20px 0 0;padding:14px 16px 22px;'
+                + 'display:flex;flex-direction:column;gap:12px;max-height:88vh;'
+                + 'box-shadow:0 -8px 30px rgba(0,0,0,.35);'
+                + 'transform:translateY(40px);transition:transform .28s cubic-bezier(.32,.72,0,1);';
+            var handle = document.createElement('div');
+            handle.style.cssText = 'width:42px;height:4px;border-radius:2px;background:var(--border);margin:2px auto 4px;';
+
+            // ─── Cabecera ───
+            var head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:flex-start;gap:10px;';
+            var headIcon = document.createElement('div');
+            headIcon.style.cssText = 'width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#c4881e,#e8a825);'
+                + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+            headIcon.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>';
+            var headText = document.createElement('div');
+            headText.style.cssText = 'flex:1;';
+            headText.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--tw);">¿Dónde compartir?</div>'
+                + '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Marca uno o varios destinos</div>';
+            var closeBtn = document.createElement('button');
+            closeBtn.setAttribute('aria-label', 'Cancelar');
+            closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:none;background:var(--card);cursor:pointer;'
+                + 'display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+            closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            head.appendChild(headIcon);
+            head.appendChild(headText);
+            head.appendChild(closeBtn);
+
+            // ─── Lista de checkboxes ───
+            var list = document.createElement('div');
+            list.style.cssText = 'display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;';
+
+            // Confirm button (lo referencio aquí para poder actualizarlo desde las rows)
+            var confirmBtn = document.createElement('button');
+
+            function updateConfirmState() {
+                var n = (toPublic ? 1 : 0) + selectedCrewIds.size;
+                if (n === 0) {
+                    confirmBtn.disabled = true;
+                    confirmBtn.style.opacity = '.45';
+                    confirmBtn.style.cursor = 'not-allowed';
+                    confirmBtn.textContent = 'Marca un destino';
+                } else {
+                    confirmBtn.disabled = false;
+                    confirmBtn.style.opacity = '1';
+                    confirmBtn.style.cursor = 'pointer';
+                    confirmBtn.textContent = n === 1 ? 'Compartir' : ('Compartir en ' + n + ' sitios');
+                }
+            }
+
+            // Fila reusable de destino
+            function buildDestRow(opts) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;gap:11px;padding:11px 12px;'
+                    + 'background:var(--card);border:1.5px solid var(--border);border-radius:13px;cursor:pointer;'
+                    + 'transition:border-color .15s ease, background .15s ease;';
+                var av = document.createElement('div');
+                av.style.cssText = 'width:38px;height:38px;border-radius:' + (opts.isPublic ? '50%' : '12px') + ';'
+                    + 'background:' + opts.bg + ';display:flex;align-items:center;justify-content:center;'
+                    + 'color:#fff;font-size:14px;font-weight:800;overflow:hidden;flex-shrink:0;';
+                if (opts.avatarUrl) {
+                    var img = document.createElement('img');
+                    img.src = opts.avatarUrl; img.loading = 'lazy';
+                    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+                    av.appendChild(img);
+                } else if (opts.iconSvg) {
+                    av.innerHTML = opts.iconSvg;
+                } else {
+                    av.textContent = (opts.label || '?')[0].toUpperCase();
+                }
+                var info = document.createElement('div');
+                info.style.cssText = 'flex:1;min-width:0;';
+                var ttl = document.createElement('div');
+                ttl.style.cssText = 'font-size:14px;font-weight:800;color:var(--tw);'
+                    + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                ttl.textContent = opts.label;
+                info.appendChild(ttl);
+                if (opts.sub) {
+                    var sb2 = document.createElement('div');
+                    sb2.style.cssText = 'font-size:10.5px;color:var(--tm);margin-top:1px;';
+                    sb2.textContent = opts.sub;
+                    info.appendChild(sb2);
+                }
+                // Checkbox visual a la derecha
+                var cb = document.createElement('div');
+                cb.style.cssText = 'width:24px;height:24px;border-radius:7px;'
+                    + 'border:2px solid var(--border);background:transparent;flex-shrink:0;'
+                    + 'display:flex;align-items:center;justify-content:center;transition:all .15s ease;';
+                cb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="opacity:0;transition:opacity .15s ease;"><polyline points="20 6 9 17 4 12"/></svg>';
+
+                function setVisualChecked(on) {
+                    if (on) {
+                        row.style.borderColor = opts.checkedColor;
+                        row.style.background = opts.checkedBg;
+                        cb.style.background = opts.checkedColor;
+                        cb.style.borderColor = opts.checkedColor;
+                        cb.firstChild.style.opacity = '1';
+                    } else {
+                        row.style.borderColor = 'var(--border)';
+                        row.style.background = 'var(--card)';
+                        cb.style.background = 'transparent';
+                        cb.style.borderColor = 'var(--border)';
+                        cb.firstChild.style.opacity = '0';
+                    }
+                }
+                setVisualChecked(opts.initialChecked);
+
+                row.onclick = function() {
+                    opts.onToggle(function(nowChecked) {
+                        setVisualChecked(nowChecked);
+                        updateConfirmState();
+                    });
+                };
+
+                row.appendChild(av);
+                row.appendChild(info);
+                row.appendChild(cb);
+                return row;
+            }
+
+            // 1) Club público
+            list.appendChild(buildDestRow({
+                isPublic: true,
+                label: 'Club público',
+                sub: 'Visible para todos tus seguidores',
+                bg: 'linear-gradient(135deg,#c4881e,#e8a825)',
+                iconSvg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+                checkedColor: '#c4881e',
+                checkedBg: 'rgba(196,136,30,.10)',
+                initialChecked: true,
+                onToggle: function(applyVisual) {
+                    toPublic = !toPublic;
+                    applyVisual(toPublic);
+                }
+            }));
+
+            // 2) Cada crew
+            crews.forEach(function(c) {
+                list.appendChild(buildDestRow({
+                    isPublic: false,
+                    label: c.name || 'Crew',
+                    sub: c.role === 'owner' ? 'Propietario' : (c.role === 'admin' ? 'Admin' : 'Miembro'),
+                    bg: 'linear-gradient(135deg,#6b7a44,#8a9c57)',
+                    avatarUrl: c.avatar_url || null,
+                    checkedColor: '#6b7a44',
+                    checkedBg: 'rgba(107,122,68,.10)',
+                    initialChecked: false,
+                    onToggle: function(applyVisual) {
+                        if (selectedCrewIds.has(c.id)) {
+                            selectedCrewIds.delete(c.id);
+                            applyVisual(false);
+                        } else {
+                            selectedCrewIds.add(c.id);
+                            applyVisual(true);
+                        }
+                    }
+                }));
+            });
+
+            // ─── Botón confirmar ───
+            confirmBtn.style.cssText = 'height:46px;border-radius:23px;border:none;cursor:pointer;'
+                + 'background:linear-gradient(135deg,#c4881e,#e8a825);color:#000;'
+                + 'font-family:var(--f);font-size:14px;font-weight:800;letter-spacing:.3px;margin-top:4px;'
+                + 'box-shadow:0 3px 10px rgba(196,136,30,.25);'
+                + 'transition:opacity .15s ease;';
+            updateConfirmState();
+
+            function closeMe(result) {
+                bk.style.opacity = '0';
+                sheet.style.transform = 'translateY(40px)';
+                setTimeout(function() { bk.remove(); resolve(result); }, 240);
+            }
+            closeBtn.onclick = function() { closeMe(null); };
+            bk.onclick = function(e) { if (e.target === bk) closeMe(null); };
+            confirmBtn.onclick = function() {
+                if (confirmBtn.disabled) return;
+                closeMe({ toPublic: toPublic, crewIds: Array.from(selectedCrewIds) });
+            };
+
+            // Montaje
+            sheet.appendChild(handle);
+            sheet.appendChild(head);
+            sheet.appendChild(list);
+            sheet.appendChild(confirmBtn);
+            bk.appendChild(sheet);
+            document.body.appendChild(bk);
+            requestAnimationFrame(function() {
+                bk.style.opacity = '1';
+                sheet.style.transform = 'translateY(0)';
+            });
+        });
+    });
+}
+window.pickPublishDestinations = pickPublishDestinations;
+
+// Helper: inserta el mismo post en N destinos. Si toPublic es true, se
+// crea una fila con crew_id NULL. Por cada crewId, otra fila con ese
+// crew_id. Devuelve { ok: number, errors: any[] }.
+async function _insertPostToDestinations(basePost, destinations) {
+    var sb = window._sbClient;
+    var ok = 0, errors = [];
+    var inserts = [];
+    if (destinations.toPublic) {
+        inserts.push(Object.assign({}, basePost, { crew_id: null }));
+    }
+    (destinations.crewIds || []).forEach(function(cid) {
+        inserts.push(Object.assign({}, basePost, { crew_id: cid }));
+    });
+    // Insertamos en paralelo para reducir latencia
+    var results = await Promise.allSettled(inserts.map(function(row) {
+        return sb.from('club_posts').insert(row);
+    }));
+    results.forEach(function(r) {
+        if (r.status === 'fulfilled' && !r.value.error) ok++;
+        else errors.push(r.status === 'fulfilled' ? r.value.error : r.reason);
+    });
+    return { ok: ok, total: inserts.length, errors: errors };
+}
+window._insertPostToDestinations = _insertPostToDestinations;
+
+// Aplicar/quitar bloqueo o silencio. Refresca sets al terminar.
+async function setUserBlockState(targetId, type, on) {
+    var sb = window._sbClient;
+    try {
+        var { data: { session } } = await sb.auth.getSession();
+        if (!session) throw new Error('No session');
+        var myId = session.user.id;
+        if (on) {
+            // Upsert: si ya existía como otro tipo, sustituimos
+            var { error } = await sb.from('user_blocks')
+                .upsert({ user_id: myId, target_id: targetId, type: type }, { onConflict: 'user_id,target_id' });
+            if (error) throw error;
+            // Bloquear implica también dejar de seguir (relación rota en ambos sentidos)
+            if (type === 'block') {
+                await sb.from('follows').delete().or('and(follower_id.eq.'+myId+',following_id.eq.'+targetId+'),and(follower_id.eq.'+targetId+',following_id.eq.'+myId+')');
+            }
+        } else {
+            var { error: e2 } = await sb.from('user_blocks')
+                .delete().eq('user_id', myId).eq('target_id', targetId).eq('type', type);
+            if (e2) throw e2;
+        }
+        await _refreshBlockSets();
+        return true;
+    } catch (e) {
+        console.error('[MR] setUserBlockState:', e);
+        alert('No se pudo guardar el cambio. ¿Está creada la tabla user_blocks en Supabase?');
+        return false;
+    }
+}
+window.setUserBlockState = setUserBlockState;
 
 async function _refreshUnreadBadge() {
     try {
@@ -15720,7 +17786,15 @@ function openClub() {
     if (_bb) _bb.style.boxShadow = '';
     v.style.display = 'flex';
     requestAnimationFrame(function() { requestAnimationFrame(function() { v.style.transform = 'translateY(0)'; }); });
-    renderClubFeed();
+    // Aplicar estilos de las pestañas (Para ti / Siguiendo / Crews) según estado guardado
+    if (typeof _refreshClubTabStyles === 'function') _refreshClubTabStyles();
+    // Renderizar según pestaña activa: feed normal o lista de crews
+    var _tabMode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+    if (_tabMode === 'crews' && typeof renderClubCrewsList === 'function') {
+        renderClubCrewsList();
+    } else {
+        renderClubFeed();
+    }
     _loadClubHeaderStats();
     _checkClubDots();
     _initPTR();
@@ -15759,17 +17833,27 @@ function _fmtWeekRange() {
         : ('Semana del ' + dM + ' ' + mM + ' – ' + dS + ' ' + mS);
 }
 
-async function toggleClubBoard() {
-    var feed = document.getElementById('club-feed');
+async function toggleClubBoard(opts) {
+    opts = opts || {};
+    var crewId   = opts.crewId   || null;
+    var crewName = opts.crewName || null;
+    // Contenedor donde insertar el panel: por defecto #club-feed (global).
+    // Si nos pasan crewId, insertamos dentro del feed del crew.
+    var feed = opts.container
+        || (crewId ? document.getElementById('crew-feed-' + crewId) : null)
+        || document.getElementById('club-feed');
     if (!feed) return;
-    var existing = document.getElementById('club-board-panel');
+    // Identificador único del panel para coexistir global/crew sin pisar
+    var panelId = crewId ? ('crew-board-panel-' + crewId) : 'club-board-panel';
+    var existing = document.getElementById(panelId);
     if (existing) {
         // Cerrar con animación
         existing.style.maxHeight = '0px';
         existing.style.opacity = '0';
         existing.style.marginBottom = '0px';
         setTimeout(function() { existing.remove(); }, 280);
-        var btn = document.getElementById('club-board-btn');
+        // Quitar resalte del botón (puede ser el global o el del detalle del crew)
+        var btn = document.getElementById(crewId ? 'crew-board-btn' : 'club-board-btn');
         if (btn) btn.style.boxShadow = '';
         return;
     }
@@ -15777,7 +17861,7 @@ async function toggleClubBoard() {
     // El fondo es un SVG con textura de corcho (motas ocres y oscuras),
     // enmarcado con un borde de madera + sombra interior para dar profundidad.
     var panel = document.createElement('div');
-    panel.id = 'club-board-panel';
+    panel.id = panelId;
     var CORK_SVG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><rect width='200' height='200' fill='%23c89a5e'/><g fill='%238a6234' opacity='.55'><circle cx='14' cy='22' r='2.4'/><circle cx='48' cy='9' r='1.8'/><circle cx='71' cy='34' r='2.9'/><circle cx='95' cy='16' r='1.5'/><circle cx='128' cy='28' r='2.2'/><circle cx='162' cy='11' r='2.6'/><circle cx='184' cy='40' r='1.7'/><circle cx='29' cy='58' r='2'/><circle cx='55' cy='76' r='2.7'/><circle cx='88' cy='60' r='1.6'/><circle cx='118' cy='71' r='2.3'/><circle cx='148' cy='55' r='2.5'/><circle cx='178' cy='86' r='1.9'/><circle cx='11' cy='92' r='2.2'/><circle cx='42' cy='112' r='1.7'/><circle cx='68' cy='124' r='2.6'/><circle cx='103' cy='108' r='2'/><circle cx='135' cy='130' r='2.4'/><circle cx='166' cy='116' r='1.8'/><circle cx='192' cy='138' r='2.1'/><circle cx='22' cy='148' r='2.5'/><circle cx='58' cy='162' r='1.6'/><circle cx='85' cy='178' r='2.3'/><circle cx='116' cy='156' r='2'/><circle cx='143' cy='184' r='2.7'/><circle cx='174' cy='170' r='1.9'/></g><g fill='%23e3b97a' opacity='.5'><circle cx='20' cy='40' r='1.6'/><circle cx='62' cy='20' r='2.1'/><circle cx='85' cy='42' r='1.8'/><circle cx='108' cy='6' r='1.4'/><circle cx='142' cy='38' r='1.7'/><circle cx='170' cy='22' r='2'/><circle cx='36' cy='68' r='1.9'/><circle cx='78' cy='92' r='1.5'/><circle cx='110' cy='82' r='2.2'/><circle cx='138' cy='68' r='1.6'/><circle cx='162' cy='98' r='1.8'/><circle cx='24' cy='106' r='1.7'/><circle cx='52' cy='138' r='2'/><circle cx='92' cy='142' r='1.5'/><circle cx='125' cy='116' r='1.9'/><circle cx='156' cy='142' r='1.6'/><circle cx='184' cy='160' r='1.8'/><circle cx='14' cy='158' r='2'/><circle cx='48' cy='184' r='1.7'/><circle cx='100' cy='190' r='1.4'/><circle cx='130' cy='172' r='2.1'/></g><g fill='%235a3a1c' opacity='.4'><circle cx='32' cy='14' r='.8'/><circle cx='76' cy='6' r='1'/><circle cx='115' cy='22' r='.9'/><circle cx='156' cy='44' r='.7'/><circle cx='190' cy='68' r='1.1'/><circle cx='12' cy='62' r='.9'/><circle cx='46' cy='86' r='1'/><circle cx='90' cy='104' r='.8'/><circle cx='124' cy='92' r='.7'/><circle cx='155' cy='124' r='1'/><circle cx='186' cy='108' r='.8'/><circle cx='20' cy='130' r='.9'/><circle cx='68' cy='154' r='.7'/><circle cx='98' cy='166' r='1.1'/><circle cx='142' cy='160' r='.8'/><circle cx='178' cy='184' r='1'/></g></svg>";
     panel.style.cssText = "flex-shrink:0;max-height:0;opacity:0;overflow:hidden;"
         + "transition:max-height .35s ease,opacity .25s ease,margin-bottom .25s ease;"
@@ -15792,31 +17876,40 @@ async function toggleClubBoard() {
         panel.style.opacity = '1';
         panel.style.marginBottom = '14px';
     });
-    var btn2 = document.getElementById('club-board-btn');
+    var btn2 = document.getElementById(crewId ? 'crew-board-btn' : 'club-board-btn');
     if (btn2) btn2.style.boxShadow = '0 0 0 3px rgba(196,136,30,.25)';
     // Render real
     try {
-        var html = await _buildClubBoardHTML();
+        var html = await _buildClubBoardHTML({ crewId: crewId, crewName: crewName });
         panel.innerHTML = html;
         // Re-ajustar max-height tras render real (por si el contenido lo necesita)
         requestAnimationFrame(function() { panel.style.maxHeight = panel.scrollHeight + 'px'; });
-        // Listener para cerrar con el botón X interno
+        // Listener para cerrar con el botón X interno (mismo contexto)
         var closeX = panel.querySelector('[data-board-close]');
-        if (closeX) closeX.onclick = function() { toggleClubBoard(); };
+        if (closeX) closeX.onclick = function() { toggleClubBoard({ crewId: crewId, crewName: crewName, container: feed }); };
     } catch (e) {
         panel.innerHTML = '<div style="padding:24px 20px;text-align:center;color:var(--tm);font-size:12px;">No se pudo cargar el tablón.</div>';
     }
 }
 
-async function _buildClubBoardHTML() {
+async function _buildClubBoardHTML(opts) {
+    opts = opts || {};
+    var crewId   = opts.crewId   || null;
+    var crewName = opts.crewName || null;
     var sb = window._sbClient;
     var weekStart = _getWeekStartISO();
-    // Traer todos los posts de la semana con autor y reacciones
-    var { data: posts, error } = await sb
+    // Traer todos los posts de la semana con autor y reacciones.
+    // Si hay crewId → solo posts de ese crew.
+    // Si NO hay crewId → solo posts públicos (crew_id IS NULL), igual que
+    // el feed global, para coherencia (no mezclar privados en stats globales).
+    var q = sb
         .from('club_posts')
         .select('id, act_data, created_at, profiles!club_posts_user_id_fkey(id, username, avatar_url), reactions(id)')
         .gte('created_at', weekStart)
         .order('created_at', { ascending: false });
+    if (crewId) q = q.eq('crew_id', crewId);
+    else        q = q.is('crew_id', null);
+    var { data: posts, error } = await q;
     if (error) throw error;
     posts = posts || [];
 
@@ -15857,10 +17950,15 @@ async function _buildClubBoardHTML() {
     var medals = ['🥇', '🥈', '🥉'];
 
     // ── Header del panel (siempre) ────────────────────────────
+    // Título contextual: si estamos en un crew, ponemos su nombre.
+    function _safeName(n) { return String(n || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    var titleText = crewId
+        ? ('📋 Esta semana en ' + _safeName(crewName || 'el crew'))
+        : '📋 Esta semana en el Club';
     var header = '<div style="' + noteStyle() + 'margin:14px 14px 12px;display:flex;align-items:center;justify-content:space-between;">'
               +    pin('red')
               +    '<div>'
-              +      '<div style="font-size:13px;font-weight:800;color:#1a1f2e;letter-spacing:.2px;">📋 Esta semana en el Club</div>'
+              +      '<div style="font-size:13px;font-weight:800;color:#1a1f2e;letter-spacing:.2px;">' + titleText + '</div>'
               +      '<div style="margin-top:2px;font-size:10px;color:#6b6b6b;font-weight:600;">' + _fmtWeekRange() + '</div>'
               +    '</div>'
               +    '<button data-board-close style="width:28px;height:28px;border-radius:50%;border:none;background:rgba(0,0,0,.08);color:#1a1f2e;cursor:pointer;font-size:14px;line-height:1;font-weight:700;">×</button>'
@@ -15992,6 +18090,46 @@ async function _buildClubBoardHTML() {
 }
 window.toggleClubBoard = toggleClubBoard;
 
+// ══ FEED FILTER — Para ti / Siguiendo / Crews ════════════════════════
+// Las dos primeras pestañas son toggles del feed normal (filtro por
+// seguidos). La tercera ("Crews") sustituye el feed por la lista de
+// mis crews — al tocar un crew se abre su detalle.
+// Modo persistido en LocalStorage:
+//   mr_club_tab = 'all' (default) | 'following' | 'crews'
+function setClubFeedFilter(mode) {
+    if (mode !== 'all' && mode !== 'following' && mode !== 'crews') mode = 'all';
+    localStorage.setItem(_uk('mr_club_tab'), mode);
+    // Compatibilidad: el toggle viejo solo conocía following sí/no
+    if (mode === 'following') localStorage.setItem(_uk('mr_feed_only_following'), '1');
+    else if (mode === 'all')  localStorage.setItem(_uk('mr_feed_only_following'), '0');
+    _refreshClubTabStyles();
+    if (mode === 'crews') {
+        if (typeof renderClubCrewsList === 'function') renderClubCrewsList();
+    } else {
+        if (typeof renderClubFeed === 'function') renderClubFeed();
+    }
+}
+window.setClubFeedFilter = setClubFeedFilter;
+
+function _refreshClubTabStyles() {
+    var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+    // Fallback: si el modo guardado no existe pero el toggle viejo está activado, usar following
+    if (mode !== 'crews' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
+    var tAll   = document.getElementById('club-tab-all');
+    var tFol   = document.getElementById('club-tab-following');
+    var tCrews = document.getElementById('club-tab-crews');
+    if (!tAll || !tFol || !tCrews) return;
+    var base = 'flex:1;height:30px;border:none;border-radius:8px;font-family:var(--f);font-size:11.5px;letter-spacing:.3px;cursor:pointer;transition:background .15s;';
+    // Estilos: dorado para feed, verde oliva para crews cuando está activa
+    var inactive   = 'background:rgba(255,255,255,.04);color:var(--tm);font-weight:700;';
+    var activeGold = 'background:rgba(196,136,30,.22);color:var(--tw);font-weight:800;';
+    var activeOliv = 'background:rgba(107,122,68,.28);color:#fff;font-weight:800;';
+    tAll.style.cssText   = base + (mode === 'all'       ? activeGold : inactive);
+    tFol.style.cssText   = base + (mode === 'following' ? activeGold : inactive);
+    tCrews.style.cssText = base + (mode === 'crews'     ? activeOliv : inactive);
+}
+window._refreshClubTabStyles = _refreshClubTabStyles;
+
 // ══ HEATMAP — Mapa de calor de rutas (últimos 30 días) ═══════════════
 // Renderiza todas las rutas de un runner superpuestas en un canvas
 // con compositing aditivo. Donde se cruzan, los píxeles se suman y
@@ -16007,6 +18145,10 @@ var _heatmapCache = {};
 async function openHeatmap(userId, displayName) {
     var isMe = (userId === 'me');
     var cacheKey = isMe ? 'me' : userId;
+    // Para el heatmap propio invalidamos siempre la cache: leer de la
+    // memoria local es instantáneo y así reflejamos cualquier actividad
+    // recién importada o borrada sin recargar la app.
+    if (isMe) delete _heatmapCache[cacheKey];
     // Rango por defecto: 30 días. Si el conjunto resulta vacío y el usuario
     // tiene actividades fuera de ese rango, ampliaremos a 90 días automáticamente.
     var DAYS_PRIMARY = 30;
@@ -16063,11 +18205,146 @@ async function openHeatmap(userId, displayName) {
     footer.style.cssText = 'margin-top:10px;font-size:10px;color:var(--tm);text-align:center;line-height:1.6;';
     footer.innerHTML = 'Cargando rutas…';
 
+    // Action row: download + share (sólo se muestran cuando hay tracks)
+    var actionsRow = document.createElement('div');
+    actionsRow.id = 'hm-actions';
+    actionsRow.style.cssText = 'display:none;margin-top:10px;gap:8px;justify-content:center;';
+
+    var dlBtn = document.createElement('button');
+    dlBtn.id = 'hm-dl-btn';
+    dlBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="margin-left:6px;">Descargar</span>';
+    dlBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:linear-gradient(135deg,#c4881e,#e8a825);color:#000;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+
+    var shBtn = document.createElement('button');
+    shBtn.id = 'hm-sh-btn';
+    shBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span style="margin-left:6px;">Compartir</span>';
+    shBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--tw);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+
+    actionsRow.appendChild(dlBtn);
+    actionsRow.appendChild(shBtn);
+
+    // Botón "Compartir al Club" (solo en heatmap propio)
+    var clubBtn = null;
+    if (isMe) {
+        clubBtn = document.createElement('button');
+        clubBtn.id = 'hm-club-btn';
+        clubBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="margin-left:6px;">Al Club</span>';
+        clubBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:var(--bg);color:var(--gold);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        actionsRow.appendChild(clubBtn);
+    }
+
     card.appendChild(hdr);
     card.appendChild(canvas);
     card.appendChild(footer);
+    card.appendChild(actionsRow);
     ov.appendChild(card);
     document.body.appendChild(ov);
+
+    // Helper para construir el filename
+    function _heatmapFilename() {
+        var who = isMe ? 'mio' : (displayName || 'runner').toString().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        var d = new Date();
+        var pad = function(n) { return n < 10 ? '0' + n : n; };
+        var datePart = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+        return 'misterrunner-heatmap-' + who + '-' + datePart + '.png';
+    }
+
+    // Descargar imagen PNG
+    dlBtn.onclick = function() {
+        try {
+            var url = canvas.toDataURL('image/png');
+            var link = document.createElement('a');
+            link.href = url;
+            link.download = _heatmapFilename();
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (e) {
+            console.error('[Heatmap] download:', e);
+        }
+    };
+
+    // Compartir vía Web Share API si está disponible, o fallback a descarga
+    shBtn.onclick = async function() {
+        try {
+            var blob = await new Promise(function(res) { canvas.toBlob(res, 'image/png'); });
+            if (!blob) throw new Error('No blob');
+            var file = new File([blob], _heatmapFilename(), { type: 'image/png' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    files: [file],
+                    title: 'Mi heatmap de MisterRunner',
+                    text: isMe ? 'Mis rutas de los últimos ' + daysUsed + ' días 🔥' : ''
+                });
+            } else {
+                // Fallback: descarga directa
+                dlBtn.onclick();
+            }
+        } catch (e) {
+            // Usuario canceló o el navegador no permite — silencioso
+            if (e && e.name !== 'AbortError') console.error('[Heatmap] share:', e);
+        }
+    };
+
+    // Publicar el heatmap como post en el Club / Crews
+    if (clubBtn) clubBtn.onclick = async function() {
+        // Selector de destinos (sustituye al confirm() clásico)
+        var dest = (typeof pickPublishDestinations === 'function')
+            ? await pickPublishDestinations()
+            : { toPublic: true, crewIds: [] };
+        if (!dest) return; // canceló
+        var sb = window._sbClient;
+        var origHTML = clubBtn.innerHTML;
+        clubBtn.innerHTML = '<span style="font-size:11px;">Publicando…</span>';
+        clubBtn.disabled = true;
+        try {
+            var { data: { session } } = await sb.auth.getSession();
+            if (!session) throw new Error('No session');
+            var myId = session.user.id;
+            // Convertimos canvas a Blob PNG
+            var blob = await new Promise(function(res) { canvas.toBlob(res, 'image/png'); });
+            if (!blob) throw new Error('No blob');
+            // Subimos a Supabase Storage
+            var pth = myId + '/heatmap-' + Date.now() + '.png';
+            var { error: upE } = await sb.storage.from('media').upload(pth, blob, { contentType: 'image/png' });
+            if (upE) throw upE;
+            var { data: ud } = sb.storage.from('media').getPublicUrl(pth);
+            var photoUrl = ud.publicUrl;
+            // Creamos el post con act_data especial tipo "heatmap"
+            var actData = {
+                type: 'heatmap',
+                name: '🔥 Mi Heatmap · ' + daysUsed + ' días',
+                dateStr: (function() {
+                    var d = new Date();
+                    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+                })(),
+                heatmapStats: {
+                    days: daysUsed,
+                    totalKm: Math.round(totalKm * 10) / 10,
+                    nRoutes: tracks.length,
+                    nZones: (typeof nClusters !== 'undefined' ? nClusters : 1)
+                }
+            };
+            var res = await _insertPostToDestinations({
+                user_id: myId,
+                act_data: actData,
+                photo_url: photoUrl
+            }, dest);
+            if (!res.ok) throw (res.errors[0] || new Error('No se pudo publicar'));
+            // Feedback éxito
+            clubBtn.innerHTML = '<span style="font-size:11px;">✓ Publicado</span>';
+            setTimeout(function() {
+                var ovEl = document.getElementById('heatmap-overlay');
+                if (ovEl) ovEl.remove();
+                if (typeof renderClubFeed === 'function') renderClubFeed();
+            }, 700);
+        } catch (e) {
+            console.error('[Heatmap] club share:', e);
+            clubBtn.innerHTML = origHTML;
+            clubBtn.disabled = false;
+            alert('No se pudo publicar el heatmap. ' + (e.message || ''));
+        }
+    };
 
     // ── Obtener tracks ───────────────────────────────────────
     var tracks; // array de arrays de {lat,lon}
@@ -16413,14 +18690,90 @@ async function openHeatmap(userId, displayName) {
         }
     }
 
-    // Watermark discreto MR en esquina inferior derecha
-    ctx.fillStyle = 'rgba(232,168,37,0.32)';
-    ctx.font = 'bold 11px system-ui, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText('MISTERRUNNER', W - 14, H - 14);
+    // ── Branding overlay (tarjeta compartible) ────────────────
+    // Barra superior con título, barra inferior con stats + logo grande
+    // abajo derecha (sustituye al watermark de texto antiguo).
+    var TOP_BAR = 60;    // alto barra superior
+    var BOTTOM_BAR = 60; // alto barra inferior (un pelín mayor para el logo)
+    var kmStrCanvas = (Math.round(totalKm * 10) / 10).toFixed(1);
 
-    // ── Footer info ──────────────────────────────────────────
+    // Barra superior: degradado oscuro semitransparente
+    var topGrad = ctx.createLinearGradient(0, 0, 0, TOP_BAR);
+    topGrad.addColorStop(0, 'rgba(8,12,22,0.92)');
+    topGrad.addColorStop(1, 'rgba(8,12,22,0.0)');
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, W, TOP_BAR);
+
+    // Título "🔥 HEATMAP · Nombre" y subtítulo "Últimos N días"
+    // (ya no hay logo arriba — solo texto)
+    var titleText = '🔥 HEATMAP';
+    if (!isMe && displayName) titleText += ' · ' + displayName;
+    else if (isMe) titleText += ' · Mis rutas';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(titleText, 16, 12);
+    ctx.fillStyle = 'rgba(232,168,37,0.85)';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Últimos ' + daysUsed + ' días', 16, 38);
+
+    // Barra inferior: degradado oscuro
+    var botGrad = ctx.createLinearGradient(0, H - BOTTOM_BAR, 0, H);
+    botGrad.addColorStop(0, 'rgba(8,12,22,0.0)');
+    botGrad.addColorStop(0.4, 'rgba(8,12,22,0.85)');
+    botGrad.addColorStop(1, 'rgba(8,12,22,0.95)');
+    ctx.fillStyle = botGrad;
+    ctx.fillRect(0, H - BOTTOM_BAR, W, BOTTOM_BAR);
+
+    // Stats izquierda: km recorridos + nº rutas
+    ctx.fillStyle = '#e8a825';
+    ctx.font = 'bold 24px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(kmStrCanvas + ' km', 16, H - 24);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText(nRutas + (nRutas === 1 ? ' ruta' : ' rutas')
+               + (nClusters > 1 ? ' · ' + nClusters + ' zonas' : ''),
+               16, H - 9);
+
+    // Logo MR grande abajo a la derecha (sustituye al watermark de texto).
+    // Esperamos al onload del logo antes de habilitar los botones para
+    // garantizar que el PNG descargado ya lo incluya.
+    var logoImg = new Image();
+    logoImg.onload = function() {
+        ctx.save();
+        ctx.beginPath();
+        var logoSize = 52;
+        var logoX = W - logoSize - 14;
+        var logoY = H - logoSize - 12;
+        var r = 9;
+        ctx.moveTo(logoX + r, logoY);
+        ctx.lineTo(logoX + logoSize - r, logoY);
+        ctx.quadraticCurveTo(logoX + logoSize, logoY, logoX + logoSize, logoY + r);
+        ctx.lineTo(logoX + logoSize, logoY + logoSize - r);
+        ctx.quadraticCurveTo(logoX + logoSize, logoY + logoSize, logoX + logoSize - r, logoY + logoSize);
+        ctx.lineTo(logoX + r, logoY + logoSize);
+        ctx.quadraticCurveTo(logoX, logoY + logoSize, logoX, logoY + logoSize - r);
+        ctx.lineTo(logoX, logoY + r);
+        ctx.quadraticCurveTo(logoX, logoY, logoX + r, logoY);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
+        ctx.restore();
+        if (actionsRow) actionsRow.style.display = 'flex';
+    };
+    logoImg.onerror = function() {
+        if (actionsRow) actionsRow.style.display = 'flex';
+    };
+    if (typeof MR_LOGO === 'string') {
+        logoImg.src = MR_LOGO;
+    } else {
+        if (actionsRow) actionsRow.style.display = 'flex';
+    }
+
+    // ── Footer info (debajo del canvas, en el modal) ──────────
     var kmStr = (Math.round(totalKm * 10) / 10).toFixed(1);
     var zonasInfo = (nClusters > 1) ? (' · <b style="color:var(--tw);font-weight:800;">' + nClusters + '</b> zonas') : '';
     footer.innerHTML = '<b style="color:var(--tw);font-weight:800;">' + kmStr + ' km</b> recorridos · '
@@ -16495,12 +18848,106 @@ async function openClubActivity() {
     });
 }
 
+async function _openBlockMenu(anchorBtn, targetId, targetName) {
+    // Cerrar otro menú abierto si existe
+    var prev = document.getElementById('mr-block-menu');
+    if (prev) { prev.remove(); return; }
+
+    var muted   = isMuted(targetId);
+    var blocked = isBlocked(targetId);
+
+    var menu = document.createElement('div');
+    menu.id = 'mr-block-menu';
+    var rect = anchorBtn.getBoundingClientRect();
+    // Posicionar a la derecha-debajo del botón, alineado al borde derecho
+    var top = rect.bottom + 6, right = window.innerWidth - rect.right;
+    menu.style.cssText = 'position:fixed;top:'+top+'px;right:'+right+'px;'
+        + 'background:var(--card);border:1px solid var(--border);border-radius:10px;'
+        + 'box-shadow:0 6px 20px rgba(0,0,0,.25);min-width:160px;padding:4px 0;'
+        + 'font-family:var(--f);font-size:12.5px;z-index:99999;';
+
+    function rowHTML(icon, label, color, danger) {
+        return '<div style="padding:10px 14px;display:flex;align-items:center;gap:9px;color:'
+             + (color||'var(--tw)')+';cursor:pointer;font-weight:600;" '
+             + 'onmouseover="this.style.background=\'var(--card2,var(--bsoft,rgba(127,127,127,.08)))\'" '
+             + 'onmouseout="this.style.background=\'transparent\'">'
+             + icon + '<span>' + label + '</span></div>';
+    }
+    var muteIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 12 19 8 23 4"/><line x1="13" y1="12" x2="23" y2="12"/><path d="M1 12h4l2 7h12l4-12"/></svg>';
+    var blockIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
+
+    menu.innerHTML = ''
+        + '<div data-action="mute">' + rowHTML(muteIcon, muted ? 'Quitar silencio' : 'Silenciar', null) + '</div>'
+        + '<div style="height:1px;background:var(--border);"></div>'
+        + '<div data-action="block">' + rowHTML(blockIcon, blocked ? 'Desbloquear' : 'Bloquear', '#ef4444') + '</div>';
+
+    // Cerrar al pulsar fuera
+    function dismiss(ev) {
+        if (!menu.contains(ev.target) && ev.target !== anchorBtn) {
+            menu.remove();
+            document.removeEventListener('mousedown', dismiss, true);
+            document.removeEventListener('touchstart', dismiss, true);
+        }
+    }
+    setTimeout(function() {
+        document.addEventListener('mousedown', dismiss, true);
+        document.addEventListener('touchstart', dismiss, true);
+    }, 0);
+
+    menu.querySelector('[data-action="mute"]').onclick = async function() {
+        menu.remove();
+        var ok = await setUserBlockState(targetId, 'mute', !muted);
+        if (ok) {
+            _showBlockToast(muted ? 'Silencio retirado a @' + targetName : 'Silenciado @' + targetName);
+            // Refrescar feed si está visible
+            if (typeof renderClubFeed === 'function') renderClubFeed();
+        }
+    };
+    menu.querySelector('[data-action="block"]').onclick = async function() {
+        menu.remove();
+        if (!blocked) {
+            if (!confirm('¿Bloquear a @' + targetName + '? Dejaréis de seguiros y no podréis interactuar.')) return;
+        }
+        var ok = await setUserBlockState(targetId, 'block', !blocked);
+        if (ok) {
+            _showBlockToast(blocked ? 'Desbloqueado @' + targetName : 'Bloqueado @' + targetName);
+            // Si bloqueé desde su perfil, lo cierro (ya no debería verlo)
+            if (!blocked) {
+                var ov = document.querySelector('[data-up-overlay]');
+                if (ov) ov.remove();
+                if (typeof renderClubFeed === 'function') renderClubFeed();
+            } else {
+                if (typeof renderClubFeed === 'function') renderClubFeed();
+            }
+        }
+    };
+
+    document.body.appendChild(menu);
+}
+window._openBlockMenu = _openBlockMenu;
+
+function _showBlockToast(msg) {
+    var t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);'
+        + 'background:#1a1f2e;color:#fff;padding:10px 16px;border-radius:10px;'
+        + 'font-family:var(--f);font-size:12px;font-weight:600;z-index:99998;'
+        + 'box-shadow:0 4px 16px rgba(0,0,0,.35);max-width:80%;';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() {
+        t.style.transition = 'opacity .3s';
+        t.style.opacity = '0';
+        setTimeout(function() { t.remove(); }, 320);
+    }, 2200);
+}
+
 async function openUserProfile(userId, username, avatarUrl) {
     var sb = window._sbClient;
     var { data:{ session } } = await sb.auth.getSession();
     if (!session) return;
     var myId = session.user.id;
     var ov = document.createElement('div');
+    ov.setAttribute('data-up-overlay', '1');
     ov.style.cssText = 'position:fixed;inset:0;z-index:20015;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
     var hdr = document.createElement('div');
     hdr.style.cssText = 'flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+8px) 15px 12px;background:var(--bg);border-bottom:2px solid var(--gold-bd);position:relative;';
@@ -16572,14 +19019,24 @@ async function openUserProfile(userId, username, avatarUrl) {
         var foll = document.getElementById('up-followers'); if(foll) foll.textContent=fc||0;
     };
 
-    // Name row: name on the left, Follow button on the right (same line)
+    // Name row: name on the left, Follow button + kebab on the right
     var nameRow = document.createElement('div');
-    nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
     var nameEl = document.createElement('div');
     nameEl.style.cssText = 'flex:1;min-width:0;font-size:16px;font-weight:800;color:var(--tw);letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     nameEl.textContent = username || '—';
     nameRow.appendChild(nameEl);
     nameRow.appendChild(fBtn);
+    // Kebab ⋯ con menú silenciar/bloquear
+    var kebab = document.createElement('button');
+    kebab.setAttribute('aria-label', 'Más opciones');
+    kebab.style.cssText = 'width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,.08);color:var(--tw);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    kebab.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
+    kebab.onclick = function(e) {
+        e.stopPropagation();
+        _openBlockMenu(kebab, userId, username || 'Runner');
+    };
+    nameRow.appendChild(kebab);
     midCol.appendChild(nameRow);
 
     // Bio (read-only when viewing other users)
@@ -17018,11 +19475,21 @@ function closeClub() {
 }
 
 /* ── Feed ────────────────────────────────────────────────────────── */
-async function renderClubFeed() {
-    var container = document.getElementById('club-feed');
+async function renderClubFeed(opts) {
+    // ── Parámetros opcionales ──
+    // opts.crewId  → si se pasa, filtramos por ese crew (vista del Crew).
+    //               si no, mostramos solo posts SIN crew (feed global).
+    // opts.target  → contenedor DOM donde renderizar. Por defecto #club-feed.
+    opts = opts || {};
+    var crewId = opts.crewId || null;
+    var container = opts.target || document.getElementById('club-feed');
     if (!container) return;
-    // Preservar el panel del Tablón si está abierto (no perderlo durante el reload)
-    var _boardSaved = document.getElementById('club-board-panel');
+    // Preservar el panel del Tablón si está abierto. ID distinto según contexto:
+    //   global → 'club-board-panel'
+    //   crew   → 'crew-board-panel-<crewId>'
+    var _boardSaved = crewId
+        ? document.getElementById('crew-board-panel-' + crewId)
+        : document.getElementById('club-board-panel');
     container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--tm);font-size:13px;">Cargando...</div>';
     if (_boardSaved) container.insertBefore(_boardSaved, container.firstChild);
 
@@ -17043,30 +19510,62 @@ async function renderClubFeed() {
         const followMeSet = new Set((followMe||[]).map(r => r.follower_id));
         const mutualSet = new Set([...iFollowSet].filter(id => followMeSet.has(id)));
 
-        const { data: posts, error } = await window._sbClient
+        // Query base: con filtro por crew o solo posts públicos
+        var q = window._sbClient
             .from('club_posts')
             .select('*, profiles!club_posts_user_id_fkey(id, username, avatar_url), reactions(id, user_id, emoji)')
             .order('created_at', { ascending: false })
             .limit(50);
+        if (crewId) {
+            q = q.eq('crew_id', crewId);
+        } else {
+            // Feed global: SOLO posts sin crew (los de crew solo se ven en su detalle)
+            q = q.is('crew_id', null);
+        }
+        const { data: posts, error } = await q;
 
         if (error) throw error;
 
         // Preservar el panel del Tablón si está abierto antes de redibujar el feed
-        var _board = document.getElementById('club-board-panel');
+        var _board = crewId
+            ? document.getElementById('crew-board-panel-' + crewId)
+            : document.getElementById('club-board-panel');
         if (_board) _board.parentNode.removeChild(_board);
 
-        if (!posts || !posts.length) {
-            container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--tm);"><div style="font-size:32px;margin-bottom:10px;">🏃</div><div style="font-size:14px;font-weight:700;color:var(--tp);margin-bottom:6px;">Tu Club está vacío</div><div style="font-size:12px;line-height:1.6;">Sigue a otros runners y comparte tus actividades.</div></div>';
+        // ── Filtros: ocultar posts de gente bloqueada/silenciada o que me bloqueó.
+        // El toggle "Solo seguidos" solo aplica al feed global, no al feed de un crew
+        // (en un crew ya son todos "tus" runners por definición).
+        var onlyFollowing = !crewId && localStorage.getItem(_uk('mr_feed_only_following')) === '1';
+        var visiblePosts = (posts || []).filter(function(p) {
+            var uid = p.user_id;
+            if (typeof hiddenByMe === 'function' && hiddenByMe(uid)) return false;
+            if (onlyFollowing && uid !== myId && !iFollowSet.has(uid)) return false;
+            return true;
+        });
+
+        if (!visiblePosts || !visiblePosts.length) {
+            var emptyTitle, emptyBody;
+            if (crewId) {
+                emptyTitle = 'Este crew aún no tiene posts';
+                emptyBody  = 'Cuando alguien comparta una actividad al crew, aparecerá aquí.';
+            } else if (onlyFollowing) {
+                emptyTitle = 'Sin posts de gente que sigues';
+                emptyBody  = 'Cambia a "Para ti" para ver todos los posts del Club.';
+            } else {
+                emptyTitle = 'Tu Club está vacío';
+                emptyBody  = 'Sigue a otros runners y comparte tus actividades.';
+            }
+            container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--tm);"><div style="font-size:32px;margin-bottom:10px;">🏃</div><div style="font-size:14px;font-weight:700;color:var(--tp);margin-bottom:6px;">' + emptyTitle + '</div><div style="font-size:12px;line-height:1.6;">' + emptyBody + '</div></div>';
             if (_board) container.insertBefore(_board, container.firstChild);
             return;
         }
 
         container.innerHTML = '';
         if (_board) container.appendChild(_board);
-        posts.forEach(post => container.appendChild(_buildClubCard(post, myId, mutualSet)));
+        visiblePosts.forEach(post => container.appendChild(_buildClubCard(post, myId, mutualSet)));
 
         setTimeout(() => {
-            posts.forEach(post => {
+            visiblePosts.forEach(post => {
                 const actData = post.act_data || {};
                 if (actData.records?.length > 10 && typeof window.drawTrack === 'function') {
                     const cv = document.getElementById('club-map-' + post.id);
@@ -17143,8 +19642,8 @@ function _buildClubCard(post, myId, mutualSet) {
         var dh = Math.floor(act.durationSec/3600), dm = Math.floor((act.durationSec%3600)/60), ds = act.durationSec%60;
         dur = dh > 0 ? dh + ':' + String(dm).padStart(2,'0') + ':' + String(ds).padStart(2,'0') : dm + ':' + String(ds).padStart(2,'0');
     }
-    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera'};
-    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#C9A84C',race:'#e879f9'};
+    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera',heatmap:'🔥 Heatmap'};
+    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#C9A84C',race:'#e879f9',heatmap:'#e8a825'};
     var tl = TLAB[act.type] || act.type || 'Actividad';
     var tc = TCOL[act.type] || '#aaa';
     var diff = Date.now() - new Date(post.created_at).getTime();
@@ -17330,7 +19829,24 @@ function _buildClubCard(post, myId, mutualSet) {
 
     /* Stats */
     var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:10px 6px 8px;flex-shrink:0;';
-    [{v:distVal,u:'KM'},{v:dur,u:'Tiempo'},{v:pace,u:'Ritmo'},{v:act.avgHr>0?String(act.avgHr):'--',u:'FC'}].forEach(function(s) {
+    var statCells;
+    if (act.type === 'heatmap' && act.heatmapStats) {
+        var hs = act.heatmapStats;
+        statCells = [
+            { v: (hs.totalKm != null ? hs.totalKm.toFixed(1) : '--'), u: 'KM' },
+            { v: String(hs.nRoutes || '--'), u: hs.nRoutes === 1 ? 'Ruta' : 'Rutas' },
+            { v: String(hs.nZones || 1), u: (hs.nZones === 1 ? 'Zona' : 'Zonas') },
+            { v: String(hs.days || 30) + 'd', u: 'Periodo' }
+        ];
+    } else {
+        statCells = [
+            { v: distVal, u: 'KM' },
+            { v: dur, u: 'Tiempo' },
+            { v: pace, u: 'Ritmo' },
+            { v: act.avgHr > 0 ? String(act.avgHr) : '--', u: 'FC' }
+        ];
+    }
+    statCells.forEach(function(s) {
         var cell = document.createElement('div'); cell.style.cssText = 'text-align:center;padding:2px;';
         cell.innerHTML = '<div style="font-size:18px;font-weight:800;color:var(--tw);line-height:1.1;font-variant-numeric:tabular-nums;">' + s.v + '</div><div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-top:2px;">' + s.u + '</div>';
         sg.appendChild(cell);
@@ -17623,6 +20139,12 @@ async function _doShareActivityToClub(actId, actObj) {
         var act = actObj || ((typeof activities !== 'undefined') ? activities.find(function(a) { return a.id === actId; }) : null);
         if (!act) { showToast('Actividad no encontrada', 2000); return; }
 
+        // Selector de destinos antes de cualquier trabajo (upload de foto, etc.)
+        var dest = (typeof pickPublishDestinations === 'function')
+            ? await pickPublishDestinations()
+            : { toPublic: true, crewIds: [] };
+        if (!dest) return; // canceló
+
         _showClubPublishingBanner();
 
         var cleanActData = Object.assign({}, act, {photoB64: null, records: (act.records||[]).slice(0, 800)});
@@ -17642,17 +20164,18 @@ async function _doShareActivityToClub(actId, actObj) {
             } catch(e) { console.warn('[Club] Photo upload failed:', e); }
         }
 
-        const { data: inserted, error } = await sb.from('club_posts').insert({
+        var result = await _insertPostToDestinations({
             user_id: myId,
             act_data: cleanActData,
             photo_url: photoUrl
-        }).select();
+        }, dest);
 
         var pb = document.getElementById('club-publishing-banner'); if (pb) pb.remove();
 
-        if (error) {
-            console.error('[Club] Insert error:', error);
-            showToast('Error: ' + (error.message || JSON.stringify(error)), 4000);
+        if (!result.ok) {
+            var err = result.errors[0] || {};
+            console.error('[Club] Insert error:', err);
+            showToast('Error: ' + (err.message || JSON.stringify(err)), 4000);
             return;
         }
         _showClubSharedBanner();
@@ -17740,11 +20263,19 @@ async function clubSearch(q) {
             var el = document.createElement('div');
             el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card);border-radius:12px;border:1px solid var(--border);margin-bottom:6px;';
             var av = document.createElement('div');
-            av.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:700;flex-shrink:0;overflow:hidden;';
+            av.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:700;flex-shrink:0;overflow:hidden;cursor:pointer;';
             if (u.avatar_url) { var iav = document.createElement('img'); iav.src = u.avatar_url; iav.loading = 'lazy'; iav.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(iav); }
             else av.textContent = (u.username || '?')[0].toUpperCase();
-            var info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;';
+            var info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;cursor:pointer;';
             info.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--tw);">@' + u.username + '</div>' + (u.city ? '<div style="font-size:10px;color:var(--tm);">' + u.city + '</div>' : '');
+            // Avatar y nombre/info abren el perfil del runner (imprescindible para
+            // poder des-silenciar o desbloquear desde la lupa, ya que sus posts
+            // están filtrados del feed).
+            (function(_id, _un, _ua) {
+                var openIt = function() { closeClubSearch(); openUserProfile(_id, _un, _ua); };
+                av.onclick = openIt;
+                info.onclick = openIt;
+            })(u.id, u.username, u.avatar_url);
 
             var dmBtn2 = document.createElement('button');
             dmBtn2.style.cssText = 'padding:7px 10px;border-radius:20px;border:1.5px solid var(--border);background:var(--card2);color:var(--ts);font-family:var(--f);font-size:13px;cursor:pointer;margin-right:6px;';
@@ -18025,7 +20556,16 @@ function _initPTR() {
     var startY = 0, pulling = false, triggered = false;
     feed.addEventListener('touchstart', function(e) { if (feed.scrollTop === 0) { startY = e.touches[0].clientY; pulling = true; triggered = false; } }, {passive: true});
     feed.addEventListener('touchmove', function(e) { if (!pulling) return; var dy = e.touches[0].clientY - startY; if (dy > 65 && !triggered) { triggered = true; } }, {passive: true});
-    feed.addEventListener('touchend', function() { if (!pulling) return; pulling = false; if (triggered) { triggered = false; renderClubFeed(); } }, {passive: true});
+    feed.addEventListener('touchend', function() {
+        if (!pulling) return;
+        pulling = false;
+        if (triggered) {
+            triggered = false;
+            var _tab = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+            if (_tab === 'crews' && typeof renderClubCrewsList === 'function') renderClubCrewsList();
+            else renderClubFeed();
+        }
+    }, {passive: true});
 }
 
 /* ── Init ────────────────────────────────────────────────────────── */
@@ -18112,6 +20652,12 @@ window.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <!-- Big Mister Runner logo on the right (mirrors avatar size for visual balance) -->
                 <img alt="" aria-hidden="true" id="club-header-logo" style="width:74px;height:74px;border-radius:12px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.35);object-fit:cover;"/>
+            </div>
+            <!-- Tabs Para ti / Siguiendo / Crews (fuera del scroll, siempre visibles) -->
+            <div style="margin-top:10px;display:flex;gap:8px;padding:0 2px;">
+                <button id="club-tab-all" onclick="setClubFeedFilter('all')" style="flex:1;height:30px;border:none;border-radius:8px;background:rgba(196,136,30,.22);color:var(--tw);font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.3px;cursor:pointer;transition:background .15s;">Para ti</button>
+                <button id="club-tab-following" onclick="setClubFeedFilter('following')" style="flex:1;height:30px;border:none;border-radius:8px;background:rgba(255,255,255,.04);color:var(--tm);font-family:var(--f);font-size:11.5px;font-weight:700;letter-spacing:.3px;cursor:pointer;transition:background .15s;">Siguiendo</button>
+                <button id="club-tab-crews" onclick="setClubFeedFilter('crews')" style="flex:1;height:30px;border:none;border-radius:8px;background:rgba(255,255,255,.04);color:var(--tm);font-family:var(--f);font-size:11.5px;font-weight:700;letter-spacing:.3px;cursor:pointer;transition:background .15s;">Crews</button>
             </div>
         </div>
         <div id="club-feed" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 15px 80px;display:flex;flex-direction:column;">
