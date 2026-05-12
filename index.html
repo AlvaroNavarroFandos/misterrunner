@@ -11891,7 +11891,12 @@
                     var { data:{ session } } = await sb.auth.getSession();
                     if (!session) return;
                     var myId = session.user.id;
-                    var cleanAct = Object.assign({}, _act, {photoB64: null});
+                    // Stamp watch name on the activity so other users can see it in the post header.
+                    // Old posts without `watch` simply won't show the watch chip — fully retro-compatible.
+                    var cleanAct = Object.assign({}, _act, {
+                        photoB64: null,
+                        watch: profileData.watch || _act.watch || ''
+                    });
                     var photoUrl = null;
                     if (_act.photoB64 && _act.photoB64.startsWith('data:')) {
                         try {
@@ -14101,7 +14106,7 @@ function buildManualHTML() {
                 { title: 'Feed de actividad (campana)', text: 'Al pulsar la campana ves un historial cronológico:\n• @usuario ha reaccionado a tu post 🔥\n• @usuario ha empezado a seguirte\n\nAl pulsar cualquier fila se abre el perfil de ese usuario. El punto rojo desaparece al abrir el feed.' },
                 { title: 'Perfil de otro runner', text: 'Al pulsar el nombre o avatar de cualquier runner en el feed se abre su perfil con cabecera dorada, foto, nombre, stats (posts/seguidores/seguidos) y todos sus posts publicados.\n\n• Botón verde "Siguiendo" — ya lo sigues\n• Botón rojo "Seguir" — empieza a seguirle\n\nSi le sigues y él te sigue (seguimiento mutuo), aparecerá el icono de chat en sus posts para poder enviarle un mensaje directo.' },
                 { title: 'Compartir una actividad al Club', text: 'Desde Biblioteca → detalle de actividad → icono compartir → "Compartir al Club". Aparece una confirmación. Al publicar, la actividad queda visible para tus seguidores en el feed.\n\nLos posts del Club se guardan en la nube (Supabase) permanentemente — no dependen del backup local.' },
-                { title: 'Reacciones', text: 'Cada post tiene 5 emojis de reacción: 🐢 🐐 ❤️ 😂 🔥. Solo puedes elegir una reacción por post (al pulsar otra cambia la selección). Los contadores se actualizan en tiempo real sin recargar el feed.' },
+                { title: 'Reacciones', text: 'Cada post tiene 5 emojis de reacción: ❤️ 💪 🔥 🐐 🐢. Solo puedes elegir una reacción por post (al pulsar otra cambia la selección). Los contadores se actualizan en tiempo real sin recargar el feed.' },
                 { title: 'Mensajes directos (DM)', text: 'Solo puedes enviar mensajes a runners con los que tenéis seguimiento mutuo (los dos os seguís). El chat tiene estilo iMessage: burbujas azul marino para tus mensajes, gris claro para los del otro.\n\nAl abrir una conversación los mensajes se marcan como leídos automáticamente. En la lista de conversaciones los mensajes no leídos aparecen en negrita, igual que WhatsApp.' },
                 { title: 'Eliminar un post', text: 'Solo puedes eliminar tus propios posts. Pulsa el icono 🗑 en la cabecera de tu post → confirmación → el post se elimina definitivamente de la nube y desaparece del feed.' },
                 { title: 'Buscar runners', text: 'Pulsa la lupa en la cabecera del Club. Escribe el nombre de usuario (mínimo 2 caracteres). Los resultados muestran avatar, nombre, número de posts y botón Seguir/Siguiendo.' },
@@ -15280,6 +15285,34 @@ async function _loadClubHeaderStats() {
     } catch(e) {}
 }
 
+// Photo zoom modal — fullscreen image viewer for club post photos.
+// Click anywhere or ESC closes. Reuses _avFade animation if available.
+function _openPhotoZoom(url) {
+    if (!url) return;
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);animation:_avFade .18s ease-out;cursor:zoom-out;';
+    // Ensure the fade keyframe exists (might not be loaded yet if avatar wasn't tapped)
+    if (!document.getElementById('_avFadeStyle')) {
+        var st = document.createElement('style');
+        st.id = '_avFadeStyle';
+        st.textContent = '@keyframes _avFade{from{opacity:0}to{opacity:1}}';
+        document.head.appendChild(st);
+    }
+    var img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
+    ov.appendChild(img);
+
+    var close = function() {
+        ov.style.animation = '_avFade .14s ease-out reverse';
+        setTimeout(function(){ if(ov.parentNode) ov.remove(); document.removeEventListener('keydown', onKey); }, 130);
+    };
+    var onKey = function(e) { if (e.key === 'Escape') close(); };
+    ov.onclick = close;
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(ov);
+}
+
 function _openClubAvatarView() {
     // Accept any avatar source: data: URI, https URL from Supabase Storage, anything.
     var src = profileData && profileData.avatar ? profileData.avatar : '';
@@ -15534,6 +15567,33 @@ async function renderClubFeed() {
 }
 
 /* ── Build club card ─────────────────────────────────────────────── */
+// Detect if an activity is a Personal Best vs the local user's recorded marcas.
+// Returns a label like '5K' / '10K' / 'HM' / 'M', or null if not a PB.
+// Only meaningful for own posts (we don't have other users' marcas client-side).
+function _detectPB(act) {
+    try {
+        if (typeof profileData === 'undefined' || !profileData.marcas) return null;
+        var dist = act.distKm;
+        var dur = act.durationSec;
+        if (!dist || !dur || dur <= 0) return null;
+        // Match real distance to a PB bucket
+        var bucket = null;
+        if (dist >= 4.8 && dist <= 5.5)   bucket = { key: '5k',  label: '5K' };
+        else if (dist >= 9.5 && dist <= 10.8) bucket = { key: '10k', label: '10K' };
+        else if (dist >= 20.5 && dist <= 21.5) bucket = { key: 'hm', label: 'HM' };
+        else if (dist >= 41.5 && dist <= 43.0) bucket = { key: 'm',  label: 'M' };
+        if (!bucket) return null;
+        var pbStr = profileData.marcas[bucket.key];
+        if (!pbStr || pbStr === '—' || pbStr === '\u2014') return null; // no previous mark
+        // Parse "MM:SS" or "HH:MM:SS"
+        var parts = String(pbStr).split(':').map(Number);
+        var pbSec = parts.length === 3 ? parts[0]*3600+parts[1]*60+parts[2] : parts[0]*60+(parts[1]||0);
+        if (!pbSec || pbSec <= 0) return null;
+        // Beat means strictly faster
+        return dur < pbSec ? bucket.label : null;
+    } catch(e) { return null; }
+}
+
 function _buildClubCard(post, myId, mutualSet) {
     mutualSet = mutualSet || new Set();
     var act = post.act_data || {};
@@ -15586,6 +15646,34 @@ function _buildClubCard(post, myId, mutualSet) {
     if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8px;font-weight:700;color:var(--gold);background:var(--gold-lt);border:1px solid var(--gold-bd);border-radius:4px;padding:1px 5px;'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
     var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:var(--tm);margin-top:2px;'; uDt.textContent = dateStr;
     uInfo.appendChild(uNW); uInfo.appendChild(uDt);
+
+    // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
+    // Both are stored inside act_data: shoeName / shoeColor (set when the activity was created),
+    // and watch (stamped on the post when published).
+    var shoeName = act.shoeName || '';
+    var shoeColor = act.shoeColor || '';
+    var watchName = act.watch || '';
+    if (shoeName || watchName) {
+        var gearRow = document.createElement('div');
+        gearRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;';
+        if (shoeName) {
+            var shChip = document.createElement('span');
+            shChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            // Colored shoe icon (tinted with shoeColor if available)
+            var shoeStroke = shoeColor || 'var(--tm)';
+            shChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + shoeStroke + '" stroke-width="1.8" stroke-linecap="round"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + shoeName + '</span>';
+            gearRow.appendChild(shChip);
+        }
+        if (watchName) {
+            var wChip = document.createElement('span');
+            wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            // Smartwatch icon (rectangle with strap nubs + small inner display)
+            wChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="var(--tm)" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
+            gearRow.appendChild(wChip);
+        }
+        uInfo.appendChild(gearRow);
+    }
+
     hdr.appendChild(uInfo);
     var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
     var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:11px;color:var(--tm);'; agoEl.textContent = ago;
@@ -15640,10 +15728,12 @@ function _buildClubCard(post, myId, mutualSet) {
         if (hasP && hasT) {
             mw.style.cssText = 'display:flex;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
             var photoSide = document.createElement('div');
-            photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;';
+            photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
-            photoSide.appendChild(ph); mw.appendChild(photoSide);
+            photoSide.appendChild(ph);
+            (function(_url){ photoSide.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            mw.appendChild(photoSide);
             var trackSide = document.createElement('div');
             trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;';
             var cvo = document.createElement('canvas');
@@ -15652,13 +15742,14 @@ function _buildClubCard(post, myId, mutualSet) {
             cvo.style.cssText = 'width:100%;height:100%;display:block;';
             trackSide.appendChild(cvo); mw.appendChild(trackSide);
         } else if (hasP) {
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
             mw.appendChild(ph);
             var gb = document.createElement('div');
             gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
             mw.appendChild(gb);
+            (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var cvFull = document.createElement('canvas');
@@ -15675,8 +15766,21 @@ function _buildClubCard(post, myId, mutualSet) {
     var nameRow = document.createElement('div');
     nameRow.style.cssText = 'padding:12px 15px 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-shrink:0;';
     var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:20px;font-weight:800;color:var(--tw);letter-spacing:-.4px;line-height:1.2;flex:1;'; nmEl.textContent = act.name || tl;
-    var tbEl = document.createElement('div'); tbEl.style.cssText = 'font-size:10px;font-weight:700;padding:4px 10px;border-radius:99px;flex-shrink:0;margin-top:4px;background:' + tc + '22;color:' + tc + ';border:1px solid ' + tc + '44;'; tbEl.textContent = tl;
-    nameRow.appendChild(nmEl); nameRow.appendChild(tbEl); card.appendChild(nameRow);
+    var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-top:4px;';
+    // PB badge (own posts only — we don't have remote marcas)
+    if (isOwn) {
+        var pbLabel = _detectPB(act);
+        if (pbLabel) {
+            var pbBadge = document.createElement('div');
+            pbBadge.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:10px;font-weight:800;padding:4px 9px;border-radius:99px;background:linear-gradient(135deg,#c4881e,#e8a825);color:#1a1208;border:1px solid #a36e0f;box-shadow:0 1px 4px rgba(196,136,30,.35);';
+            pbBadge.innerHTML = '<span style="font-size:11px;">🏆</span><span>PB ' + pbLabel + '</span>';
+            pbBadge.title = 'Nueva marca personal en ' + pbLabel;
+            rightBadges.appendChild(pbBadge);
+        }
+    }
+    var tbEl = document.createElement('div'); tbEl.style.cssText = 'font-size:10px;font-weight:700;padding:4px 10px;border-radius:99px;background:' + tc + '22;color:' + tc + ';border:1px solid ' + tc + '44;'; tbEl.textContent = tl;
+    rightBadges.appendChild(tbEl);
+    nameRow.appendChild(nmEl); nameRow.appendChild(rightBadges); card.appendChild(nameRow);
 
     /* Divider */
     var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 15px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv1);
@@ -15693,15 +15797,216 @@ function _buildClubCard(post, myId, mutualSet) {
     /* Reactions */
     var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 15px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv2);
     card.appendChild(_renderReactionBar(post.id, reactions, myId, act.shoeName || ''));
+    /* Comments section */
+    card.appendChild(_renderCommentsSection(post.id, myId, profile));
     return card;
+}
+
+/* ── Comments section ────────────────────────────────────────────── */
+// Collapsible comments under each post. Loads count first (cheap), expands to show full list.
+// Stores in Supabase `post_comments` table. Graceful fallback if table missing.
+function _renderCommentsSection(postId, myId, ownerProfile) {
+    var wrap = document.createElement('div');
+    wrap.id = 'cmt-wrap-' + postId;
+    wrap.style.cssText = 'border-top:1px solid var(--bsoft);flex-shrink:0;';
+
+    // Toggle button row
+    var toggle = document.createElement('button');
+    toggle.style.cssText = 'width:100%;background:none;border:none;padding:9px 15px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-family:var(--f);';
+    toggle.innerHTML = '<span style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ts);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '">Comentarios</span></span><svg id="cmt-chev-' + postId + '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2" stroke-linecap="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>';
+
+    // Collapsible body
+    var body = document.createElement('div');
+    body.id = 'cmt-body-' + postId;
+    body.style.cssText = 'display:none;padding:0 15px 12px;';
+    body.innerHTML = '<div id="cmt-list-' + postId + '" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px;"></div>';
+
+    // Input row
+    var inputRow = document.createElement('div');
+    inputRow.style.cssText = 'display:flex;gap:8px;align-items:flex-end;';
+    var ta = document.createElement('textarea');
+    ta.placeholder = 'Escribe un comentario...';
+    ta.rows = 1;
+    ta.maxLength = 500;
+    ta.style.cssText = 'flex:1;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:8px 12px;font-family:var(--f);font-size:13px;color:var(--tw);outline:none;resize:none;max-height:80px;line-height:1.35;';
+    ta.oninput = function() { this.style.height='auto'; this.style.height=Math.min(this.scrollHeight, 80)+'px'; };
+    var sendBtn = document.createElement('button');
+    sendBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
+    inputRow.appendChild(ta); inputRow.appendChild(sendBtn);
+    body.appendChild(inputRow);
+
+    wrap.appendChild(toggle);
+    wrap.appendChild(body);
+
+    // ---------- Logic ----------
+    var loaded = false;
+    var expanded = false;
+
+    async function loadComments() {
+        var listEl = document.getElementById('cmt-list-' + postId);
+        if (!listEl) return;
+        listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:6px 0;">Cargando comentarios...</div>';
+        try {
+            var sb = window._sbClient;
+            var { data, error } = await sb.from('post_comments')
+                .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .eq('post_id', postId).order('created_at', { ascending: true });
+            if (error) {
+                listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:6px 0;font-style:italic;">Comentarios no disponibles aún.</div>';
+                return;
+            }
+            renderList(data || []);
+            updateCount((data || []).length);
+        } catch(e) {
+            listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:6px 0;font-style:italic;">Error al cargar.</div>';
+        }
+    }
+
+    function renderList(comments) {
+        var listEl = document.getElementById('cmt-list-' + postId);
+        if (!listEl) return;
+        if (!comments.length) {
+            listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
+            return;
+        }
+        listEl.innerHTML = '';
+        comments.forEach(function(c) {
+            listEl.appendChild(buildCommentRow(c));
+        });
+    }
+
+    function buildCommentRow(c) {
+        var prof = c.profiles || {};
+        var un = prof.username || '?';
+        var avUrl = prof.avatar_url || '';
+        var isMine = c.user_id === myId;
+        var row = document.createElement('div');
+        row.dataset.cid = c.id;
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;';
+
+        var avc = document.createElement('div');
+        avc.style.cssText = 'width:28px;height:28px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;cursor:' + (isMine?'default':'pointer') + ';';
+        if (avUrl) { var ai = document.createElement('img'); ai.src = avUrl; ai.style.cssText = 'width:100%;height:100%;object-fit:cover;'; avc.appendChild(ai); }
+        else avc.textContent = (un[0]||'?').toUpperCase();
+        if (!isMine && c.user_id) {
+            (function(_id,_un,_ua){ avc.onclick = function(){ openUserProfile(_id,_un,_ua); }; })(c.user_id, un, avUrl);
+        }
+
+        var bubble = document.createElement('div');
+        bubble.style.cssText = 'flex:1;min-width:0;background:var(--surface);border-radius:14px;padding:7px 11px;';
+        var header = document.createElement('div');
+        header.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-bottom:1px;';
+        var nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'font-size:11.5px;font-weight:800;color:var(--tw);' + (!isMine && c.user_id ? 'cursor:pointer;' : '');
+        nameSpan.textContent = un;
+        if (!isMine && c.user_id) {
+            (function(_id,_un,_ua){ nameSpan.onclick = function(){ openUserProfile(_id,_un,_ua); }; })(c.user_id, un, avUrl);
+        }
+        var dateSpan = document.createElement('span');
+        dateSpan.style.cssText = 'font-size:10px;color:var(--tm);flex-shrink:0;';
+        var d = Date.now() - new Date(c.created_at).getTime();
+        var mm = Math.floor(d/60000);
+        dateSpan.textContent = mm < 1 ? 'ahora' : mm < 60 ? mm+'m' : mm < 1440 ? Math.floor(mm/60)+'h' : Math.floor(mm/1440)+'d';
+        header.appendChild(nameSpan); header.appendChild(dateSpan);
+        if (isMine) {
+            var delBtn = document.createElement('button');
+            delBtn.style.cssText = 'margin-left:auto;background:none;border:none;cursor:pointer;padding:0;opacity:.5;';
+            delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            (function(_cid, _row){
+                delBtn.onclick = async function() {
+                    if (!confirm('¿Eliminar este comentario?')) return;
+                    try {
+                        await window._sbClient.from('post_comments').delete().eq('id', _cid);
+                        _row.remove();
+                        var remaining = document.querySelectorAll('#cmt-list-' + postId + ' [data-cid]').length;
+                        updateCount(remaining);
+                        if (remaining === 0) {
+                            var listEl = document.getElementById('cmt-list-' + postId);
+                            if (listEl) listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
+                        }
+                    } catch(e) {}
+                };
+            })(c.id, row);
+            header.appendChild(delBtn);
+        }
+        var textEl = document.createElement('div');
+        textEl.style.cssText = 'font-size:13px;color:var(--tw);line-height:1.35;white-space:pre-wrap;word-break:break-word;';
+        textEl.textContent = c.content;
+        bubble.appendChild(header); bubble.appendChild(textEl);
+
+        row.appendChild(avc); row.appendChild(bubble);
+        return row;
+    }
+
+    function updateCount(n) {
+        var lbl = document.getElementById('cmt-label-' + postId);
+        if (lbl) lbl.textContent = n > 0 ? 'Comentarios (' + n + ')' : 'Comentarios';
+    }
+
+    // Initial count fetch (light, head-only) so the label is accurate before expanding.
+    (async function initialCount() {
+        try {
+            var sb = window._sbClient;
+            var { count, error } = await sb.from('post_comments').select('id', { count: 'exact', head: true }).eq('post_id', postId);
+            if (!error && typeof count === 'number') updateCount(count);
+        } catch(e) { /* table missing — ignore */ }
+    })();
+
+    toggle.onclick = function() {
+        expanded = !expanded;
+        body.style.display = expanded ? 'block' : 'none';
+        var chev = document.getElementById('cmt-chev-' + postId);
+        if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0)';
+        if (expanded && !loaded) {
+            loaded = true;
+            loadComments();
+        }
+    };
+
+    async function sendComment() {
+        var txt = (ta.value || '').trim();
+        if (!txt) return;
+        sendBtn.disabled = true;
+        try {
+            var sb = window._sbClient;
+            var { data, error } = await sb.from('post_comments')
+                .insert({ post_id: postId, user_id: myId, content: txt })
+                .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .single();
+            if (error) {
+                alert('No se pudo enviar el comentario. ¿Has creado la tabla post_comments en Supabase?');
+                console.warn('[comments] insert error', error);
+                return;
+            }
+            ta.value = ''; ta.style.height = 'auto';
+            var listEl = document.getElementById('cmt-list-' + postId);
+            if (listEl) {
+                var ph = listEl.querySelector('div[style*="primero en comentar"]');
+                if (ph) ph.remove();
+                listEl.appendChild(buildCommentRow(data));
+            }
+            var remaining = document.querySelectorAll('#cmt-list-' + postId + ' [data-cid]').length;
+            updateCount(remaining);
+        } catch(e) {
+            console.warn('[comments] send failed', e);
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+    sendBtn.onclick = sendComment;
+    ta.onkeydown = function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); } };
+
+    return wrap;
 }
 
 /* ── Reactions ───────────────────────────────────────────────────── */
 function _renderReactionBar(postId, reactions, myId, shoeName) {
-    var EMOJIS = ['🐢','🐐','❤️','😂','🔥'];
+    // Note: `shoeName` param kept for backward compatibility but is no longer rendered here —
+    // the shoe (and watch) chips now live in the post header next to name+date.
+    var EMOJIS = ['❤️','💪','🔥','🐐','🐢'];
     var bar = document.createElement('div');
     bar.id = 'rxbar-' + postId;
-    bar.dataset.shoe = shoeName || '';
     bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px 12px;flex-wrap:nowrap;border-top:1px solid var(--bsoft);';
     var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
     EMOJIS.forEach(function(em) {
@@ -15716,8 +16021,7 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
                 var newReactions = _iMine
                     ? (_reactions||[]).filter(function(r) { return !(r.user_id===myId && r.emoji===_em); })
                     : (_reactions||[]).concat([{user_id:myId, emoji:_em, post_id:_pid}]);
-                var shoe = _bar.dataset.shoe || '';
-                var newBar = _renderReactionBar(_pid, newReactions, myId, shoe);
+                var newBar = _renderReactionBar(_pid, newReactions, myId);
                 _bar.parentNode && _bar.parentNode.replaceChild(newBar, _bar);
                 if (_iMine) {
                     window._sbClient.from('reactions').delete().eq('post_id',_pid).eq('user_id',myId).eq('emoji',_em).then(() => {});
@@ -15729,12 +16033,6 @@ function _renderReactionBar(postId, reactions, myId, shoeName) {
         emWrap.appendChild(btn);
     });
     bar.appendChild(emWrap);
-    if (shoeName) {
-        var shEl = document.createElement('span');
-        shEl.style.cssText = 'font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px;flex-shrink:0;display:flex;align-items:center;gap:3px;margin-left:4px;';
-        shEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="1.8" stroke-linecap="round"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span>' + shoeName + '</span>';
-        bar.appendChild(shEl);
-    }
     return bar;
 }
 
