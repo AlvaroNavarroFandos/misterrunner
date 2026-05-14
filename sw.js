@@ -1,5 +1,5 @@
 /* MisterRunner Service Worker — Production */
-const CACHE = 'mr-v3';
+const CACHE = 'mr-v4';
 const SUPABASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co';
 /* ── Cache Strategy ───────────────────────────────────────────────── */
 const STATIC_ASSETS = ['/'];
@@ -21,6 +21,11 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const { request } = e;
   const url = new URL(request.url);
+  
+  /* ✅ NUEVA GUARDA: ignorar esquemas que no sean http/https */
+  /* Evita errores de extensiones (chrome-extension://) y otros esquemas raros */
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+  
   /* Never cache Supabase API calls */
   if (url.hostname.includes('supabase.co')) return;
   if (request.method !== 'GET') return;
