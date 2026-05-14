@@ -8072,40 +8072,41 @@
         topHalf.style.cssText = 'flex:0 0 60%;display:flex;gap:8px;padding:10px 10px 6px;min-height:0;';
 
         // ── Izquierda: figura biomecánica (imagen real + cotas SVG superpuestas) ───
+        // Enfoque limpio: la imagen va DENTRO de la SVG como <image>, así todo comparte
+        // el mismo sistema de coordenadas. La imagen ocupa el rectángulo (10, 35)-(230, 282)
+        // (240w × 270h con offset), y las cotas se colocan dentro de la zona libre alrededor.
+        //   - Cabeza top imagen:    pixel (174, 3)   → SVG (174+10, 3+35) = (184, 38)
+        //   - Pie trasero:          pixel (3, 252)   → SVG (13, 287)
+        //   - Pie delantero:        pixel (205, 158) → SVG (215, 193)
         const bioWrap = document.createElement('div');
-        bioWrap.style.cssText = 'flex:1;background:linear-gradient(180deg,#0d1726 0%,#0a1220 100%);border-radius:14px;border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden;min-width:0;';
+        bioWrap.style.cssText = 'flex:1;background:linear-gradient(180deg,#0d1726 0%,#0a1220 100%);border-radius:14px;border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden;min-width:0;display:flex;align-items:center;justify-content:center;padding:6px;';
         const vertLbl = (avgVert > 0 ? avgVert.toFixed(1) : '—') + ' cm';
         const strideLbl = (avgStride > 0 ? Math.round(avgStride) : '—') + ' cm';
-        // La imagen del runner se posiciona absoluta dentro del contenedor.
-        // top:6%, width:88%, centered. La SVG cubre todo el contenedor (viewBox 210x260)
-        // y posiciona las cotas y los foot strikes según las coordenadas calculadas:
-        //   - Imagen 240x270 con runner detectado en: cabeza (72%, 1%), pie atrás (1%, 93%), pie delante (85%, 58%)
-        //   - En coordenadas de viewBox 210x260, esto se traduce a:
-        //     pie atrás ≈ (15, 210), pie delante ≈ (170, 138)
         bioWrap.innerHTML =
-            '<img src="'+MR_RUNNER_IMG+'" alt="runner" style="position:absolute;top:6%;left:50%;transform:translateX(-50%);width:88%;height:auto;filter:brightness(1.6) contrast(1.1) drop-shadow(0 2px 4px rgba(0,0,0,.5));pointer-events:none;"/>'
-            + '<svg viewBox="0 0 210 260" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;">'
-            // Oscilación vertical (cota cyan superior, junto a la cabeza)
-            + '<line x1="100" y1="14" x2="100" y2="38" stroke="#3BBCE0" stroke-width="1.5" stroke-dasharray="3,2" opacity="0.95"/>'
-            + '<polygon points="100,14 96,20 104,20" fill="#3BBCE0"/>'
-            + '<polygon points="100,38 96,32 104,32" fill="#3BBCE0"/>'
-            + '<text x="110" y="29" fill="#3BBCE0" font-size="10" font-weight="700" font-family="sans-serif">'+vertLbl+'</text>'
+            '<svg viewBox="0 0 240 320" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block;">'
+            // Imagen runner embebida (mantiene aspect-ratio 240/270, ocupa 220x247.5 con offset y=35)
+            + '<image href="'+MR_RUNNER_IMG+'" x="10" y="35" width="220" height="247.5" preserveAspectRatio="xMidYMid meet" style="filter:brightness(1.6) contrast(1.1);"/>'
+            // Oscilación vertical: cabeza en (169.5, 38) → cota cyan junto a la cabeza
+            + '<line x1="116" y1="40" x2="116" y2="66" stroke="#3BBCE0" stroke-width="2" stroke-dasharray="4,3" opacity="0.95"/>'
+            + '<polygon points="116,38 109,46 123,46" fill="#3BBCE0"/>'
+            + '<polygon points="116,68 109,60 123,60" fill="#3BBCE0"/>'
+            + '<text x="128" y="57" fill="#3BBCE0" font-size="13" font-weight="700" font-family="sans-serif">'+vertLbl+'</text>'
             // Líneas de referencia horizontales (límites superior/inferior oscilación)
-            + '<line x1="80" y1="14" x2="148" y2="14" stroke="#3BBCE0" stroke-width="0.6" stroke-dasharray="2,2" opacity="0.4"/>'
-            + '<line x1="80" y1="38" x2="148" y2="38" stroke="#3BBCE0" stroke-width="0.6" stroke-dasharray="2,2" opacity="0.4"/>'
-            // Línea de suelo (debajo de los pies)
-            + '<line x1="10" y1="225" x2="200" y2="225" stroke="rgba(255,255,255,0.22)" stroke-width="1.2" stroke-dasharray="3,3"/>'
-            // Foot strikes (apoyos de cadencia): naranja con halo en el pie trasero (apoyo activo)
-            + '<circle cx="15" cy="210" r="4" fill="#FF9500"/>'
-            + '<circle cx="15" cy="210" r="7" fill="none" stroke="#FF9500" stroke-width="1" opacity="0.5"/>'
-            + '<circle cx="170" cy="138" r="3.5" fill="#FF9500" opacity="0.45"/>'
+            + '<line x1="88" y1="40" x2="170" y2="40" stroke="#3BBCE0" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.4"/>'
+            + '<line x1="88" y1="66" x2="170" y2="66" stroke="#3BBCE0" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.4"/>'
+            // Línea de suelo (al nivel del pie trasero apoyado: Y≈266)
+            + '<line x1="0" y1="271" x2="240" y2="271" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" stroke-dasharray="4,4"/>'
+            // Foot strikes: pie trasero apoyado (13, 266), pie delantero en vuelo (198, 180)
+            + '<circle cx="13" cy="266" r="5" fill="#FF9500"/>'
+            + '<circle cx="13" cy="266" r="9" fill="none" stroke="#FF9500" stroke-width="1.3" opacity="0.5"/>'
+            + '<circle cx="198" cy="180" r="4.5" fill="#FF9500" opacity="0.45"/>'
             // Líneas guía verticales desde cada pie hasta la cota de zancada
-            + '<line x1="15" y1="214" x2="15" y2="238" stroke="#AF52DE" stroke-width="0.6" stroke-dasharray="2,2" opacity="0.55"/>'
-            + '<line x1="170" y1="141" x2="170" y2="238" stroke="#AF52DE" stroke-width="0.6" stroke-dasharray="2,2" opacity="0.55"/>'
+            + '<line x1="13" y1="272" x2="13" y2="295" stroke="#AF52DE" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.55"/>'
+            + '<line x1="198" y1="184" x2="198" y2="295" stroke="#AF52DE" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.55"/>'
             // Cota de zancada (corchete morado)
-            + '<line x1="15" y1="238" x2="170" y2="238" stroke="#AF52DE" stroke-width="2"/>'
-            + '<path d="M 15 233 L 15 243 M 170 233 L 170 243" stroke="#AF52DE" stroke-width="2" stroke-linecap="round"/>'
-            + '<text x="92" y="254" fill="#AF52DE" font-size="11" font-weight="700" text-anchor="middle" font-family="sans-serif">'+strideLbl+'</text>'
+            + '<line x1="13" y1="295" x2="198" y2="295" stroke="#AF52DE" stroke-width="2.5"/>'
+            + '<path d="M 13 290 L 13 300 M 198 290 L 198 300" stroke="#AF52DE" stroke-width="2.5" stroke-linecap="round"/>'
+            + '<text x="105" y="313" fill="#AF52DE" font-size="13" font-weight="700" text-anchor="middle" font-family="sans-serif">'+strideLbl+'</text>'
             + '</svg>';
 
         // ── Derecha: 4 cards apiladas ─────────────────────────────────
