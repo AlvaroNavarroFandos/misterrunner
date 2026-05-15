@@ -1053,17 +1053,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 })();
 </script>
 
-    <!-- LOGIN SCREEN -->
+    <!-- LOGIN / AUTH SCREEN (multi-mode) -->
     <div id="login-screen" style="opacity:0;pointer-events:none;transition:opacity .18s ease;">
         <div class="login-logo" style="background:transparent;border:none;box-shadow:none;"><img id="mr-icon-b64" src="" data-mr-logo="1" alt="MisterRunner" style="width:140px;height:110px;object-fit:cover;object-position:center 10%;border-radius:16px;"></div>
         <div class="login-title" id="login-title">MisterRunner</div>
         <div class="login-sub" id="login-mode-label">Tu entrenador personal de running</div>
-        <div class="login-form">
-            <input class="login-input" id="login-user" type="text" placeholder="Usuario" autocomplete="username" autocapitalize="none" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()">
+
+        <!-- MODE: LOGIN -->
+        <div class="login-form" id="auth-mode-login">
+            <input class="login-input" id="login-email" type="email" placeholder="Email" autocomplete="email" autocapitalize="none" inputmode="email" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()">
             <input class="login-input" id="login-pass" type="password" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()">
             <div class="login-error" id="login-error"></div>
             <button class="login-btn-primary" id="login-submit-btn" onclick="submitLogin()">Entrar</button>
-            <div class="login-mode-toggle">¿No tienes cuenta? <span id="register-link" onclick="toggleRegisterMode()" style="cursor:pointer;color:var(--crimson);font-weight:600;">Crear cuenta</span></div>
+            <div class="login-mode-toggle" style="margin-top:10px;"><span onclick="authShowMode('forgot')" style="cursor:pointer;color:var(--crimson);font-weight:600;font-size:12px;">¿Has olvidado tu contraseña?</span></div>
+            <div class="login-mode-toggle">¿No tienes cuenta? <span onclick="authShowMode('register')" style="cursor:pointer;color:var(--crimson);font-weight:600;">Crear cuenta</span></div>
+        </div>
+
+        <!-- MODE: REGISTER -->
+        <div class="login-form" id="auth-mode-register" style="display:none;">
+            <input class="login-input" id="reg-email" type="email" placeholder="Email" autocomplete="email" autocapitalize="none" inputmode="email">
+            <input class="login-input" id="reg-username" type="text" placeholder="Nombre de usuario" autocomplete="username" autocapitalize="none" maxlength="20">
+            <input class="login-input" id="reg-pass" type="password" placeholder="Contraseña (mínimo 8, con letras y números)" autocomplete="new-password">
+            <input class="login-input" id="reg-pass2" type="password" placeholder="Repite la contraseña" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitRegister()">
+            <div class="login-error" id="reg-error"></div>
+            <div style="font-size:11px;color:#8e8e93;text-align:center;margin:4px 0 8px;line-height:1.4;">
+                Al crear la cuenta aceptas los <a href="/terms" target="_blank" style="color:var(--crimson);text-decoration:underline;">Términos</a> y la <a href="/privacy" target="_blank" style="color:var(--crimson);text-decoration:underline;">Política de privacidad</a>. Edad mínima 16 años.
+            </div>
+            <button class="login-btn-primary" id="reg-submit-btn" onclick="submitRegister()">Crear cuenta</button>
+            <div class="login-mode-toggle">¿Ya tienes cuenta? <span onclick="authShowMode('login')" style="cursor:pointer;color:var(--crimson);font-weight:600;">Iniciar sesión</span></div>
+        </div>
+
+        <!-- MODE: VERIFY EMAIL WAIT -->
+        <div class="login-form" id="auth-mode-verify" style="display:none;">
+            <div style="text-align:center;font-size:48px;margin:8px 0;">📧</div>
+            <div style="font-size:16px;font-weight:700;color:var(--text);text-align:center;margin-bottom:8px;">Verifica tu email</div>
+            <div style="font-size:13px;color:#8e8e93;text-align:center;line-height:1.5;margin-bottom:14px;">
+                Te hemos enviado un email a <strong id="verify-email-display" style="color:var(--text);">tu@email.com</strong>.<br>
+                Haz clic en el enlace para activar tu cuenta.
+            </div>
+            <div class="login-error" id="verify-error"></div>
+            <button class="login-btn-primary" id="verify-check-btn" onclick="checkVerificationStatus()">Ya he verificado, continuar</button>
+            <button class="login-btn-primary" id="verify-resend-btn" onclick="resendVerificationEmail()" style="background:transparent;border:1px solid var(--crimson);color:var(--crimson);margin-top:8px;">Reenviar email</button>
+            <div class="login-mode-toggle" style="margin-top:14px;"><span onclick="authCancelVerification()" style="cursor:pointer;color:#8e8e93;font-size:12px;">Cancelar y usar otra cuenta</span></div>
+        </div>
+
+        <!-- MODE: FORGOT PASSWORD -->
+        <div class="login-form" id="auth-mode-forgot" style="display:none;">
+            <div style="font-size:13px;color:#8e8e93;text-align:center;margin-bottom:10px;line-height:1.5;">
+                Introduce el email de tu cuenta y te enviaremos un enlace para restablecer la contraseña.
+            </div>
+            <input class="login-input" id="forgot-email" type="email" placeholder="Email" autocomplete="email" autocapitalize="none" inputmode="email" onkeydown="if(event.key==='Enter')submitForgotPassword()">
+            <div class="login-error" id="forgot-error"></div>
+            <button class="login-btn-primary" id="forgot-submit-btn" onclick="submitForgotPassword()">Enviar enlace</button>
+            <div class="login-mode-toggle"><span onclick="authShowMode('login')" style="cursor:pointer;color:var(--crimson);font-weight:600;">Volver a iniciar sesión</span></div>
+        </div>
+
+        <!-- MODE: FORGOT SENT -->
+        <div class="login-form" id="auth-mode-forgot-sent" style="display:none;">
+            <div style="text-align:center;font-size:48px;margin:8px 0;">✉️</div>
+            <div style="font-size:16px;font-weight:700;color:var(--text);text-align:center;margin-bottom:8px;">Email enviado</div>
+            <div style="font-size:13px;color:#8e8e93;text-align:center;line-height:1.5;margin-bottom:14px;">
+                Si el email existe en MisterRunner, recibirás un enlace para restablecer tu contraseña en unos minutos. Revisa también la carpeta de spam.
+            </div>
+            <button class="login-btn-primary" onclick="authShowMode('login')">Volver a iniciar sesión</button>
+        </div>
+
+        <!-- MODE: RESET PASSWORD (vuelta desde email) -->
+        <div class="login-form" id="auth-mode-reset" style="display:none;">
+            <div style="font-size:13px;color:#8e8e93;text-align:center;margin-bottom:10px;line-height:1.5;">
+                Introduce tu nueva contraseña.
+            </div>
+            <input class="login-input" id="reset-pass" type="password" placeholder="Nueva contraseña (mínimo 8, letras y números)" autocomplete="new-password">
+            <input class="login-input" id="reset-pass2" type="password" placeholder="Repite la nueva contraseña" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitResetPassword()">
+            <div class="login-error" id="reset-error"></div>
+            <button class="login-btn-primary" id="reset-submit-btn" onclick="submitResetPassword()">Cambiar contraseña</button>
         </div>
     </div>
 
@@ -1782,6 +1845,45 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>
 
+                <!-- INFORMACIÓN LEGAL -->
+                <div style="margin-top:18px;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+                    <div style="padding:10px 14px 4px;font-size:10px;font-weight:700;color:var(--tm);letter-spacing:.6px;text-transform:uppercase;">Información legal</div>
+                    <a href="/privacy" target="_blank" style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid rgba(0,0,0,.07);text-decoration:none;background:#fff;">
+                        <div style="width:30px;height:30px;border-radius:8px;background:#e8e8ec;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#636366" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:#1c1c1e;">Política de privacidad</div>
+                            <div style="font-size:10px;color:#8e8e93;margin-top:1px;">Cómo tratamos tus datos</div>
+                        </div>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#c7c7cc" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </a>
+                    <a href="/terms" target="_blank" style="display:flex;align-items:center;gap:12px;padding:13px 14px;text-decoration:none;background:#fff;">
+                        <div style="width:30px;height:30px;border-radius:8px;background:#e8e8ec;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#636366" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:#1c1c1e;">Términos de servicio</div>
+                            <div style="font-size:10px;color:#8e8e93;margin-top:1px;">Condiciones de uso de la app</div>
+                        </div>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#c7c7cc" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </a>
+                </div>
+
+                <!-- ZONA DE PELIGRO -->
+                <div style="margin-top:18px;background:var(--surface);border:1px solid rgba(255,59,48,.25);border-radius:14px;overflow:hidden;">
+                    <div style="padding:10px 14px 4px;font-size:10px;font-weight:700;color:#ff3b30;letter-spacing:.6px;text-transform:uppercase;">Zona de peligro</div>
+                    <div onclick="deleteMyAccount()" style="display:flex;align-items:center;gap:12px;padding:13px 14px;cursor:pointer;background:#fff;">
+                        <div style="width:30px;height:30px;border-radius:8px;background:rgba(255,59,48,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ff3b30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:#ff3b30;">Borrar mi cuenta</div>
+                            <div style="font-size:10px;color:#8e8e93;margin-top:1px;">Eliminación total e inmediata</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Versión -->
                 <div style="text-align:center;padding:8px 0 10px;">
                     <span style="font-size:9px;color:var(--tm);letter-spacing:.5px;">MisterRunner v3.1</span>
@@ -2139,7 +2241,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     const APP_KEY   = 'mr_appstate_v2';
     let APP_KEY_OVERRIDE = null;
     let currentUser = null;
-    let isRegisterMode = false;
 
     // ── LOGO MISTER RUNNER (192x192 JPG, base64) ─────────────────
     // Logo de la app embebido para usarlo donde haga falta sin pedir red.
@@ -2157,7 +2258,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                   .replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
     }
     function validateUsername(u) {
-        return /^[a-zA-Z0-9_.\-]{3,32}$/.test(u);
+        // Alineado con constraint BD: 3-20 caracteres, solo letras, números y _
+        return /^[a-zA-Z0-9_]{3,20}$/.test(u);
+    }
+    function validateEmail(e) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+    }
+    function validatePassword(p) {
+        // mínimo 8, al menos una letra y un dígito (config Supabase)
+        return typeof p === 'string' && p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p);
     }
 
     // ── SIMPLE HASH (FNV-1a) for storage key derivation only ─────
@@ -3609,64 +3718,300 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return _RL_MAX-d.n;
     }
 
-    // ── LOGIN / REGISTER ─────────────────────────────────────────
-    function showLoginError(msg) {
-        const el = document.getElementById('login-error');
-        if(el) el.textContent = msg;
-    }
+    // ── LOGIN / REGISTER (multi-mode) ────────────────────────────
+    // Estado: 'login' | 'register' | 'verify' | 'forgot' | 'forgot-sent' | 'reset'
+    var _authCurrentMode = 'login';
+    var _pendingVerifyEmail = null;  // email del usuario pendiente de verificar
+    var _resendCooldownTimer = null;
 
-    function hideLoginScreen() {
-        const ls = document.getElementById('login-screen');
-        const nav = document.getElementById('nav');
-        if(ls)  { ls.style.opacity = '0'; ls.style.pointerEvents = 'none'; setTimeout(()=>{ ls.style.display='none'; }, 200); }
-        if(nav) nav.style.display = '';
-        // Update username label
-        const lbl = document.getElementById('login-username-label');
-        if(lbl && currentUser) lbl.textContent = currentUser;
+    function _setError(id, msg) {
+        const el = document.getElementById(id);
+        if(el) el.textContent = msg || '';
     }
+    function _setBtn(id, disabled, text) {
+        const b = document.getElementById(id);
+        if(!b) return;
+        b.disabled = !!disabled;
+        if(text != null) b.textContent = text;
+    }
+    function showLoginError(msg) { _setError('login-error', msg); }
 
-    function toggleRegisterMode() {
-        isRegisterMode = !isRegisterMode;
-        const btn   = document.getElementById('login-submit-btn');
-        const link  = document.getElementById('register-link');
+    function authShowMode(mode) {
+        _authCurrentMode = mode;
+        const modes = ['login','register','verify','forgot','forgot-sent','reset'];
+        modes.forEach(m => {
+            const el = document.getElementById('auth-mode-'+m);
+            if(el) el.style.display = (m === mode) ? '' : 'none';
+        });
         const title = document.getElementById('login-title');
-        if(btn)   btn.textContent  = isRegisterMode ? 'Crear cuenta' : 'Entrar';
-        if(title) title.textContent = isRegisterMode ? 'Crear cuenta' : 'MisterRunner';
-        if(link)  link.textContent  = isRegisterMode ? 'Ya tengo cuenta' : 'Crear cuenta';
-        showLoginError('');
+        const sub   = document.getElementById('login-mode-label');
+        const titles = {
+            'login':       ['MisterRunner',     'Tu entrenador personal de running'],
+            'register':    ['Crear cuenta',     'Únete a MisterRunner'],
+            'verify':      ['Casi listo',       'Solo falta verificar tu email'],
+            'forgot':      ['Recuperar acceso', 'Te enviaremos un enlace por email'],
+            'forgot-sent': ['Email enviado',    'Revisa tu bandeja de entrada'],
+            'reset':       ['Nueva contraseña', 'Elige una contraseña nueva']
+        };
+        if(title && titles[mode]) title.textContent = titles[mode][0];
+        if(sub   && titles[mode]) sub.textContent   = titles[mode][1];
+        // Limpiar errores al cambiar de modo
+        ['login-error','reg-error','verify-error','forgot-error','reset-error'].forEach(id => _setError(id, ''));
     }
 
     function submitLogin() {
-        const user = document.getElementById('login-user').value.trim().toLowerCase();
-        const pass = document.getElementById('login-pass').value;
-        const errEl = document.getElementById('login-error');
-        if(errEl) errEl.textContent = '';
-        if(!user||!pass){showLoginError('Introduce usuario y contraseña.');return;}
-        if(user.length<3){showLoginError('Usuario: mínimo 3 caracteres.');return;}
-        if(pass.length<6){showLoginError('Contraseña: mínimo 6 caracteres.');return;}
-        if(!validateUsername(user)){showLoginError('Usuario: solo letras, números, _ - .');return;}
-        const btn=document.getElementById('login-submit-btn');
-        if(btn){btn.disabled=true;btn.textContent='Cargando...';}
-        const email=user+'@mr.app';
-        if(isRegisterMode){
-            window._sbClient.auth.signUp({email,password:pass,options:{data:{username:user}}})
-            .then(({data,error})=>{
-                if(btn){btn.disabled=false;btn.textContent='Crear cuenta';}
-                if(error){showLoginError(error.message.includes('already')?'Usuario ya registrado. Inicia sesión.':error.message);return;}
-                currentUser=user;APP_KEY_OVERRIDE=getUserKey(user);
-                hideLoginScreen();if(typeof initDarkMode==='function')initDarkMode();
-                bootApp();setTimeout(showWelcomeBanner,800);setTimeout(()=>_initClubSupabase(),600);
-            }).catch(()=>{if(btn){btn.disabled=false;btn.textContent='Crear cuenta';}showLoginError('Error de red.');});
-        } else {
-            window._sbClient.auth.signInWithPassword({email,password:pass})
-            .then(({data,error})=>{
-                if(btn){btn.disabled=false;btn.textContent='Entrar';}
-                if(error){const rem=_rlFail(user);showLoginError(error.message.includes('Invalid')?('Contraseña incorrecta.'+(rem>0?' Intentos: '+rem:' Bloqueado 5 min.')):error.message);return;}
-                _rlClear(user);currentUser=user;APP_KEY_OVERRIDE=getUserKey(user);
-                hideLoginScreen();if(typeof initDarkMode==='function')initDarkMode();
-                bootApp();setTimeout(()=>_initClubSupabase(),600);
-            }).catch(()=>{if(btn){btn.disabled=false;btn.textContent='Entrar';}showLoginError('Error de red.');});
-        }
+        const email = (document.getElementById('login-email').value || '').trim().toLowerCase();
+        const pass  = document.getElementById('login-pass').value;
+        _setError('login-error','');
+        if(!email || !pass)         { showLoginError('Introduce email y contraseña.'); return; }
+        if(!validateEmail(email))   { showLoginError('Email no válido.'); return; }
+        if(pass.length < 8)         { showLoginError('La contraseña debe tener al menos 8 caracteres.'); return; }
+        const rlMsg = _rlCheck(email);
+        if(rlMsg) { showLoginError(rlMsg); return; }
+
+        _setBtn('login-submit-btn', true, 'Entrando...');
+        window._sbClient.auth.signInWithPassword({ email, password: pass })
+            .then(({ data, error }) => {
+                _setBtn('login-submit-btn', false, 'Entrar');
+                if(error) {
+                    const m = (error.message || '').toLowerCase();
+                    if(m.includes('email not confirmed') || m.includes('not confirmed')) {
+                        // Sesión existe pero email no verificado → pantalla de verificación
+                        _pendingVerifyEmail = email;
+                        const disp = document.getElementById('verify-email-display');
+                        if(disp) disp.textContent = email;
+                        authShowMode('verify');
+                        return;
+                    }
+                    if(m.includes('invalid login') || m.includes('invalid credentials')) {
+                        const rem = _rlFail(email);
+                        showLoginError('Email o contraseña incorrectos.' + (rem > 0 ? ' Intentos restantes: ' + rem : ' Cuenta bloqueada 5 min.'));
+                        return;
+                    }
+                    showLoginError(error.message || 'Error al iniciar sesión.');
+                    return;
+                }
+                // Sesión OK. Si no está verificado, mostrar pantalla de verificación.
+                const u = data?.user;
+                if(u && !u.email_confirmed_at && !u.confirmed_at) {
+                    _pendingVerifyEmail = email;
+                    const disp = document.getElementById('verify-email-display');
+                    if(disp) disp.textContent = email;
+                    authShowMode('verify');
+                    return;
+                }
+                _rlClear(email);
+                _onAuthSuccess(u);
+            })
+            .catch(() => {
+                _setBtn('login-submit-btn', false, 'Entrar');
+                showLoginError('Error de red. Inténtalo de nuevo.');
+            });
+    }
+
+    function submitRegister() {
+        const email = (document.getElementById('reg-email').value || '').trim().toLowerCase();
+        const user  = (document.getElementById('reg-username').value || '').trim().toLowerCase();
+        const p1    = document.getElementById('reg-pass').value;
+        const p2    = document.getElementById('reg-pass2').value;
+        _setError('reg-error','');
+        if(!email || !user || !p1 || !p2) { _setError('reg-error','Rellena todos los campos.'); return; }
+        if(!validateEmail(email))         { _setError('reg-error','Email no válido.'); return; }
+        if(!validateUsername(user))       { _setError('reg-error','Usuario: 3-20 caracteres, solo letras, números y _'); return; }
+        if(!validatePassword(p1))         { _setError('reg-error','Contraseña: mínimo 8 caracteres, con letras y números.'); return; }
+        if(p1 !== p2)                     { _setError('reg-error','Las contraseñas no coinciden.'); return; }
+
+        _setBtn('reg-submit-btn', true, 'Creando...');
+        // Redirect tras verificación email: vuelta a la propia app
+        const redirectTo = window.location.origin + '/';
+        window._sbClient.auth.signUp({
+            email, password: p1,
+            options: { data: { username: user }, emailRedirectTo: redirectTo }
+        }).then(({ data, error }) => {
+            _setBtn('reg-submit-btn', false, 'Crear cuenta');
+            if(error) {
+                const m = (error.message || '').toLowerCase();
+                if(m.includes('already') || m.includes('registered')) {
+                    _setError('reg-error','Ese email ya está registrado. Inicia sesión o recupera tu contraseña.');
+                } else if(m.includes('username') || m.includes('duplicate')) {
+                    _setError('reg-error','Ese nombre de usuario ya está en uso. Elige otro.');
+                } else if(m.includes('password')) {
+                    _setError('reg-error','Contraseña no válida: ' + error.message);
+                } else {
+                    _setError('reg-error', error.message || 'Error al crear la cuenta.');
+                }
+                return;
+            }
+            // Registro OK → email de verificación enviado
+            _pendingVerifyEmail = email;
+            const disp = document.getElementById('verify-email-display');
+            if(disp) disp.textContent = email;
+            authShowMode('verify');
+        }).catch(() => {
+            _setBtn('reg-submit-btn', false, 'Crear cuenta');
+            _setError('reg-error','Error de red. Inténtalo de nuevo.');
+        });
+    }
+
+    function checkVerificationStatus() {
+        if(!window._sbClient) return;
+        _setError('verify-error','');
+        _setBtn('verify-check-btn', true, 'Comprobando...');
+        // Forzar refresh de sesión
+        window._sbClient.auth.refreshSession()
+            .then(({ data, error }) => {
+                _setBtn('verify-check-btn', false, 'Ya he verificado, continuar');
+                const u = data?.user;
+                if(u && (u.email_confirmed_at || u.confirmed_at)) {
+                    _onAuthSuccess(u);
+                } else {
+                    _setError('verify-error','Aún no hemos detectado la verificación. Comprueba tu email y vuelve a intentarlo.');
+                }
+            })
+            .catch(() => {
+                _setBtn('verify-check-btn', false, 'Ya he verificado, continuar');
+                _setError('verify-error','No se pudo comprobar. Inténtalo de nuevo.');
+            });
+    }
+
+    function _startResendCooldown(seconds) {
+        const btn = document.getElementById('verify-resend-btn');
+        if(!btn) return;
+        let remaining = seconds;
+        btn.disabled = true;
+        btn.textContent = 'Reenviar email (' + remaining + 's)';
+        if(_resendCooldownTimer) clearInterval(_resendCooldownTimer);
+        _resendCooldownTimer = setInterval(() => {
+            remaining--;
+            if(remaining <= 0) {
+                clearInterval(_resendCooldownTimer); _resendCooldownTimer = null;
+                btn.disabled = false; btn.textContent = 'Reenviar email';
+            } else {
+                btn.textContent = 'Reenviar email (' + remaining + 's)';
+            }
+        }, 1000);
+    }
+
+    function resendVerificationEmail() {
+        if(!_pendingVerifyEmail) { _setError('verify-error','No hay email pendiente.'); return; }
+        _setError('verify-error','');
+        _setBtn('verify-resend-btn', true, 'Enviando...');
+        const redirectTo = window.location.origin + '/';
+        window._sbClient.auth.resend({
+            type: 'signup',
+            email: _pendingVerifyEmail,
+            options: { emailRedirectTo: redirectTo }
+        }).then(({ error }) => {
+            if(error) {
+                const m = (error.message || '').toLowerCase();
+                if(m.includes('rate') || m.includes('only request')) {
+                    _setError('verify-error','Has reenviado hace poco. Espera 60 segundos.');
+                } else {
+                    _setError('verify-error', error.message || 'No se pudo reenviar.');
+                }
+                _setBtn('verify-resend-btn', false, 'Reenviar email');
+                return;
+            }
+            _startResendCooldown(60);
+            _setError('verify-error','');
+        }).catch(() => {
+            _setBtn('verify-resend-btn', false, 'Reenviar email');
+            _setError('verify-error','Error de red.');
+        });
+    }
+
+    function authCancelVerification() {
+        if(!window.confirm('¿Cancelar y usar otra cuenta? Tu cuenta seguirá pendiente de verificar.')) return;
+        if(window._sbClient) window._sbClient.auth.signOut().catch(()=>{});
+        _pendingVerifyEmail = null;
+        authShowMode('login');
+    }
+
+    function submitForgotPassword() {
+        const email = (document.getElementById('forgot-email').value || '').trim().toLowerCase();
+        _setError('forgot-error','');
+        if(!email)               { _setError('forgot-error','Introduce tu email.'); return; }
+        if(!validateEmail(email)){ _setError('forgot-error','Email no válido.'); return; }
+
+        _setBtn('forgot-submit-btn', true, 'Enviando...');
+        const redirectTo = window.location.origin + '/?reset=1';
+        window._sbClient.auth.resetPasswordForEmail(email, { redirectTo })
+            .then(({ error }) => {
+                _setBtn('forgot-submit-btn', false, 'Enviar enlace');
+                // Por seguridad, mostramos siempre la misma pantalla (no revelamos si existe)
+                authShowMode('forgot-sent');
+            })
+            .catch(() => {
+                _setBtn('forgot-submit-btn', false, 'Enviar enlace');
+                // Mismo comportamiento incluso si hay error de red, por consistencia UX
+                authShowMode('forgot-sent');
+            });
+    }
+
+    function submitResetPassword() {
+        const p1 = document.getElementById('reset-pass').value;
+        const p2 = document.getElementById('reset-pass2').value;
+        _setError('reset-error','');
+        if(!validatePassword(p1)) { _setError('reset-error','Contraseña: mínimo 8 caracteres, con letras y números.'); return; }
+        if(p1 !== p2)             { _setError('reset-error','Las contraseñas no coinciden.'); return; }
+        _setBtn('reset-submit-btn', true, 'Guardando...');
+        window._sbClient.auth.updateUser({ password: p1 })
+            .then(({ data, error }) => {
+                _setBtn('reset-submit-btn', false, 'Cambiar contraseña');
+                if(error) { _setError('reset-error', error.message || 'No se pudo actualizar la contraseña.'); return; }
+                // Tras reset, limpiamos hash de la URL y pasamos a login
+                try { history.replaceState(null, '', window.location.pathname); } catch(_) {}
+                alert('Contraseña actualizada. Inicia sesión con la nueva contraseña.');
+                if(window._sbClient) window._sbClient.auth.signOut().catch(()=>{});
+                authShowMode('login');
+            })
+            .catch(() => {
+                _setBtn('reset-submit-btn', false, 'Cambiar contraseña');
+                _setError('reset-error','Error de red. Inténtalo de nuevo.');
+            });
+    }
+
+    // Llamado tras login exitoso (sesión válida y email verificado)
+    function _onAuthSuccess(user) {
+        if(!user) return;
+        const username = user.user_metadata?.username || (user.email || '').split('@')[0];
+        currentUser = username;
+        APP_KEY_OVERRIDE = getUserKey(username);
+        hideLoginScreen();
+        if(typeof initDarkMode === 'function') initDarkMode();
+        bootApp();
+        // Welcome banner solo para registros nuevos (primer login tras verificación)
+        setTimeout(showWelcomeBanner, 800);
+        setTimeout(() => _initClubSupabase(), 600);
+    }
+
+    // Detecta si el usuario viene de hacer click en un enlace del email
+    // (verificación de cuenta, recovery de contraseña, etc).
+    // Supabase JS v2 procesa el hash automáticamente en detectSessionInUrl,
+    // así que solo necesitamos saber qué tipo de flujo era para mostrar UI correcta.
+    function detectarVueltaDeEmail() {
+        try {
+            const hash = window.location.hash || '';
+            const search = window.location.search || '';
+            // Recovery: el enlace incluye type=recovery
+            if(hash.includes('type=recovery') || search.includes('reset=1')) {
+                authShowMode('reset');
+                return 'recovery';
+            }
+            // Signup verificado: tras procesar el hash, onAuthStateChange disparará SIGNED_IN
+            if(hash.includes('type=signup')) {
+                return 'signup';
+            }
+            // Errores en el hash (token expirado, etc.)
+            if(hash.includes('error=') || hash.includes('error_description=')) {
+                const m = decodeURIComponent((hash.match(/error_description=([^&]+)/) || [])[1] || 'El enlace no es válido o ha caducado.');
+                alert('No se pudo procesar el enlace: ' + m.replace(/\+/g,' '));
+                try { history.replaceState(null, '', window.location.pathname); } catch(_) {}
+                authShowMode('login');
+                return 'error';
+            }
+        } catch(_) {}
+        return null;
     }
 
     // ── WELCOME BANNER (replaces full onboarding wizard) ────────
@@ -3779,13 +4124,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     function checkAutoLogin() {
         if(!window._sbClient) return false;
+        // Si volvemos de un enlace de recovery, no autologuear: mostrar reset
+        const back = detectarVueltaDeEmail();
+        if(back === 'recovery') return false;
         window._sbClient.auth.getSession().then(({data:{session}})=>{
-            if(session?.user&&!currentUser){
-                const username=session.user.user_metadata?.username||session.user.email?.split('@')[0];
+            if(session?.user && !currentUser){
+                const u = session.user;
+                // Si el email no está verificado, NO entrar: mostrar pantalla de verificación
+                if(!u.email_confirmed_at && !u.confirmed_at) {
+                    _pendingVerifyEmail = u.email;
+                    const disp = document.getElementById('verify-email-display');
+                    if(disp) disp.textContent = u.email || '';
+                    authShowMode('verify');
+                    return;
+                }
+                const username = u.user_metadata?.username || u.email?.split('@')[0];
                 if(username){
-                    currentUser=username;APP_KEY_OVERRIDE=getUserKey(username);
-                    hideLoginScreen();if(typeof initDarkMode==='function')initDarkMode();
-                    bootApp();setTimeout(()=>_initClubSupabase(),600);
+                    currentUser = username; APP_KEY_OVERRIDE = getUserKey(username);
+                    hideLoginScreen(); if(typeof initDarkMode==='function') initDarkMode();
+                    bootApp(); setTimeout(()=>_initClubSupabase(),600);
                 }
             }
         });
@@ -3797,10 +4154,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // formulario de login durante 1-2s en arranques con sesión válida.
     async function checkAutoLoginAsync() {
         if (!window._sbClient) return false;
+        // Vuelta de recovery: nunca autologuear
+        const back = detectarVueltaDeEmail();
+        if (back === 'recovery') return false;
         try {
             const { data: { session } } = await window._sbClient.auth.getSession();
             if (session?.user && !currentUser) {
-                const username = session.user.user_metadata?.username || session.user.email?.split('@')[0];
+                const u = session.user;
+                // Email no verificado: no autologuear; mostrar pantalla de verify
+                if(!u.email_confirmed_at && !u.confirmed_at) {
+                    _pendingVerifyEmail = u.email;
+                    const disp = document.getElementById('verify-email-display');
+                    if(disp) disp.textContent = u.email || '';
+                    authShowMode('verify');
+                    return false;
+                }
+                const username = u.user_metadata?.username || u.email?.split('@')[0];
                 if (username) {
                     currentUser = username;
                     APP_KEY_OVERRIDE = getUserKey(username);
@@ -3828,11 +4197,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const ls=document.getElementById('login-screen'),nav=document.getElementById('nav');
         if(nav)nav.style.display='none';
         if(ls){ls.style.display='';ls.style.removeProperty('display');requestAnimationFrame(()=>{ls.style.opacity='1';ls.style.pointerEvents='';});}
-        const ui=document.getElementById('login-user'),pi=document.getElementById('login-pass');
-        if(ui)ui.value='';if(pi)pi.value='';isRegisterMode=false;
-        const b2=document.getElementById('login-submit-btn'),l2=document.getElementById('register-link'),t2=document.getElementById('login-title');
-        if(b2)b2.textContent='Entrar';if(t2)t2.textContent='MisterRunner';if(l2)l2.textContent='Crear cuenta';
-        showLoginError('');
+        // Limpiar todos los inputs de auth
+        ['login-email','login-pass','reg-email','reg-username','reg-pass','reg-pass2','forgot-email','reset-pass','reset-pass2'].forEach(id => {
+            const el = document.getElementById(id); if(el) el.value = '';
+        });
+        _pendingVerifyEmail = null;
+        if(_resendCooldownTimer) { clearInterval(_resendCooldownTimer); _resendCooldownTimer = null; }
+        authShowMode('login');
+    }
+
+    async function deleteMyAccount() {
+        const c1 = window.confirm(
+            '⚠️ ¿Borrar tu cuenta?\n\n' +
+            'Esta acción es INMEDIATA y NO se puede deshacer. Se eliminarán:\n\n' +
+            '• Tu perfil y todos tus datos\n' +
+            '• Tus actividades, planes y marcas\n' +
+            '• Tus publicaciones y comentarios del Club\n' +
+            '• Tus clubes (si eres único dueño)\n' +
+            '• Tus mensajes (aparecerán como [usuario eliminado])\n\n' +
+            '¿Continuar?'
+        );
+        if(!c1) return;
+        const typed = window.prompt('Para confirmar, escribe BORRAR en mayúsculas:');
+        if(typed !== 'BORRAR') {
+            alert('Borrado cancelado.');
+            return;
+        }
+        if(!window._sbClient) { alert('Cliente no disponible.'); return; }
+        try {
+            const { error } = await window._sbClient.rpc('delete_my_account');
+            if(error) {
+                alert('Error al borrar la cuenta: ' + (error.message || 'desconocido'));
+                return;
+            }
+            // Limpiar todo localmente y volver a login
+            try { await window._sbClient.auth.signOut(); } catch(_) {}
+            try { localStorage.clear(); } catch(_) {}
+            alert('Tu cuenta ha sido borrada.');
+            window.location.reload();
+        } catch(e) {
+            alert('Error de red al borrar la cuenta. Inténtalo de nuevo.');
+        }
     }
 
     /* ── NAV ── */
@@ -17262,8 +17667,27 @@ window._sbClient = supabase.createClient(_SB_URL, _SB_KEY, {
 
 /* ── Auth state listener ─────────────────────────────────────────── */
 window._sbClient.auth.onAuthStateChange((event, session) => {
+    // Cuando viene de un enlace de recovery, Supabase emite PASSWORD_RECOVERY.
+    // NO debemos autologuear: hay que mostrar la pantalla de cambio de contraseña.
+    if (event === 'PASSWORD_RECOVERY') {
+        if (typeof authShowMode === 'function') authShowMode('reset');
+        const ls = document.getElementById('login-screen');
+        if(ls){ ls.style.display=''; ls.style.opacity='1'; ls.style.pointerEvents=''; }
+        return;
+    }
     if (event === 'SIGNED_IN' && session && !currentUser) {
-        const username = session.user.user_metadata?.username || session.user.email?.split('@')[0];
+        const u = session.user;
+        // Si el email aún no está verificado, no entrar a la app
+        if(!u.email_confirmed_at && !u.confirmed_at) {
+            if (typeof authShowMode === 'function') {
+                _pendingVerifyEmail = u.email;
+                const disp = document.getElementById('verify-email-display');
+                if(disp) disp.textContent = u.email || '';
+                authShowMode('verify');
+            }
+            return;
+        }
+        const username = u.user_metadata?.username || u.email?.split('@')[0];
         if (username) {
             currentUser = username;
             APP_KEY_OVERRIDE = getUserKey(username);
@@ -27044,12 +27468,12 @@ async function openConversations() {
             var avInner = document.createElement('div');
             avInner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--crimson);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;border:2px solid var(--bg);';
             if (c.other_avatar){var ai=document.createElement('img');ai.src=c.other_avatar;ai.loading='lazy';ai.style.cssText='width:100%;height:100%;object-fit:cover;';avInner.appendChild(ai);}
-            else avInner.textContent=(c.other_username||'?')[0].toUpperCase();
+            else avInner.textContent=(c.other_username||'×')[0].toUpperCase();
             av.appendChild(avInner);
         } else {
             av.style.cssText = 'width:52px;height:52px;border-radius:50%;background:var(--crimson);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;position:relative;box-shadow:0 1px 4px rgba(0,0,0,.10);';
             if (c.other_avatar){var ai=document.createElement('img');ai.src=c.other_avatar;ai.loading='lazy';ai.style.cssText='width:100%;height:100%;object-fit:cover;';av.appendChild(ai);}
-            else av.textContent=(c.other_username||'?')[0].toUpperCase();
+            else av.textContent=(c.other_username||'×')[0].toUpperCase();
         }
         if(hasUnread){
             var ub=document.createElement('span');
@@ -27066,9 +27490,10 @@ async function openConversations() {
         var msgWeight = hasUnread ? '600' : '500';
         var timeColor = hasUnread ? 'var(--crimson)' : 'var(--tm)';
         var timeWeight = hasUnread ? '700' : '500';
+        var _displayName = c.other_username ? ('@' + c.other_username) : '[usuario eliminado]';
         info.innerHTML =
             '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;">'
-          +   '<span style="font-size:15px;font-weight:700;color:'+nameColor+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.1px;">@'+c.other_username+'</span>'
+          +   '<span style="font-size:15px;font-weight:700;color:'+nameColor+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.1px;'+(c.other_username?'':'font-style:italic;opacity:.7;')+'">'+_displayName+'</span>'
           +   '<span style="font-size:11.5px;color:'+timeColor+';font-weight:'+timeWeight+';white-space:nowrap;flex-shrink:0;">'+lastAt+'</span>'
           + '</div>'
           + '<div style="font-size:13px;color:'+msgColor+';font-weight:'+msgWeight+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">'+(c.last_message||'')+'</div>';
