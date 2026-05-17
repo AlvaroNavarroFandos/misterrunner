@@ -27673,8 +27673,24 @@ function _initPTR() {
 /* ── Init ────────────────────────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', function() {
     initDarkMode();
+    // Si la URL es una vuelta de un enlace de email (recovery o error),
+    // detectarVueltaDeEmail() mostrará la pantalla correcta y NO debemos
+    // entrar al Home aunque Supabase haya creado una sesión válida.
+    try {
+        var _back = (typeof detectarVueltaDeEmail === 'function') ? detectarVueltaDeEmail() : null;
+        if (_back === 'recovery' || _back === 'error') return;
+    } catch(_) {}
     window._sbClient.auth.getSession().then(function({data: {session}}) {
         if (session) {
+            // Doble guardia: si tras el getSession seguimos en una URL de recovery,
+            // no autologuear (puede que detectarVueltaDeEmail no se haya disparado
+            // por ejecución asíncrona del listener PASSWORD_RECOVERY).
+            var _h = window.location.hash || '';
+            var _s = window.location.search || '';
+            if (_h.includes('type=recovery') || _s.includes('reset=1')) {
+                if (typeof authShowMode === 'function') authShowMode('reset');
+                return;
+            }
             var username = session.user.user_metadata?.username || session.user.email?.split('@')[0];
             if (username) {
                 currentUser = username;
