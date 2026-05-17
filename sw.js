@@ -1,47 +1,148 @@
 /* MisterRunner Service Worker — Production */
-const CACHE = 'mr-v4';
+/* Bloque K — Auditoría SW (K.1 + K.2) — 17 mayo 2026 */
+
+const CACHE_VERSION = 'mr-v3.1-2026-05-17';
+const CACHE_STATIC  = `${CACHE_VERSION}-static`;
+const CACHE_PAGES   = `${CACHE_VERSION}-pages`;
+
 const SUPABASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co';
-/* ── Cache Strategy ───────────────────────────────────────────────── */
-const STATIC_ASSETS = ['/'];
+
+/* Assets que precacheamos en install. Si alguno falla, no rompe el install. */
+const STATIC_ASSETS = [
+  '/',
+  '/icon-192.png',
+  '/badge-72.png'
+];
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
+
+/* Solo cacheamos requests http(s). Excluye chrome-extension://, blob:, data:,
+   ws:, wss:, file:, etc. → fix K.1 explícito. */
+function isCacheable(request) {
+  const url = request.url;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+  if (request.method !== 'GET') return false;
+  return true;
+}
+
+/* Detecta si un request es la "shell" navegacional (index.html). */
+function isNavigationRequest(request) {
+  if (request.mode === 'navigate') return true;
+  // Fallback para navegadores antiguos o requests sin mode
+  const accept = request.headers.get('accept') || '';
+  return request.method === 'GET' && accept.includes('text/html');
+}
+
+/* ── Install: precache de estáticos ───────────────────────────────── */
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE)
-      .then(c => c.addAll(STATIC_ASSETS).catch(() => {}))
+    caches.open(CACHE_STATIC)
+      .then(c => c.addAll(STATIC_ASSETS).catch(err => {
+        console.warn('[SW] Precache parcial:', err);
+      }))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
+
+/* ── Activate: limpiar caches antiguos + tomar control ────────────── */
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
+    caches.keys().then(keys => {
+      const valid = new Set([CACHE_STATIC, CACHE_PAGES]);
+      return Promise.all(
+        keys.filter(k => !valid.has(k)).map(k => caches.delete(k))
+      );
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
+
+/* ── Fetch: enrutado por tipo de request ──────────────────────────── */
 self.addEventListener('fetch', e => {
   const { request } = e;
   const url = new URL(request.url);
-  
-  /* ✅ NUEVA GUARDA: ignorar esquemas que no sean http/https */
-  /* Evita errores de extensiones (chrome-extension://) y otros esquemas raros */
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-  
-  /* Never cache Supabase API calls */
+
+  /* No tocar API de Supabase (auth, rest, realtime, storage). */
   if (url.hostname.includes('supabase.co')) return;
-  if (request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(request).then(cached => {
-      if (cached) return cached;
-      return fetch(request).then(resp => {
-        if (resp && resp.status === 200 && resp.type === 'basic') {
-          const clone = resp.clone();
-          caches.open(CACHE).then(c => c.put(request, clone));
-        }
-        return resp;
-      }).catch(() => caches.match('/'));
-    })
-  );
+
+  /* Filtro global: si no es cacheable, dejar pasar sin interceptar. */
+  if (!isCacheable(request)) return;
+
+  /* Navegación / index.html → NETWORK-FIRST */
+  if (isNavigationRequest(request)) {
+    e.respondWith(networkFirst(request));
+    return;
+  }
+
+  /* Assets estáticos same-origin → CACHE-FIRST */
+  if (url.origin === self.location.origin) {
+    e.respondWith(cacheFirst(request));
+    return;
+  }
+
+  /* Cross-origin (CDNs, fuentes, etc.) → CACHE-FIRST también,
+     pero solo cacheamos respuestas opaque-safe (status 200, type basic/cors). */
+  e.respondWith(cacheFirst(request));
 });
+
+/* ── Estrategias ──────────────────────────────────────────────────── */
+
+/* NETWORK-FIRST: red primero, caché si falla. Usada para index.html.
+   Tras una respuesta de red válida, actualizamos la copia en caché. */
+async function networkFirst(request) {
+  try {
+    const fresh = await fetch(request);
+    if (fresh && fresh.status === 200 && (fresh.type === 'basic' || fresh.type === 'cors')) {
+      const clone = fresh.clone();
+      caches.open(CACHE_PAGES).then(c => {
+        // Doble check: solo cacheamos URLs http(s)
+        if (request.url.startsWith('http')) c.put(request, clone);
+      }).catch(() => {});
+    }
+    return fresh;
+  } catch (err) {
+    /* Offline o red caída → buscar en caché */
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    /* Fallback final: shell de la app */
+    const shell = await caches.match('/');
+    if (shell) return shell;
+    /* Si ni eso, propagar el error */
+    throw err;
+  }
+}
+
+/* CACHE-FIRST: caché si existe, si no red. Actualiza caché en background. */
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) {
+    /* Refresh silencioso en background (stale-while-revalidate ligero) */
+    fetch(request).then(resp => {
+      if (resp && resp.status === 200 && (resp.type === 'basic' || resp.type === 'cors')) {
+        caches.open(CACHE_STATIC).then(c => {
+          if (request.url.startsWith('http')) c.put(request, resp.clone());
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+    return cached;
+  }
+
+  try {
+    const fresh = await fetch(request);
+    if (fresh && fresh.status === 200 && (fresh.type === 'basic' || fresh.type === 'cors')) {
+      const clone = fresh.clone();
+      caches.open(CACHE_STATIC).then(c => {
+        if (request.url.startsWith('http')) c.put(request, clone);
+      }).catch(() => {});
+    }
+    return fresh;
+  } catch (err) {
+    /* Fallback para navegación si todo falla */
+    const shell = await caches.match('/');
+    if (shell) return shell;
+    throw err;
+  }
+}
+
 /* ── Push Notifications ───────────────────────────────────────────── */
 self.addEventListener('push', e => {
   if (!e.data) return;
@@ -63,6 +164,7 @@ self.addEventListener('push', e => {
   };
   e.waitUntil(self.registration.showNotification(title, opts));
 });
+
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const data = e.notification.data || {};
@@ -91,12 +193,14 @@ self.addEventListener('notificationclick', e => {
     })
   );
 });
+
 /* ── Background Sync (queue DMs when offline) ─────────────────────── */
 self.addEventListener('sync', e => {
   if (e.tag === 'send-message') {
     e.waitUntil(flushOfflineMessages());
   }
 });
+
 async function flushOfflineMessages() {
   const db = await openMsgQueue();
   const tx = db.transaction('queue', 'readwrite');
@@ -117,6 +221,7 @@ async function flushOfflineMessages() {
     } catch {}
   }
 }
+
 function openMsgQueue() {
   return new Promise((res, rej) => {
     const req = indexedDB.open('mr-msg-queue', 1);
@@ -125,6 +230,7 @@ function openMsgQueue() {
     req.onerror = e => rej(e);
   });
 }
+
 function idbAll(store) {
   return new Promise((res, rej) => {
     const req = store.getAll();
