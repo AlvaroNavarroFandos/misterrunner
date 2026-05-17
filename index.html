@@ -50,7 +50,7 @@
         const manifest = {
             name:'MisterRunner', short_name:'MisterRunner',
             description:'Tu entrenador personal de running',
-            start_url:'./', display:'standalone',
+            display:'standalone',
             background_color:'#f0ebe0', theme_color:'#8F1A28',
             icons:[
                 {src:'data:image/png;base64,'+iconBase64,sizes:'192x192',type:'image/png'},
@@ -16427,9 +16427,24 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         if (!uid) { console.warn('[MR][PR] sin sesión'); return null; }
 
         const acts = (typeof window._getActivities === 'function') ? window._getActivities() : [];
-        if (!acts.length) { console.warn('[MR][PR] sin actividades locales'); return null; }
         const running = acts.filter(a => RUNNING_TYPES.has(String(a.type || '').toLowerCase()));
         console.log('[MR][PR] recalculando récords sobre', running.length, 'actividades running...');
+
+        // Caso especial: 0 actividades running → borrar TODOS los records del
+        // usuario para evitar PRs huérfanos en BD (visibles en perfil del Club).
+        if (!running.length) {
+            console.log('[MR][PR] sin actividades running, limpiando user_records del usuario');
+            const { error: eDelAll } = await sb.from('user_records').delete().eq('user_id', uid);
+            if (eDelAll) {
+                console.warn('[MR][PR] limpieza total falló:', eDelAll.message);
+                return null;
+            }
+            // Refrescar UI de PRs si está visible
+            if (typeof renderPRHistory === 'function') {
+                try { renderPRHistory(); } catch(_){}
+            }
+            return [];
+        }
 
         // Mejor por tipo
         const best = {}; // { type: { value, actId, dateStr } }
