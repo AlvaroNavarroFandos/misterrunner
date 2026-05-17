@@ -4019,6 +4019,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             const hash = window.location.hash || '';
             const search = window.location.search || '';
+            // ⚠️ Comprobar ERRORES PRIMERO: si el enlace caducó, Supabase
+            // redirige con ?reset=1#error=access_denied&error_code=otp_expired...
+            // Si no chequeamos esto antes que 'type=recovery'/'reset=1', acabamos
+            // mostrando la pantalla de "Nueva contraseña" sin sesión válida y
+            // el usuario ve un "Auth session missing!" críptico al intentar guardar.
+            if(hash.includes('error=') || hash.includes('error_description=')) {
+                const m = decodeURIComponent((hash.match(/error_description=([^&]+)/) || [])[1] || 'El enlace no es válido o ha caducado.');
+                alert('No se pudo procesar el enlace: ' + m.replace(/\+/g,' '));
+                try { history.replaceState(null, '', window.location.pathname); } catch(_) {}
+                authShowMode('login');
+                return 'error';
+            }
             // Recovery: el enlace incluye type=recovery
             if(hash.includes('type=recovery') || search.includes('reset=1')) {
                 authShowMode('reset');
@@ -4027,14 +4039,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // Signup verificado: tras procesar el hash, onAuthStateChange disparará SIGNED_IN
             if(hash.includes('type=signup')) {
                 return 'signup';
-            }
-            // Errores en el hash (token expirado, etc.)
-            if(hash.includes('error=') || hash.includes('error_description=')) {
-                const m = decodeURIComponent((hash.match(/error_description=([^&]+)/) || [])[1] || 'El enlace no es válido o ha caducado.');
-                alert('No se pudo procesar el enlace: ' + m.replace(/\+/g,' '));
-                try { history.replaceState(null, '', window.location.pathname); } catch(_) {}
-                authShowMode('login');
-                return 'error';
             }
         } catch(_) {}
         return null;
