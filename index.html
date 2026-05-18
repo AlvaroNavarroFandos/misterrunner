@@ -2475,6 +2475,231 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     max-width: 200px;
                     margin: 0 auto;
                 }
+
+                /* ═══════════════════════════════════════════════════════════
+                   PANTALLA IMPORTING (Bloque L · FASE 2.5)
+                   Simulación de ~15s con progress bar global, texto del lote
+                   (6 lotes de 50 runs, último de 40) y sub-progress de fotos.
+                   Cero escrituras a Supabase. Botón cancelar real.
+                   2 sub-estados internos: running | done (transitorio a summary).
+                   ═══════════════════════════════════════════════════════════ */
+
+                /* Contenedor general */
+                #view-import-strava .vis-imp-wrap {
+                    padding: 24px 4px 8px;
+                }
+
+                /* Mini-header con icono + nombre del archivo (reutiliza idea de vis-an-fileheader) */
+                #view-import-strava .vis-imp-fileheader {
+                    display: flex;
+                    align-items: center;
+                    gap: 11px;
+                    padding: 12px 14px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    margin-bottom: 22px;
+                }
+                #view-import-strava .vis-imp-fileheader-icon {
+                    flex-shrink: 0;
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 9px;
+                    background: linear-gradient(135deg, #FC4C02 0%, #e84400 100%);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 2px 6px rgba(252,76,2,.28);
+                }
+                #view-import-strava .vis-imp-fileheader-text { flex: 1; min-width: 0; }
+                #view-import-strava .vis-imp-fileheader-name {
+                    font-size: 13.5px;
+                    font-weight: 600;
+                    color: var(--tw);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                #view-import-strava .vis-imp-fileheader-size {
+                    font-size: 12px;
+                    color: var(--ts);
+                    margin-top: 2px;
+                }
+
+                /* Título principal de la sección */
+                #view-import-strava .vis-imp-title {
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: var(--tw);
+                    text-align: center;
+                    margin-bottom: 6px;
+                    letter-spacing: -.2px;
+                }
+                #view-import-strava .vis-imp-subtitle {
+                    font-size: 13px;
+                    color: var(--ts);
+                    text-align: center;
+                    margin-bottom: 24px;
+                    line-height: 1.45;
+                }
+
+                /* --- Progress bar global (actividades) --- */
+                #view-import-strava .vis-imp-progress-block {
+                    margin-bottom: 22px;
+                }
+                #view-import-strava .vis-imp-progress-head {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: baseline;
+                    margin-bottom: 8px;
+                }
+                #view-import-strava .vis-imp-progress-label {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: var(--tw);
+                }
+                #view-import-strava .vis-imp-progress-pct {
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #FC4C02;
+                    font-variant-numeric: tabular-nums;
+                }
+                #view-import-strava .vis-imp-progress-track {
+                    height: 10px;
+                    border-radius: 999px;
+                    background: var(--border);
+                    overflow: hidden;
+                    position: relative;
+                }
+                #view-import-strava .vis-imp-progress-fill {
+                    height: 100%;
+                    width: 0%;
+                    border-radius: 999px;
+                    background: linear-gradient(90deg, #FC4C02 0%, #e84400 100%);
+                    transition: width .35s cubic-bezier(.4,0,.2,1);
+                    position: relative;
+                    overflow: hidden;
+                }
+                /* Sutil brillo deslizante sobre la barra mientras hay progreso < 100% */
+                #view-import-strava .vis-imp-progress-fill::after {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -40%;
+                    width: 40%;
+                    height: 100%;
+                    background: linear-gradient(90deg,
+                        rgba(255,255,255,0) 0%,
+                        rgba(255,255,255,.35) 50%,
+                        rgba(255,255,255,0) 100%);
+                    animation: vis-imp-shine 1.6s linear infinite;
+                }
+                #view-import-strava .vis-imp-progress-fill.is-done::after { display: none; }
+                @keyframes vis-imp-shine {
+                    0%   { left: -40%; }
+                    100% { left: 100%; }
+                }
+                #view-import-strava .vis-imp-batch-text {
+                    margin-top: 9px;
+                    font-size: 12.5px;
+                    color: var(--ts);
+                    text-align: left;
+                    min-height: 16px;
+                    font-variant-numeric: tabular-nums;
+                }
+
+                /* --- Sub-progress fotos --- */
+                #view-import-strava .vis-imp-photo-block {
+                    margin-bottom: 26px;
+                    padding: 12px 14px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                }
+                #view-import-strava .vis-imp-photo-head {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 8px;
+                }
+                #view-import-strava .vis-imp-photo-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 7px;
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    color: var(--tw);
+                }
+                #view-import-strava .vis-imp-photo-icon {
+                    flex-shrink: 0;
+                    color: var(--ts);
+                }
+                #view-import-strava .vis-imp-photo-count {
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    color: var(--ts);
+                    font-variant-numeric: tabular-nums;
+                }
+                #view-import-strava .vis-imp-photo-track {
+                    height: 6px;
+                    border-radius: 999px;
+                    background: var(--border);
+                    overflow: hidden;
+                }
+                #view-import-strava .vis-imp-photo-fill {
+                    height: 100%;
+                    width: 0%;
+                    border-radius: 999px;
+                    background: linear-gradient(90deg, #FC4C02 0%, #e84400 100%);
+                    opacity: .85;
+                    transition: width .35s cubic-bezier(.4,0,.2,1);
+                }
+
+                /* --- Nota tranquilizadora --- */
+                #view-import-strava .vis-imp-note {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 8px;
+                    padding: 10px 12px;
+                    background: rgba(252, 76, 2, .07);
+                    border: 1px solid rgba(252, 76, 2, .18);
+                    border-radius: 10px;
+                    margin-bottom: 24px;
+                }
+                #view-import-strava .vis-imp-note-icon {
+                    flex-shrink: 0;
+                    color: #FC4C02;
+                    margin-top: 1px;
+                }
+                #view-import-strava .vis-imp-note-text {
+                    font-size: 12px;
+                    color: var(--ts);
+                    line-height: 1.5;
+                }
+
+                /* --- Botón cancelar --- */
+                #view-import-strava .vis-imp-cancel {
+                    display: block;
+                    width: 100%;
+                    max-width: 280px;
+                    margin: 0 auto;
+                    padding: 12px 18px;
+                    border-radius: 12px;
+                    border: 1px solid var(--border);
+                    background: var(--surface);
+                    color: var(--tw);
+                    font-family: var(--f);
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: opacity .15s, background .15s;
+                }
+                #view-import-strava .vis-imp-cancel:active { opacity: .7; }
+                #view-import-strava .vis-imp-cancel:disabled {
+                    opacity: .45;
+                    cursor: not-allowed;
+                }
+
             </style>
 
             <!-- Cabecera con botón volver -->
@@ -2795,12 +3020,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 <!-- Estado: importing -->
                 <div class="vis-placeholder" id="vis-importing">
-                    <div class="vis-ph-emoji">🚧</div>
-                    <div class="vis-ph-name">Pantalla importando</div>
-                    <div class="vis-ph-desc">
-                        Progress bar global, texto del lote, sub-progress fotos<br>
-                        y botón cancelar.<br>
-                        <strong>Sub-tarea 2.5.</strong>
+                    <div class="vis-imp-wrap">
+
+                        <!-- ─── Mini-header con archivo en curso ─── -->
+                        <div class="vis-imp-fileheader">
+                            <div class="vis-imp-fileheader-icon">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                </svg>
+                            </div>
+                            <div class="vis-imp-fileheader-text">
+                                <div class="vis-imp-fileheader-name" id="vis-imp-fileheader-name">—</div>
+                                <div class="vis-imp-fileheader-size" id="vis-imp-fileheader-size">—</div>
+                            </div>
+                        </div>
+
+                        <!-- ─── Título y subtítulo ─── -->
+                        <div class="vis-imp-title">Importando tus carreras</div>
+                        <div class="vis-imp-subtitle">
+                            Procesando archivos y subiendo datos a tu perfil.<br>
+                            Mantén la app abierta hasta que termine.
+                        </div>
+
+                        <!-- ─── Progress bar global (actividades) ─── -->
+                        <div class="vis-imp-progress-block">
+                            <div class="vis-imp-progress-head">
+                                <div class="vis-imp-progress-label">Progreso</div>
+                                <div class="vis-imp-progress-pct" id="vis-imp-progress-pct">0%</div>
+                            </div>
+                            <div class="vis-imp-progress-track">
+                                <div class="vis-imp-progress-fill" id="vis-imp-progress-fill"></div>
+                            </div>
+                            <div class="vis-imp-batch-text" id="vis-imp-batch-text">Preparando…</div>
+                        </div>
+
+                        <!-- ─── Sub-progress fotos ─── -->
+                        <div class="vis-imp-photo-block">
+                            <div class="vis-imp-photo-head">
+                                <div class="vis-imp-photo-label">
+                                    <div class="vis-imp-photo-icon">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                            <circle cx="12" cy="13" r="4"/>
+                                        </svg>
+                                    </div>
+                                    Fotos
+                                </div>
+                                <div class="vis-imp-photo-count" id="vis-imp-photo-count">0 / 0</div>
+                            </div>
+                            <div class="vis-imp-photo-track">
+                                <div class="vis-imp-photo-fill" id="vis-imp-photo-fill"></div>
+                            </div>
+                        </div>
+
+                        <!-- ─── Nota tranquilizadora ─── -->
+                        <div class="vis-imp-note">
+                            <div class="vis-imp-note-icon">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="12" y1="16" x2="12" y2="12"/>
+                                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                                </svg>
+                            </div>
+                            <div class="vis-imp-note-text">
+                                Si cancelas, los datos ya procesados se descartarán
+                                y volverás al resumen para reintentar.
+                            </div>
+                        </div>
+
+                        <!-- ─── Botón cancelar ─── -->
+                        <button type="button" class="vis-imp-cancel" id="vis-imp-cancel-btn">
+                            Cancelar importación
+                        </button>
+
                     </div>
                 </div>
 
