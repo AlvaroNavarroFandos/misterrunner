@@ -4340,6 +4340,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             '⚠️ ¿Borrar TODAS tus actividades?\n\n' +
             'Esta acción es INMEDIATA y NO se puede deshacer. Se eliminarán:\n\n' +
             '• Todas tus actividades (locales y publicadas en Club)\n' +
+            '• Tus actividades importadas masivamente (Strava, etc.)\n' +
+            '• Tus fotos y streams asociados (Storage)\n' +
             '• Tus PRs y hitos km\n' +
             '• Tus reacciones y comentarios en posts de otros\n' +
             '• Todos los datos derivados locales (medallero, prHistory)\n\n' +
@@ -4366,9 +4368,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) {}
         if (!uid) { alert('No hay sesión activa.'); return; }
 
-        // ── Ejecutar RPC ──────────────────────────────────────────
+        // ── 1. Ejecutar RPC: limpia BD ────────────────────────────
         console.log('[WIPE] Iniciando wipe_user_activities para', uid);
-        let summary = null;
+        let dbSummary = null;
         try {
             const { data, error } = await sb.rpc('wipe_user_activities', {
                 _target_user_id: uid
@@ -4378,19 +4380,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 alert('Error al borrar en servidor: ' + (error.message || 'desconocido'));
                 return;
             }
-            summary = data || {};
-            console.log('[WIPE] RPC OK:', summary);
+            dbSummary = data || {};
+            console.log('[WIPE] RPC OK:', dbSummary);
         } catch(e) {
             console.error('[WIPE] RPC exception:', e);
             alert('Error de red. Inténtalo de nuevo.');
             return;
         }
 
-        // ── Limpieza local ────────────────────────────────────────
-        // 1. Memoria: array activities
+        // ── 2. Edge Function: limpia Storage ──────────────────────
+        // Si falla, NO abortamos: la BD ya está limpia, los binarios
+        // huérfanos en Storage son inocuos. Solo avisamos al final.
+        let storageSummary = { photos_deleted: 0, streams_deleted: 0, errors: [] };
+        let storageOk = true;
+        let storageErrorMsg = null;
+        try {
+            const { data, error } = await sb.functions.invoke('wipe-user-photos', {
+                method: 'POST',
+                body: {}
+            });
+            if (error) {
+                storageOk = false;
+                storageErrorMsg = error.message || 'error desconocido';
+                console.warn('[WIPE] Edge Function error:', error);
+            } else if (data) {
+                storageSummary = data;
+                console.log('[WIPE] Edge Function OK:', storageSummary);
+            }
+        } catch(e) {
+            storageOk = false;
+            storageErrorMsg = e.message || 'excepción de red';
+            console.warn('[WIPE] Edge Function exception:', e);
+        }
+
+        // ── 3. Limpieza local (igual que FASE 0) ──────────────────
+        // 3a. Memoria: array activities
         try { if (typeof activities !== 'undefined') activities = []; } catch(_) {}
 
-        // 2. IndexedDB: vaciar store de actividades del user
+        // 3b. IndexedDB: vaciar store de actividades del user
         try {
             const db = await openIDB();
             const tx = db.transaction(IDB_STORE, 'readwrite');
@@ -4407,30 +4434,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             console.warn('[WIPE] IDB clear falló (no bloqueante):', e);
         }
 
-        // 3. Datos derivados en profileData (memoria) y localStorage
+        // 3c. Datos derivados en profileData (memoria) y localStorage
         try {
             if (typeof profileData === 'object' && profileData) {
                 profileData.medallero = [];
                 profileData.prHistory = [];
             }
-            // Limpiar key específica de medallero
             localStorage.removeItem(_uk('mr_medallero'));
-            // Resnapshot del estado sin actividades ni derivados
             if (typeof saveAppState === 'function') saveAppState();
         } catch(e) {
             console.warn('[WIPE] limpieza derivados falló (no bloqueante):', e);
         }
 
-        // ── Feedback ──────────────────────────────────────────────
-        const msg =
-            '✅ Borrado completado.\n\n' +
-            'Supabase:\n' +
-            '  • ' + (summary.posts || 0) + ' posts/actividades\n' +
-            '  • ' + (summary.reactions || 0) + ' reacciones\n' +
-            '  • ' + (summary.comments || 0) + ' comentarios\n' +
-            '  • ' + (summary.records || 0) + ' récords/hitos\n\n' +
-            'Local: actividades, medallero e historial PR limpios.\n\n' +
-            'La página se recargará para refrescar la UI.';
+        // ── 4. Feedback al usuario ────────────────────────────────
+        // Sección 1: BD (manual día a día — del flujo anterior)
+        // Sección 2: BD (import masivo — nuevo en FASE 1)
+        // Sección 3: Storage
+        // Sección 4: Avisos si algo no fue 100%
+        let msg = '✅ Borrado completado.\n\n';
+        msg += 'BD · Actividad manual día a día:\n';
+        msg += '  • ' + (dbSummary.posts || 0) + ' posts/club\n';
+        msg += '  • ' + (dbSummary.reactions || 0) + ' reacciones\n';
+        msg += '  • ' + (dbSummary.comments || 0) + ' comentarios\n';
+        msg += '  • ' + (dbSummary.records || 0) + ' récords/hitos\n\n';
+        msg += 'BD · Import masivo (Strava, etc.):\n';
+        msg += '  • ' + (dbSummary.activities || 0) + ' actividades\n';
+        msg += '  • ' + (dbSummary.activity_photos || 0) + ' fotos (meta)\n';
+        msg += '  • ' + (dbSummary.imports_log || 0) + ' logs\n\n';
+        msg += 'Storage:\n';
+        if (storageOk) {
+            msg += '  • ' + (storageSummary.photos_deleted || 0) + ' fotos (binarios)\n';
+            msg += '  • ' + (storageSummary.streams_deleted || 0) + ' streams\n';
+            if (storageSummary.errors && storageSummary.errors.length) {
+                msg += '  ⚠ ' + storageSummary.errors.length + ' errores parciales (ver consola)\n';
+            }
+        } else {
+            msg += '  ⚠ Storage no se pudo limpiar: ' + storageErrorMsg + '\n';
+            msg += '    (la BD sí quedó limpia; los binarios huérfanos no afectan)\n';
+        }
+        msg += '\nLocal: actividades, medallero e historial PR limpios.\n';
+        msg += '\nLa página se recargará para refrescar la UI.';
+
         alert(msg);
 
         // Recarga para garantizar UI consistente en todas las vistas
