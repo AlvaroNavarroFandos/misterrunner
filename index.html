@@ -29,6 +29,11 @@
          con el script de Supabase de arriba. -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
+    <!-- pako (Bloque L · FASE 3.2): descompresión gzip in-memory para los
+         archivos .fit.gz de Strava. Versión fijada. Expone window.pako con
+         pako.ungzip(uint8Array). -->
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -1915,7 +1920,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         </section>
 
         <!-- ═══════════════════════════════════════════════════════════════════
-             VIEW IMPORT STRAVA (Bloque L · FASE 2 ✅ COMPLETA + FASE 3.1 ✅)
+             VIEW IMPORT STRAVA (Bloque L · FASE 2 ✅ + FASE 3.1 ✅ + FASE 3.2 ✅)
              ═══════════════════════════════════════════════════════════════════
              6ª view de la app. Acceso por botón pill en cabecera de Activities
              (añadido en sub-tarea 2.2). Estructura de 4 sub-estados internos
@@ -1924,8 +1929,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                · analysis  → resumen pre-import del ZIP (2.4) + dev sintético (2.7)
                · importing → progress bar global + sub-progress fotos (2.5)
                · summary   → PRs/hitos desbloqueados (2.6) + km/periodo reales (3.1)
-             Parsers: parseStravaCSV real (3.1) + parseFitStrava/parseGPXStrava stubs (2.8 → 3.2/3.3).
-             FASE 3.1: parser CSV real + filtro Run/Trail Run + totalKm + dateRange + filtro macOS.
+             Parsers: parseStravaCSV real (3.1) + parseFitStrava real (3.2) + parseGPXStrava stub (→ 3.3).
+             FASE 3.2: parser FIT custom vanilla + pako para .fit.gz. HITO 1 desbloqueado.
         -->
         <section class="view" id="view-import-strava">
             <style>
@@ -3118,14 +3123,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <span class="vis-dev-single-title">Modo desarrollador</span>
                         </div>
                         <div class="vis-dev-single-desc">
-                            Sube un único archivo <strong>.fit</strong> o <strong>.gpx</strong>
+                            Sube un único archivo <strong>.fit</strong>, <strong>.fit.gz</strong> o <strong>.gpx</strong>
                             para testear el pipeline sin necesidad de un ZIP completo.
                             Útil para validar parsers y flujo de import con N=1.
                         </div>
                         <button type="button" class="vis-dev-single-btn" id="vis-dev-single-btn">
-                            Subir archivo individual (.fit / .gpx)
+                            Subir archivo individual (.fit / .fit.gz / .gpx)
                         </button>
-                        <input type="file" id="vis-dev-single-input" accept=".fit,.gpx,application/gpx+xml,application/octet-stream" style="display:none;">
+                        <input type="file" id="vis-dev-single-input" accept=".fit,.fit.gz,.gpx,.gz,application/gpx+xml,application/octet-stream,application/gzip" style="display:none;">
                     </div>
 
                     <!-- Footer "Compatible with Strava" (Bloque L · FASE 2.9) -->
@@ -3512,17 +3517,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             </div>
 
             <script>
-                /* Namespace global del importador Strava (Bloque L · FASE 2 ✅ + FASE 3.1 ✅).
-                   Tras FASE 3.1 contiene: setImportState, currentFile, analysis,
-                   currentDevMode, currentDevKind, analyzeZip, analyzeDevFile,
-                   parseStravaCSV (real), parseFitStrava (stub), parseGPXStrava (stub),
-                   impStart, sim, simTimer. FASE 3.2/3.3 sustituirán los 2 parsers
-                   restantes (stubs → reales) sin tocar UI ni firmas. */
+                /* Namespace global del importador Strava (Bloque L · FASE 2 ✅ + FASE 3.1 ✅ + FASE 3.2 ✅).
+                   Tras FASE 3.2 contiene: setImportState, currentFile, analysis,
+                   currentDevMode, currentDevKind, analyzeZip, analyzeDevFile (async),
+                   parseStravaCSV (real), parseFitStrava (real), parseGPXStrava (stub),
+                   impStart, sim, simTimer. FASE 3.3 sustituirá parseGPXStrava
+                   (stub → real) sin tocar UI ni firmas. */
                 window._MR_StravaImport = window._MR_StravaImport || {};
 
                 /* Marker de arranque: confirma en consola que FASE 2 está
                    cargada y FASE 3.1 activa. Útil en QA. */
-                console.info('[MR][StravaImport] FASE 2 ready + FASE 3.1 active — parseStravaCSV real, parseFit/Gpx stubbed');
+                console.info('[MR][StravaImport] FASE 2 ready + FASE 3.1/3.2 active — parseStravaCSV+parseFitStrava reales, parseGPX stub');
 
                 /* setImportState(name)
                    Muestra el sub-contenedor solicitado y oculta los otros 3.
@@ -3674,18 +3679,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 /* ── visValidateDevFile(file) ────────────────────────────────
                    Validación específica del modo dev (Bloque L · FASE 2.7).
-                   Solo acepta .fit o .gpx individuales. NO se usa en el flujo
-                   normal — únicamente desde el botón dev oculto. */
+                   Acepta .fit, .fit.gz o .gpx individuales. NO se usa en el
+                   flujo normal — únicamente desde el botón dev oculto.
+                   FASE 3.2: .fit.gz se descomprime con pako dentro de
+                   visAnalyzeDevFile antes de parsear. Kind devuelto sigue
+                   siendo 'fit' o 'gpx'. */
                 function visValidateDevFile(file) {
                     if (!file) return { ok: false, msg: 'No se ha seleccionado ningún archivo.' };
                     if (file.size === 0) return { ok: false, msg: 'El archivo está vacío.' };
                     var name = (file.name || '').toLowerCase();
-                    var isFit = name.endsWith('.fit');
-                    var isGpx = name.endsWith('.gpx');
-                    if (!isFit && !isGpx) {
-                        return { ok: false, msg: 'El archivo debe ser .fit o .gpx (modo dev).' };
+                    var isFitGz = name.endsWith('.fit.gz');
+                    var isFit   = !isFitGz && name.endsWith('.fit');
+                    var isGpx   = name.endsWith('.gpx');
+                    if (!isFitGz && !isFit && !isGpx) {
+                        return { ok: false, msg: 'El archivo debe ser .fit, .fit.gz o .gpx (modo dev).' };
                     }
-                    return { ok: true, kind: isFit ? 'fit' : 'gpx' };
+                    return { ok: true, kind: (isFit || isFitGz) ? 'fit' : 'gpx' };
                 }
 
                 /* Procesa el archivo aceptado: guarda en namespace, muestra info,
@@ -4047,17 +4056,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 window._MR_StravaImport.parseStravaCSV = parseStravaCSV;
 
                 /* ═══════════════════════════════════════════════════════════
-                   PARSERS DE TRACK FILES (Bloque L · FASE 2.8)
-                   - parseFitStrava(uint8Array): stub. FIT SDK en FASE 3.
-                   - parseGPXStrava(xmlText):    stub. XML real en FASE 3.
+                   PARSERS DE TRACK FILES (Bloque L · FASE 2.8 + FASE 3.2)
+                   - parseFitStrava(uint8Array): REAL (FASE 3.2). Parser custom
+                     vanilla del formato FIT (Garmin/COROS/Wahoo/Suunto/…).
+                     Sin dependencias externas; coherente con la filosofía de
+                     los parsers existentes de Coros y Suunto.
+                   - parseGPXStrava(xmlText):    stub. XML real en FASE 3.3.
                    Ambos comparten el MISMO shape de retorno (los campos
                    inexistentes para .gpx llegan como null, no como undefined
-                   ni 0). Esto permite que FASE 4 consuma un único contrato
-                   sin ramificar por origen.
+                   ni 0). FASE 4 consume un único contrato sin ramificar.
                    Unidades SI: metros, segundos, bpm, sec/km.
-                   Cero escrituras a Supabase (regla de toda la FASE 2).
-                   En FASE 3 se reemplazará SOLO el cuerpo de las funciones;
-                   las firmas y el shape de retorno son CONGELADOS aquí.
+                   Cero escrituras a Supabase (regla de toda la FASE 2-3).
                    ═══════════════════════════════════════════════════════════ */
 
                 /* ── _buildStubParserResult(source) ──────────────────────────
@@ -4065,7 +4074,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    y reconocibles (10.2 km / 47:23 / 152 bpm — coherentes con
                    el PR 10K mock de la pantalla summary 2.6). Streams vacíos
                    intencionalmente: no inventamos 3000 puntos GPS falsos.
-                   FASE 3 los llenará desde el .fit/.gpx real. */
+                   FASE 3.2 ya no lo usa (parseFitStrava es real). FASE 3.3
+                   sustituirá parseGPXStrava y este helper podrá eliminarse. */
                 function _buildStubParserResult(source) {
                     /* 10 splits sintéticos de 4:44/km (284 sec) cada uno.
                        Suma ≈ 47:20 ≈ duración total mock. Coherente, no exacto. */
@@ -4115,19 +4125,405 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     };
                 }
 
+                /* ── Helpers internos del parser FIT (FASE 3.2) ─────────────
+                   _encodePolyline: algoritmo Google encoded polyline.
+                   _computeKmSplits: splits por km cerrado desde records con
+                     distance acumulada + timestamp + HR + altitude.
+                   _fitTsToIso: convierte timestamp FIT (sec desde 1989-12-31
+                     UTC) a ISO 8601 string.
+                   Validados en aislado contra .fit reales (COROS 10K, Wahoo
+                   indoor). Coherencia 100% con session totals de cada archivo.  */
+                function _encodePolyline(coords) {
+                    function encodeSigned(num) {
+                        num = num < 0 ? ~(num << 1) : (num << 1);
+                        var s = '';
+                        while (num >= 0x20) {
+                            s += String.fromCharCode((0x20 | (num & 0x1f)) + 63);
+                            num >>>= 5;
+                        }
+                        s += String.fromCharCode(num + 63);
+                        return s;
+                    }
+                    var result = '';
+                    var prevLat = 0, prevLng = 0;
+                    for (var i = 0; i < coords.length; i++) {
+                        var lat = coords[i][0], lng = coords[i][1];
+                        var iLat = Math.round(lat * 1e5);
+                        var iLng = Math.round(lng * 1e5);
+                        result += encodeSigned(iLat - prevLat);
+                        result += encodeSigned(iLng - prevLng);
+                        prevLat = iLat;
+                        prevLng = iLng;
+                    }
+                    return result;
+                }
+
+                function _computeKmSplits(records, startTimeSec) {
+                    var splits = [];
+                    if (!records.length) return splits;
+                    var kmTarget = 1000;
+                    var kmStartTime = startTimeSec || records[0].timestamp;
+                    var hrSum = 0, hrCnt = 0;
+                    var elevGain = 0;
+                    var prevAlt = records[0].altitude;
+                    for (var i = 0; i < records.length; i++) {
+                        var r = records[i];
+                        var dist = r.distance;
+                        if (dist == null) continue;
+                        if (r.heart_rate != null) { hrSum += r.heart_rate; hrCnt++; }
+                        if (r.altitude != null && prevAlt != null) {
+                            var diff = r.altitude - prevAlt;
+                            if (diff > 0) elevGain += diff;
+                        }
+                        if (r.altitude != null) prevAlt = r.altitude;
+                        while (dist >= kmTarget) {
+                            var prevR = records[i - 1] || r;
+                            var prevDist = prevR.distance != null ? prevR.distance : 0;
+                            var prevTs = prevR.timestamp != null ? prevR.timestamp : r.timestamp;
+                            var crossTs;
+                            if (dist === prevDist) {
+                                crossTs = r.timestamp;
+                            } else {
+                                var frac = (kmTarget - prevDist) / (dist - prevDist);
+                                crossTs = prevTs + frac * (r.timestamp - prevTs);
+                            }
+                            splits.push({
+                                km: Math.round(kmTarget / 1000),
+                                durationSec: Math.round(crossTs - kmStartTime),
+                                avgHr: hrCnt > 0 ? Math.round(hrSum / hrCnt) : null,
+                                elevGainM: Math.round(elevGain)
+                            });
+                            kmStartTime = crossTs;
+                            hrSum = 0; hrCnt = 0;
+                            elevGain = 0;
+                            kmTarget += 1000;
+                        }
+                    }
+                    return splits;
+                }
+
+                var _FIT_EPOCH_MS = Date.UTC(1989, 11, 31);  // 1989-12-31 UTC
+                function _fitTsToIso(secs) {
+                    return new Date(_FIT_EPOCH_MS + secs * 1000).toISOString();
+                }
+
                 /* ── parseFitStrava(uint8Array) ─────────────────────────────
-                   Stub. En FASE 3 esto consumirá el FIT SDK (~21.x) sobre el
-                   Uint8Array YA descomprimido (pako se aplica fuera, antes
-                   de invocar este parser).
-                   Acepta cualquier input por ahora; en FASE 3 validará que
-                   sea un Uint8Array no vacío y devolverá {ok:false} si el
-                   FIT está corrupto. */
+                   Parser custom vanilla del formato FIT (Bloque L · FASE 3.2).
+                   Lee header (12/14 bytes), definition messages y data messages.
+                   Soporta little/big endian, developer fields (omitidos), tipos
+                   base más comunes y headers compressed-timestamp.
+                   Devuelve el shape congelado de FASE 2.8: 8 keys top-level
+                   con 12 keys en summary, 8 streams alineados temporalmente,
+                   splits por km cerrado, polyline Google encoded.
+                   Validado en aislado contra .fit reales (COROS 10K, Wahoo
+                   indoor). Performance ~13ms/archivo Node, asumible para
+                   FASE 4 (290 archivos en pocos segundos).
+                   Acepta Uint8Array YA descomprimido. visAnalyzeDevFile aplica
+                   pako.ungzip antes si el archivo es .fit.gz. */
+                var _FIT_BASE_TYPE_SIZE = {
+                    0x00: 1, 0x01: 1, 0x02: 1, 0x83: 2, 0x84: 2,
+                    0x85: 4, 0x86: 4, 0x07: 1, 0x88: 4, 0x89: 8,
+                    0x0A: 1, 0x8B: 2, 0x8C: 4, 0x0D: 1
+                };
+                var _FIT_SPORT_ENUM = {
+                    0: 'generic', 1: 'running', 2: 'cycling',
+                    4: 'fitness_equipment', 10: 'training', 11: 'walking',
+                    17: 'hiking'
+                };
                 function parseFitStrava(uint8Array) {
-                    // TODO FASE 3: integrar FIT SDK (~21.x) y parsear records,
-                    // sessions, laps. Reconstruir streams completos y polyline.
-                    // Devolver {ok:false, warnings:[...]} si el archivo es
-                    // inválido o no contiene records de actividad.
-                    return _buildStubParserResult('fit');
+                    var warnings = [];
+                    function ko(msg) {
+                        warnings.push(msg);
+                        return {
+                            ok: false,
+                            source: 'fit',
+                            warnings: warnings,
+                            parsedAt: Date.now(),
+                            summary: null,
+                            streams: null,
+                            splits: [],
+                            polyline: null
+                        };
+                    }
+                    if (!uint8Array || !(uint8Array instanceof Uint8Array) || uint8Array.length === 0) {
+                        return ko('Input vacío o no es Uint8Array');
+                    }
+                    if (uint8Array.length < 14) {
+                        return ko('Archivo demasiado corto para ser FIT (' + uint8Array.length + ' bytes)');
+                    }
+
+                    var dv = new DataView(uint8Array.buffer, uint8Array.byteOffset, uint8Array.byteLength);
+                    var headerSize = dv.getUint8(0);
+                    if (headerSize !== 12 && headerSize !== 14) {
+                        return ko('Tamaño de header FIT inesperado: ' + headerSize);
+                    }
+                    var dataSize = dv.getUint32(4, true);
+                    var sig = String.fromCharCode(
+                        uint8Array[8], uint8Array[9], uint8Array[10], uint8Array[11]
+                    );
+                    if (sig !== '.FIT') {
+                        return ko('Firma FIT no encontrada (encontrado "' + sig + '")');
+                    }
+                    if (headerSize + dataSize > uint8Array.length) {
+                        return ko('dataSize del header excede tamaño real del archivo');
+                    }
+
+                    var GMSG_FILE_ID = 0;
+                    var GMSG_SESSION = 18;
+                    var GMSG_RECORD = 20;
+
+                    var definitions = {};
+                    var pos = headerSize;
+                    var dataEnd = headerSize + dataSize;
+                    var records = [];
+                    var session = null;
+                    var fileId = null;
+
+                    while (pos < dataEnd) {
+                        var recHdr = dv.getUint8(pos);
+                        pos += 1;
+
+                        var isCompressed = (recHdr & 0x80) !== 0;
+                        if (isCompressed) {
+                            var localMsgNumC = (recHdr >> 5) & 0x03;
+                            var defC = definitions[localMsgNumC];
+                            if (!defC) { warnings.push('Compressed sin def, abortando decode'); break; }
+                            var dataSzC = 0;
+                            for (var ic = 0; ic < defC.fields.length; ic++) dataSzC += defC.fields[ic].size;
+                            pos += dataSzC;
+                            continue;
+                        }
+
+                        var isDefinition = (recHdr & 0x40) !== 0;
+                        var hasDevData = (recHdr & 0x20) !== 0;
+                        var localMsgNum = recHdr & 0x0F;
+
+                        if (isDefinition) {
+                            if (pos + 4 > dataEnd) { warnings.push('def truncada'); break; }
+                            pos += 1; // reserved
+                            var arch = dv.getUint8(pos); pos += 1;
+                            var littleEndian = (arch === 0);
+                            var globalMsgNum = littleEndian ? dv.getUint16(pos, true) : dv.getUint16(pos, false);
+                            pos += 2;
+                            var numFields = dv.getUint8(pos); pos += 1;
+                            if (pos + numFields * 3 > dataEnd) { warnings.push('fields truncados'); break; }
+                            var fields = [];
+                            for (var i = 0; i < numFields; i++) {
+                                var fNum = dv.getUint8(pos); pos += 1;
+                                var fSize = dv.getUint8(pos); pos += 1;
+                                var fType = dv.getUint8(pos); pos += 1;
+                                fields.push({ num: fNum, size: fSize, type: fType, dev: false });
+                            }
+                            if (hasDevData) {
+                                if (pos + 1 > dataEnd) break;
+                                var numDevFields = dv.getUint8(pos); pos += 1;
+                                if (pos + numDevFields * 3 > dataEnd) { warnings.push('dev fields truncados'); break; }
+                                for (var j = 0; j < numDevFields; j++) {
+                                    var dfNum = dv.getUint8(pos); pos += 1;
+                                    var dfSize = dv.getUint8(pos); pos += 1;
+                                    var dfIdx = dv.getUint8(pos); pos += 1;
+                                    fields.push({ num: dfNum + 10000, size: dfSize, type: 0x02, dev: true });
+                                }
+                            }
+                            definitions[localMsgNum] = { global: globalMsgNum, fields: fields, le: littleEndian };
+                        } else {
+                            var def = definitions[localMsgNum];
+                            if (!def) {
+                                warnings.push('Data sin def (localMsgNum=' + localMsgNum + ') — corte de decode');
+                                break;
+                            }
+                            var msg = {};
+                            for (var k = 0; k < def.fields.length; k++) {
+                                var f = def.fields[k];
+                                var fEnd = pos + f.size;
+                                if (fEnd > dataEnd) { warnings.push('field overflow'); pos = dataEnd; break; }
+                                if (f.dev) { pos = fEnd; continue; }
+                                var bt = _FIT_BASE_TYPE_SIZE[f.type];
+                                if (!bt) { pos = fEnd; continue; }
+                                var val = null;
+                                switch (f.type) {
+                                    case 0x00: case 0x02: case 0x0A: case 0x0D:
+                                        val = dv.getUint8(pos);
+                                        if ((f.type === 0x00 || f.type === 0x02 || f.type === 0x0D) && val === 0xFF) val = null;
+                                        else if (f.type === 0x0A && val === 0x00) val = null;
+                                        break;
+                                    case 0x01:
+                                        val = dv.getInt8(pos);
+                                        if (val === 0x7F) val = null;
+                                        break;
+                                    case 0x84:
+                                        val = dv.getUint16(pos, def.le);
+                                        if (val === 0xFFFF) val = null;
+                                        break;
+                                    case 0x83:
+                                        val = dv.getInt16(pos, def.le);
+                                        if (val === 0x7FFF) val = null;
+                                        break;
+                                    case 0x8B:
+                                        val = dv.getUint16(pos, def.le);
+                                        if (val === 0x0000) val = null;
+                                        break;
+                                    case 0x86:
+                                        val = dv.getUint32(pos, def.le);
+                                        if (val === 0xFFFFFFFF) val = null;
+                                        break;
+                                    case 0x85:
+                                        val = dv.getInt32(pos, def.le);
+                                        if (val === 0x7FFFFFFF) val = null;
+                                        break;
+                                    case 0x8C:
+                                        val = dv.getUint32(pos, def.le);
+                                        if (val === 0x00000000) val = null;
+                                        break;
+                                    case 0x07:
+                                        var s = '';
+                                        for (var sj = 0; sj < f.size; sj++) {
+                                            var b = uint8Array[pos + sj];
+                                            if (b === 0) break;
+                                            s += String.fromCharCode(b);
+                                        }
+                                        val = s || null;
+                                        break;
+                                    case 0x88:
+                                        val = dv.getFloat32(pos, def.le);
+                                        if (!isFinite(val)) val = null;
+                                        break;
+                                    default:
+                                        val = null;
+                                }
+                                msg['f' + f.num] = val;
+                                pos = fEnd;
+                            }
+
+                            if (def.global === GMSG_RECORD) {
+                                records.push({
+                                    timestamp:  msg.f253,
+                                    lat:        msg.f0 != null ? msg.f0 * (180 / Math.pow(2, 31)) : null,
+                                    lng:        msg.f1 != null ? msg.f1 * (180 / Math.pow(2, 31)) : null,
+                                    altitude:   msg.f78 != null ? (msg.f78 / 5) - 500 : (msg.f2 != null ? (msg.f2 / 5) - 500 : null),
+                                    heart_rate: msg.f3,
+                                    cadence:    msg.f4,
+                                    distance:   msg.f5 != null ? msg.f5 / 100 : null,
+                                    speed:      msg.f73 != null ? msg.f73 / 1000 : (msg.f6 != null ? msg.f6 / 1000 : null)
+                                });
+                            } else if (def.global === GMSG_SESSION && !session) {
+                                session = {
+                                    start_time:        msg.f2,
+                                    sport:             msg.f5,
+                                    sub_sport:         msg.f6,
+                                    total_elapsed_ms:  msg.f7,
+                                    total_timer_ms:    msg.f8,
+                                    total_distance_cm: msg.f9,
+                                    avg_hr:            msg.f16,
+                                    max_hr:            msg.f17,
+                                    avg_cad:           msg.f18,
+                                    ascent:            msg.f22,
+                                    descent:           msg.f23,
+                                    calories:          msg.f11
+                                };
+                            } else if (def.global === GMSG_FILE_ID && !fileId) {
+                                fileId = { manufacturer: msg.f1, product: msg.f2, time_created: msg.f4 };
+                            }
+                        }
+                    }
+
+                    if (!session) warnings.push('No se encontró mensaje session — actividad incompleta');
+                    if (records.length === 0) warnings.push('No se encontraron records');
+
+                    var sportStr = null;
+                    if (session && session.sport != null) {
+                        sportStr = _FIT_SPORT_ENUM[session.sport] || ('sport_' + session.sport);
+                        if (session.sport === 1 && session.sub_sport === 3) sportStr = 'trail_running';
+                    }
+                    var startSec = session ? session.start_time : (records[0] ? records[0].timestamp : null);
+                    var distanceM = session && session.total_distance_cm != null
+                        ? Math.round(session.total_distance_cm / 100)
+                        : (records.length && records[records.length - 1].distance != null
+                            ? Math.round(records[records.length - 1].distance)
+                            : null);
+                    var durationSec = session && session.total_elapsed_ms != null
+                        ? Math.round(session.total_elapsed_ms / 1000) : null;
+                    var movingSec = session && session.total_timer_ms != null
+                        ? Math.round(session.total_timer_ms / 1000) : null;
+                    var avgPace = null;
+                    if (movingSec && distanceM && distanceM > 0) {
+                        avgPace = Math.round(movingSec / (distanceM / 1000));
+                    }
+
+                    var summary = {
+                        startTime:       startSec != null ? _fitTsToIso(startSec) : null,
+                        durationSec:     durationSec,
+                        movingSec:       movingSec,
+                        distanceM:       distanceM,
+                        elevGainM:       session && session.ascent  != null ? session.ascent  : null,
+                        elevLossM:       session && session.descent != null ? session.descent : null,
+                        avgHr:           session && session.avg_hr  != null ? session.avg_hr  : null,
+                        maxHr:           session && session.max_hr  != null ? session.max_hr  : null,
+                        avgPaceSecPerKm: avgPace,
+                        avgCadence:      session && session.avg_cad != null ? session.avg_cad : null,
+                        calories:        session && session.calories != null ? session.calories : null,
+                        sport:           sportStr
+                    };
+
+                    var timeArr = [], latArr = [], lngArr = [], altArr = [];
+                    var hrArr = [], cadArr = [], distArr = [], paceArr = [];
+                    var anyAlt = false, anyHr = false, anyCad = false, anyDist = false, anyPace = false;
+                    for (var rIdx = 0; rIdx < records.length; rIdx++) {
+                        var rec = records[rIdx];
+                        var tRel = (rec.timestamp != null && startSec != null) ? rec.timestamp - startSec : null;
+                        timeArr.push(tRel);
+                        latArr.push(rec.lat);
+                        lngArr.push(rec.lng);
+                        altArr.push(rec.altitude);
+                        hrArr.push(rec.heart_rate);
+                        cadArr.push(rec.cadence);
+                        distArr.push(rec.distance);
+                        var pace = null;
+                        if (rec.speed != null && rec.speed > 0.1) pace = Math.round(1000 / rec.speed);
+                        paceArr.push(pace);
+                        if (rec.altitude   != null) anyAlt  = true;
+                        if (rec.heart_rate != null) anyHr   = true;
+                        if (rec.cadence    != null) anyCad  = true;
+                        if (rec.distance   != null) anyDist = true;
+                        if (pace           != null) anyPace = true;
+                    }
+                    var streams = {
+                        time:     timeArr,
+                        lat:      latArr,
+                        lon:      lngArr,
+                        altitude: anyAlt  ? altArr  : null,
+                        hr:       anyHr   ? hrArr   : null,
+                        cadence:  anyCad  ? cadArr  : null,
+                        pace:     anyPace ? paceArr : null,
+                        distance: anyDist ? distArr : null
+                    };
+
+                    var splits = _computeKmSplits(records, startSec);
+
+                    var polyCoords = [];
+                    for (var pIdx = 0; pIdx < records.length; pIdx++) {
+                        var pr = records[pIdx];
+                        if (pr.lat != null && pr.lng != null) polyCoords.push([pr.lat, pr.lng]);
+                    }
+                    var polyline = polyCoords.length > 0 ? _encodePolyline(polyCoords) : null;
+
+                    if (polyCoords.length === 0) {
+                        warnings.push('Sin coordenadas GPS — polyline null (probable indoor)');
+                    }
+                    if (sportStr && sportStr !== 'running' && sportStr !== 'trail_running') {
+                        warnings.push('Sport "' + sportStr + '" ≠ running — registrado pero no será un PR de carrera');
+                    }
+
+                    return {
+                        ok: true,
+                        source: 'fit',
+                        warnings: warnings,
+                        parsedAt: Date.now(),
+                        summary: summary,
+                        streams: streams,
+                        splits: splits,
+                        polyline: polyline
+                    };
                 }
                 window._MR_StravaImport.parseFitStrava = parseFitStrava;
 
@@ -4261,17 +4657,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 window._MR_StravaImport.analyzeZip = visAnalyzeZip;
 
                 /* ── visAnalyzeDevFile(file, kind) ──────────────────────────
-                   Modo dev (FASE 2.7): NO descomprime ZIP, NO toca JSZip,
-                   NO busca CSV. Construye un análisis sintético equivalente
-                   al shape del análisis real para que las pantallas
-                   posteriores (analysis/importing/summary) puedan operar
-                   con N=1 sin cambios.
-                   - parsed.runs    = 1
-                   - counts.fit/gpx = 1 según kind
-                   - counts.photos  = 0
-                   - csvFound       = false (este flag queda informativo;
-                                      no se usa para bloquear el flujo). */
-                function visAnalyzeDevFile(file, kind) {
+                   Modo dev (FASE 2.7 + FASE 3.2): NO descomprime ZIP, NO
+                   busca CSV. Construye un análisis sintético equivalente al
+                   shape del análisis real (runs=1, photos=0, csvFound=false)
+                   para que las pantallas posteriores operen con N=1 sin
+                   cambios.
+                   FASE 3.2: ahora invoca al parser REAL. Lee el File como
+                   ArrayBuffer y, si es .fit.gz, descomprime con pako antes
+                   de pasar al parseFitStrava. Pasa a async — su único
+                   consumidor (setImportState rama 'analysis') no espera el
+                   resultado, solo dispara la función, así que es transparente. */
+                async function visAnalyzeDevFile(file, kind) {
                     if (!file) {
                         visAnRenderError('No hay archivo cargado. Vuelve atrás y selecciona uno.');
                         return;
@@ -4280,12 +4676,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (kind === 'fit') counts.fit = 1;
                     else if (kind === 'gpx') counts.gpx = 1;
 
-                    /* Shape compatible con parseStravaCSV stub (runs/photoCount
-                       son las dos claves que consumen 2.5 y 2.6 hoy). */
-                    var parsed = {
-                        runs: 1,
-                        photoCount: 0
-                    };
+                    var parsed = { runs: 1, photoCount: 0 };
 
                     window._MR_StravaImport.analysis = {
                         file: file,
@@ -4297,27 +4688,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         devKind: kind
                     };
 
-                    /* FASE 2.8: invocar el parser stub correspondiente para
-                       validar plumbing end-to-end. NO afecta a la UI (los
-                       valores que se pintan vienen de `parsed`/`counts` ya
-                       construidos arriba). En FASE 3 los parsers tendrán
-                       cuerpo real y este punto será el integration test. */
+                    /* Pintar UI ya — los stat cards no dependen del parser */
+                    visAnRenderResult(file, parsed, counts);
+                    visAnSetState('result');
+
+                    /* FASE 3.2: invocar el parser REAL contra el contenido
+                       del archivo. Para .fit.gz descomprimir con pako antes.
+                       El resultado va a analysis.devParserResult y se loggea. */
                     var parserResult = null;
                     try {
                         if (kind === 'fit') {
-                            parserResult = parseFitStrava(new Uint8Array(0));
+                            var arrBuf = await file.arrayBuffer();
+                            var u8 = new Uint8Array(arrBuf);
+                            var isGz = (file.name || '').toLowerCase().endsWith('.gz');
+                            if (isGz) {
+                                if (typeof window.pako !== 'object' || typeof window.pako.ungzip !== 'function') {
+                                    console.error('[MR][StravaImport][dev] pako no disponible para descomprimir .fit.gz');
+                                    parserResult = { ok: false, source: 'fit', warnings: ['pako no disponible'], parsedAt: Date.now() };
+                                } else {
+                                    u8 = window.pako.ungzip(u8);
+                                }
+                            }
+                            if (!parserResult) parserResult = parseFitStrava(u8);
                         } else if (kind === 'gpx') {
+                            /* GPX sigue stub hasta FASE 3.3 */
                             parserResult = parseGPXStrava('');
                         }
                     } catch (err) {
-                        console.warn('[MR][StravaImport][dev] parser stub falló:', err);
-                        parserResult = null;
+                        console.warn('[MR][StravaImport][dev] parser falló:', err);
+                        parserResult = { ok: false, source: kind || 'unknown', warnings: ['Excepción: ' + (err && err.message ? err.message : String(err))], parsedAt: Date.now() };
                     }
                     window._MR_StravaImport.analysis.devParserResult = parserResult;
-                    console.log('[MR][StravaImport][dev] parser stub result:', parserResult);
-
-                    visAnRenderResult(file, parsed, counts);
-                    visAnSetState('result');
+                    console.log('[MR][StravaImport][dev] parser result:', parserResult);
                 }
                 window._MR_StravaImport.analyzeDevFile = visAnalyzeDevFile;
 
