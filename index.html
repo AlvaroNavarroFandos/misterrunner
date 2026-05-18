@@ -2243,6 +2243,64 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 #view-import-strava .vis-warn.is-visible { display: flex; }
 
+                /* ─── Bloque DEV "1 archivo" (Bloque L · FASE 2.7) ──────────
+                   Oculto por defecto (display:none). Lo enseña/oculta
+                   applyDebugVisibility() según ?debug=1 o whitelist UUID.
+                   Estética deliberadamente "tooling" (borde discontinuo,
+                   etiqueta DEV) para que sea inconfundible con el flujo
+                   principal incluso si por error se hace visible. */
+                #view-import-strava .vis-dev-single {
+                    display: none;
+                    margin-top: 18px;
+                    padding: 14px 14px 12px;
+                    border-radius: 12px;
+                    border: 1.5px dashed rgba(0, 0, 0, .18);
+                    background: rgba(0, 0, 0, .025);
+                }
+                #view-import-strava .vis-dev-single-head {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-bottom: 8px;
+                }
+                #view-import-strava .vis-dev-single-badge {
+                    font-size: 9.5px;
+                    font-weight: 700;
+                    letter-spacing: .8px;
+                    padding: 2px 7px;
+                    border-radius: 4px;
+                    background: #6B6B6B;
+                    color: #fff;
+                    text-transform: uppercase;
+                }
+                #view-import-strava .vis-dev-single-title {
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    color: var(--text);
+                }
+                #view-import-strava .vis-dev-single-desc {
+                    font-size: 11px;
+                    color: var(--ts);
+                    line-height: 1.45;
+                    margin-bottom: 10px;
+                }
+                #view-import-strava .vis-dev-single-btn {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border-radius: 10px;
+                    border: 1px solid rgba(0, 0, 0, .18);
+                    background: #fff;
+                    color: var(--text);
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background .15s ease;
+                }
+                #view-import-strava .vis-dev-single-btn:hover,
+                #view-import-strava .vis-dev-single-btn:active {
+                    background: rgba(0, 0, 0, .04);
+                }
+
                 /* ═══════════════════════════════════════════════════════════
                    PANTALLA ANALYSIS (Bloque L · FASE 2.4)
                    Tras aceptar el ZIP, descomprimimos con JSZip in-memory,
@@ -3020,6 +3078,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </svg>
                         <span id="vis-warn-msg">—</span>
                     </div>
+
+                    <!-- Bloque DEV "1 archivo" (Bloque L · FASE 2.7) -->
+                    <!-- Oculto por defecto. applyDebugVisibility() lo muestra
+                         si ?debug=1 o UUID del usuario en DEBUG_USER_WHITELIST. -->
+                    <div class="vis-dev-single" id="vis-dev-single">
+                        <div class="vis-dev-single-head">
+                            <span class="vis-dev-single-badge">Dev</span>
+                            <span class="vis-dev-single-title">Modo desarrollador</span>
+                        </div>
+                        <div class="vis-dev-single-desc">
+                            Sube un único archivo <strong>.fit</strong> o <strong>.gpx</strong>
+                            para testear el pipeline sin necesidad de un ZIP completo.
+                            Útil para validar parsers y flujo de import con N=1.
+                        </div>
+                        <button type="button" class="vis-dev-single-btn" id="vis-dev-single-btn">
+                            Subir archivo individual (.fit / .gpx)
+                        </button>
+                        <input type="file" id="vis-dev-single-input" accept=".fit,.gpx,application/gpx+xml,application/octet-stream" style="display:none;">
+                    </div>
                 </div>
 
                 <!-- Estado: analysis -->
@@ -3546,6 +3623,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     return { ok: true, warn: warn };
                 }
 
+                /* ── visValidateDevFile(file) ────────────────────────────────
+                   Validación específica del modo dev (Bloque L · FASE 2.7).
+                   Solo acepta .fit o .gpx individuales. NO se usa en el flujo
+                   normal — únicamente desde el botón dev oculto. */
+                function visValidateDevFile(file) {
+                    if (!file) return { ok: false, msg: 'No se ha seleccionado ningún archivo.' };
+                    if (file.size === 0) return { ok: false, msg: 'El archivo está vacío.' };
+                    var name = (file.name || '').toLowerCase();
+                    var isFit = name.endsWith('.fit');
+                    var isGpx = name.endsWith('.gpx');
+                    if (!isFit && !isGpx) {
+                        return { ok: false, msg: 'El archivo debe ser .fit o .gpx (modo dev).' };
+                    }
+                    return { ok: true, kind: isFit ? 'fit' : 'gpx' };
+                }
+
                 /* Procesa el archivo aceptado: guarda en namespace, muestra info,
                    warning si toca, y transiciona a analysis (2.4 lo recogerá). */
                 function visAcceptFile(file) {
@@ -3558,8 +3651,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             + '). El análisis puede tardar varios segundos.');
                     }
                     window._MR_StravaImport.currentFile = file;
+                    window._MR_StravaImport.currentDevMode = false;
                     /* Pequeña pausa para que el usuario vea el "se ha leído bien"
                        antes de saltar a la siguiente pantalla. */
+                    setTimeout(function() {
+                        if (window.setImportState) window.setImportState('analysis');
+                    }, 700);
+                }
+
+                /* ── visAcceptDevFile(file) ──────────────────────────────────
+                   Variante del flujo de aceptación para modo dev (FASE 2.7).
+                   Valida con visValidateDevFile, marca currentDevMode=true y
+                   transiciona a analysis. El hook de setImportState detectará
+                   el flag y usará visAnalyzeDevFile en vez de visAnalyzeZip. */
+                function visAcceptDevFile(file) {
+                    var v = visValidateDevFile(file);
+                    if (!v.ok) { visShowError(v.msg); return; }
+                    visClearMessages();
+                    visShowFileInfo(file);
+                    window._MR_StravaImport.currentFile = file;
+                    window._MR_StravaImport.currentDevMode = true;
+                    window._MR_StravaImport.currentDevKind = v.kind; /* 'fit' | 'gpx' */
                     setTimeout(function() {
                         if (window.setImportState) window.setImportState('analysis');
                     }, 700);
@@ -3587,6 +3699,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         var files = e.target.files;
                         if (files && files.length > 0) visAcceptFile(files[0]);
                         /* Reset para permitir re-seleccionar el mismo archivo */
+                        try { e.target.value = ''; } catch(_) {}
+                    });
+                })();
+
+                /* Handler · botón DEV "Subir archivo individual" (FASE 2.7).
+                   Solo es invocable cuando applyDebugVisibility() ha mostrado
+                   el bloque. La validación adicional aquí no hace daño. */
+                (function() {
+                    var devBtn   = document.getElementById('vis-dev-single-btn');
+                    var devInput = document.getElementById('vis-dev-single-input');
+                    if (!devBtn || !devInput) return;
+                    devBtn.addEventListener('click', function() { devInput.click(); });
+                    devInput.addEventListener('change', function(e) {
+                        var files = e.target.files;
+                        if (files && files.length > 0) visAcceptDevFile(files[0]);
                         try { e.target.value = ''; } catch(_) {}
                     });
                 })();
@@ -3763,6 +3890,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 window._MR_StravaImport.analyzeZip = visAnalyzeZip;
 
+                /* ── visAnalyzeDevFile(file, kind) ──────────────────────────
+                   Modo dev (FASE 2.7): NO descomprime ZIP, NO toca JSZip,
+                   NO busca CSV. Construye un análisis sintético equivalente
+                   al shape del análisis real para que las pantallas
+                   posteriores (analysis/importing/summary) puedan operar
+                   con N=1 sin cambios.
+                   - parsed.runs    = 1
+                   - counts.fit/gpx = 1 según kind
+                   - counts.photos  = 0
+                   - csvFound       = false (este flag queda informativo;
+                                      no se usa para bloquear el flujo). */
+                function visAnalyzeDevFile(file, kind) {
+                    if (!file) {
+                        visAnRenderError('No hay archivo cargado. Vuelve atrás y selecciona uno.');
+                        return;
+                    }
+                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0 };
+                    if (kind === 'fit') counts.fit = 1;
+                    else if (kind === 'gpx') counts.gpx = 1;
+
+                    /* Shape compatible con parseStravaCSV stub (runs/photoCount
+                       son las dos claves que consumen 2.5 y 2.6 hoy). */
+                    var parsed = {
+                        runs: 1,
+                        photoCount: 0
+                    };
+
+                    window._MR_StravaImport.analysis = {
+                        file: file,
+                        parsed: parsed,
+                        counts: counts,
+                        csvFound: false,
+                        analyzedAt: Date.now(),
+                        devMode: true,
+                        devKind: kind
+                    };
+
+                    visAnRenderResult(file, parsed, counts);
+                    visAnSetState('result');
+                }
+                window._MR_StravaImport.analyzeDevFile = visAnalyzeDevFile;
+
                 /* ── visAnRenderResult ──────────────────────────────────────
                    Inyecta valores en los 4 stat cards + lista detallada
                    + mini-header del archivo. */
@@ -3915,8 +4084,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     visImpRenderProgress(0, 'Preparando…', 0, photos);
 
-                    /* Estado de la simulación, expuesto en namespace para depuración */
-                    var totalTicks = Math.ceil(VIS_IMP_TOTAL_MS / VIS_IMP_TICK_MS);
+                    /* Estado de la simulación, expuesto en namespace para depuración.
+                       FASE 2.7: si runs === 1 (modo dev "1 archivo"), reducimos
+                       la duración total a 3s. La constante global se mantiene
+                       intacta para no afectar al flujo normal. */
+                    var totalMs = (runs === 1) ? 3000 : VIS_IMP_TOTAL_MS;
+                    var totalTicks = Math.ceil(totalMs / VIS_IMP_TICK_MS);
                     window._MR_StravaImport.sim = {
                         runs: runs,
                         photos: photos,
@@ -4139,8 +4312,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var btn = document.getElementById('vis-sum-cta-again');
                     if (!btn) return;
                     btn.addEventListener('click', function() {
-                        window._MR_StravaImport.currentFile = null;
-                        window._MR_StravaImport.analysis    = null;
+                        window._MR_StravaImport.currentFile    = null;
+                        window._MR_StravaImport.analysis       = null;
+                        window._MR_StravaImport.currentDevMode = false;
+                        window._MR_StravaImport.currentDevKind = null;
                         if (window.setImportState) window.setImportState('entry');
                     });
                 })();
@@ -4175,7 +4350,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         } else if (name === 'analysis') {
                             /* Reset a loading mientras llega el resultado del análisis */
                             visAnSetState('loading');
-                            visAnalyzeZip(window._MR_StravaImport.currentFile);
+                            /* FASE 2.7: si estamos en modo dev (archivo .fit/.gpx
+                               individual), construir análisis sintético sin
+                               descomprimir nada. En modo normal, vía JSZip. */
+                            if (window._MR_StravaImport.currentDevMode === true) {
+                                visAnalyzeDevFile(
+                                    window._MR_StravaImport.currentFile,
+                                    window._MR_StravaImport.currentDevKind
+                                );
+                            } else {
+                                visAnalyzeZip(window._MR_StravaImport.currentFile);
+                            }
                         } else if (name === 'importing') {
                             /* Arrancar simulación con datos del análisis */
                             visImpStart(window._MR_StravaImport.analysis);
@@ -6754,10 +6939,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Se llama tras login y al cargar la app.
     async function applyDebugVisibility() {
         try {
-            const btn = document.getElementById('dev-wipe-activities-btn');
-            if (!btn) return;
             const show = await isDebugUserAsync();
-            btn.style.display = show ? 'flex' : 'none';
+            const btnWipe = document.getElementById('dev-wipe-activities-btn');
+            if (btnWipe) btnWipe.style.display = show ? 'flex' : 'none';
+            /* FASE 2.7 Bloque L: bloque "1 archivo" en la pantalla entry
+               del importador. Display block (no flex) porque su layout
+               interno usa flujo normal y los hijos sí flex donde aplica. */
+            const devSingle = document.getElementById('vis-dev-single');
+            if (devSingle) devSingle.style.display = show ? 'block' : 'none';
         } catch(_) {}
     }
     window.applyDebugVisibility = applyDebugVisibility;
