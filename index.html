@@ -3054,9 +3054,214 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 })();
 
-                /* Reset visual al volver a entry desde otros estados.
-                   Hookeamos setImportState para que cuando se vuelva a 'entry'
-                   se limpien mensajes (excepto si hay currentFile válido). */
+                /* ═══════════════════════════════════════════════════════════
+                   ANÁLISIS DEL ZIP (Bloque L · FASE 2.4)
+                   - parseStravaCSV: stub que devuelve los 290/290/159/45 fijos.
+                     Parser real en FASE 3 (103 columnas de activities.csv).
+                   - visAnalyzeZip: descomprime con JSZip, busca activities.csv,
+                     llama al stub, cuenta archivos detallados reales y pinta.
+                   - Cero escrituras a Supabase (regla de toda la FASE 2).
+                   ═══════════════════════════════════════════════════════════ */
+
+                /* ── Stub del parser de Strava ──────────────────────────────
+                   Firma estable que vale para FASE 3. Por ahora ignora
+                   csvText y devuelve mock fijo según v6 §"Datos de prueba". */
+                function parseStravaCSV(csvText) {
+                    // TODO FASE 3: parsear las 103 columnas reales de activities.csv.
+                    return {
+                        totalActivities: 290,
+                        runs: 290,
+                        photoCount: 159,
+                        estimatedSizeMB: 45,
+                        rows: [],      // FASE 3 lo llenará con filas parseadas
+                        warnings: []   // FASE 3 podrá reportar issues de encoding/columnas
+                    };
+                }
+                /* Exponer para debug desde DevTools */
+                window._MR_StravaImport.parseStravaCSV = parseStravaCSV;
+
+                /* ── Helpers de formato locales ─────────────────────────── */
+                function visAnFormatInt(n) {
+                    if (n === null || n === undefined || isNaN(n)) return '—';
+                    return Number(n).toLocaleString('es-ES');
+                }
+                function visAnFormatMB(mb) {
+                    if (mb === null || mb === undefined || isNaN(mb)) return '—';
+                    if (mb < 10) return mb.toFixed(1) + ' MB';
+                    return Math.round(mb) + ' MB';
+                }
+
+                /* ── Cambio de sub-estado interno ('loading'|'result'|'error') ── */
+                function visAnSetState(sub) {
+                    var subs = ['loading', 'result', 'error'];
+                    if (subs.indexOf(sub) === -1) {
+                        console.warn('[MR][StravaImport] visAnSetState: sub-estado inválido "' + sub + '"');
+                        return;
+                    }
+                    subs.forEach(function(s) {
+                        var el = document.getElementById('vis-an-' + s);
+                        if (el) el.classList.toggle('is-visible', s === sub);
+                    });
+                    window._MR_StravaImport.currentAnalysisSub = sub;
+                }
+
+                /* ── visAnalyzeZip(file) ─────────────────────────────────────
+                   Función async que descomprime el ZIP in-memory con JSZip,
+                   localiza activities.csv (case-insensitive, en cualquier
+                   nivel), llama al stub parseStravaCSV(csvText), cuenta
+                   archivos detallados reales y rinde el DOM.
+                   En caso de falta de activities.csv → estado error. */
+                async function visAnalyzeZip(file) {
+                    if (!file) {
+                        visAnRenderError('No hay archivo cargado. Vuelve atrás y selecciona un ZIP.');
+                        return;
+                    }
+                    if (typeof window.JSZip !== 'function') {
+                        visAnRenderError('La librería de descompresión no está disponible. Recarga la página y vuelve a intentarlo.');
+                        return;
+                    }
+
+                    visAnSetState('loading');
+
+                    var zip;
+                    try {
+                        zip = await window.JSZip.loadAsync(file);
+                    } catch (err) {
+                        console.error('[MR][StravaImport] JSZip.loadAsync falló:', err);
+                        visAnRenderError('El archivo no se ha podido descomprimir. Puede estar corrupto o no ser un ZIP válido.');
+                        return;
+                    }
+
+                    /* Localizar activities.csv (case-insensitive, cualquier nivel) */
+                    var csvEntry = null;
+                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0 };
+                    zip.forEach(function(relPath, entry) {
+                        if (entry.dir) return;
+                        var lower = relPath.toLowerCase();
+                        var base = lower.split('/').pop();
+                        if (!csvEntry && base === 'activities.csv') csvEntry = entry;
+                        if (lower.endsWith('.fit.gz')) counts.fit++;
+                        else if (lower.endsWith('.gpx'))    counts.gpx++;
+                        else if (lower.endsWith('.tcx.gz')) counts.tcx++;
+                        else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png')) counts.photos++;
+                    });
+
+                    if (!csvEntry) {
+                        visAnRenderError(
+                            'Este ZIP no parece un export oficial de Strava: falta el archivo <strong>activities.csv</strong>. ' +
+                            'Asegúrate de haber descargado el archivo correcto desde tu cuenta de Strava.'
+                        );
+                        return;
+                    }
+
+                    var csvText;
+                    try {
+                        csvText = await csvEntry.async('string');
+                    } catch (err) {
+                        console.error('[MR][StravaImport] error leyendo activities.csv:', err);
+                        visAnRenderError('No se ha podido leer el archivo activities.csv del ZIP.');
+                        return;
+                    }
+
+                    /* En FASE 2 este stub devuelve mock fijo; en FASE 3 será real */
+                    var parsed;
+                    try {
+                        parsed = parseStravaCSV(csvText);
+                    } catch (err) {
+                        console.error('[MR][StravaImport] parseStravaCSV falló:', err);
+                        visAnRenderError('No se ha podido analizar activities.csv.');
+                        return;
+                    }
+
+                    /* Guardar resultado para que la sub-tarea 2.5 lo consuma */
+                    window._MR_StravaImport.analysis = {
+                        file: file,
+                        parsed: parsed,
+                        counts: counts,
+                        csvFound: true,
+                        analyzedAt: Date.now()
+                    };
+
+                    visAnRenderResult(file, parsed, counts);
+                    visAnSetState('result');
+                }
+                window._MR_StravaImport.analyzeZip = visAnalyzeZip;
+
+                /* ── visAnRenderResult ──────────────────────────────────────
+                   Inyecta valores en los 4 stat cards + lista detallada
+                   + mini-header del archivo. */
+                function visAnRenderResult(file, parsed, counts) {
+                    var setText = function(id, value) {
+                        var el = document.getElementById(id);
+                        if (el) el.textContent = value;
+                    };
+
+                    /* Mini-header del archivo */
+                    setText('vis-an-fileheader-name', file.name);
+                    setText('vis-an-fileheader-size', visFormatBytes(file.size));
+
+                    /* 4 stat cards */
+                    setText('vis-an-stat-activities', visAnFormatInt(parsed.totalActivities));
+                    setText('vis-an-stat-runs',       visAnFormatInt(parsed.runs));
+                    setText('vis-an-stat-photos',     visAnFormatInt(parsed.photoCount));
+                    setText('vis-an-stat-size',       visAnFormatMB(parsed.estimatedSizeMB));
+
+                    /* Lista detallada (acordeón) */
+                    setText('vis-an-detail-csv',    '✓');
+                    setText('vis-an-detail-fit',    visAnFormatInt(counts.fit));
+                    setText('vis-an-detail-gpx',    visAnFormatInt(counts.gpx));
+                    setText('vis-an-detail-tcx',    visAnFormatInt(counts.tcx));
+                    setText('vis-an-detail-photos', visAnFormatInt(counts.photos));
+
+                    /* Asegurar que el acordeón empieza cerrado */
+                    var acc = document.getElementById('vis-an-detail-acc');
+                    if (acc) {
+                        acc.classList.remove('is-open');
+                        var h = acc.querySelector('.vis-acc-header');
+                        if (h) h.setAttribute('aria-expanded', 'false');
+                    }
+                }
+
+                /* ── visAnRenderError ────────────────────────────────────── */
+                function visAnRenderError(htmlMsg) {
+                    var msgEl = document.getElementById('vis-an-error-msg');
+                    if (msgEl) msgEl.innerHTML = htmlMsg;
+                    visAnSetState('error');
+                }
+
+                /* Handler · acordeón "Ver archivos detectados" */
+                (function() {
+                    var acc = document.getElementById('vis-an-detail-acc');
+                    if (!acc) return;
+                    var header = acc.querySelector('.vis-acc-header');
+                    if (!header) return;
+                    header.addEventListener('click', function() {
+                        var isOpen = acc.classList.toggle('is-open');
+                        header.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+                    });
+                })();
+
+                /* Handler · botones de analysis (3) */
+                (function() {
+                    function goEntry() {
+                        if (window.setImportState) window.setImportState('entry');
+                    }
+                    function goImporting() {
+                        if (window.setImportState) window.setImportState('importing');
+                    }
+                    var btnCancel  = document.getElementById('vis-an-btn-cancel');
+                    var btnImport  = document.getElementById('vis-an-btn-import');
+                    var btnErrBack = document.getElementById('vis-an-error-back');
+                    if (btnCancel)  btnCancel.addEventListener('click', goEntry);
+                    if (btnImport)  btnImport.addEventListener('click', goImporting);
+                    if (btnErrBack) btnErrBack.addEventListener('click', goEntry);
+                })();
+
+                /* Hook a setImportState para reacciones por estado:
+                   - entry:    limpiar UI si no hay archivo previo.
+                   - analysis: disparar visAnalyzeZip(currentFile).
+                   Punto único de extensión: sub-tareas futuras (2.5 importing,
+                   2.6 summary) añadirán sus ramas aquí, evitando wraps anidados. */
                 (function() {
                     var originalSetState = window._MR_StravaImport.setImportState;
                     if (typeof originalSetState !== 'function') return;
@@ -3067,6 +3272,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             if (!window._MR_StravaImport.currentFile) {
                                 visClearMessages();
                             }
+                        } else if (name === 'analysis') {
+                            /* Reset a loading mientras llega el resultado del análisis */
+                            visAnSetState('loading');
+                            visAnalyzeZip(window._MR_StravaImport.currentFile);
                         }
                         return result;
                     };
