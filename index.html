@@ -3550,15 +3550,214 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (btnErrBack) btnErrBack.addEventListener('click', goEntry);
                 })();
 
+                /* ═══════════════════════════════════════════════════════════
+                   PANTALLA IMPORTING (Bloque L · FASE 2.5)
+                   Simulación de ~15s con progress bar global, texto del lote
+                   (6 lotes de 50 runs, último de 40) y sub-progress de fotos.
+                   Cero escrituras a Supabase. Botón cancelar real (sin confirm,
+                   vuelve a analysis preservando el File y el análisis previo).
+                   Salvaguarda: cualquier salida del estado 'importing' (botón
+                   volver de la topbar, cancelar, etc.) mata el timer.
+                   ═══════════════════════════════════════════════════════════ */
+
+                /* Configuración de la simulación. Total ≈ 15s.
+                   Tick cada 250ms, 60 ticks → 15s exactos. */
+                var VIS_IMP_TOTAL_MS  = 15000;
+                var VIS_IMP_TICK_MS   = 250;
+                var VIS_IMP_BATCH_SIZE = 50;
+
+                /* ── visImpRenderHeader(file) ────────────────────────────────
+                   Pinta nombre + tamaño en el mini-header del importing. */
+                function visImpRenderHeader(file) {
+                    var nameEl = document.getElementById('vis-imp-fileheader-name');
+                    var sizeEl = document.getElementById('vis-imp-fileheader-size');
+                    if (nameEl) nameEl.textContent = (file && file.name) ? file.name : '—';
+                    if (sizeEl) sizeEl.textContent = (file && typeof file.size === 'number')
+                        ? visFormatBytes(file.size)
+                        : '—';
+                }
+
+                /* ── visImpRenderProgress(pct, batchInfo, photoDone, photoTotal) ─
+                   Inyecta valores en la barra global, texto del lote y barra
+                   de fotos. Tolerante a IDs ausentes. */
+                function visImpRenderProgress(pct, batchInfo, photoDone, photoTotal) {
+                    var pctClamped = Math.max(0, Math.min(100, pct));
+                    var pctEl   = document.getElementById('vis-imp-progress-pct');
+                    var fillEl  = document.getElementById('vis-imp-progress-fill');
+                    var batchEl = document.getElementById('vis-imp-batch-text');
+                    var photoCountEl = document.getElementById('vis-imp-photo-count');
+                    var photoFillEl  = document.getElementById('vis-imp-photo-fill');
+
+                    if (pctEl)   pctEl.textContent = Math.round(pctClamped) + '%';
+                    if (fillEl)  fillEl.style.width = pctClamped + '%';
+                    if (batchEl) batchEl.textContent = batchInfo || '';
+                    if (photoCountEl) {
+                        photoCountEl.textContent = photoDone + ' / ' + photoTotal;
+                    }
+                    if (photoFillEl) {
+                        var photoPct = photoTotal > 0
+                            ? (photoDone / photoTotal) * 100
+                            : 0;
+                        photoFillEl.style.width = photoPct + '%';
+                    }
+                }
+
+                /* ── visImpStart(analysis) ───────────────────────────────────
+                   Arranque de la simulación. Lee runs/fotos del análisis,
+                   prepara la cola de lotes, pinta header y lanza el primer tick.
+                   Idempotente: si ya hay un timer corriendo, no duplica. */
+                function visImpStart(analysis) {
+                    /* Si ya hay simulación en marcha, no relanzar */
+                    if (window._MR_StravaImport.simTimer) {
+                        return;
+                    }
+
+                    /* Datos del análisis (con defensa por si falta) */
+                    var file = analysis && analysis.file ? analysis.file : null;
+                    var runs = (analysis && analysis.parsed && typeof analysis.parsed.runs === 'number')
+                        ? analysis.parsed.runs
+                        : 290;
+                    var photos = (analysis && analysis.counts && typeof analysis.counts.photos === 'number')
+                        ? analysis.counts.photos
+                        : 207;
+
+                    /* Cabecera y reset visual */
+                    visImpRenderHeader(file);
+                    var fillEl = document.getElementById('vis-imp-progress-fill');
+                    if (fillEl) fillEl.classList.remove('is-done');
+                    var btnCancel = document.getElementById('vis-imp-cancel-btn');
+                    if (btnCancel) {
+                        btnCancel.disabled = false;
+                        btnCancel.textContent = 'Cancelar importación';
+                    }
+                    visImpRenderProgress(0, 'Preparando…', 0, photos);
+
+                    /* Estado de la simulación, expuesto en namespace para depuración */
+                    var totalTicks = Math.ceil(VIS_IMP_TOTAL_MS / VIS_IMP_TICK_MS);
+                    window._MR_StravaImport.sim = {
+                        runs: runs,
+                        photos: photos,
+                        totalTicks: totalTicks,
+                        currentTick: 0,
+                        startedAt: Date.now()
+                    };
+
+                    /* Lanzar el bucle */
+                    window._MR_StravaImport.simTimer = setInterval(
+                        visImpTick,
+                        VIS_IMP_TICK_MS
+                    );
+                }
+                window._MR_StravaImport.impStart = visImpStart;
+
+                /* ── visImpTick() ────────────────────────────────────────────
+                   Un tick del bucle. Calcula porcentaje en función del tick
+                   actual, deriva lote y fotos procesadas, repinta. Al llegar
+                   al 100% se autodetiene y dispara visImpFinish(). */
+                function visImpTick() {
+                    var sim = window._MR_StravaImport.sim;
+                    if (!sim) {
+                        visImpStop('no-state');
+                        return;
+                    }
+                    sim.currentTick++;
+                    var pct = (sim.currentTick / sim.totalTicks) * 100;
+                    if (pct >= 100) pct = 100;
+
+                    /* Lote actual: 6 lotes para 290 runs (50,50,50,50,50,40) */
+                    var runsDone = Math.round((pct / 100) * sim.runs);
+                    if (runsDone > sim.runs) runsDone = sim.runs;
+                    var batchIndex = Math.min(
+                        Math.floor(runsDone / VIS_IMP_BATCH_SIZE),
+                        Math.ceil(sim.runs / VIS_IMP_BATCH_SIZE) - 1
+                    );
+                    var totalBatches = Math.ceil(sim.runs / VIS_IMP_BATCH_SIZE);
+                    var batchStart = batchIndex * VIS_IMP_BATCH_SIZE + 1;
+                    var batchEnd   = Math.min((batchIndex + 1) * VIS_IMP_BATCH_SIZE, sim.runs);
+                    var batchInfo  = 'Lote ' + (batchIndex + 1) + '/' + totalBatches
+                                   + ' · Procesando carreras '
+                                   + batchStart + '–' + batchEnd
+                                   + ' (' + runsDone + '/' + sim.runs + ')';
+
+                    /* Fotos: avanzan en paralelo, ligeramente más lentas al final
+                       para que el "ritmo" se sienta natural (subida pesada) */
+                    var photoPct = Math.pow(pct / 100, 1.2) * 100;
+                    var photosDone = Math.round((photoPct / 100) * sim.photos);
+                    if (photosDone > sim.photos) photosDone = sim.photos;
+
+                    visImpRenderProgress(pct, batchInfo, photosDone, sim.photos);
+
+                    if (pct >= 100) {
+                        visImpFinish();
+                    }
+                }
+
+                /* ── visImpStop(reason) ──────────────────────────────────────
+                   Para el bucle. 'reason' es informativo (cancel|navigation|
+                   done|no-state). NO cambia de estado por sí mismo; la lógica
+                   de transición vive en el handler que llama a stop. */
+                function visImpStop(reason) {
+                    if (window._MR_StravaImport.simTimer) {
+                        clearInterval(window._MR_StravaImport.simTimer);
+                        window._MR_StravaImport.simTimer = null;
+                    }
+                    if (window._MR_StravaImport.sim) {
+                        window._MR_StravaImport.sim.stoppedReason = reason || 'unknown';
+                        window._MR_StravaImport.sim.stoppedAt = Date.now();
+                    }
+                }
+                window._MR_StravaImport.impStop = visImpStop;
+
+                /* ── visImpFinish() ──────────────────────────────────────────
+                   Llamado al alcanzar 100%. Para el timer, marca la barra
+                   como 'is-done' (oculta el brillo deslizante), deshabilita
+                   cancelar y transiciona a summary tras 600ms. */
+                function visImpFinish() {
+                    visImpStop('done');
+                    var fillEl = document.getElementById('vis-imp-progress-fill');
+                    if (fillEl) fillEl.classList.add('is-done');
+                    var batchEl = document.getElementById('vis-imp-batch-text');
+                    if (batchEl) batchEl.textContent = 'Completado. Preparando resumen…';
+                    var btnCancel = document.getElementById('vis-imp-cancel-btn');
+                    if (btnCancel) {
+                        btnCancel.disabled = true;
+                    }
+                    setTimeout(function() {
+                        if (window.setImportState) window.setImportState('summary');
+                    }, 600);
+                }
+
+                /* Handler · botón cancelar de importing */
+                (function() {
+                    var btn = document.getElementById('vis-imp-cancel-btn');
+                    if (!btn) return;
+                    btn.addEventListener('click', function() {
+                        visImpStop('cancel');
+                        if (window.setImportState) window.setImportState('analysis');
+                    });
+                })();
+
                 /* Hook a setImportState para reacciones por estado:
-                   - entry:    limpiar UI si no hay archivo previo.
-                   - analysis: disparar visAnalyzeZip(currentFile).
-                   Punto único de extensión: sub-tareas futuras (2.5 importing,
-                   2.6 summary) añadirán sus ramas aquí, evitando wraps anidados. */
+                   - entry:     limpiar UI si no hay archivo previo.
+                   - analysis:  disparar visAnalyzeZip(currentFile).
+                   - importing: arrancar simulación con datos del análisis.
+                   - else:      salvaguarda — si salimos de importing por
+                                cualquier vía (back, summary, etc.), matar
+                                el timer para no dejar bucles huérfanos.
+                   Punto único de extensión: sub-tareas futuras (2.6 summary)
+                   añadirán sus ramas aquí, evitando wraps anidados. */
                 (function() {
                     var originalSetState = window._MR_StravaImport.setImportState;
                     if (typeof originalSetState !== 'function') return;
                     window._MR_StravaImport.setImportState = function(name) {
+                        /* SALVAGUARDA: si el estado actual era 'importing' y vamos
+                           a CUALQUIER otro estado, matar el timer ANTES de transicionar.
+                           Cubre back de topbar, cancelar, navegación lateral, etc. */
+                        if (window._MR_StravaImport.currentState === 'importing'
+                            && name !== 'importing') {
+                            visImpStop('navigation');
+                        }
+
                         var result = originalSetState(name);
                         if (name === 'entry') {
                             /* Si entramos limpios (no había archivo previo), limpiamos UI */
@@ -3569,6 +3768,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             /* Reset a loading mientras llega el resultado del análisis */
                             visAnSetState('loading');
                             visAnalyzeZip(window._MR_StravaImport.currentFile);
+                        } else if (name === 'importing') {
+                            /* Arrancar simulación con datos del análisis */
+                            visImpStart(window._MR_StravaImport.analysis);
                         }
                         return result;
                     };
