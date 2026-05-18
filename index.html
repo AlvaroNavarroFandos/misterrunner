@@ -3783,6 +3783,106 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 /* Exponer para debug desde DevTools */
                 window._MR_StravaImport.parseStravaCSV = parseStravaCSV;
 
+                /* ═══════════════════════════════════════════════════════════
+                   PARSERS DE TRACK FILES (Bloque L · FASE 2.8)
+                   - parseFitStrava(uint8Array): stub. FIT SDK en FASE 3.
+                   - parseGPXStrava(xmlText):    stub. XML real en FASE 3.
+                   Ambos comparten el MISMO shape de retorno (los campos
+                   inexistentes para .gpx llegan como null, no como undefined
+                   ni 0). Esto permite que FASE 4 consuma un único contrato
+                   sin ramificar por origen.
+                   Unidades SI: metros, segundos, bpm, sec/km.
+                   Cero escrituras a Supabase (regla de toda la FASE 2).
+                   En FASE 3 se reemplazará SOLO el cuerpo de las funciones;
+                   las firmas y el shape de retorno son CONGELADOS aquí.
+                   ═══════════════════════════════════════════════════════════ */
+
+                /* ── _buildStubParserResult(source) ──────────────────────────
+                   Helper interno. Devuelve un objeto mock con datos canónicos
+                   y reconocibles (10.2 km / 47:23 / 152 bpm — coherentes con
+                   el PR 10K mock de la pantalla summary 2.6). Streams vacíos
+                   intencionalmente: no inventamos 3000 puntos GPS falsos.
+                   FASE 3 los llenará desde el .fit/.gpx real. */
+                function _buildStubParserResult(source) {
+                    /* 10 splits sintéticos de 4:44/km (284 sec) cada uno.
+                       Suma ≈ 47:20 ≈ duración total mock. Coherente, no exacto. */
+                    var splits = [];
+                    for (var i = 1; i <= 10; i++) {
+                        splits.push({
+                            km: i,
+                            durationSec: 284,
+                            avgHr: 152,
+                            elevGainM: 0
+                        });
+                    }
+                    return {
+                        ok: true,
+                        source: source,
+                        warnings: ['Stub mock data — FASE 3 implementará parser real'],
+                        parsedAt: Date.now(),
+
+                        summary: {
+                            startTime:        '2024-03-15T07:23:11Z',
+                            durationSec:      2843,
+                            movingSec:        2843,
+                            distanceM:        10200,
+                            elevGainM:        45,
+                            elevLossM:        45,
+                            avgHr:            152,
+                            maxHr:            171,
+                            avgPaceSecPerKm:  278,
+                            avgCadence:       176,
+                            calories:         620,
+                            sport:            'running'
+                        },
+
+                        streams: {
+                            time:     [],
+                            lat:      [],
+                            lon:      [],
+                            altitude: null,
+                            hr:       null,
+                            cadence:  null,
+                            pace:     null,
+                            distance: null
+                        },
+
+                        splits:   splits,
+                        polyline: null
+                    };
+                }
+
+                /* ── parseFitStrava(uint8Array) ─────────────────────────────
+                   Stub. En FASE 3 esto consumirá el FIT SDK (~21.x) sobre el
+                   Uint8Array YA descomprimido (pako se aplica fuera, antes
+                   de invocar este parser).
+                   Acepta cualquier input por ahora; en FASE 3 validará que
+                   sea un Uint8Array no vacío y devolverá {ok:false} si el
+                   FIT está corrupto. */
+                function parseFitStrava(uint8Array) {
+                    // TODO FASE 3: integrar FIT SDK (~21.x) y parsear records,
+                    // sessions, laps. Reconstruir streams completos y polyline.
+                    // Devolver {ok:false, warnings:[...]} si el archivo es
+                    // inválido o no contiene records de actividad.
+                    return _buildStubParserResult('fit');
+                }
+                window._MR_StravaImport.parseFitStrava = parseFitStrava;
+
+                /* ── parseGPXStrava(xmlText) ────────────────────────────────
+                   Stub. En FASE 3 esto parseará el XML con DOMParser nativo
+                   y extraerá <trkpt> + <ele> + <extensions>/<gpxtpx:hr>.
+                   El shape de retorno es el mismo que parseFitStrava: los
+                   campos que el GPX físicamente no contiene (cadencia,
+                   calorías, etc.) seguirán llegando como null. */
+                function parseGPXStrava(xmlText) {
+                    // TODO FASE 3: parsear XML con DOMParser, recorrer trkpt,
+                    // leer namespace gpxtpx para HR si existe, codificar
+                    // polyline. Devolver {ok:false} si no hay trkpt o el XML
+                    // está malformado.
+                    return _buildStubParserResult('gpx');
+                }
+                window._MR_StravaImport.parseGPXStrava = parseGPXStrava;
+
                 /* ── Helpers de formato locales ─────────────────────────── */
                 function visAnFormatInt(n) {
                     if (n === null || n === undefined || isNaN(n)) return '—';
@@ -3926,6 +4026,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         devMode: true,
                         devKind: kind
                     };
+
+                    /* FASE 2.8: invocar el parser stub correspondiente para
+                       validar plumbing end-to-end. NO afecta a la UI (los
+                       valores que se pintan vienen de `parsed`/`counts` ya
+                       construidos arriba). En FASE 3 los parsers tendrán
+                       cuerpo real y este punto será el integration test. */
+                    var parserResult = null;
+                    try {
+                        if (kind === 'fit') {
+                            parserResult = parseFitStrava(new Uint8Array(0));
+                        } else if (kind === 'gpx') {
+                            parserResult = parseGPXStrava('');
+                        }
+                    } catch (err) {
+                        console.warn('[MR][StravaImport][dev] parser stub falló:', err);
+                        parserResult = null;
+                    }
+                    window._MR_StravaImport.analysis.devParserResult = parserResult;
+                    console.log('[MR][StravaImport][dev] parser stub result:', parserResult);
 
                     visAnRenderResult(file, parsed, counts);
                     visAnSetState('result');
