@@ -1873,6 +1873,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <!-- ZONA DE PELIGRO -->
                 <div style="margin-top:18px;background:var(--surface);border:1px solid rgba(255,59,48,.25);border-radius:14px;overflow:hidden;">
                     <div style="padding:10px 14px 4px;font-size:10px;font-weight:700;color:#ff3b30;letter-spacing:.6px;text-transform:uppercase;">Zona de peligro</div>
+                    <!-- Botón modo dev (Bloque L): visible solo con ?debug=1 o whitelist. Se muestra/oculta vía applyDebugVisibility() -->
+                    <div id="dev-wipe-activities-btn" onclick="wipeMyActivities()" style="display:none;align-items:center;gap:12px;padding:13px 14px;cursor:pointer;background:#fff;border-bottom:1px solid rgba(255,59,48,.12);">
+                        <div style="width:30px;height:30px;border-radius:8px;background:rgba(255,59,48,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ff3b30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 11l1 6"/><path d="M15 11l-1 6"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:#ff3b30;">Borrar todas mis actividades</div>
+                            <div style="font-size:10px;color:#8e8e93;margin-top:1px;">Modo dev · BD + local · No toca la cuenta</div>
+                        </div>
+                    </div>
                     <div onclick="deleteMyAccount()" style="display:flex;align-items:center;gap:12px;padding:13px 14px;cursor:pointer;background:#fff;">
                         <div style="width:30px;height:30px;border-radius:8px;background:rgba(255,59,48,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ff3b30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
@@ -2241,6 +2251,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     const APP_KEY   = 'mr_appstate_v2';
     let APP_KEY_OVERRIDE = null;
     let currentUser = null;
+
+    // ── DEBUG / DEV TOOLS (Bloque L · Strava import) ─────────────
+    // Whitelist de UUIDs que ven herramientas de desarrollo en UI.
+    // El propio modo se activa también con ?debug=1 en la URL.
+    // Estas herramientas NO deben ser visibles en prod para usuarios normales.
+    const DEBUG_USER_WHITELIST = [
+        'fba94f5a-3d3d-496d-b4f7-790cddf52be0',   // Álvaro (owner)
+    ];
+
+    // Comprobación síncrona: ?debug=1 en URL.
+    // currentUser es un string username, no el user object, así que el UUID
+    // no es accesible aquí. Para checks por UUID, usar isDebugUserAsync().
+    function isDebugUser() {
+        try {
+            var qs = new URLSearchParams(window.location.search || '');
+            if (qs.get('debug') === '1') return true;
+        } catch(_) {}
+        return false;
+    }
+
+    // Comprobación async: UUID en whitelist. Consulta la sesión de Supabase.
+    // Devuelve false si no hay cliente Supabase o no hay sesión.
+    async function isDebugUserAsync() {
+        if (isDebugUser()) return true;   // shortcut: ?debug=1 gana
+        try {
+            var sb = window._sbClient;
+            if (!sb) return false;
+            var { data: { session } } = await sb.auth.getSession();
+            var uid = session && session.user && session.user.id;
+            if (uid && DEBUG_USER_WHITELIST.indexOf(uid) >= 0) return true;
+        } catch(_) {}
+        return false;
+    }
 
     // ── LOGO MISTER RUNNER (192x192 JPG, base64) ─────────────────
     // Logo de la app embebido para usarlo donde haga falta sin pedir red.
@@ -4009,6 +4052,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Welcome banner solo para registros nuevos (primer login tras verificación)
         setTimeout(showWelcomeBanner, 800);
         setTimeout(() => _initClubSupabase(), 600);
+        setTimeout(() => { if (typeof applyDebugVisibility === 'function') applyDebugVisibility(); }, 800);
     }
 
     // Detecta si el usuario viene de hacer click en un enlace del email
@@ -4173,6 +4217,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     currentUser = username; APP_KEY_OVERRIDE = getUserKey(username);
                     hideLoginScreen(); if(typeof initDarkMode==='function') initDarkMode();
                     bootApp(); setTimeout(()=>_initClubSupabase(),600);
+                    setTimeout(() => { if (typeof applyDebugVisibility === 'function') applyDebugVisibility(); }, 800);
                 }
             }
         });
@@ -4270,6 +4315,139 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             alert('Error de red al borrar la cuenta. Inténtalo de nuevo.');
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // wipeMyActivities — DEV TOOL · FASE 0 Bloque L (Strava import)
+    // ═══════════════════════════════════════════════════════════════
+    // Borra TODAS las actividades del usuario:
+    //   • Supabase: club_posts, reactions, post_comments, user_records
+    //     (vía RPC wipe_user_activities — SECURITY DEFINER + guard)
+    //   • Local: activities = [], IndexedDB store, derivados localStorage
+    // NO toca: cuenta auth, perfil base, planes, crews, follows, mensajes.
+    //
+    // Visible solo con ?debug=1 en URL o UUID en DEBUG_USER_WHITELIST.
+    // Triple confirmación: confirm → prompt "BORRAR TODO" → ejecución.
+    // ═══════════════════════════════════════════════════════════════
+    async function wipeMyActivities() {
+        // ── Guarda de visibilidad (defensa en profundidad) ────────
+        if (!(await isDebugUserAsync())) {
+            console.warn('[WIPE] Acceso denegado: no eres debug user');
+            return;
+        }
+
+        // ── Triple confirmación ───────────────────────────────────
+        const c1 = window.confirm(
+            '⚠️ ¿Borrar TODAS tus actividades?\n\n' +
+            'Esta acción es INMEDIATA y NO se puede deshacer. Se eliminarán:\n\n' +
+            '• Todas tus actividades (locales y publicadas en Club)\n' +
+            '• Tus PRs y hitos km\n' +
+            '• Tus reacciones y comentarios en posts de otros\n' +
+            '• Todos los datos derivados locales (medallero, prHistory)\n\n' +
+            'NO se borrará: tu cuenta, perfil, planes, crews ni follows.\n\n' +
+            '¿Continuar?'
+        );
+        if (!c1) return;
+
+        const typed = window.prompt('Para confirmar, escribe BORRAR TODO en mayúsculas:');
+        if (typed !== 'BORRAR TODO') {
+            alert('Borrado cancelado.');
+            return;
+        }
+
+        // ── Cliente Supabase disponible ───────────────────────────
+        const sb = window._sbClient;
+        if (!sb) { alert('Cliente Supabase no disponible.'); return; }
+
+        // ── Obtener UUID del usuario actual ───────────────────────
+        let uid = null;
+        try {
+            const { data: { session } } = await sb.auth.getSession();
+            uid = session && session.user && session.user.id;
+        } catch(e) {}
+        if (!uid) { alert('No hay sesión activa.'); return; }
+
+        // ── Ejecutar RPC ──────────────────────────────────────────
+        console.log('[WIPE] Iniciando wipe_user_activities para', uid);
+        let summary = null;
+        try {
+            const { data, error } = await sb.rpc('wipe_user_activities', {
+                _target_user_id: uid
+            });
+            if (error) {
+                console.error('[WIPE] RPC error:', error);
+                alert('Error al borrar en servidor: ' + (error.message || 'desconocido'));
+                return;
+            }
+            summary = data || {};
+            console.log('[WIPE] RPC OK:', summary);
+        } catch(e) {
+            console.error('[WIPE] RPC exception:', e);
+            alert('Error de red. Inténtalo de nuevo.');
+            return;
+        }
+
+        // ── Limpieza local ────────────────────────────────────────
+        // 1. Memoria: array activities
+        try { if (typeof activities !== 'undefined') activities = []; } catch(_) {}
+
+        // 2. IndexedDB: vaciar store de actividades del user
+        try {
+            const db = await openIDB();
+            const tx = db.transaction(IDB_STORE, 'readwrite');
+            const store = tx.objectStore(IDB_STORE);
+            const allReq = store.getAll();
+            await new Promise(res => { allReq.onsuccess = res; allReq.onerror = res; });
+            const myKey = APP_KEY_OVERRIDE || APP_KEY;
+            const others = (allReq.result || []).filter(a => a._owner && a._owner !== myKey);
+            store.clear();
+            others.forEach(a => store.put(a));
+            await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+            console.log('[WIPE] IDB limpio para owner', myKey);
+        } catch(e) {
+            console.warn('[WIPE] IDB clear falló (no bloqueante):', e);
+        }
+
+        // 3. Datos derivados en profileData (memoria) y localStorage
+        try {
+            if (typeof profileData === 'object' && profileData) {
+                profileData.medallero = [];
+                profileData.prHistory = [];
+            }
+            // Limpiar key específica de medallero
+            localStorage.removeItem(_uk('mr_medallero'));
+            // Resnapshot del estado sin actividades ni derivados
+            if (typeof saveAppState === 'function') saveAppState();
+        } catch(e) {
+            console.warn('[WIPE] limpieza derivados falló (no bloqueante):', e);
+        }
+
+        // ── Feedback ──────────────────────────────────────────────
+        const msg =
+            '✅ Borrado completado.\n\n' +
+            'Supabase:\n' +
+            '  • ' + (summary.posts || 0) + ' posts/actividades\n' +
+            '  • ' + (summary.reactions || 0) + ' reacciones\n' +
+            '  • ' + (summary.comments || 0) + ' comentarios\n' +
+            '  • ' + (summary.records || 0) + ' récords/hitos\n\n' +
+            'Local: actividades, medallero e historial PR limpios.\n\n' +
+            'La página se recargará para refrescar la UI.';
+        alert(msg);
+
+        // Recarga para garantizar UI consistente en todas las vistas
+        window.location.reload();
+    }
+
+    // ── Muestra/oculta herramientas dev según isDebugUserAsync() ──
+    // Se llama tras login y al cargar la app.
+    async function applyDebugVisibility() {
+        try {
+            const btn = document.getElementById('dev-wipe-activities-btn');
+            if (!btn) return;
+            const show = await isDebugUserAsync();
+            btn.style.display = show ? 'flex' : 'none';
+        } catch(_) {}
+    }
+    window.applyDebugVisibility = applyDebugVisibility;
 
     /* ── NAV ── */
     document.querySelectorAll('.nb').forEach(btn => {
@@ -17745,6 +17923,7 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
             if (typeof initDarkMode === 'function') initDarkMode();
             bootApp();
             setTimeout(() => _initClubSupabase(), 600);
+            setTimeout(() => { if (typeof applyDebugVisibility === 'function') applyDebugVisibility(); }, 800);
         }
     }
     if (event === 'SIGNED_OUT') {
@@ -27722,6 +27901,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 hideLoginScreen();
                 bootApp();
                 setTimeout(() => _initClubSupabase(), 600);
+                setTimeout(() => { if (typeof applyDebugVisibility === 'function') applyDebugVisibility(); }, 800);
             }
         }
     });
