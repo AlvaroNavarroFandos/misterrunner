@@ -1915,7 +1915,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         </section>
 
         <!-- ═══════════════════════════════════════════════════════════════════
-             VIEW IMPORT STRAVA (Bloque L · FASE 2 ✅ COMPLETA tras 2.9)
+             VIEW IMPORT STRAVA (Bloque L · FASE 2 ✅ COMPLETA + FASE 3.1 ✅)
              ═══════════════════════════════════════════════════════════════════
              6ª view de la app. Acceso por botón pill en cabecera de Activities
              (añadido en sub-tarea 2.2). Estructura de 4 sub-estados internos
@@ -1923,9 +1923,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                · entry     → drag&drop ZIP + guía descarga (2.3) + bloque dev (2.7) + footer (2.9)
                · analysis  → resumen pre-import del ZIP (2.4) + dev sintético (2.7)
                · importing → progress bar global + sub-progress fotos (2.5)
-               · summary   → PRs/hitos desbloqueados (2.6)
-             Parsers stub: parseStravaCSV (2.4), parseFitStrava + parseGPXStrava (2.8).
-             FASE 2: UI completa + plumbing listo. FASE 3 sustituirá cuerpos de parsers.
+               · summary   → PRs/hitos desbloqueados (2.6) + km/periodo reales (3.1)
+             Parsers: parseStravaCSV real (3.1) + parseFitStrava/parseGPXStrava stubs (2.8 → 3.2/3.3).
+             FASE 3.1: parser CSV real + filtro Run/Trail Run + totalKm + dateRange + filtro macOS.
         -->
         <section class="view" id="view-import-strava">
             <style>
@@ -3512,17 +3512,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             </div>
 
             <script>
-                /* Namespace global del importador Strava (Bloque L · FASE 2 ✅).
-                   Tras FASE 2.9 contiene: setImportState, currentFile, analysis,
+                /* Namespace global del importador Strava (Bloque L · FASE 2 ✅ + FASE 3.1 ✅).
+                   Tras FASE 3.1 contiene: setImportState, currentFile, analysis,
                    currentDevMode, currentDevKind, analyzeZip, analyzeDevFile,
-                   parseStravaCSV, parseFitStrava, parseGPXStrava, impStart, sim,
-                   simTimer. FASE 3 sustituirá los 3 parsers (stubs → reales)
-                   sin tocar UI ni firmas. */
+                   parseStravaCSV (real), parseFitStrava (stub), parseGPXStrava (stub),
+                   impStart, sim, simTimer. FASE 3.2/3.3 sustituirán los 2 parsers
+                   restantes (stubs → reales) sin tocar UI ni firmas. */
                 window._MR_StravaImport = window._MR_StravaImport || {};
 
                 /* Marker de arranque: confirma en consola que FASE 2 está
-                   cargada y lista. Útil en QA y al iniciar FASE 3. */
-                console.info('[MR][StravaImport] FASE 2 ready — UI complete, parsers stubbed');
+                   cargada y FASE 3.1 activa. Útil en QA. */
+                console.info('[MR][StravaImport] FASE 2 ready + FASE 3.1 active — parseStravaCSV real, parseFit/Gpx stubbed');
 
                 /* setImportState(name)
                    Muestra el sub-contenedor solicitado y oculta los otros 3.
@@ -3807,26 +3807,240 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 })();
 
                 /* ═══════════════════════════════════════════════════════════
-                   ANÁLISIS DEL ZIP (Bloque L · FASE 2.4)
-                   - parseStravaCSV: stub que devuelve los 290/290/159/45 fijos.
-                     Parser real en FASE 3 (103 columnas de activities.csv).
+                   ANÁLISIS DEL ZIP (Bloque L · FASE 2.4 + FASE 3.1)
+                   - parseStravaCSV (FASE 3.1): parser real con filtro
+                     Activity Type ∈ {'Run','Trail Run'}, totalKm,
+                     dateRange y rows.
                    - visAnalyzeZip: descomprime con JSZip, busca activities.csv,
-                     llama al stub, cuenta archivos detallados reales y pinta.
-                   - Cero escrituras a Supabase (regla de toda la FASE 2).
+                     filtra defensivamente entries macOS metadata (FASE 3.1),
+                     llama a parseStravaCSV, cuenta archivos detallados
+                     reales y pinta.
+                   - Cero escrituras a Supabase (regla de toda la FASE 2-3).
                    ═══════════════════════════════════════════════════════════ */
 
-                /* ── Stub del parser de Strava ──────────────────────────────
-                   Firma estable que vale para FASE 3. Por ahora ignora
-                   csvText y devuelve mock fijo según v6 §"Datos de prueba". */
+                /* ── Parser activities.csv de Strava (FASE 3.1) ──────────────
+                   Real. Parser CSV vanilla (sin deps) + filtro
+                   Activity Type ∈ {'Run','Trail Run'} + cálculo de totalKm
+                   y dateRange.
+                   Encoding: UTF-8 con BOM opcional. RFC-4180 mínimo:
+                   comillas dobles, escape "" interno, comas dentro de
+                   campos entrecomillados, CRLF/LF/CR.
+                   Unidades del CSV de Strava (verificadas): Distance en
+                   km, Elapsed/Moving Time en segundos, Elevation Gain/Loss
+                   en metros, Activity Date en formato
+                   "%b %d, %Y, %I:%M:%S %p" (locale en-US, UTC).
+                   Devuelve objeto con shape:
+                   {ok, totalActivities, runs, photoCount, estimatedSizeMB,
+                    totalKm, dateRange:{from,to}, rows:[], warnings:[]}
+                   - photoCount y estimatedSizeMB se mantienen a 0 aquí
+                     (los rellena visAnalyzeZip leyendo el ZIP). */
                 function parseStravaCSV(csvText) {
-                    // TODO FASE 3: parsear las 103 columnas reales de activities.csv.
+                    var warnings = [];
+                    var emptyResult = {
+                        ok: false,
+                        totalActivities: 0,
+                        runs: 0,
+                        photoCount: 0,
+                        estimatedSizeMB: 0,
+                        totalKm: 0,
+                        dateRange: { from: null, to: null },
+                        rows: [],
+                        warnings: warnings
+                    };
+                    if (!csvText || typeof csvText !== 'string') {
+                        warnings.push('CSV vacío o no es string');
+                        return emptyResult;
+                    }
+
+                    /* ── Parser CSV vanilla (RFC-4180 mínimo) ──────────── */
+                    function _parseCsvLines(text) {
+                        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+                        var rows = [];
+                        var row = [];
+                        var field = '';
+                        var i = 0;
+                        var inQuotes = false;
+                        var len = text.length;
+                        while (i < len) {
+                            var c = text[i];
+                            if (inQuotes) {
+                                if (c === '"') {
+                                    if (i + 1 < len && text[i + 1] === '"') {
+                                        field += '"';
+                                        i += 2;
+                                        continue;
+                                    }
+                                    inQuotes = false;
+                                    i++;
+                                    continue;
+                                }
+                                field += c;
+                                i++;
+                                continue;
+                            }
+                            if (c === '"') { inQuotes = true; i++; continue; }
+                            if (c === ',') { row.push(field); field = ''; i++; continue; }
+                            if (c === '\r') {
+                                row.push(field); field = ''; rows.push(row); row = [];
+                                if (i + 1 < len && text[i + 1] === '\n') i += 2; else i++;
+                                continue;
+                            }
+                            if (c === '\n') {
+                                row.push(field); field = ''; rows.push(row); row = [];
+                                i++;
+                                continue;
+                            }
+                            field += c;
+                            i++;
+                        }
+                        if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+                        return rows;
+                    }
+
+                    /* ── Parser de fecha Strava (en-US) ────────────────── */
+                    var MONTH_MAP = {
+                        Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
+                        Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11
+                    };
+                    function _parseStravaDate(s) {
+                        if (!s || typeof s !== 'string') return null;
+                        s = s.trim();
+                        if (!s) return null;
+                        var m = s.match(/^([A-Za-z]{3})\s+(\d{1,2}),\s+(\d{4}),\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?$/i);
+                        if (!m) return null;
+                        var monKey = m[1].charAt(0).toUpperCase() + m[1].slice(1, 3).toLowerCase();
+                        var mon = MONTH_MAP[monKey];
+                        if (mon === undefined) return null;
+                        var hour = parseInt(m[4], 10);
+                        var ampm = m[7] ? m[7].toUpperCase() : null;
+                        if (ampm === 'PM' && hour < 12) hour += 12;
+                        else if (ampm === 'AM' && hour === 12) hour = 0;
+                        var d = new Date(Date.UTC(
+                            parseInt(m[3], 10), mon, parseInt(m[2], 10),
+                            hour, parseInt(m[5], 10), parseInt(m[6], 10)
+                        ));
+                        if (isNaN(d.getTime())) return null;
+                        return d.toISOString();
+                    }
+
+                    function _toFloat(s) {
+                        if (s === undefined || s === null || s === '') return null;
+                        var n = parseFloat(s);
+                        return isNaN(n) ? null : n;
+                    }
+                    function _toInt(s) {
+                        if (s === undefined || s === null || s === '') return null;
+                        var n = parseInt(s, 10);
+                        return isNaN(n) ? null : n;
+                    }
+
+                    var lines = _parseCsvLines(csvText);
+                    if (lines.length < 2) {
+                        warnings.push('CSV sin filas de datos');
+                        return emptyResult;
+                    }
+
+                    var headers = lines[0].map(function(h) { return (h || '').trim(); });
+                    function findCol(name) {
+                        var lower = name.toLowerCase();
+                        for (var i = 0; i < headers.length; i++) {
+                            if (headers[i].toLowerCase() === lower) return i;
+                        }
+                        return -1;
+                    }
+                    var idx = {
+                        activityId:   findCol('Activity ID'),
+                        activityDate: findCol('Activity Date'),
+                        activityName: findCol('Activity Name'),
+                        activityType: findCol('Activity Type'),
+                        elapsedTime:  findCol('Elapsed Time'),
+                        movingTime:   findCol('Moving Time'),
+                        distance:     findCol('Distance'),          // km
+                        elevGain:     findCol('Elevation Gain'),    // m
+                        elevLoss:     findCol('Elevation Loss'),    // m
+                        maxHr:        findCol('Max Heart Rate'),
+                        avgHr:        findCol('Average Heart Rate'),
+                        calories:     findCol('Calories'),
+                        filename:     findCol('Filename'),
+                        commute:      findCol('Commute')
+                    };
+                    if (idx.activityType === -1) {
+                        warnings.push('Falta columna "Activity Type" — no se puede filtrar Runs');
+                        return emptyResult;
+                    }
+                    if (idx.activityDate === -1) warnings.push('Falta columna "Activity Date"');
+                    if (idx.distance === -1)     warnings.push('Falta columna "Distance"');
+
+                    var rows = [];
+                    var totalKm = 0;
+                    var dateMin = null;
+                    var dateMax = null;
+                    var skippedNoFilename = 0;
+                    var skippedBadDate = 0;
+                    var totalActivities = 0;
+                    var runCount = 0;
+
+                    for (var r = 1; r < lines.length; r++) {
+                        var line = lines[r];
+                        if (line.length === 1 && line[0] === '') continue;   // línea vacía real
+                        totalActivities++;
+
+                        var type = (line[idx.activityType] || '').trim();
+                        if (type !== 'Run' && type !== 'Trail Run') continue;
+                        runCount++;
+
+                        var distance = idx.distance >= 0 ? _toFloat(line[idx.distance]) : null;
+                        var dateRaw  = idx.activityDate >= 0 ? line[idx.activityDate] : null;
+                        var dateIso  = _parseStravaDate(dateRaw);
+                        if (!dateIso && dateRaw) skippedBadDate++;
+
+                        var filename = idx.filename >= 0 ? (line[idx.filename] || '').trim() : '';
+                        if (!filename) skippedNoFilename++;
+                        var filenameBase = filename ? filename.replace(/^activities\//i, '') : '';
+
+                        rows.push({
+                            activityId:   idx.activityId   >= 0 ? (line[idx.activityId] || '').trim() : '',
+                            type:         type,
+                            date:         dateIso,
+                            dateRaw:      dateRaw || null,
+                            name:         idx.activityName >= 0 ? (line[idx.activityName] || '').trim() : '',
+                            distanceKm:   distance,
+                            movingTime:   idx.movingTime  >= 0 ? _toInt(line[idx.movingTime])  : null,
+                            elapsedTime:  idx.elapsedTime >= 0 ? _toInt(line[idx.elapsedTime]) : null,
+                            elevGainM:    idx.elevGain    >= 0 ? _toFloat(line[idx.elevGain])  : null,
+                            elevLossM:    idx.elevLoss    >= 0 ? _toFloat(line[idx.elevLoss])  : null,
+                            avgHr:        idx.avgHr       >= 0 ? _toFloat(line[idx.avgHr])     : null,
+                            maxHr:        idx.maxHr       >= 0 ? _toFloat(line[idx.maxHr])     : null,
+                            calories:     idx.calories    >= 0 ? _toFloat(line[idx.calories])  : null,
+                            commute:      idx.commute     >= 0 ? ((line[idx.commute] || '').toLowerCase() === 'true') : false,
+                            filename:     filename,
+                            filenameBase: filenameBase
+                        });
+
+                        if (typeof distance === 'number') totalKm += distance;
+                        if (dateIso) {
+                            if (!dateMin || dateIso < dateMin) dateMin = dateIso;
+                            if (!dateMax || dateIso > dateMax) dateMax = dateIso;
+                        }
+                    }
+
+                    if (skippedNoFilename > 0) {
+                        warnings.push(skippedNoFilename + ' carreras sin Filename (probable actividad manual sin track file)');
+                    }
+                    if (skippedBadDate > 0) {
+                        warnings.push(skippedBadDate + ' carreras con fecha no parseable');
+                    }
+
                     return {
-                        totalActivities: 290,
-                        runs: 290,
-                        photoCount: 159,
-                        estimatedSizeMB: 45,
-                        rows: [],      // FASE 3 lo llenará con filas parseadas
-                        warnings: []   // FASE 3 podrá reportar issues de encoding/columnas
+                        ok: true,
+                        totalActivities: totalActivities,
+                        runs: runCount,
+                        photoCount: 0,           // lo rellena visAnalyzeZip desde el ZIP
+                        estimatedSizeMB: 0,      // ídem
+                        totalKm: Math.round(totalKm * 100) / 100,
+                        dateRange: { from: dateMin, to: dateMax },
+                        rows: rows,
+                        warnings: warnings
                     };
                 }
                 /* Exponer para debug desde DevTools */
@@ -3991,6 +4205,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (entry.dir) return;
                         var lower = relPath.toLowerCase();
                         var base = lower.split('/').pop();
+                        /* Filtro defensivo macOS metadata (FASE 3.1) — ignora
+                           sidecars AppleDouble y carpetas/turds que Finder
+                           añade al re-comprimir un .zip ya descomprimido,
+                           evitando duplicar los conteos de archivos. */
+                        if (base.charAt(0) === '.' && base.charAt(1) === '_') return;
+                        if (lower.indexOf('__macosx/') === 0) return;
+                        if (base === '.ds_store') return;
                         if (!csvEntry && base === 'activities.csv') csvEntry = entry;
                         if (lower.endsWith('.fit.gz')) counts.fit++;
                         else if (lower.endsWith('.gpx'))    counts.gpx++;
@@ -4116,8 +4337,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     /* 4 stat cards */
                     setText('vis-an-stat-activities', visAnFormatInt(parsed.totalActivities));
                     setText('vis-an-stat-runs',       visAnFormatInt(parsed.runs));
-                    setText('vis-an-stat-photos',     visAnFormatInt(parsed.photoCount));
-                    setText('vis-an-stat-size',       visAnFormatMB(parsed.estimatedSizeMB));
+                    /* photos y tamaño se derivan del ZIP físico (counts.photos
+                       + file.size), no del CSV — el CSV solo cataloga
+                       actividades. En modo dev N=1, counts.photos = 0 y
+                       file.size es el tamaño del .fit/.gpx individual. */
+                    setText('vis-an-stat-photos',     visAnFormatInt(counts.photos));
+                    setText('vis-an-stat-size',       visAnFormatMB(file.size / (1024 * 1024)));
 
                     /* Lista detallada (acordeón) */
                     setText('vis-an-detail-csv',    '✓');
@@ -4429,10 +4654,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 }
 
+                /* ── _visFormatPeriodEs(fromISO, toISO) ─────────────────────
+                   Formatea un rango de fechas ISO como "Abr 2024 – May 2026"
+                   en español (mes en 3 letras con primera mayúscula, año).
+                   Si las dos fechas son del mismo mes y año, devuelve solo
+                   ese mes ("May 2026"). Si algo es inválido, devuelve ''. */
+                var VIS_MES_ES = ['Ene','Feb','Mar','Abr','May','Jun',
+                                  'Jul','Ago','Sep','Oct','Nov','Dic'];
+                function _visFormatPeriodEs(fromISO, toISO) {
+                    if (!fromISO || !toISO) return '';
+                    var d1 = new Date(fromISO);
+                    var d2 = new Date(toISO);
+                    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return '';
+                    var m1 = VIS_MES_ES[d1.getUTCMonth()] + ' ' + d1.getUTCFullYear();
+                    var m2 = VIS_MES_ES[d2.getUTCMonth()] + ' ' + d2.getUTCFullYear();
+                    if (m1 === m2) return m1;
+                    return m1 + ' – ' + m2;
+                }
+
                 /* ── visSumRender(analysis) ──────────────────────────────────
-                   Función principal. Pinta los 4 stat cards (2 reales + 2 mock)
-                   y delega en visSumRenderList para PRs/hitos. Tolerante a
-                   analysis ausente (usa fallbacks). */
+                   Función principal. Pinta los 4 stat cards y delega en
+                   visSumRenderList para PRs/hitos. Tolerante a analysis
+                   ausente: si parsed.totalKm o parsed.dateRange no están
+                   disponibles (modo dev N=1 con stub, o ausencia de
+                   analysis), cae al mock canónico anterior. */
                 function visSumRender(analysis) {
                     var runs = (analysis && analysis.parsed && typeof analysis.parsed.runs === 'number')
                         ? analysis.parsed.runs
@@ -4449,10 +4694,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     setText('vis-sum-stat-runs',   visAnFormatInt(runs));
                     setText('vis-sum-stat-photos', visAnFormatInt(photos));
 
-                    /* Stats mock decorativos. Reemplazables en FASE 3 cuando
-                       parseStravaCSV real devuelva totalKm y rango de fechas. */
-                    setText('vis-sum-stat-km',     '2.847 km');
-                    setText('vis-sum-stat-period', 'Abr 2024 – May 2026');
+                    /* Total km y período: conectados a parseStravaCSV real
+                       (FASE 3.1). Fallback al mock anterior para modo dev
+                       (que no rellena estos campos) y analysis ausente. */
+                    var totalKm = (analysis && analysis.parsed && typeof analysis.parsed.totalKm === 'number')
+                        ? analysis.parsed.totalKm
+                        : null;
+                    var dr = (analysis && analysis.parsed && analysis.parsed.dateRange) || null;
+
+                    var kmText;
+                    if (typeof totalKm === 'number' && totalKm > 0) {
+                        kmText = visAnFormatInt(Math.round(totalKm)) + ' km';
+                    } else {
+                        kmText = '2.847 km';
+                    }
+                    setText('vis-sum-stat-km', kmText);
+
+                    var periodText;
+                    if (dr && dr.from && dr.to) {
+                        periodText = _visFormatPeriodEs(dr.from, dr.to);
+                    } else {
+                        periodText = 'Abr 2024 – May 2026';
+                    }
+                    setText('vis-sum-stat-period', periodText);
 
                     /* Listas de PRs y hitos */
                     visSumRenderList('vis-sum-prs-list',        VIS_SUM_PRS_MOCK,        'pr');
