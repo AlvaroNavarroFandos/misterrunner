@@ -5378,7 +5378,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         photosTotal: photosTotal,
                         startedAt: Date.now(),
                         stoppedReason: null,
-                        stoppedAt: null
+                        stoppedAt: null,
+                        /* FASE 4.3.a: contador de streams subidos a activity-streams */
+                        streamsUploaded: 0
                     };
                     window._MR_StravaImport.imp = imp;
 
@@ -5444,11 +5446,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         imp.stoppedAt = Date.now();
                     }
                     console.info(
-                        '[MR][StravaImport][FASE 4.2.b] runImport terminado · '
+                        '[MR][StravaImport][FASE 4.3.a] runImport terminado · '
                         + 'reason=' + imp.stoppedReason + ' · '
                         + 'processed=' + imp.processed + '/' + imp.total + ' · '
                         + 'inserted=' + imp.inserted + ' · '
                         + 'skipped='  + imp.skipped  + ' · '
+                        + 'streamsUploaded=' + imp.streamsUploaded + ' · '
                         + 'errors='   + imp.errors.length + ' · '
                         + 'duración=' + Math.round((imp.stoppedAt - imp.startedAt) / 1000) + 's'
                     );
@@ -5661,6 +5664,93 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                    y FASE 4.4 (fotos). Lo guardamos en el row para
                                    que esté accesible. */
                                 row._dbActivityId = upData.id;
+
+                                /* ───────────────────────────────────────────────
+                                   FASE 4.3.a — Subida streams gzip a bucket
+                                   `activity-streams` + UPDATE streams_path.
+                                   Solo si el track parseo OK y tiene streams.
+                                   Las 36/290 sin polyline (indoor manuales,
+                                   .tcx.gz no parseado) caen por la guarda y
+                                   conservan streams_path=NULL. Politica P2
+                                   (acumular y seguir): errores no abortan.
+                                   DEC-2 serializado, DEC-3 0 retries,
+                                   DEC-4 contentType application/gzip,
+                                   DEC-5 upsert:false. v12 §FASE 4.3.
+                                   ─────────────────────────────────────────────── */
+                                if (parsed && parsed.ok
+                                    && parsed.streams
+                                    && Array.isArray(parsed.streams.time)
+                                    && parsed.streams.time.length > 0) {
+                                    try {
+                                        var streamsObj = {
+                                            version:  1,
+                                            streams:  parsed.streams,
+                                            splits:   parsed.splits,
+                                            polyline: parsed.polyline,
+                                            summary:  parsed.summary
+                                        };
+                                        var jsonStr = JSON.stringify(streamsObj);
+                                        var gzipped = pako.gzip(jsonStr);
+                                        var blob = new Blob([gzipped], { type: 'application/gzip' });
+                                        var streamsPath = imp.userId + '/' + upData.id + '.json.gz';
+
+                                        var { error: streamsUpErr } = await sb.storage
+                                            .from('activity-streams')
+                                            .upload(streamsPath, blob, {
+                                                cacheControl: '3600',
+                                                upsert: false,
+                                                contentType: 'application/gzip'
+                                            });
+
+                                        if (streamsUpErr) {
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'streams-upload',
+                                                message:      streamsUpErr.message || String(streamsUpErr)
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.3.a][streams-upload-error] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' · ' + (streamsUpErr.message || streamsUpErr)
+                                            );
+                                        } else {
+                                            /* Upload OK → UPDATE streams_path */
+                                            var { error: streamsPathErr } = await sb
+                                                .from('activities')
+                                                .update({ streams_path: streamsPath })
+                                                .eq('id', upData.id);
+
+                                            if (streamsPathErr) {
+                                                imp.errors.push({
+                                                    filenameBase: row.filenameBase || '(sin filename)',
+                                                    externalId:   row.activityId,
+                                                    stage:        'streams-path-update',
+                                                    message:      streamsPathErr.message || String(streamsPathErr)
+                                                });
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.3.a][streams-path-update-error] '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' · ' + (streamsPathErr.message || streamsPathErr)
+                                                );
+                                            } else {
+                                                imp.streamsUploaded++;
+                                            }
+                                        }
+                                    } catch (eStreams) {
+                                        imp.errors.push({
+                                            filenameBase: row.filenameBase || '(sin filename)',
+                                            externalId:   row.activityId,
+                                            stage:        'streams-exception',
+                                            message:      String(eStreams && eStreams.message || eStreams)
+                                        });
+                                        console.error(
+                                            '[MR][StravaImport][FASE 4.3.a][streams-exception] '
+                                            + (row.filenameBase || '(no-track)') + ':',
+                                            eStreams
+                                        );
+                                    }
+                                }
                             }
                         } catch (e) {
                             /* Excepción inesperada (network, timeout, etc.) */
