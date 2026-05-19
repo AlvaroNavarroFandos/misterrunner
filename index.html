@@ -5954,6 +5954,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                             }
                                             var photoPath = imp.userId + '/' + upData.id + '/' + basename;
 
+                                            /* FASE 4.4.a fix MIME: JSZip async('blob')
+                                               devuelve Blob con type vacio. El SDK
+                                               Supabase Storage prioriza Blob.type sobre
+                                               options.contentType, por lo que sin este
+                                               re-envuelto se enviaria como
+                                               application/octet-stream y el bucket
+                                               activity-photos lo rechaza (whitelist:
+                                               image/jpeg, image/png, image/webp).
+                                               Workaround estandar documentado en
+                                               github.com/supabase/supabase issues. */
+                                            photoBlob = new Blob([photoBlob], {
+                                                type: photoContentType
+                                            });
+
                                             var { error: photoUpErr } = await sb.storage
                                                 .from('activity-photos')
                                                 .upload(photoPath, photoBlob, {
