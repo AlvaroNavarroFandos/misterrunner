@@ -5383,7 +5383,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         streamsUploaded: 0,
                         /* FASE 4.3.b: contador de streams reparados en caso skipped
                            (BD tenia la fila pero streams_path estaba NULL) */
-                        streamsRepaired: 0
+                        streamsRepaired: 0,
+                        /* FASE 4.4.a: contador de fotos subidas en INSERT nuevo
+                           (por foto fisicamente subida al bucket activity-photos) */
+                        photosUploaded: 0,
+                        /* FASE 4.4.b: contador de rows reparados con fotos en caso
+                           skipped (BD tenia la fila pero photo_paths estaba NULL).
+                           Nota: cuenta ROWS reparados, no fotos individuales.
+                           Las fotos individuales suman a imp.photosDone++. */
+                        photosRepaired: 0
                     };
                     window._MR_StravaImport.imp = imp;
 
@@ -5449,13 +5457,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         imp.stoppedAt = Date.now();
                     }
                     console.info(
-                        '[MR][StravaImport][FASE 4.3.a] runImport terminado · '
+                        '[MR][StravaImport][FASE 4.4.a] runImport terminado · '
                         + 'reason=' + imp.stoppedReason + ' · '
                         + 'processed=' + imp.processed + '/' + imp.total + ' · '
                         + 'inserted=' + imp.inserted + ' · '
                         + 'skipped='  + imp.skipped  + ' · '
                         + 'streamsUploaded=' + imp.streamsUploaded + ' · '
                         + 'streamsRepaired=' + imp.streamsRepaired + ' · '
+                        + 'photosUploaded=' + imp.photosUploaded + ' · '
+                        + 'photosRepaired=' + imp.photosRepaired + ' · '
+                        + 'photosDone=' + imp.photosDone + '/' + imp.photosTotal + ' · '
                         + 'errors='   + imp.errors.length + ' · '
                         + 'duración=' + Math.round((imp.stoppedAt - imp.startedAt) / 1000) + 's'
                     );
@@ -5881,6 +5892,146 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                             + (row.filenameBase || '(no-track)') + ':',
                                             eStreams
                                         );
+                                    }
+                                }
+
+                                /* ───────────────────────────────────────────────
+                                   FASE 4.4.a — Subida fotos a bucket
+                                   `activity-photos` + UPDATE photo_paths.
+                                   Solo si el row tiene mediaFilenames del CSV.
+                                   Bucle serializado por foto (DEC-4.4-3).
+                                   0 retries (DEC-4.4-4). Originales sin tocar
+                                   (DEC-4.4-5). photosDone++ por foto exitosa
+                                   (DEC-4.4-6.1). UPDATE photo_paths solo si
+                                   length > 0 al final (sub-dec 3.2 + 1.3).
+                                   Path layout: {userId}/{activityId}/{basename}.
+                                   Lookup en photosByBasename con .toLowerCase()
+                                   (nota 9 v13: casing inconsistente 1/209). v13 §FASE 4.4.
+                                   ─────────────────────────────────────────────── */
+                                if (row.mediaFilenames
+                                    && Array.isArray(row.mediaFilenames)
+                                    && row.mediaFilenames.length > 0) {
+                                    var photoPaths = [];
+                                    for (var pi = 0; pi < row.mediaFilenames.length; pi++) {
+                                        var basename = row.mediaFilenames[pi];
+                                        var photoEntry = analysis.zipIndex.photosByBasename.get(
+                                            basename.toLowerCase()
+                                        );
+                                        if (!photoEntry) {
+                                            /* Foto referenciada en CSV pero no presente
+                                               en el ZIP. Auditable, no bloquea el row. */
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'photos-missing-in-zip',
+                                                message:      'basename=' + basename + ' no encontrado en photosByBasename'
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.4.a][photos-missing-in-zip] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' · ' + basename
+                                            );
+                                            continue;
+                                        }
+                                        try {
+                                            var photoBlob = await photoEntry.async('blob');
+                                            var lowerBase = basename.toLowerCase();
+                                            var photoContentType;
+                                            if (lowerBase.endsWith('.jpg') || lowerBase.endsWith('.jpeg')) {
+                                                photoContentType = 'image/jpeg';
+                                            } else if (lowerBase.endsWith('.png')) {
+                                                photoContentType = 'image/png';
+                                            } else {
+                                                photoContentType = 'application/octet-stream';
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.4.a][photos-unknown-ext] '
+                                                    + basename + ' → contentType=application/octet-stream'
+                                                );
+                                            }
+                                            var photoPath = imp.userId + '/' + upData.id + '/' + basename;
+
+                                            var { error: photoUpErr } = await sb.storage
+                                                .from('activity-photos')
+                                                .upload(photoPath, photoBlob, {
+                                                    cacheControl: '3600',
+                                                    upsert: false,
+                                                    contentType: photoContentType
+                                                });
+
+                                            if (photoUpErr) {
+                                                imp.errors.push({
+                                                    filenameBase: row.filenameBase || '(sin filename)',
+                                                    externalId:   row.activityId,
+                                                    stage:        'photos-upload',
+                                                    message:      'basename=' + basename + ' · ' + (photoUpErr.message || String(photoUpErr))
+                                                });
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.4.a][photos-upload-error] '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' · ' + basename
+                                                    + ' · ' + (photoUpErr.message || photoUpErr)
+                                                );
+                                            } else {
+                                                photoPaths.push(photoPath);
+                                                imp.photosDone++;
+                                            }
+                                        } catch (ePhoto) {
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'photos-exception',
+                                                message:      'basename=' + basename + ' · ' + String(ePhoto && ePhoto.message || ePhoto)
+                                            });
+                                            console.error(
+                                                '[MR][StravaImport][FASE 4.4.a][photos-exception] '
+                                                + (row.filenameBase || '(no-track)') + ' · ' + basename + ':',
+                                                ePhoto
+                                            );
+                                        }
+                                    }
+                                    /* UPDATE photo_paths solo si al menos una foto subio
+                                       (sub-dec 3.2). Si todas fallaron, photo_paths queda
+                                       NULL → reparable en re-import via 4.4.b. */
+                                    if (photoPaths.length > 0) {
+                                        try {
+                                            var { error: photoPathsErr } = await sb
+                                                .from('activities')
+                                                .update({ photo_paths: photoPaths })
+                                                .eq('id', upData.id);
+
+                                            if (photoPathsErr) {
+                                                imp.errors.push({
+                                                    filenameBase: row.filenameBase || '(sin filename)',
+                                                    externalId:   row.activityId,
+                                                    stage:        'photos-path-update',
+                                                    message:      photoPathsErr.message || String(photoPathsErr)
+                                                });
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.4.a][photos-path-update-error] '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' · ' + (photoPathsErr.message || photoPathsErr)
+                                                );
+                                            } else {
+                                                imp.photosUploaded += photoPaths.length;
+                                                console.info(
+                                                    '[MR][StravaImport][FASE 4.4.a] fotos subidas · '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' · ' + photoPaths.length + '/' + row.mediaFilenames.length
+                                                );
+                                            }
+                                        } catch (ePhotoUpd) {
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'photos-path-update-exception',
+                                                message:      String(ePhotoUpd && ePhotoUpd.message || ePhotoUpd)
+                                            });
+                                            console.error(
+                                                '[MR][StravaImport][FASE 4.4.a][photos-path-update-exception] '
+                                                + (row.filenameBase || '(no-track)') + ':',
+                                                ePhotoUpd
+                                            );
+                                        }
                                     }
                                 }
                             }
