@@ -5385,12 +5385,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                            (BD tenia la fila pero streams_path estaba NULL) */
                         streamsRepaired: 0,
                         /* FASE 4.4.a: contador de fotos subidas en INSERT nuevo
-                           (por foto fisicamente subida al bucket activity-photos) */
+                           (por foto fisicamente subida al bucket activity-photos
+                           y persistida con fila en tabla public.activity_photos) */
                         photosUploaded: 0,
                         /* FASE 4.4.b: contador de rows reparados con fotos en caso
-                           skipped (BD tenia la fila pero photo_paths estaba NULL).
-                           Nota: cuenta ROWS reparados, no fotos individuales.
-                           Las fotos individuales suman a imp.photosDone++. */
+                           skipped (BD tenia la fila activity pero 0 filas en
+                           activity_photos). Nota: cuenta ROWS reparados, no fotos
+                           individuales. Las fotos individuales suman a imp.photosDone++. */
                         photosRepaired: 0
                     };
                     window._MR_StravaImport.imp = imp;
@@ -5897,21 +5898,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                                 /* ───────────────────────────────────────────────
                                    FASE 4.4.a — Subida fotos a bucket
-                                   `activity-photos` + UPDATE photo_paths.
+                                   `activity-photos` + INSERT a activity_photos.
                                    Solo si el row tiene mediaFilenames del CSV.
                                    Bucle serializado por foto (DEC-4.4-3).
                                    0 retries (DEC-4.4-4). Originales sin tocar
                                    (DEC-4.4-5). photosDone++ por foto exitosa
-                                   (DEC-4.4-6.1). UPDATE photo_paths solo si
-                                   length > 0 al final (sub-dec 3.2 + 1.3).
+                                   (DEC-4.4-6.1). INSERT a activity_photos solo
+                                   si al menos 1 foto subio (sub-dec 1.5'/1.6').
                                    Path layout: {userId}/{activityId}/{basename}.
                                    Lookup en photosByBasename con .toLowerCase()
-                                   (nota 9 v13: casing inconsistente 1/209). v13 §FASE 4.4.
+                                   (nota 9 v13: casing inconsistente 1/209).
+                                   Convive con flujo manual (photoB64 +
+                                   bucket media) sin interferencias.
+                                   v13 §FASE 4.4.
                                    ─────────────────────────────────────────────── */
                                 if (row.mediaFilenames
                                     && Array.isArray(row.mediaFilenames)
                                     && row.mediaFilenames.length > 0) {
-                                    var photoPaths = [];
+                                    var photoRows = [];
                                     for (var pi = 0; pi < row.mediaFilenames.length; pi++) {
                                         var basename = row.mediaFilenames[pi];
                                         var photoEntry = analysis.zipIndex.photosByBasename.get(
@@ -5972,7 +5976,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                                     + ' · ' + (photoUpErr.message || photoUpErr)
                                                 );
                                             } else {
-                                                photoPaths.push(photoPath);
+                                                photoRows.push({
+                                                    activity_id:       upData.id,
+                                                    user_id:           imp.userId,
+                                                    storage_path:      photoPath,
+                                                    original_filename: basename,
+                                                    position:          pi
+                                                });
                                                 imp.photosDone++;
                                             }
                                         } catch (ePhoto) {
@@ -5989,47 +5999,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                             );
                                         }
                                     }
-                                    /* UPDATE photo_paths solo si al menos una foto subio
-                                       (sub-dec 3.2). Si todas fallaron, photo_paths queda
-                                       NULL → reparable en re-import via 4.4.b. */
-                                    if (photoPaths.length > 0) {
+                                    /* INSERT a activity_photos solo si al menos una foto
+                                       subio (sub-dec 1.5'). Si todas fallaron, no se hace
+                                       INSERT → activity sin filas hijas en activity_photos,
+                                       reparable en re-import via 4.4.b (COUNT = 0 dispara
+                                       reparacion, sub-dec 1.6'). */
+                                    if (photoRows.length > 0) {
                                         try {
-                                            var { error: photoPathsErr } = await sb
-                                                .from('activities')
-                                                .update({ photo_paths: photoPaths })
-                                                .eq('id', upData.id);
+                                            var { error: photoInsErr } = await sb
+                                                .from('activity_photos')
+                                                .insert(photoRows);
 
-                                            if (photoPathsErr) {
+                                            if (photoInsErr) {
                                                 imp.errors.push({
                                                     filenameBase: row.filenameBase || '(sin filename)',
                                                     externalId:   row.activityId,
-                                                    stage:        'photos-path-update',
-                                                    message:      photoPathsErr.message || String(photoPathsErr)
+                                                    stage:        'photos-row-insert',
+                                                    message:      photoInsErr.message || String(photoInsErr)
                                                 });
                                                 console.warn(
-                                                    '[MR][StravaImport][FASE 4.4.a][photos-path-update-error] '
+                                                    '[MR][StravaImport][FASE 4.4.a][photos-row-insert-error] '
                                                     + (row.filenameBase || '(no-track)')
-                                                    + ' · ' + (photoPathsErr.message || photoPathsErr)
+                                                    + ' · ' + (photoInsErr.message || photoInsErr)
                                                 );
                                             } else {
-                                                imp.photosUploaded += photoPaths.length;
+                                                imp.photosUploaded += photoRows.length;
                                                 console.info(
                                                     '[MR][StravaImport][FASE 4.4.a] fotos subidas · '
                                                     + (row.filenameBase || '(no-track)')
-                                                    + ' · ' + photoPaths.length + '/' + row.mediaFilenames.length
+                                                    + ' · ' + photoRows.length + '/' + row.mediaFilenames.length
                                                 );
                                             }
-                                        } catch (ePhotoUpd) {
+                                        } catch (ePhotoIns) {
                                             imp.errors.push({
                                                 filenameBase: row.filenameBase || '(sin filename)',
                                                 externalId:   row.activityId,
-                                                stage:        'photos-path-update-exception',
-                                                message:      String(ePhotoUpd && ePhotoUpd.message || ePhotoUpd)
+                                                stage:        'photos-row-insert-exception',
+                                                message:      String(ePhotoIns && ePhotoIns.message || ePhotoIns)
                                             });
                                             console.error(
-                                                '[MR][StravaImport][FASE 4.4.a][photos-path-update-exception] '
+                                                '[MR][StravaImport][FASE 4.4.a][photos-row-insert-exception] '
                                                 + (row.filenameBase || '(no-track)') + ':',
-                                                ePhotoUpd
+                                                ePhotoIns
                                             );
                                         }
                                     }
