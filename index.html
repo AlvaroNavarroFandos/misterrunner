@@ -5140,19 +5140,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 })();
 
                 /* ═══════════════════════════════════════════════════════════
-                   PANTALLA IMPORTING (Bloque L · FASE 2.5)
-                   Simulación de ~15s con progress bar global, texto del lote
-                   (6 lotes de 50 runs, último de 40) y sub-progress de fotos.
-                   Cero escrituras a Supabase. Botón cancelar real (sin confirm,
-                   vuelve a analysis preservando el File y el análisis previo).
-                   Salvaguarda: cualquier salida del estado 'importing' (botón
-                   volver de la topbar, cancelar, etc.) mata el timer.
+                   PANTALLA IMPORTING (Bloque L · FASE 2.5 + 4.2.a)
+                   Pipeline real de import. Lee tracks del ZIP, descomprime
+                   .fit.gz con pako, parsea .fit/.gpx con los parsers REALES
+                   de FASE 3, dibuja progress por row dentro de lotes de 50
+                   con Promise.all. FASE 4.2.a: SIN escrituras a Supabase
+                   todavía (log + parse + progress real). FASE 4.2.b añadirá
+                   INSERT a activities con upsert + ignoreDuplicates.
+                   Botón cancelar setea cancelRequested=true; el loop termina
+                   el lote actual y aborta entre lotes (BD consistente).
                    ═══════════════════════════════════════════════════════════ */
 
-                /* Configuración de la simulación. Total ≈ 15s.
-                   Tick cada 250ms, 60 ticks → 15s exactos. */
-                var VIS_IMP_TOTAL_MS  = 15000;
-                var VIS_IMP_TICK_MS   = 250;
+                /* Tamaño de lote para el loop de runImport. Las 50 actividades
+                   del lote se procesan en paralelo con Promise.all; entre
+                   lotes se serializa para permitir cancelación limpia. */
                 var VIS_IMP_BATCH_SIZE = 50;
 
                 /* ── visImpRenderHeader(file) ────────────────────────────────
@@ -5191,27 +5192,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 }
 
-                /* ── visImpStart(analysis) ───────────────────────────────────
-                   Arranque de la simulación. Lee runs/fotos del análisis,
-                   prepara la cola de lotes, pinta header y lanza el primer tick.
-                   Idempotente: si ya hay un timer corriendo, no duplica. */
-                function visImpStart(analysis) {
-                    /* Si ya hay simulación en marcha, no relanzar */
-                    if (window._MR_StravaImport.simTimer) {
+                /* ── runImport(analysis) ──────────────────────────────────────────────
+                   FASE 4.2.a. Pipeline async que reemplaza la simulación.
+                   Lee tracks del ZIP, descomprime/parsea, dibuja progress
+                   real. SIN escrituras a BD (eso es 4.2.b).
+
+                   Flujo:
+                     1) Obtiene userId vía sb.auth.getSession().
+                     2) Inicializa state `imp` en namespace con contadores
+                        y flag cancelRequested.
+                     3) Loop sobre analysis.parsed.rows en lotes de
+                        VIS_IMP_BATCH_SIZE. Entre lotes comprueba cancelación.
+                     4) processRow se encarga de cada actividad en paralelo
+                        dentro del lote.
+                     5) Al terminar (natural o cancelado) llama visImpFinish.
+
+                   Errores fatales (sesión expirada, exception inesperada):
+                     log + visImpRenderProgress con mensaje + return.
+                     NO transición a summary. */
+                async function runImport(analysis) {
+                    /* Defensas mínimas */
+                    if (!analysis || !analysis.parsed || !analysis.parsed.rows) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] analysis inválido');
+                        visImpRenderProgress(0, 'Error: análisis inválido', 0, 0);
+                        return;
+                    }
+                    if (!analysis.zipIndex || !analysis.zipIndex.tracksByFilenameBase) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] zipIndex ausente');
+                        visImpRenderProgress(0, 'Error: zipIndex ausente', 0, 0);
                         return;
                     }
 
-                    /* Datos del análisis (con defensa por si falta) */
-                    var file = analysis && analysis.file ? analysis.file : null;
-                    var runs = (analysis && analysis.parsed && typeof analysis.parsed.runs === 'number')
-                        ? analysis.parsed.runs
-                        : 290;
-                    var photos = (analysis && analysis.counts && typeof analysis.counts.photos === 'number')
-                        ? analysis.counts.photos
-                        : 207;
+                    /* Auth */
+                    var sb = window._sbClient;
+                    var session;
+                    try {
+                        var sessionRes = await sb.auth.getSession();
+                        session = sessionRes && sessionRes.data && sessionRes.data.session;
+                    } catch (e) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] auth.getSession falló:', e);
+                        visImpRenderProgress(0, 'Error: no se pudo verificar la sesión', 0, 0);
+                        return;
+                    }
+                    if (!session || !session.user || !session.user.id) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] sesión ausente');
+                        visImpRenderProgress(0, 'Error: sesión expirada, vuelve a entrar', 0, 0);
+                        return;
+                    }
+                    var userId = session.user.id;
 
-                    /* Cabecera y reset visual */
-                    visImpRenderHeader(file);
+                    /* State global del import (sustituye al antiguo `sim`).
+                       Expuesto en namespace para depuración desde DevTools. */
+                    var rows = analysis.parsed.rows;
+                    var photosTotal = (analysis.counts && typeof analysis.counts.photos === 'number')
+                        ? analysis.counts.photos
+                        : 0;
+                    var imp = {
+                        userId: userId,
+                        rows: rows,
+                        total: rows.length,
+                        processed: 0,
+                        inserted: 0,
+                        skipped: 0,
+                        errors: [],
+                        cancelRequested: false,
+                        photosDone: 0,
+                        photosTotal: photosTotal,
+                        startedAt: Date.now(),
+                        stoppedReason: null,
+                        stoppedAt: null
+                    };
+                    window._MR_StravaImport.imp = imp;
+
+                    /* UI: header + reset visual + estado inicial */
+                    visImpRenderHeader(analysis.file || null);
                     var fillEl = document.getElementById('vis-imp-progress-fill');
                     if (fillEl) fillEl.classList.remove('is-done');
                     var btnCancel = document.getElementById('vis-imp-cancel-btn');
@@ -5219,92 +5273,176 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         btnCancel.disabled = false;
                         btnCancel.textContent = 'Cancelar importación';
                     }
-                    visImpRenderProgress(0, 'Preparando…', 0, photos);
+                    visImpRenderProgress(0, 'Preparando…', 0, photosTotal);
 
-                    /* Estado de la simulación, expuesto en namespace para depuración.
-                       FASE 2.7: si runs === 1 (modo dev "1 archivo"), reducimos
-                       la duración total a 3s. La constante global se mantiene
-                       intacta para no afectar al flujo normal. */
-                    var totalMs = (runs === 1) ? 3000 : VIS_IMP_TOTAL_MS;
-                    var totalTicks = Math.ceil(totalMs / VIS_IMP_TICK_MS);
-                    window._MR_StravaImport.sim = {
-                        runs: runs,
-                        photos: photos,
-                        totalTicks: totalTicks,
-                        currentTick: 0,
-                        startedAt: Date.now()
-                    };
-
-                    /* Lanzar el bucle */
-                    window._MR_StravaImport.simTimer = setInterval(
-                        visImpTick,
-                        VIS_IMP_TICK_MS
+                    console.info(
+                        '[MR][StravaImport][FASE 4.2.a] runImport arranca · '
+                        + 'userId=' + userId.slice(0, 8) + '… · '
+                        + 'rows=' + imp.total + ' · '
+                        + 'tracks indexados=' + analysis.zipIndex.tracksByFilenameBase.size + ' · '
+                        + 'fotos indexadas=' + analysis.zipIndex.photosByBasename.size
                     );
-                }
-                window._MR_StravaImport.impStart = visImpStart;
 
-                /* ── visImpTick() ────────────────────────────────────────────
-                   Un tick del bucle. Calcula porcentaje en función del tick
-                   actual, deriva lote y fotos procesadas, repinta. Al llegar
-                   al 100% se autodetiene y dispara visImpFinish(). */
-                function visImpTick() {
-                    var sim = window._MR_StravaImport.sim;
-                    if (!sim) {
-                        visImpStop('no-state');
-                        return;
+                    /* Loop por lotes */
+                    var totalBatches = Math.ceil(imp.total / VIS_IMP_BATCH_SIZE);
+                    for (var batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+                        /* Cancelación entre lotes (decisión: terminar lote actual) */
+                        if (imp.cancelRequested) {
+                            imp.stoppedReason = 'cancel';
+                            imp.stoppedAt = Date.now();
+                            console.info(
+                                '[MR][StravaImport][FASE 4.2.a] cancelado tras lote '
+                                + batchIndex + '/' + totalBatches
+                                + ' · processed=' + imp.processed + '/' + imp.total
+                            );
+                            break;
+                        }
+
+                        var batchStart = batchIndex * VIS_IMP_BATCH_SIZE;
+                        var batchEnd   = Math.min(batchStart + VIS_IMP_BATCH_SIZE, imp.total);
+                        var batchSlice = rows.slice(batchStart, batchEnd);
+
+                        /* Texto del lote actual (constante durante el lote;
+                           el % avanza por row dentro del Promise.all). */
+                        var batchInfo = 'Lote ' + (batchIndex + 1) + '/' + totalBatches
+                                      + ' · Procesando carreras '
+                                      + (batchStart + 1) + '–' + batchEnd
+                                      + ' (' + imp.processed + '/' + imp.total + ')';
+                        var pct = (imp.processed / imp.total) * 100;
+                        visImpRenderProgress(pct, batchInfo, imp.photosDone, imp.photosTotal);
+
+                        /* Promise.all del lote — paraleliza dentro, serializa entre */
+                        try {
+                            await Promise.all(batchSlice.map(function(row) {
+                                return processRow(row, imp, analysis, batchIndex, totalBatches);
+                            }));
+                        } catch (e) {
+                            /* processRow está envuelta para NO lanzar (todo error
+                               va a imp.errors[]). Este catch es defensa final. */
+                            console.error('[MR][StravaImport][FASE 4.2.a] error inesperado en lote ' + batchIndex + ':', e);
+                            imp.errors.push({ filenameBase: '(lote ' + batchIndex + ')', message: String(e && e.message || e) });
+                        }
                     }
-                    sim.currentTick++;
-                    var pct = (sim.currentTick / sim.totalTicks) * 100;
-                    if (pct >= 100) pct = 100;
 
-                    /* Lote actual: 6 lotes para 290 runs (50,50,50,50,50,40) */
-                    var runsDone = Math.round((pct / 100) * sim.runs);
-                    if (runsDone > sim.runs) runsDone = sim.runs;
-                    var batchIndex = Math.min(
-                        Math.floor(runsDone / VIS_IMP_BATCH_SIZE),
-                        Math.ceil(sim.runs / VIS_IMP_BATCH_SIZE) - 1
+                    /* Cierre — reasignación final del state */
+                    if (!imp.stoppedReason) {
+                        imp.stoppedReason = 'done';
+                        imp.stoppedAt = Date.now();
+                    }
+                    console.info(
+                        '[MR][StravaImport][FASE 4.2.a] runImport terminado · '
+                        + 'reason=' + imp.stoppedReason + ' · '
+                        + 'processed=' + imp.processed + '/' + imp.total + ' · '
+                        + 'errors=' + imp.errors.length + ' · '
+                        + 'duración=' + Math.round((imp.stoppedAt - imp.startedAt) / 1000) + 's'
                     );
-                    var totalBatches = Math.ceil(sim.runs / VIS_IMP_BATCH_SIZE);
-                    var batchStart = batchIndex * VIS_IMP_BATCH_SIZE + 1;
-                    var batchEnd   = Math.min((batchIndex + 1) * VIS_IMP_BATCH_SIZE, sim.runs);
-                    var batchInfo  = 'Lote ' + (batchIndex + 1) + '/' + totalBatches
-                                   + ' · Procesando carreras '
-                                   + batchStart + '–' + batchEnd
-                                   + ' (' + runsDone + '/' + sim.runs + ')';
+                    if (imp.errors.length > 0) {
+                        console.warn('[MR][StravaImport][FASE 4.2.a] detalle errores:', imp.errors);
+                    }
 
-                    /* Fotos: avanzan en paralelo, ligeramente más lentas al final
-                       para que el "ritmo" se sienta natural (subida pesada) */
-                    var photoPct = Math.pow(pct / 100, 1.2) * 100;
-                    var photosDone = Math.round((photoPct / 100) * sim.photos);
-                    if (photosDone > sim.photos) photosDone = sim.photos;
-
-                    visImpRenderProgress(pct, batchInfo, photosDone, sim.photos);
-
-                    if (pct >= 100) {
+                    /* Si fue cancelado: vuelve a analysis. Si terminó: a summary. */
+                    if (imp.stoppedReason === 'cancel') {
+                        if (window.setImportState) window.setImportState('analysis');
+                    } else {
                         visImpFinish();
                     }
                 }
+                window._MR_StravaImport.runImport = runImport;
 
-                /* ── visImpStop(reason) ──────────────────────────────────────
-                   Para el bucle. 'reason' es informativo (cancel|navigation|
-                   done|no-state). NO cambia de estado por sí mismo; la lógica
-                   de transición vive en el handler que llama a stop. */
-                function visImpStop(reason) {
-                    if (window._MR_StravaImport.simTimer) {
-                        clearInterval(window._MR_StravaImport.simTimer);
-                        window._MR_StravaImport.simTimer = null;
+                /* ── processRow(row, imp, analysis, batchIndex, totalBatches) ─
+                   FASE 4.2.a. Procesa una sola actividad: localiza track entry
+                   en zipIndex, descomprime (.fit.gz) o lee texto (.gpx), invoca
+                   parser real, logea resultado. Incrementa imp.processed y
+                   repinta progress al terminar (decisión P2 = C: por row).
+                   NUNCA lanza: cualquier error se acumula en imp.errors[] y
+                   continúa. En FASE 4.2.b añadirá el INSERT a activities. */
+                async function processRow(row, imp, analysis, batchIndex, totalBatches) {
+                    var parsed = null;
+                    try {
+                        var entry = analysis.zipIndex.tracksByFilenameBase.get(row.filenameBase);
+                        if (entry) {
+                            if (/\.fit\.gz$/i.test(row.filenameBase)) {
+                                var gz = await entry.async('uint8array');
+                                var raw = pako.ungzip(gz);
+                                parsed = parseFitStrava(raw);
+                            } else if (/\.gpx$/i.test(row.filenameBase)) {
+                                var xml = await entry.async('string');
+                                parsed = parseGPXStrava(xml);
+                            } else {
+                                /* .tcx.gz u otros: aún no soportados como track */
+                                parsed = null;
+                            }
+                            if (parsed && parsed.ok === false) {
+                                /* GPX vacío (manual sin GPS) u otros: parsed.ok=false NO es error,
+                                   simplemente row sin polyline/streams (FASE 4.2.b: row solo CSV) */
+                                parsed = null;
+                            }
+                        } else {
+                            /* No hay track file en el ZIP: row solo con datos CSV.
+                               Esperado para algunas actividades manuales de Strava. */
+                            parsed = null;
+                        }
+                    } catch (e) {
+                        imp.errors.push({
+                            filenameBase: row.filenameBase || '(sin filename)',
+                            externalId: row.activityId,
+                            stage: 'parse',
+                            message: String(e && e.message || e)
+                        });
+                        parsed = null;
                     }
-                    if (window._MR_StravaImport.sim) {
-                        window._MR_StravaImport.sim.stoppedReason = reason || 'unknown';
-                        window._MR_StravaImport.sim.stoppedAt = Date.now();
+
+                    /* Log diagnóstico de control (FASE 4.2.a — sin BD aún) */
+                    console.info(
+                        '[MR][StravaImport][FASE 4.2.a][row] '
+                        + (row.filenameBase || '(no-track)')
+                        + ' · CSV ' + row.distanceKm.toFixed(2) + 'km'
+                        + ' · parsed=' + (parsed ? 'ok' : 'null')
+                        + (parsed && parsed.summary
+                            ? ' · ' + (parsed.summary.distanceM / 1000).toFixed(2) + 'km'
+                            : '')
+                    );
+
+                    /* FASE 4.2.b INSERTARÁ AQUÍ:
+                       const insertPayload = { ... };
+                       const { data, error } = await sb.from('activities').upsert(...);
+                       if (error) imp.errors.push(...); else if (data === null) imp.skipped++; else imp.inserted++; */
+
+                    /* Progress por row (decisión P2 = C) */
+                    imp.processed++;
+                    var pct = (imp.processed / imp.total) * 100;
+                    var batchStart = batchIndex * VIS_IMP_BATCH_SIZE;
+                    var batchEnd   = Math.min(batchStart + VIS_IMP_BATCH_SIZE, imp.total);
+                    var batchInfo  = 'Lote ' + (batchIndex + 1) + '/' + totalBatches
+                                   + ' · Procesando carreras '
+                                   + (batchStart + 1) + '–' + batchEnd
+                                   + ' (' + imp.processed + '/' + imp.total + ')';
+                    visImpRenderProgress(pct, batchInfo, imp.photosDone, imp.photosTotal);
+                }
+
+                /* ── visImpStop(reason) ────────────────────────────────────────────────
+                   FASE 4.2.a. Solicitud externa de parada del import en curso.
+                   'reason' es informativo (cancel|navigation|done|unknown).
+                   NO aborta en seco: marca cancelRequested=true en el state,
+                   runImport termina el lote actual y cierra limpio.
+                   Si no hay import corriendo, no-op silencioso. */
+                function visImpStop(reason) {
+                    var imp = window._MR_StravaImport.imp;
+                    if (imp && !imp.stoppedReason) {
+                        imp.cancelRequested = true;
+                        /* stoppedReason/stoppedAt los pone el propio runImport
+                           al cerrar el loop, para preservar el orden de eventos. */
                     }
                 }
                 window._MR_StravaImport.impStop = visImpStop;
 
                 /* ── visImpFinish() ──────────────────────────────────────────
-                   Llamado al alcanzar 100%. Para el timer, marca la barra
-                   como 'is-done' (oculta el brillo deslizante), deshabilita
-                   cancelar y transiciona a summary tras 600ms. */
+                   Llamado al cerrar el loop de runImport sin cancelación.
+                   Marca la barra como 'is-done' (oculta el brillo deslizante),
+                   deshabilita cancelar y transiciona a summary tras 600ms.
+                   FASE 4.2.a: llamada por visImpStop('done') NO necesaria
+                   (no hay timer). visImpStop sigue invocándose por compat
+                   pero su rol nuevo es solo marcar cancelRequested. */
                 function visImpFinish() {
                     visImpStop('done');
                     var fillEl = document.getElementById('vis-imp-progress-fill');
@@ -5320,13 +5458,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }, 600);
                 }
 
-                /* Handler · botón cancelar de importing */
+                /* Handler · botón cancelar de importing (FASE 4.2.a)
+                   Setea cancelRequested=true. runImport detecta el flag
+                   entre lotes, termina el lote actual y hace la transición
+                   a 'analysis' él mismo. NO transición desde aquí. */
                 (function() {
                     var btn = document.getElementById('vis-imp-cancel-btn');
                     if (!btn) return;
                     btn.addEventListener('click', function() {
-                        visImpStop('cancel');
-                        if (window.setImportState) window.setImportState('analysis');
+                        var imp = window._MR_StravaImport.imp;
+                        if (imp && !imp.cancelRequested && !imp.stoppedReason) {
+                            imp.cancelRequested = true;
+                            btn.disabled = true;
+                            btn.textContent = 'Cancelando tras lote actual…';
+                        } else {
+                            /* Fallback defensivo: no hay import corriendo
+                               (no debería pasar). Vuelve a analysis igualmente. */
+                            if (window.setImportState) window.setImportState('analysis');
+                        }
                     });
                 })();
 
@@ -5538,8 +5687,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 visAnalyzeZip(window._MR_StravaImport.currentFile);
                             }
                         } else if (name === 'importing') {
-                            /* Arrancar simulación con datos del análisis */
-                            visImpStart(window._MR_StravaImport.analysis);
+                            /* FASE 4.2.a: arranca el pipeline real. runImport
+                               es async pero NO esperamos su promesa aquí (el
+                               setImportState hook debe retornar sin bloquear).
+                               El .catch() final captura errores no manejados. */
+                            runImport(window._MR_StravaImport.analysis).catch(function(err) {
+                                console.error('[MR][StravaImport][FASE 4.2.a] runImport falló:', err);
+                            });
                         } else if (name === 'summary') {
                             /* Pintar resumen + re-disparar animación de fade-in.
                                Sin el reset, al volver a summary tras un segundo
