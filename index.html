@@ -3818,21 +3818,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 })();
 
                 /* ═══════════════════════════════════════════════════════════
-                   ANÁLISIS DEL ZIP (Bloque L · FASE 2.4 + FASE 3.1)
-                   - parseStravaCSV (FASE 3.1): parser real con filtro
+                   ANÁLISIS DEL ZIP (Bloque L · FASE 2.4 + FASE 3.1 + FASE 4.1)
+                   - parseStravaCSV (FASE 3.1 + 4.1): parser real con filtro
                      Activity Type ∈ {'Run','Trail Run'}, totalKm,
-                     dateRange y rows.
-                   - visAnalyzeZip: descomprime con JSZip, busca activities.csv,
-                     filtra defensivamente entries macOS metadata (FASE 3.1),
-                     llama a parseStravaCSV, cuenta archivos detallados
-                     reales y pinta.
-                   - Cero escrituras a Supabase (regla de toda la FASE 2-3).
+                     dateRange, rows con mediaFilenames y activityGear.
+                   - visAnalyzeZip (FASE 2.4 + 3.1 + 4.1): descomprime con JSZip,
+                     busca activities.csv, filtra defensivamente entries macOS
+                     metadata, llama a parseStravaCSV, cuenta archivos
+                     detallados, CONSTRUYE zipIndex (tracksByFilenameBase +
+                     photosByBasename) y pinta.
+                   - Cero escrituras a Supabase (FASE 4.1 sigue sin escribir;
+                     FASE 4.2 abrirá los inserts).
                    ═══════════════════════════════════════════════════════════ */
 
-                /* ── Parser activities.csv de Strava (FASE 3.1) ──────────────
+                /* ── Parser activities.csv de Strava (FASE 3.1 + FASE 4.1) ────
                    Real. Parser CSV vanilla (sin deps) + filtro
                    Activity Type ∈ {'Run','Trail Run'} + cálculo de totalKm
-                   y dateRange.
+                   y dateRange + extracción de fotos asociadas (FASE 4.1) +
+                   extracción de zapatillas (FASE 4.1).
                    Encoding: UTF-8 con BOM opcional. RFC-4180 mínimo:
                    comillas dobles, escape "" interno, comas dentro de
                    campos entrecomillados, CRLF/LF/CR.
@@ -3844,7 +3847,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    {ok, totalActivities, runs, photoCount, estimatedSizeMB,
                     totalKm, dateRange:{from,to}, rows:[], warnings:[]}
                    - photoCount y estimatedSizeMB se mantienen a 0 aquí
-                     (los rellena visAnalyzeZip leyendo el ZIP). */
+                     (los rellena visAnalyzeZip leyendo el ZIP).
+                   FASE 4.1: cada row añade además
+                   - mediaFilenames: string[] (basenames UUID sin prefijo
+                     'media/', solo .jpg/.jpeg/.png; vacío si la actividad
+                     no tiene fotos. Separador en CSV: '|').
+                   - activityGear: string|null (modelo de zapatillas del
+                     CSV columna 'Activity Gear'; 94% de runs lo traen). */
                 function parseStravaCSV(csvText) {
                     var warnings = [];
                     var emptyResult = {
@@ -3973,7 +3982,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         avgHr:        findCol('Average Heart Rate'),
                         calories:     findCol('Calories'),
                         filename:     findCol('Filename'),
-                        commute:      findCol('Commute')
+                        commute:      findCol('Commute'),
+                        /* FASE 4.1: columnas para fotos y zapatillas */
+                        media:        findCol('Media'),
+                        activityGear: findCol('Activity Gear')
                     };
                     if (idx.activityType === -1) {
                         warnings.push('Falta columna "Activity Type" — no se puede filtrar Runs');
@@ -3981,6 +3993,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     if (idx.activityDate === -1) warnings.push('Falta columna "Activity Date"');
                     if (idx.distance === -1)     warnings.push('Falta columna "Distance"');
+                    /* FASE 4.1: warnings defensivos para columnas nuevas */
+                    if (idx.media === -1)        warnings.push('Falta columna "Media" — no se podrán emparejar fotos');
+                    if (idx.activityGear === -1) warnings.push('Falta columna "Activity Gear" — zapatillas quedarán vacías');
 
                     var rows = [];
                     var totalKm = 0;
@@ -4009,6 +4024,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (!filename) skippedNoFilename++;
                         var filenameBase = filename ? filename.replace(/^activities\//i, '') : '';
 
+                        /* FASE 4.1: parsear celda Media → array de basenames.
+                           Separador en el CSV de Strava: '|' (pipe). Quitamos
+                           el prefijo 'media/' case-insensitive y filtramos
+                           por extensión imagen. Los .mp4 (vídeos) quedan
+                           excluidos por decisión de producto. */
+                        var mediaFilenames = [];
+                        if (idx.media >= 0) {
+                            var mediaRaw = (line[idx.media] || '').trim();
+                            if (mediaRaw) {
+                                var parts = mediaRaw.split('|');
+                                for (var mi = 0; mi < parts.length; mi++) {
+                                    var p = parts[mi].trim();
+                                    if (!p) continue;
+                                    var base = p.replace(/^media\//i, '');
+                                    var lowExt = base.toLowerCase();
+                                    if (lowExt.endsWith('.jpg') || lowExt.endsWith('.jpeg') || lowExt.endsWith('.png')) {
+                                        mediaFilenames.push(base);
+                                    }
+                                }
+                            }
+                        }
+
+                        /* FASE 4.1: extracción de zapatillas (Activity Gear).
+                           string limpio o null. 94% de runs lo traen en CSV. */
+                        var activityGear = null;
+                        if (idx.activityGear >= 0) {
+                            var ag = (line[idx.activityGear] || '').trim();
+                            if (ag) activityGear = ag;
+                        }
+
                         rows.push({
                             activityId:   idx.activityId   >= 0 ? (line[idx.activityId] || '').trim() : '',
                             type:         type,
@@ -4025,7 +4070,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             calories:     idx.calories    >= 0 ? _toFloat(line[idx.calories])  : null,
                             commute:      idx.commute     >= 0 ? ((line[idx.commute] || '').toLowerCase() === 'true') : false,
                             filename:     filename,
-                            filenameBase: filenameBase
+                            filenameBase: filenameBase,
+                            /* FASE 4.1: nuevas claves */
+                            mediaFilenames: mediaFilenames,
+                            activityGear:   activityGear
                         });
 
                         if (typeof distance === 'number') totalKm += distance;
@@ -4786,9 +4834,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 /* ── visAnalyzeZip(file) ─────────────────────────────────────
                    Función async que descomprime el ZIP in-memory con JSZip,
                    localiza activities.csv (case-insensitive, en cualquier
-                   nivel), llama al stub parseStravaCSV(csvText), cuenta
-                   archivos detallados reales y rinde el DOM.
-                   En caso de falta de activities.csv → estado error. */
+                   nivel), llama a parseStravaCSV(csvText) (REAL desde FASE 3.1),
+                   cuenta archivos detallados reales y rinde el DOM.
+                   En caso de falta de activities.csv → estado error.
+                   FASE 4.1: construye además zipIndex con referencias a los
+                   entries individuales del ZIP (tracksByFilenameBase,
+                   photosByBasename) para que la sub-tarea 4.2 pueda procesar
+                   cada actividad sin recorrer el ZIP de nuevo. */
                 async function visAnalyzeZip(file) {
                     if (!file) {
                         visAnRenderError('No hay archivo cargado. Vuelve atrás y selecciona un ZIP.');
@@ -4810,9 +4862,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         return;
                     }
 
-                    /* Localizar activities.csv (case-insensitive, cualquier nivel) */
+                    /* Localizar activities.csv (case-insensitive, cualquier nivel)
+                       + FASE 4.1: construir zipIndex con referencias entry-by-entry
+                       para tracks y fotos. Una sola pasada del ZIP. */
                     var csvEntry = null;
                     var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0 };
+                    /* FASE 4.1: maps de indexación para uso en FASE 4.2/4.3/4.4.
+                       tracksByFilenameBase: '1234567890.fit.gz' o '...gpx' → entry.
+                       photosByBasename:     'UUID.jpg' (lowercase) → entry.
+                       Las claves se almacenan en minúscula para resolver el
+                       caso de casing inconsistente detectado en CSV (1/209). */
+                    var tracksByFilenameBase = new Map();
+                    var photosByBasename = new Map();
                     zip.forEach(function(relPath, entry) {
                         if (entry.dir) return;
                         var lower = relPath.toLowerCase();
@@ -4825,10 +4886,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (lower.indexOf('__macosx/') === 0) return;
                         if (base === '.ds_store') return;
                         if (!csvEntry && base === 'activities.csv') csvEntry = entry;
-                        if (lower.endsWith('.fit.gz')) counts.fit++;
-                        else if (lower.endsWith('.gpx'))    counts.gpx++;
+                        if (lower.endsWith('.fit.gz')) {
+                            counts.fit++;
+                            /* FASE 4.1: indexar track .fit.gz */
+                            tracksByFilenameBase.set(base, entry);
+                        }
+                        else if (lower.endsWith('.gpx')) {
+                            counts.gpx++;
+                            /* FASE 4.1: indexar track .gpx */
+                            tracksByFilenameBase.set(base, entry);
+                        }
                         else if (lower.endsWith('.tcx.gz')) counts.tcx++;
-                        else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png')) counts.photos++;
+                        else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png')) {
+                            counts.photos++;
+                            /* FASE 4.1: indexar foto SOLO si está dentro de media/
+                               para evitar incluir profile.jpg (foto de perfil del
+                               usuario que vive en la raíz del ZIP). */
+                            if (lower.indexOf('media/') === 0) {
+                                photosByBasename.set(base, entry);
+                            }
+                        }
                     });
 
                     if (!csvEntry) {
@@ -4858,14 +4935,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         return;
                     }
 
-                    /* Guardar resultado para que la sub-tarea 2.5 lo consuma */
+                    /* Guardar resultado para que la sub-tarea 2.5 lo consuma.
+                       FASE 4.1: añadimos zipIndex con referencias a los entries
+                       individuales del ZIP para usar en FASE 4.2/4.3/4.4. */
                     window._MR_StravaImport.analysis = {
                         file: file,
                         parsed: parsed,
                         counts: counts,
                         csvFound: true,
-                        analyzedAt: Date.now()
+                        analyzedAt: Date.now(),
+                        /* FASE 4.1: índice del ZIP */
+                        zipIndex: {
+                            csvEntry: csvEntry,
+                            tracksByFilenameBase: tracksByFilenameBase,
+                            photosByBasename: photosByBasename
+                        }
                     };
+
+                    /* FASE 4.1: log diagnóstico para validar indexación en preview.
+                       Muestra tamaños y conteos derivados para verificación visual. */
+                    try {
+                        var rowsArr = (parsed && parsed.rows) ? parsed.rows : [];
+                        var runsWithMedia = 0, runsWithGear = 0, totalMediaRefs = 0;
+                        for (var ri = 0; ri < rowsArr.length; ri++) {
+                            var rr = rowsArr[ri];
+                            if (rr.mediaFilenames && rr.mediaFilenames.length > 0) {
+                                runsWithMedia++;
+                                totalMediaRefs += rr.mediaFilenames.length;
+                            }
+                            if (rr.activityGear) runsWithGear++;
+                        }
+                        console.info('[MR][StravaImport][FASE 4.1] zipIndex listo:',
+                            '\n  · tracks indexados:', tracksByFilenameBase.size,
+                                '(fit.gz=' + counts.fit + ', gpx=' + counts.gpx + ')',
+                            '\n  · fotos indexadas: ', photosByBasename.size,
+                                '(de ' + counts.photos + ' totales en ZIP)',
+                            '\n  · runs con media: ', runsWithMedia,
+                                '(' + totalMediaRefs + ' referencias)',
+                            '\n  · runs con gear:  ', runsWithGear);
+                    } catch (logErr) {
+                        console.warn('[MR][StravaImport][FASE 4.1] log diagnóstico falló (no crítico):', logErr);
+                    }
 
                     visAnRenderResult(file, parsed, counts);
                     visAnSetState('result');
