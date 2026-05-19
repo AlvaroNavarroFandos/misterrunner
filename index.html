@@ -5297,7 +5297,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         analysis.parsed.rows = [{
                             activityId:     devActId,
                             type:           'Run',
-                            date:           devStart ? devStart.slice(0, 10) : null,
+                            date:           devStart || null,   /* ISO completo, no truncar a YYYY-MM-DD */
                             dateRaw:        devStart,
                             name:           devName,
                             distanceKm:     devDistKm,
@@ -5444,10 +5444,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         imp.stoppedAt = Date.now();
                     }
                     console.info(
-                        '[MR][StravaImport][FASE 4.2.a] runImport terminado · '
+                        '[MR][StravaImport][FASE 4.2.b] runImport terminado · '
                         + 'reason=' + imp.stoppedReason + ' · '
                         + 'processed=' + imp.processed + '/' + imp.total + ' · '
-                        + 'errors=' + imp.errors.length + ' · '
+                        + 'inserted=' + imp.inserted + ' · '
+                        + 'skipped='  + imp.skipped  + ' · '
+                        + 'errors='   + imp.errors.length + ' · '
                         + 'duración=' + Math.round((imp.stoppedAt - imp.startedAt) / 1000) + 's'
                     );
                     if (imp.errors.length > 0) {
@@ -5523,10 +5525,153 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             : '')
                     );
 
-                    /* FASE 4.2.b INSERTARÁ AQUÍ:
-                       const insertPayload = { ... };
-                       const { data, error } = await sb.from('activities').upsert(...);
-                       if (error) imp.errors.push(...); else if (data === null) imp.skipped++; else imp.inserted++; */
+                    /* ── FASE 4.2.b: INSERT a public.activities ──────────
+                       Construir payload con redondeos defensivos para columnas
+                       integer y fallbacks para NOT NULL (Opción B acordada).
+                       Upsert con onConflict en (user_id, source, external_id):
+                       si ya existe, NO toca nada (ignoreDuplicates=true).
+                       Si parsed=null (row solo CSV sin track), igual se inserta
+                       con polyline_encoded=null, ele_min=null, ele_max=null,
+                       avg_cadence=null. Coherente con notas 6 y 11 del v11. */
+
+                    /* Descarte limpio si no hay start_date (decisión P1=B): un
+                       archivo sin fecha de inicio detectable no merece entrar
+                       a BD con fecha falsa. Push a errors y skip. */
+                    if (!row.date) {
+                        imp.errors.push({
+                            filenameBase: row.filenameBase || '(sin filename)',
+                            externalId:   row.activityId,
+                            stage:        'no-start-date',
+                            message:      'sin start_date detectable, fila descartada'
+                        });
+                        console.warn(
+                            '[MR][StravaImport][FASE 4.2.b][no-date] '
+                            + (row.filenameBase || '(no-track)')
+                        );
+                    } else {
+                        /* Defensa NOT NULL (Opción B): fallback movingTime → elapsedTime → 0
+                           y distanceKm → 0. Mantiene la fila aunque el CSV traiga celdas
+                           vacías; perdemos métricas derivadas pero conservamos histórico. */
+                        var safeDistKm   = (row.distanceKm != null) ? row.distanceKm : 0;
+                        var safeDuration = (row.movingTime != null) ? row.movingTime
+                                         : (row.elapsedTime != null) ? row.elapsedTime
+                                         : 0;
+
+                        /* avg_pace_sec: derivado defensivo. Si dist=0 → null (no Infinity). */
+                        var safePaceSec = (safeDistKm > 0 && safeDuration > 0)
+                            ? Math.round(safeDuration / safeDistKm)
+                            : null;
+
+                        /* ele_min / ele_max: solo si parsed tiene streams.altitude
+                           con al menos 1 valor numérico. apply() falla con array vacío
+                           → defensiva con length check. */
+                        var eleMin = null, eleMax = null;
+                        if (parsed && parsed.ok && parsed.streams
+                            && Array.isArray(parsed.streams.altitude)
+                            && parsed.streams.altitude.length > 0) {
+                            /* Filtrar nulls (gaps en el track). Si quedan números, OK. */
+                            var altClean = parsed.streams.altitude.filter(function(v) {
+                                return typeof v === 'number' && !isNaN(v);
+                            });
+                            if (altClean.length > 0) {
+                                eleMin = Math.round(Math.min.apply(null, altClean));
+                                eleMax = Math.round(Math.max.apply(null, altClean));
+                            }
+                        }
+
+                        var insertPayload = {
+                            user_id:      imp.userId,
+                            source:       'strava_bulk',
+                            external_id:  row.activityId || null,
+
+                            /* Identidad */
+                            name:         row.name || null,
+                            start_date:   row.date,         /* ISO completo del CSV/parser */
+
+                            /* Tiempo (Opción B fallbacks) */
+                            dist_km:      safeDistKm,
+                            duration_sec: safeDuration,
+                            elapsed_sec:  (row.elapsedTime != null) ? row.elapsedTime : null,
+
+                            /* Métricas básicas CSV (redondeo defensivo) */
+                            ascent_m:     (row.elevGainM != null) ? Math.round(row.elevGainM) : null,
+                            descent_m:    (row.elevLossM != null) ? Math.round(row.elevLossM) : null,
+                            avg_hr:       (row.avgHr     != null) ? Math.round(row.avgHr)     : null,
+                            max_hr:       (row.maxHr     != null) ? Math.round(row.maxHr)     : null,
+                            calories:     (row.calories  != null) ? Math.round(row.calories)  : null,
+
+                            /* Derivado ritmo */
+                            avg_pace_sec: safePaceSec,
+
+                            /* Del parser FIT/GPX */
+                            avg_cadence:  (parsed && parsed.ok && parsed.summary && parsed.summary.avgCadence != null)
+                                          ? Math.round(parsed.summary.avgCadence)
+                                          : null,
+                            polyline_encoded: (parsed && parsed.ok) ? (parsed.polyline || null) : null,
+                            ele_min:      eleMin,
+                            ele_max:      eleMax,
+
+                            /* Strava-specific del CSV */
+                            shoes_name:   row.activityGear || null,
+
+                            /* streams_path: NULL en INSERT, FASE 4.3 UPDATE post-upload */
+                            streams_path: null
+                        };
+
+                        /* Upsert idempotente (P2 = acumular y seguir: errores no abortan) */
+                        try {
+                            var upsertRes = await sb
+                                .from('activities')
+                                .upsert(insertPayload, {
+                                    onConflict: 'user_id,source,external_id',
+                                    ignoreDuplicates: true
+                                })
+                                .select('id')
+                                .maybeSingle();
+
+                            var upData  = upsertRes && upsertRes.data;
+                            var upError = upsertRes && upsertRes.error;
+
+                            if (upError) {
+                                imp.errors.push({
+                                    filenameBase: row.filenameBase || '(sin filename)',
+                                    externalId:   row.activityId,
+                                    stage:        'insert',
+                                    code:         upError.code || null,
+                                    message:      upError.message || String(upError)
+                                });
+                                console.warn(
+                                    '[MR][StravaImport][FASE 4.2.b][insert-error] '
+                                    + (row.filenameBase || '(no-track)')
+                                    + ' · code=' + (upError.code || '?')
+                                    + ' · ' + (upError.message || upError)
+                                );
+                            } else if (upData === null) {
+                                /* ignoreDuplicates devolvió null → ya existía */
+                                imp.skipped++;
+                            } else {
+                                /* INSERT exitoso */
+                                imp.inserted++;
+                                /* upData.id está disponible para FASE 4.3 (streams)
+                                   y FASE 4.4 (fotos). Lo guardamos en el row para
+                                   que esté accesible. */
+                                row._dbActivityId = upData.id;
+                            }
+                        } catch (e) {
+                            /* Excepción inesperada (network, timeout, etc.) */
+                            imp.errors.push({
+                                filenameBase: row.filenameBase || '(sin filename)',
+                                externalId:   row.activityId,
+                                stage:        'insert-exception',
+                                message:      String(e && e.message || e)
+                            });
+                            console.error(
+                                '[MR][StravaImport][FASE 4.2.b][insert-exception] '
+                                + (row.filenameBase || '(no-track)') + ':',
+                                e
+                            );
+                        }
+                    }
 
                     /* Progress por row (decisión P2 = C) */
                     imp.processed++;
