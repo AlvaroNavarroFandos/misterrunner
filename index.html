@@ -5211,15 +5211,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      log + visImpRenderProgress con mensaje + return.
                      NO transición a summary. */
                 async function runImport(analysis) {
-                    /* Defensas mínimas */
-                    if (!analysis || !analysis.parsed || !analysis.parsed.rows) {
+                    /* FASE 4.2.a (fix): re-habilitar el botón cancelar AL INICIO,
+                       antes de cualquier defensa. Si una defensa retorna por error,
+                       el botón debe quedar utilizable para que el usuario pueda
+                       salir de la pantalla. Sin esto, un error temprano deja el
+                       botón con estado is-done/disabled del intento anterior. */
+                    var btnCancelEarly = document.getElementById('vis-imp-cancel-btn');
+                    if (btnCancelEarly) {
+                        btnCancelEarly.disabled = false;
+                        btnCancelEarly.textContent = 'Cancelar importación';
+                    }
+                    var fillElEarly = document.getElementById('vis-imp-progress-fill');
+                    if (fillElEarly) fillElEarly.classList.remove('is-done');
+
+                    /* Defensa mínima: analysis y analysis.parsed deben existir.
+                       parsed.rows[] y zipIndex se validan DESPUÉS de eventual
+                       síntesis dev (que los crea si no existen). */
+                    if (!analysis || !analysis.parsed) {
                         console.error('[MR][StravaImport][FASE 4.2.a] analysis inválido');
                         visImpRenderProgress(0, 'Error: análisis inválido', 0, 0);
-                        return;
-                    }
-                    if (!analysis.zipIndex || !analysis.zipIndex.tracksByFilenameBase) {
-                        console.error('[MR][StravaImport][FASE 4.2.a] zipIndex ausente');
-                        visImpRenderProgress(0, 'Error: zipIndex ausente', 0, 0);
                         return;
                     }
 
@@ -5316,6 +5326,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         );
                     }
 
+                    /* Defensas post-síntesis: ahora rows[] y zipIndex deben
+                       existir tanto en modo ZIP (los puso visAnalyzeZip) como
+                       en modo dev (los puso el bloque anterior). Si faltan,
+                       hay un bug real que merece corte. */
+                    if (!analysis.parsed.rows || !Array.isArray(analysis.parsed.rows)) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] parsed.rows ausente o no-array');
+                        visImpRenderProgress(0, 'Error: no hay carreras que importar', 0, 0);
+                        return;
+                    }
+                    if (!analysis.zipIndex || !analysis.zipIndex.tracksByFilenameBase) {
+                        console.error('[MR][StravaImport][FASE 4.2.a] zipIndex ausente');
+                        visImpRenderProgress(0, 'Error: zipIndex ausente', 0, 0);
+                        return;
+                    }
+
                     /* Auth */
                     var sb = window._sbClient;
                     var session;
@@ -5357,15 +5382,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     };
                     window._MR_StravaImport.imp = imp;
 
-                    /* UI: header + reset visual + estado inicial */
+                    /* UI: header + estado inicial textual.
+                       Nota: el reset del botón cancelar y del fill ya se hizo
+                       al inicio de runImport (btnCancelEarly / fillElEarly),
+                       antes de las defensas. Aquí solo pintamos contenido. */
                     visImpRenderHeader(analysis.file || null);
-                    var fillEl = document.getElementById('vis-imp-progress-fill');
-                    if (fillEl) fillEl.classList.remove('is-done');
-                    var btnCancel = document.getElementById('vis-imp-cancel-btn');
-                    if (btnCancel) {
-                        btnCancel.disabled = false;
-                        btnCancel.textContent = 'Cancelar importación';
-                    }
                     visImpRenderProgress(0, 'Preparando…', 0, photosTotal);
 
                     console.info(
