@@ -5223,6 +5223,99 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         return;
                     }
 
+                    /* ── Modo dev (FASE 2.7): 1 archivo individual ─────────────
+                       En modo dev, analysis.parsed NO tiene rows[] ni zipIndex
+                       (visAnalyzeDevFile produce shape mínima { runs:1 } y guarda
+                       el resultado del parser en analysis.devParserResult).
+                       Sintetizamos en memoria: 1 row mínimo + 1 entry virtual
+                       que imita JSZip (.async('uint8array'/'string') sobre el
+                       File nativo). Tras esto, runImport continúa el flujo
+                       estándar con total=1. Idempotente: si ya sintetizamos
+                       antes (re-arranque), no duplicamos. */
+                    if (analysis.devMode === true && !analysis.parsed.rows) {
+                        if (!analysis.file) {
+                            console.error('[MR][StravaImport][FASE 4.2.a] devMode sin file');
+                            visImpRenderProgress(0, 'Error: archivo dev no disponible', 0, 0);
+                            return;
+                        }
+                        var devFile = analysis.file;
+                        var devName = devFile.name || 'devfile';
+                        var devKind = analysis.devKind || 'fit';
+                        var devPr   = analysis.devParserResult || null;
+
+                        /* Derivar campos del row desde devParserResult cuando
+                           esté disponible. Si el parser falló (devPr.ok=false),
+                           seguimos con valores neutros — runImport solo necesita
+                           filenameBase y distanceKm para no crashear. */
+                        var devDistKm = 0;
+                        var devActId  = devName.replace(/\.(fit|gpx)(\.gz)?$/i, '');
+                        var devStart  = null;
+                        if (devPr && devPr.ok === true && devPr.summary) {
+                            if (typeof devPr.summary.distanceM === 'number') {
+                                devDistKm = devPr.summary.distanceM / 1000;
+                            }
+                            if (devPr.summary.startTime) {
+                                devStart = devPr.summary.startTime;
+                            }
+                        }
+
+                        /* Entry virtual JSZip-compatible: expone .async() con
+                           soporte para 'uint8array' y 'string'. Lee del File
+                           nativo del navegador (fileReader API moderna). */
+                        var virtualEntry = {
+                            name: devName,
+                            async: function(kind) {
+                                if (kind === 'uint8array') {
+                                    return devFile.arrayBuffer().then(function(buf) {
+                                        return new Uint8Array(buf);
+                                    });
+                                } else if (kind === 'string') {
+                                    return devFile.text();
+                                } else {
+                                    return Promise.reject(new Error('virtualEntry: async kind no soportado: ' + kind));
+                                }
+                            }
+                        };
+
+                        var virtualMap = new Map();
+                        virtualMap.set(devName, virtualEntry);
+
+                        /* Inyectar la shape ZIP-compatible. Mutamos el objeto
+                           analysis directamente — siguientes invocaciones a
+                           runImport con el mismo analysis encuentran ya la
+                           shape sintetizada (el guard del if lo respeta). */
+                        analysis.parsed.rows = [{
+                            activityId:     devActId,
+                            type:           'Run',
+                            date:           devStart ? devStart.slice(0, 10) : null,
+                            dateRaw:        devStart,
+                            name:           devName,
+                            distanceKm:     devDistKm,
+                            movingTime:     devPr && devPr.summary ? devPr.summary.movingSec : null,
+                            elapsedTime:    devPr && devPr.summary ? devPr.summary.durationSec : null,
+                            elevGainM:      devPr && devPr.summary ? devPr.summary.elevGainM : null,
+                            elevLossM:      devPr && devPr.summary ? devPr.summary.elevLossM : null,
+                            avgHr:          devPr && devPr.summary ? devPr.summary.avgHr : null,
+                            maxHr:          devPr && devPr.summary ? devPr.summary.maxHr : null,
+                            calories:       devPr && devPr.summary ? devPr.summary.calories : null,
+                            commute:        false,
+                            filename:       devName,
+                            filenameBase:   devName,
+                            mediaFilenames: [],
+                            activityGear:   null
+                        }];
+                        analysis.zipIndex = {
+                            csvEntry: null,
+                            tracksByFilenameBase: virtualMap,
+                            photosByBasename: new Map()
+                        };
+                        console.info(
+                            '[MR][StravaImport][FASE 4.2.a] devMode: shape sintetizada · '
+                            + 'file=' + devName + ' · kind=' + devKind + ' · '
+                            + 'distKm=' + devDistKm.toFixed(2)
+                        );
+                    }
+
                     /* Auth */
                     var sb = window._sbClient;
                     var session;
@@ -5365,6 +5458,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 var gz = await entry.async('uint8array');
                                 var raw = pako.ungzip(gz);
                                 parsed = parseFitStrava(raw);
+                            } else if (/\.fit$/i.test(row.filenameBase)) {
+                                /* FASE 4.2.a (fix dev): .fit puro sin gzip,
+                                   solo aparece en modo dev. ZIP de Strava
+                                   siempre trae .fit.gz, nunca .fit suelto. */
+                                var rawFit = await entry.async('uint8array');
+                                parsed = parseFitStrava(rawFit);
                             } else if (/\.gpx$/i.test(row.filenameBase)) {
                                 var xml = await entry.async('string');
                                 parsed = parseGPXStrava(xml);
