@@ -5380,7 +5380,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         stoppedReason: null,
                         stoppedAt: null,
                         /* FASE 4.3.a: contador de streams subidos a activity-streams */
-                        streamsUploaded: 0
+                        streamsUploaded: 0,
+                        /* FASE 4.3.b: contador de streams reparados en caso skipped
+                           (BD tenia la fila pero streams_path estaba NULL) */
+                        streamsRepaired: 0
                     };
                     window._MR_StravaImport.imp = imp;
 
@@ -5452,6 +5455,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         + 'inserted=' + imp.inserted + ' · '
                         + 'skipped='  + imp.skipped  + ' · '
                         + 'streamsUploaded=' + imp.streamsUploaded + ' · '
+                        + 'streamsRepaired=' + imp.streamsRepaired + ' · '
                         + 'errors='   + imp.errors.length + ' · '
                         + 'duración=' + Math.round((imp.stoppedAt - imp.startedAt) / 1000) + 's'
                     );
@@ -5655,8 +5659,136 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     + ' · ' + (upError.message || upError)
                                 );
                             } else if (upData === null) {
-                                /* ignoreDuplicates devolvió null → ya existía */
+                                /* ignoreDuplicates devolvió null → ya existía.
+                                   FASE 4.3.b — Caso skipped (Variante A: Reparador puro).
+                                   Si la fila BD tiene streams_path IS NULL pero
+                                   parsed.streams esta disponible, reparamos: SELECT
+                                   id → upload → UPDATE. Idempotencia BD intacta:
+                                   imp.skipped++ siempre. La reparacion va a un
+                                   contador separado imp.streamsRepaired.
+                                   v12 §FASE 4.3, sub-dec 1=(a), sub-dec 2=(b). */
                                 imp.skipped++;
+
+                                if (parsed && parsed.ok
+                                    && parsed.streams
+                                    && Array.isArray(parsed.streams.time)
+                                    && parsed.streams.time.length > 0
+                                    && row.activityId) {
+                                    try {
+                                        var selRes = await sb
+                                            .from('activities')
+                                            .select('id, streams_path')
+                                            .eq('user_id', imp.userId)
+                                            .eq('source', 'strava_bulk')
+                                            .eq('external_id', row.activityId)
+                                            .maybeSingle();
+
+                                        var existing    = selRes && selRes.data;
+                                        var selError    = selRes && selRes.error;
+
+                                        if (selError) {
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'skipped-select',
+                                                message:      selError.message || String(selError)
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.3.b][skipped-select-error] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' · ' + (selError.message || selError)
+                                            );
+                                        } else if (existing === null) {
+                                            /* Sub-dec 2 (b): caso teorico imposible
+                                               (ignoreDuplicates devolvio null pero
+                                               SELECT no encuentra fila). Lo dejamos
+                                               auditable. */
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'skipped-but-not-found',
+                                                message:      'upsert ignoreDuplicates devolvio null pero SELECT por external_id no hallo fila'
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.3.b][skipped-but-not-found] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' · externalId=' + row.activityId
+                                            );
+                                        } else if (existing.streams_path) {
+                                            /* Sub-dec 1 (a): ya tiene streams_path,
+                                               no tocamos nada. */
+                                        } else {
+                                            /* BD tiene la fila pero streams_path es NULL
+                                               → REPARACION: upload + UPDATE. */
+                                            var streamsObj = {
+                                                version:  1,
+                                                streams:  parsed.streams,
+                                                splits:   parsed.splits,
+                                                polyline: parsed.polyline,
+                                                summary:  parsed.summary
+                                            };
+                                            var jsonStr = JSON.stringify(streamsObj);
+                                            var gzipped = pako.gzip(jsonStr);
+                                            var blob = new Blob([gzipped], { type: 'application/gzip' });
+                                            var streamsPath = imp.userId + '/' + existing.id + '.json.gz';
+
+                                            var { error: streamsUpErr } = await sb.storage
+                                                .from('activity-streams')
+                                                .upload(streamsPath, blob, {
+                                                    cacheControl: '3600',
+                                                    upsert: false,
+                                                    contentType: 'application/gzip'
+                                                });
+
+                                            if (streamsUpErr) {
+                                                imp.errors.push({
+                                                    filenameBase: row.filenameBase || '(sin filename)',
+                                                    externalId:   row.activityId,
+                                                    stage:        'streams-repair-upload',
+                                                    message:      streamsUpErr.message || String(streamsUpErr)
+                                                });
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.3.b][repair-upload-error] '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' · ' + (streamsUpErr.message || streamsUpErr)
+                                                );
+                                            } else {
+                                                var { error: streamsPathErr } = await sb
+                                                    .from('activities')
+                                                    .update({ streams_path: streamsPath })
+                                                    .eq('id', existing.id);
+
+                                                if (streamsPathErr) {
+                                                    imp.errors.push({
+                                                        filenameBase: row.filenameBase || '(sin filename)',
+                                                        externalId:   row.activityId,
+                                                        stage:        'streams-repair-path-update',
+                                                        message:      streamsPathErr.message || String(streamsPathErr)
+                                                    });
+                                                    console.warn(
+                                                        '[MR][StravaImport][FASE 4.3.b][repair-path-update-error] '
+                                                        + (row.filenameBase || '(no-track)')
+                                                        + ' · ' + (streamsPathErr.message || streamsPathErr)
+                                                    );
+                                                } else {
+                                                    imp.streamsRepaired++;
+                                                }
+                                            }
+                                        }
+                                    } catch (eRepair) {
+                                        imp.errors.push({
+                                            filenameBase: row.filenameBase || '(sin filename)',
+                                            externalId:   row.activityId,
+                                            stage:        'streams-repair-exception',
+                                            message:      String(eRepair && eRepair.message || eRepair)
+                                        });
+                                        console.error(
+                                            '[MR][StravaImport][FASE 4.3.b][repair-exception] '
+                                            + (row.filenameBase || '(no-track)') + ':',
+                                            eRepair
+                                        );
+                                    }
+                                }
                             } else {
                                 /* INSERT exitoso */
                                 imp.inserted++;
