@@ -144,6 +144,34 @@
     body.dark-mode .act-card{background:var(--card);}
     /* SPIN */
     @keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+    /* FASE 5.4 — Overlay de carga para activity detail mientras se descargan streams */
+    .det-loading-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 5, 15, 0.92);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+        backdrop-filter: blur(4px);
+        animation: _fxToastIn 0.18s ease-out;
+    }
+    .det-loading-overlay .det-loading-spinner {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-top-color: rgba(255, 255, 255, 0.85);
+        animation: spin 0.7s linear infinite;
+        margin-bottom: 14px;
+    }
+    .det-loading-overlay .det-loading-text {
+        font-family: var(--f);
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.75);
+        letter-spacing: 0.3px;
+    }
     /* FX PREMIUM (toast, confetti, skeleton, hero, view fade) */
     @keyframes _fxToastIn{0%{opacity:0;transform:translate(-50%,-80px) scale(.85)}60%{opacity:1;transform:translate(-50%,8px) scale(1.04)}80%{transform:translate(-50%,-2px) scale(.98)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}
     @keyframes _fxToastOut{0%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(-50%,-30px) scale(.92)}}
@@ -12992,7 +13020,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ── OPEN ACTIVITY DETAIL ─────────────────────────────────────
-    function openActivityDetail(act) {
+    // FASE 5.4 — wrapper async para cargar streams antes del render (bulk only).
+    // Si activity bulk y streams no cargados aún: mostrar spinner, esperar streams,
+    // hidratar act.hrSeries/cadSeries/etc, y entonces llamar al render original.
+    // Si single-import o ya cargado: render directo, sin retraso.
+    async function openActivityDetail(act) {
+        var isBulkPendingLoad = act && act._source === 'bulk'
+            && act._dbActivityId
+            && (!act.hrSeries || act.hrSeries.length === 0)
+            && (!act.distSer  || act.distSer.length  === 0);
+
+        if (isBulkPendingLoad) {
+            // Mostrar overlay de loading inmediato
+            var loadOv = document.getElementById('act-detail-overlay');
+            if (loadOv) loadOv.remove();
+            loadOv = document.createElement('div');
+            loadOv.id = 'act-detail-overlay';
+            loadOv.className = 'det-overlay mr-fx-hero-in';
+            loadOv.innerHTML = '<div class="det-loading-overlay">'
+                + '<div class="det-loading-spinner"></div>'
+                + '<div class="det-loading-text">Cargando actividad…</div>'
+                + '</div>';
+            document.body.appendChild(loadOv);
+            // Esperar streams (1-2s primera vez, instantáneo si cache hit)
+            var streamsObj = await loadStreamsForActivity(act._dbActivityId);
+            if (streamsObj) {
+                _mapStreamsToActFields(act, streamsObj);
+            }
+            // Eliminar el overlay loading antes de re-construir todo el visor
+            if (loadOv && loadOv.parentNode) loadOv.parentNode.removeChild(loadOv);
+        }
+
         const d    = new Date(act.dateStr + 'T12:00:00');
         const df   = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
         const dfS  = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'});
@@ -17772,6 +17830,142 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             console.warn('[MR][FASE 5.2] loadActivitiesFromSupabase exception:', e);
             return [];
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // FASE 5.4 — Lazy loading + cache en memoria de streams del bucket
+    // ══════════════════════════════════════════════════════════════
+    // Estrategia: al abrir una activity bulk, si act.hrSeries no está
+    // poblado (señal de "no cargado"), descargar el .json.gz del bucket
+    // `activity-streams`, descomprimirlo con pako, parsear JSON y mapear
+    // las series al shape memoria que cards 2/3 esperan.
+    //
+    // Cache: objeto plano JS en memoria (`_streamsCache[activityId]`).
+    // Vida: la sesión actual. Se limpia en SIGNED_OUT.
+    //
+    // Shape bucket (auditado en 5.4 pre-diff):
+    //   { version, streams: { time, lat, lon, altitude, hr, cadence,
+    //                         pace, distance }, splits, polyline, summary }
+    // Shape memoria (auditado: cards 2/3 lo esperan así):
+    //   act.hrSeries  = [{t, v}]       — t=seg, v=bpm
+    //   act.cadSeries = [{t, v}]       — t=seg, v=rpm (card 3 lo dobla a spm)
+    //   act.eleSeries = [{t, v}]       — t=seg, v=metros
+    //   act.distSer   = [{t, d, spd}]  — t=seg, d=cm acum, spd=m/s
+    //   act.laps      = [{n, paceS, avgHr}] — n=km, paceS=tiempo del km
+    //
+    // Si una serie no existe (null en bucket) → array vacío en memoria.
+
+    var _streamsCache = {};
+
+    async function loadStreamsForActivity(activityId, userId) {
+        if (!activityId) return null;
+        if (_streamsCache[activityId]) {
+            return _streamsCache[activityId];
+        }
+        try {
+            var sb = window._sbClient;
+            if (!sb) return null;
+            // Si no recibimos userId, lo obtenemos de la sesión actual
+            var uid = userId;
+            if (!uid) {
+                var sessRes = await sb.auth.getSession();
+                uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            }
+            if (!uid) return null;
+            var streamsPath = uid + '/' + activityId + '.json.gz';
+            var { data: blob, error: dlErr } = await sb.storage
+                .from('activity-streams')
+                .download(streamsPath);
+            if (dlErr) {
+                console.warn('[MR][FASE 5.4] download stream falló para '+activityId+':', dlErr);
+                return null;
+            }
+            if (!blob) return null;
+            // Blob → ArrayBuffer → Uint8Array → ungzip → JSON parse
+            var arrBuf = await blob.arrayBuffer();
+            var u8 = new Uint8Array(arrBuf);
+            if (typeof window.pako !== 'object' || typeof window.pako.ungzip !== 'function') {
+                console.warn('[MR][FASE 5.4] pako no disponible');
+                return null;
+            }
+            var jsonStr = window.pako.ungzip(u8, { to: 'string' });
+            var streamsObj = JSON.parse(jsonStr);
+            _streamsCache[activityId] = streamsObj;
+            return streamsObj;
+        } catch(e) {
+            console.warn('[MR][FASE 5.4] loadStreamsForActivity exception:', e);
+            return null;
+        }
+    }
+
+    function _mapStreamsToActFields(act, streamsObj) {
+        if (!streamsObj || !streamsObj.streams) return;
+        var s = streamsObj.streams;
+        var time = Array.isArray(s.time) ? s.time : [];
+        // hrSeries: [{t, v}] con v=bpm
+        if (Array.isArray(s.hr)) {
+            act.hrSeries = [];
+            for (var i = 0; i < time.length; i++) {
+                if (s.hr[i] != null) act.hrSeries.push({ t: time[i], v: s.hr[i] });
+            }
+        } else {
+            act.hrSeries = [];
+        }
+        // cadSeries: [{t, v}] con v=rpm (una pierna)
+        if (Array.isArray(s.cadence)) {
+            act.cadSeries = [];
+            for (var j = 0; j < time.length; j++) {
+                if (s.cadence[j] != null) act.cadSeries.push({ t: time[j], v: s.cadence[j] });
+            }
+        } else {
+            act.cadSeries = [];
+        }
+        // eleSeries: [{t, v}] con v=metros
+        if (Array.isArray(s.altitude)) {
+            act.eleSeries = [];
+            for (var k = 0; k < time.length; k++) {
+                if (s.altitude[k] != null) act.eleSeries.push({ t: time[k], v: s.altitude[k] });
+            }
+        } else {
+            act.eleSeries = [];
+        }
+        // distSer: [{t, d, spd}] con d=cm acum, spd=m/s
+        // Calculamos spd desde pace (s/km) si está, o por diff finitas de distance.
+        var distArr = Array.isArray(s.distance) ? s.distance : null;
+        var paceArr = Array.isArray(s.pace)     ? s.pace     : null;
+        if (distArr) {
+            act.distSer = [];
+            for (var m = 0; m < time.length; m++) {
+                if (distArr[m] == null) continue;
+                var spd = 0;
+                if (paceArr && paceArr[m] != null && paceArr[m] > 0) {
+                    // pace en s/km → spd en m/s
+                    spd = 1000 / paceArr[m];
+                } else if (m > 0 && distArr[m-1] != null) {
+                    var dd = distArr[m] - distArr[m-1];
+                    var dt = time[m] - time[m-1];
+                    if (dt > 0) spd = dd / dt;
+                }
+                act.distSer.push({ t: time[m], d: Math.round(distArr[m] * 100), spd: spd });
+            }
+        } else {
+            act.distSer = [];
+        }
+        // laps: shape {n, paceS, avgHr} desde splits {km, durationSec, avgHr, elevGainM}
+        if (Array.isArray(streamsObj.splits)) {
+            act.laps = streamsObj.splits.map(function(sp) {
+                return {
+                    n:      sp.km,
+                    paceS:  sp.durationSec || 0,
+                    avgHr:  sp.avgHr || null
+                };
+            });
+        } else {
+            act.laps = [];
+        }
+        // csvBlocks: aplazado a FASE 6 (Strava no exporta bloques estructurados)
+        act.csvBlocks = act.csvBlocks || [];
     }
 
     async function deleteActivityFromIDB(id) {
@@ -23092,6 +23286,8 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
                 currentUser = null;
                 APP_KEY_OVERRIDE = null;
+                // FASE 5.4: limpiar cache de streams al cerrar sesión
+                try { _streamsCache = {}; } catch(_) {}
                 showLoginScreen();
                 // Recargar para limpiar estado en memoria (activities, planes, etc.)
                 setTimeout(() => location.reload(), 100);
