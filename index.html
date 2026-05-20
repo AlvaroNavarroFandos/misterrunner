@@ -4866,7 +4866,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                        + FASE 4.1: construir zipIndex con referencias entry-by-entry
                        para tracks y fotos. Una sola pasada del ZIP. */
                     var csvEntry = null;
-                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0 };
+                    /* FASE 4.5.1: photosRefsInCsv = referencias en columna Media del CSV
+                       (suma de mediaFilenames.length sobre rows). Se rellena tras
+                       parseStravaCSV. Independiente de counts.photos (físicos del ZIP)
+                       para no romper display pre-import. Ver DEC-4.4.c-11 y v16. */
+                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0, photosRefsInCsv: 0 };
                     /* FASE 4.1: maps de indexación para uso en FASE 4.2/4.3/4.4.
                        tracksByFilenameBase: '1234567890.fit.gz' o '...gpx' → entry.
                        photosByBasename:     'UUID.jpg' (lowercase) → entry.
@@ -4952,6 +4956,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         }
                     };
 
+                    /* FASE 4.5.1 (DEC-4.4.c-11): persistir referencias del CSV en
+                       counts.photosRefsInCsv ANTES del log. Blindado en su propio
+                       try para no depender del éxito del log diagnóstico. Es la
+                       fuente del denominador honesto photosDone/photosTotal y
+                       sustituye a counts.photos (físicos del ZIP) para imp.photosTotal. */
+                    try {
+                        var rowsArrRefs = (parsed && parsed.rows) ? parsed.rows : [];
+                        var refsSum = 0;
+                        for (var rri = 0; rri < rowsArrRefs.length; rri++) {
+                            var rrr = rowsArrRefs[rri];
+                            if (rrr && rrr.mediaFilenames && rrr.mediaFilenames.length > 0) {
+                                refsSum += rrr.mediaFilenames.length;
+                            }
+                        }
+                        counts.photosRefsInCsv = refsSum;
+                    } catch (refsErr) {
+                        console.warn('[MR][StravaImport][FASE 4.5.1] cómputo photosRefsInCsv falló (fallback=0):', refsErr);
+                        counts.photosRefsInCsv = 0;
+                    }
+
                     /* FASE 4.1: log diagnóstico para validar indexación en preview.
                        Muestra tamaños y conteos derivados para verificación visual. */
                     try {
@@ -5001,7 +5025,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         visAnRenderError('No hay archivo cargado. Vuelve atrás y selecciona uno.');
                         return;
                     }
-                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0 };
+                    var counts = { fit: 0, gpx: 0, tcx: 0, photos: 0, photosRefsInCsv: 0 };
                     if (kind === 'fit') counts.fit = 1;
                     else if (kind === 'gpx') counts.gpx = 1;
 
@@ -5362,8 +5386,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     /* State global del import (sustituye al antiguo `sim`).
                        Expuesto en namespace para depuración desde DevTools. */
                     var rows = analysis.parsed.rows;
-                    var photosTotal = (analysis.counts && typeof analysis.counts.photos === 'number')
-                        ? analysis.counts.photos
+                    /* FASE 4.5.1 (DEC-4.4.c-11): photosTotal = referencias del CSV
+                       (counts.photosRefsInCsv), NO físicos del ZIP (counts.photos).
+                       Así el ratio photosDone/photosTotal del log final es honesto
+                       (158/159 en test 4.4.c, en lugar del cosmético 158/207). */
+                    var photosTotal = (analysis.counts && typeof analysis.counts.photosRefsInCsv === 'number')
+                        ? analysis.counts.photosRefsInCsv
                         : 0;
                     var imp = {
                         userId: userId,
