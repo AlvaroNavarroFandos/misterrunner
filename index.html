@@ -17849,7 +17849,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Shape memoria (auditado: cards 2/3 lo esperan así):
     //   act.hrSeries  = [{t, v}]       — t=seg, v=bpm
     //   act.cadSeries = [{t, v}]       — t=seg, v=rpm (card 3 lo dobla a spm)
-    //   act.eleSeries = [{t, v}]       — t=seg, v=metros
+    //   act.eleSeries = [num, num, ...]  — array PLANO de metros (NO {t,v})
     //   act.distSer   = [{t, d, spd}]  — t=seg, d=cm acum, spd=m/s
     //   act.laps      = [{n, paceS, avgHr}] — n=km, paceS=tiempo del km
     //
@@ -17921,11 +17921,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } else {
             act.cadSeries = [];
         }
-        // eleSeries: [{t, v}] con v=metros
+        // [FASE 5.4.1] eleSeries: array PLANO de números (metros), NO [{t,v}].
+        // OJO: el render de card 1 (drawElevationProfile + stats D+/D-/Máx/Mín/Media)
+        // hace Math.max(...eleArr), eleArr[i]-eleArr[i-1] y reduce((a,b)=>a+b)
+        // esperando números directos. Coherente con single-import (L10387, L10528)
+        // que ya hace eleSeries.push(parseFloat(eleVal)).
         if (Array.isArray(s.altitude)) {
             act.eleSeries = [];
             for (var k = 0; k < time.length; k++) {
-                if (s.altitude[k] != null) act.eleSeries.push({ t: time[k], v: s.altitude[k] });
+                if (s.altitude[k] != null) act.eleSeries.push(s.altitude[k]);
             }
         } else {
             act.eleSeries = [];
