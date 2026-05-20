@@ -7381,10 +7381,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         loadStrengthPlanOnBoot();
         loadRehabPlanOnBoot();
 
-        // Async: load activities from IndexedDB then re-render
-        loadActivitiesFromIDB().then(saved => {
-            if(saved && saved.length > 0) {
-                activities = saved;
+        // Async: load activities from IndexedDB then fusión con BD bulk
+        // (FASE 5.2) y re-render. Estrategia: IDB es fuente para
+        // single-imports; Supabase es fuente para bulk-imports. Fusión
+        // por externalId — sin colisiones en la práctica (single no
+        // tiene externalId), pero formalizado por seguridad.
+        loadActivitiesFromIDB().then(async (saved) => {
+            activities = (saved && saved.length > 0) ? saved : [];
+            // FASE 5.2: hidratar bulk-imported desde Supabase
+            try {
+                var bdActs = await loadActivitiesFromSupabase();
+                if (bdActs && bdActs.length > 0) {
+                    var localExtIds = new Set(
+                        activities.map(function(a){ return a.externalId; }).filter(Boolean)
+                    );
+                    var newFromBd = bdActs.filter(function(a){
+                        return !localExtIds.has(a.externalId);
+                    });
+                    activities = activities.concat(newFromBd);
+                    console.log('[MR][FASE 5.2] hidratado: '+activities.length+' total ('+(saved?saved.length:0)+' IDB + '+newFromBd.length+' BD bulk)');
+                }
+            } catch(e) {
+                console.warn('[MR][FASE 5.2] hidratación BD falló:', e);
+            }
+            if (activities.length > 0) {
                 renderActivities();
                 renderHome();
             }
@@ -17602,6 +17622,84 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 req.onerror = () => resolve([]);
             });
         } catch(e) { return []; }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // FASE 5.2 — Hidratación de activities[] desde Supabase
+    // ══════════════════════════════════════════════════════════════
+    // Hidrata el array `activities[]` con filas bulk-importadas desde
+    // public.activities (Supabase). Estrategia: FUSIÓN con IDB por
+    // `externalId` (Strava activity ID). Las single-imports IDB nunca
+    // tienen externalId, las bulk-imports siempre sí → en la práctica
+    // unión sin colisiones, pero formalizado por si en futuro un single
+    // importa desde API Strava con activity_id.
+    //
+    // Alcance 5.2: SOLO campos mínimos para que la tarjeta resumen
+    // (Biblioteca) muestre las 290 activities. Resto de campos (series,
+    // outfit, polyline decodificada, fotos, etc.) se mapean en 5.3+
+    // cuando se toque cada tarjeta del visor.
+    //
+    // Metadatos añadidos al objeto act:
+    //   - _source: 'bulk' (para distinguir de single-imports IDB)
+    //   - _dbActivityId: UUID de BD (para SELECTs posteriores en 5.3+)
+    //   - _polyline: polyline_encoded de BD (para mini-mapa en 5.3+)
+    //
+    // Campos NULL en BD → se dejan como undefined en `act` (el render
+    // ya tiene guardas `> 0 ? ... : '—'` para distKm/durationSec/avgHr).
+
+    function _mapDbRowToAct(row) {
+        // dateStr: extraer "YYYY-MM-DD" del ISO start_date
+        // Ej: "2026-05-12T15:51:20.000Z" → "2026-05-12"
+        var dateStr = null;
+        if (row.start_date) {
+            try {
+                dateStr = String(row.start_date).slice(0, 10);
+                // Defensa: si no parece fecha, fallback null
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) dateStr = null;
+            } catch(_) { dateStr = null; }
+        }
+        return {
+            id:             row.id,                                    // UUID de BD
+            externalId:     row.external_id || null,                   // Strava activity ID
+            name:           row.name || null,
+            dateStr:        dateStr,
+            distKm:         (row.dist_km != null)      ? Number(row.dist_km)      : 0,
+            durationSec:    (row.duration_sec != null) ? Number(row.duration_sec) : 0,
+            avgHr:          (row.avg_hr != null)       ? Number(row.avg_hr)       : 0,
+            type:           row.workout_type || 'easy',                // default si NULL
+            shoeName:       row.shoes_name || '',
+            // Metadatos para FASE 5.3+
+            _source:        'bulk',
+            _dbActivityId:  row.id,
+            _polyline:      row.polyline_encoded || null,
+        };
+    }
+
+    async function loadActivitiesFromSupabase() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return [];
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return [];
+            // FASE 5.2: SELECT mínimo (solo columnas necesarias para tarjeta resumen)
+            // Ampliará en 5.3+ a medida que cada tarjeta requiera más columnas.
+            var qRes = await sb
+                .from('activities')
+                .select('id, external_id, name, start_date, dist_km, duration_sec, avg_hr, workout_type, shoes_name, polyline_encoded')
+                .eq('user_id', uid)
+                .order('start_date', { ascending: false });
+            if (qRes && qRes.error) {
+                console.warn('[MR][FASE 5.2] loadActivitiesFromSupabase error:', qRes.error);
+                return [];
+            }
+            var rows = (qRes && qRes.data) ? qRes.data : [];
+            return rows.map(_mapDbRowToAct);
+        } catch(e) {
+            console.warn('[MR][FASE 5.2] loadActivitiesFromSupabase exception:', e);
+            return [];
+        }
     }
 
     async function deleteActivityFromIDB(id) {
