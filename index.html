@@ -17647,6 +17647,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Campos NULL en BD → se dejan como undefined en `act` (el render
     // ya tiene guardas `> 0 ? ... : '—'` para distKm/durationSec/avgHr).
 
+    // Google polyline algorithm 5 decoder. Devuelve array de {lat, lon}.
+    // Ver: developers.google.com/maps/documentation/utilities/polylinealgorithm
+    // FASE 5.3.2: usado por _mapDbRowToAct para hidratar act.records desde
+    // polyline_encoded de BD. Defensivo: cualquier error → array vacío.
+    function _decodePolyline(encoded) {
+        if (!encoded || typeof encoded !== 'string') return [];
+        try {
+            var points = [], index = 0, lat = 0, lng = 0, len = encoded.length;
+            while (index < len) {
+                var b, shift = 0, result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                var dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+                lat += dlat;
+                shift = 0; result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                var dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+                lng += dlng;
+                points.push({ lat: lat / 1e5, lon: lng / 1e5 });
+            }
+            return points;
+        } catch(e) {
+            console.warn('[MR][FASE 5.3.2] _decodePolyline exception:', e);
+            return [];
+        }
+    }
+
     function _mapDbRowToAct(row) {
         // dateStr: extraer "YYYY-MM-DD" del ISO start_date
         // Ej: "2026-05-12T15:51:20.000Z" → "2026-05-12"
@@ -17658,20 +17692,51 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) dateStr = null;
             } catch(_) { dateStr = null; }
         }
+        // FASE 5.3.1: inferir 'type' desde dist_km cuando workout_type es NULL.
+        // Reglas: ≥21km=long, 5-21km=easy, <5km=recovery.
+        // Si workout_type viene relleno (post-edit usuario), respetar.
+        var distKmNum = (row.dist_km != null) ? Number(row.dist_km) : 0;
+        var inferredType;
+        if (distKmNum >= 21)      inferredType = 'long';
+        else if (distKmNum >= 5)  inferredType = 'easy';
+        else                      inferredType = 'recovery';
+        var finalType = row.workout_type || inferredType;
+        // FASE 5.3.2: decodificar polyline → records[{lat,lon}] para drawTrack.
+        // 36 de 290 activities (.tcx.gz no parseado) no tienen polyline → records=[].
+        // El render ya tolera records vacío (mostrará canvas oscuro sin polyline).
+        var records = _decodePolyline(row.polyline_encoded);
         return {
             id:             row.id,                                    // UUID de BD
             externalId:     row.external_id || null,                   // Strava activity ID
             name:           row.name || null,
             dateStr:        dateStr,
-            distKm:         (row.dist_km != null)      ? Number(row.dist_km)      : 0,
-            durationSec:    (row.duration_sec != null) ? Number(row.duration_sec) : 0,
-            avgHr:          (row.avg_hr != null)       ? Number(row.avg_hr)       : 0,
-            type:           row.workout_type || 'easy',                // default si NULL
+            distKm:         distKmNum,
+            durationSec:    (row.duration_sec != null)    ? Number(row.duration_sec)    : 0,
+            avgHr:          (row.avg_hr != null)          ? Number(row.avg_hr)          : 0,
+            maxHr:          (row.max_hr != null)          ? Number(row.max_hr)          : 0,
+            ascentM:        (row.ascent_m != null)        ? Number(row.ascent_m)        : 0,
+            descentM:       (row.descent_m != null)       ? Number(row.descent_m)       : null,
+            calories:       (row.calories != null)        ? Number(row.calories)        : 0,
+            avgCadence:     (row.avg_cadence != null)     ? Number(row.avg_cadence)     : null,
+            maxCadence:     (row.max_cadence != null)     ? Number(row.max_cadence)     : null,
+            strideLen:      (row.stride_len_cm != null)   ? Number(row.stride_len_cm)   : 0,
+            balanceL:       (row.balance_left != null)    ? Number(row.balance_left)    : null,
+            avgTemp:        (row.avg_temp_c != null)      ? Number(row.avg_temp_c)      : null,
+            elevMin:        (row.ele_min != null)         ? Number(row.ele_min)         : null,
+            elevMax:        (row.ele_max != null)         ? Number(row.ele_max)         : null,
+            elapsedSec:     (row.elapsed_sec != null)     ? Number(row.elapsed_sec)     : null,
+            avgPaceSec:     (row.avg_pace_sec != null)    ? Number(row.avg_pace_sec)    : null,
+            type:           finalType,
             shoeName:       row.shoes_name || '',
-            // Metadatos para FASE 5.3+
+            notes:          row.notes || null,
+            raceName:       row.race_name || null,
+            // FASE 5.3.2: records hidratados desde polyline para mini-mapa + visor
+            records:        records,
+            // Metadatos para FASE 5.4+
             _source:        'bulk',
             _dbActivityId:  row.id,
             _polyline:      row.polyline_encoded || null,
+            _hasPolyline:   records.length > 0,
         };
     }
 
@@ -17685,9 +17750,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!uid) return [];
             // FASE 5.2: SELECT mínimo (solo columnas necesarias para tarjeta resumen)
             // Ampliará en 5.3+ a medida que cada tarjeta requiera más columnas.
+            // FASE 5.3.1: SELECT extendido con todos los campos para tarjeta resumen + tarjeta 1
+            // (cards 2/3 leen series desde bucket, no columnas BD; card 4 hace SELECT separado).
             var qRes = await sb
                 .from('activities')
-                .select('id, external_id, name, start_date, dist_km, duration_sec, avg_hr, workout_type, shoes_name, polyline_encoded')
+                .select('id, external_id, name, start_date, dist_km, duration_sec, elapsed_sec, avg_pace_sec, ' +
+                        'avg_hr, max_hr, ascent_m, descent_m, calories, avg_cadence, max_cadence, ' +
+                        'stride_len_cm, balance_left, avg_temp_c, ele_min, ele_max, ' +
+                        'workout_type, shoes_name, notes, race_name, polyline_encoded')
                 .eq('user_id', uid)
                 .order('start_date', { ascending: false });
             if (qRes && qRes.error) {
