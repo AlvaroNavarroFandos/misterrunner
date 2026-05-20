@@ -2900,6 +2900,65 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     line-height: 1.2;
                 }
 
+                /* FASE 4.5.2: líneas inline de incidencias y reparados.
+                   Se inyectan condicionalmente en visSumRender. Heredan
+                   tipografía/colores del sistema (vars --surface, --border,
+                   --ts, --tw) para coherencia con el resto del modal. */
+                #view-import-strava #vis-sum-incidents,
+                #view-import-strava #vis-sum-repairs {
+                    margin: -16px 0 18px;
+                }
+                #view-import-strava .vis-sum-incidents-details {
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 10px;
+                    padding: 0;
+                    overflow: hidden;
+                }
+                #view-import-strava .vis-sum-incidents-summary {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: var(--tw);
+                    padding: 10px 12px;
+                    cursor: pointer;
+                    list-style: none;
+                    user-select: none;
+                }
+                #view-import-strava .vis-sum-incidents-summary::-webkit-details-marker { display: none; }
+                #view-import-strava .vis-sum-incidents-summary::before {
+                    content: '▸';
+                    display: inline-block;
+                    margin-right: 6px;
+                    font-size: 10px;
+                    color: var(--ts);
+                    transition: transform .15s ease;
+                }
+                #view-import-strava details[open] .vis-sum-incidents-summary::before {
+                    transform: rotate(90deg);
+                }
+                #view-import-strava .vis-sum-incidents-list {
+                    border-top: 1px solid var(--border);
+                    padding: 8px 12px 10px;
+                    font-size: 11px;
+                    color: var(--ts);
+                    line-height: 1.5;
+                    max-height: 180px;
+                    overflow-y: auto;
+                    font-variant-numeric: tabular-nums;
+                }
+                #view-import-strava .vis-sum-incidents-item {
+                    word-break: break-word;
+                }
+                #view-import-strava #vis-sum-repairs {
+                    font-size: 12px;
+                    color: var(--ts);
+                    padding: 8px 12px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: 10px;
+                    opacity: 0.85;
+                }
+
                 /* --- Listas de PRs / hitos (mismo molde) --- */
                 #view-import-strava .vis-sum-list {
                     background: var(--surface);
@@ -3479,6 +3538,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     <div class="vis-sum-stat-label">Periodo cubierto</div>
                                 </div>
                             </div>
+                            <!-- FASE 4.5.2: contenedores para incidencias y reparados.
+                                 Por defecto display:none; visSumRender los rellena y
+                                 muestra si hay imp.errors.length>0 o reparados>0.
+                                 En caso 4.4.c limpio (errors=0, reparados=0) quedan
+                                 invisibles → modal con el mismo look minimalista. -->
+                            <div id="vis-sum-incidents" style="display:none;"></div>
+                            <div id="vis-sum-repairs"   style="display:none;"></div>
                         </div>
 
                         <!-- ─── Sección 3: PRs desbloqueados (4 mock) ─── -->
@@ -6100,6 +6166,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             } else {
                                 /* INSERT exitoso */
                                 imp.inserted++;
+                                /* FASE 4.5.2: flag explícito de "insertada en ESTE run"
+                                   (no en algún import previo). Lo usa visSumRender para
+                                   calcular km y rango de fechas reales del modal de
+                                   cierre filtrando rows.filter(r => r._insertedInThisRun).
+                                   Independiente de _dbActivityId para ser inmunes a
+                                   cambios futuros donde la rama skipped podría
+                                   "rellenar" _dbActivityId con existing.id. */
+                                row._insertedInThisRun = true;
                                 /* upData.id está disponible para FASE 4.3 (streams)
                                    y FASE 4.4 (fotos). Lo guardamos en el row para
                                    que esté accesible. */
@@ -6529,51 +6603,208 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     return m1 + ' – ' + m2;
                 }
 
-                /* ── visSumRender(analysis) ──────────────────────────────────
-                   Función principal. Pinta los 4 stat cards y delega en
-                   visSumRenderList para PRs/hitos. Tolerante a analysis
-                   ausente: si parsed.totalKm o parsed.dateRange no están
-                   disponibles (modo dev N=1 con stub, o ausencia de
-                   analysis), cae al mock canónico anterior. */
-                function visSumRender(analysis) {
-                    var runs = (analysis && analysis.parsed && typeof analysis.parsed.runs === 'number')
-                        ? analysis.parsed.runs
-                        : 290;
-                    var photos = (analysis && analysis.counts && typeof analysis.counts.photos === 'number')
-                        ? analysis.counts.photos
-                        : 207;
+                /* ── visSumRender(analysis, imp) ─────────────────────────────
+                   FASE 4.5.2 (DEC-4.4.c-10): pinta el modal de cierre con
+                   cifras REALES del pipeline (imp.*), no del análisis pre-import
+                   (analysis.*). Cálculo de km y rango de fechas en cliente
+                   filtrando imp.rows por _insertedInThisRun (flag asignado
+                   junto a imp.inserted++, edit FASE 4.5.2 anterior).
 
-                    /* Stats reales del análisis (formato locale-ES) */
+                   Mapeo:
+                     runs    ← imp.inserted        (no analysis.parsed.runs)
+                     photos  ← imp.photosDone      (no analysis.counts.photos)
+                     km      ← Σ row.distanceKm    de rows con _insertedInThisRun
+                     period  ← MIN/MAX row.date    de rows con _insertedInThisRun
+
+                   Tolerancia: si imp no está disponible (dev mode N=1 sin
+                   pipeline real, o llamada anticipada), cae a analysis.parsed.*
+                   (comportamiento previo a 4.5.2). Si tampoco, mock canónico.
+
+                   Errores y reparados (líneas inline bajo el grid):
+                     - imp.errors.length > 0     → línea ⚠️ con detalle expandible
+                     - imp.streamsRepaired + imp.photosRepaired > 0 → línea 🔧 info
+                   Si ambos = 0 (caso 4.4.c limpio): nada renderizado, modal limpio. */
+                function visSumRender(analysis, imp) {
                     var setText = function(id, value) {
                         var el = document.getElementById(id);
                         if (el) el.textContent = value;
                     };
-                    setText('vis-sum-stat-runs',   visAnFormatInt(runs));
+
+                    /* ── Stat 1: carreras importadas ───────────────────────── */
+                    var runs;
+                    if (imp && typeof imp.inserted === 'number') {
+                        runs = imp.inserted;
+                    } else if (analysis && analysis.parsed && typeof analysis.parsed.runs === 'number') {
+                        runs = analysis.parsed.runs;
+                    } else {
+                        runs = 290;  /* fallback mock */
+                    }
+                    setText('vis-sum-stat-runs', visAnFormatInt(runs));
+
+                    /* ── Stat 2: fotos subidas ─────────────────────────────── */
+                    var photos;
+                    if (imp && typeof imp.photosDone === 'number') {
+                        photos = imp.photosDone;
+                    } else if (analysis && analysis.counts && typeof analysis.counts.photosRefsInCsv === 'number') {
+                        photos = analysis.counts.photosRefsInCsv;
+                    } else {
+                        photos = 207;  /* fallback mock */
+                    }
                     setText('vis-sum-stat-photos', visAnFormatInt(photos));
 
-                    /* Total km y período: conectados a parseStravaCSV real
-                       (FASE 3.1). Fallback al mock anterior para modo dev
-                       (que no rellena estos campos) y analysis ausente. */
-                    var totalKm = (analysis && analysis.parsed && typeof analysis.parsed.totalKm === 'number')
-                        ? analysis.parsed.totalKm
-                        : null;
-                    var dr = (analysis && analysis.parsed && analysis.parsed.dateRange) || null;
+                    /* ── Stat 3: kilómetros totales ────────────────────────── */
+                    /* Cálculo en cliente desde rows insertadas en ESTE run.
+                       Rama skipped no aporta km porque _insertedInThisRun no
+                       se asigna ahí. Caso re-import idempotente (skipped=290,
+                       inserted=0) → totalKmThisRun=0 → mostrar "—".            */
+                    var totalKmThisRun = null;
+                    var insertedRows = [];
+                    if (imp && Array.isArray(imp.rows)) {
+                        try {
+                            insertedRows = imp.rows.filter(function(r) {
+                                return r && r._insertedInThisRun === true;
+                            });
+                            totalKmThisRun = 0;
+                            for (var ki = 0; ki < insertedRows.length; ki++) {
+                                var dk = insertedRows[ki].distanceKm;
+                                if (typeof dk === 'number' && !isNaN(dk)) {
+                                    totalKmThisRun += dk;
+                                }
+                            }
+                        } catch (kmErr) {
+                            console.warn('[MR][StravaImport][FASE 4.5.2] km cálculo cliente falló:', kmErr);
+                            totalKmThisRun = null;
+                        }
+                    }
 
                     var kmText;
-                    if (typeof totalKm === 'number' && totalKm > 0) {
-                        kmText = visAnFormatInt(Math.round(totalKm)) + ' km';
+                    if (typeof totalKmThisRun === 'number' && totalKmThisRun > 0) {
+                        kmText = visAnFormatInt(Math.round(totalKmThisRun)) + ' km';
+                    } else if (typeof totalKmThisRun === 'number' && totalKmThisRun === 0
+                               && imp && typeof imp.inserted === 'number') {
+                        /* Pipeline real corrido, 0 inserted → "—" en vez de "0 km" */
+                        kmText = '—';
+                    } else if (analysis && analysis.parsed && typeof analysis.parsed.totalKm === 'number'
+                               && analysis.parsed.totalKm > 0) {
+                        /* Fallback: dev mode o llamada sin imp */
+                        kmText = visAnFormatInt(Math.round(analysis.parsed.totalKm)) + ' km';
                     } else {
-                        kmText = '2.847 km';
+                        kmText = '2.847 km';  /* fallback mock final */
                     }
                     setText('vis-sum-stat-km', kmText);
 
+                    /* ── Stat 4: período cubierto ──────────────────────────── */
+                    /* Cálculo en cliente: MIN/MAX de row.date sobre insertedRows.
+                       _visFormatPeriodEs ya maneja "mismo mes" (devuelve solo uno). */
+                    var periodFromIso = null;
+                    var periodToIso = null;
+                    if (insertedRows.length > 0) {
+                        try {
+                            for (var pi = 0; pi < insertedRows.length; pi++) {
+                                var d = insertedRows[pi].date;
+                                if (!d) continue;
+                                if (periodFromIso === null || d < periodFromIso) periodFromIso = d;
+                                if (periodToIso   === null || d > periodToIso)   periodToIso   = d;
+                            }
+                        } catch (perErr) {
+                            console.warn('[MR][StravaImport][FASE 4.5.2] período cálculo cliente falló:', perErr);
+                            periodFromIso = null;
+                            periodToIso = null;
+                        }
+                    }
+
                     var periodText;
-                    if (dr && dr.from && dr.to) {
-                        periodText = _visFormatPeriodEs(dr.from, dr.to);
+                    if (periodFromIso && periodToIso) {
+                        periodText = _visFormatPeriodEs(periodFromIso, periodToIso) || '—';
+                    } else if (imp && typeof imp.inserted === 'number' && imp.inserted === 0) {
+                        /* Pipeline real corrido, 0 inserted → "—" honesto */
+                        periodText = '—';
+                    } else if (analysis && analysis.parsed && analysis.parsed.dateRange
+                               && analysis.parsed.dateRange.from && analysis.parsed.dateRange.to) {
+                        /* Fallback: dev mode o llamada sin imp */
+                        periodText = _visFormatPeriodEs(
+                            analysis.parsed.dateRange.from,
+                            analysis.parsed.dateRange.to
+                        ) || 'Abr 2024 – May 2026';
                     } else {
-                        periodText = 'Abr 2024 – May 2026';
+                        periodText = 'Abr 2024 – May 2026';  /* fallback mock final */
                     }
                     setText('vis-sum-stat-period', periodText);
+
+                    /* ── Líneas inline: incidencias y reparados ─────────────── */
+                    /* Solo se renderizan si imp existe y hay algo que mostrar.
+                       Contenedores existen en HTML estático (vis-sum-incidents,
+                       vis-sum-repairs); aquí controlamos contenido y visibilidad. */
+                    var incEl = document.getElementById('vis-sum-incidents');
+                    var repEl = document.getElementById('vis-sum-repairs');
+
+                    if (incEl) {
+                        incEl.innerHTML = '';
+                        incEl.style.display = 'none';
+                        if (imp && Array.isArray(imp.errors) && imp.errors.length > 0) {
+                            /* Agrupar por stage para resumen humano */
+                            var byStage = {};
+                            for (var ei = 0; ei < imp.errors.length; ei++) {
+                                var st = imp.errors[ei].stage || 'unknown';
+                                byStage[st] = (byStage[st] || 0) + 1;
+                            }
+                            var stageKeys = Object.keys(byStage);
+                            var totalIncidents = imp.errors.length;
+                            var stageSummary = stageKeys.map(function(k) {
+                                return byStage[k] + '× ' + k;
+                            }).join(', ');
+
+                            var details = document.createElement('details');
+                            details.className = 'vis-sum-incidents-details';
+                            var summary = document.createElement('summary');
+                            summary.className = 'vis-sum-incidents-summary';
+                            summary.textContent = '⚠️ ' + totalIncidents
+                                + (totalIncidents === 1 ? ' incidencia' : ' incidencias')
+                                + ' · ' + stageSummary;
+                            details.appendChild(summary);
+
+                            var list = document.createElement('div');
+                            list.className = 'vis-sum-incidents-list';
+                            for (var di = 0; di < imp.errors.length && di < 20; di++) {
+                                var err = imp.errors[di];
+                                var item = document.createElement('div');
+                                item.className = 'vis-sum-incidents-item';
+                                var fn = err.filenameBase || err.externalId || '(sin ref)';
+                                var msg = err.message || '';
+                                if (msg.length > 120) msg = msg.slice(0, 117) + '…';
+                                item.textContent = '· [' + (err.stage || 'unknown') + '] '
+                                    + fn + (msg ? ' — ' + msg : '');
+                                list.appendChild(item);
+                            }
+                            if (imp.errors.length > 20) {
+                                var more = document.createElement('div');
+                                more.className = 'vis-sum-incidents-item';
+                                more.style.opacity = '0.7';
+                                more.textContent = '· … y ' + (imp.errors.length - 20) + ' más';
+                                list.appendChild(more);
+                            }
+                            details.appendChild(list);
+                            incEl.appendChild(details);
+                            incEl.style.display = '';
+                        }
+                    }
+
+                    if (repEl) {
+                        repEl.innerHTML = '';
+                        repEl.style.display = 'none';
+                        if (imp) {
+                            var sR = (typeof imp.streamsRepaired === 'number') ? imp.streamsRepaired : 0;
+                            var pR = (typeof imp.photosRepaired  === 'number') ? imp.photosRepaired  : 0;
+                            var totalRep = sR + pR;
+                            if (totalRep > 0) {
+                                var parts = [];
+                                if (sR > 0) parts.push(sR + (sR === 1 ? ' track' : ' tracks'));
+                                if (pR > 0) parts.push(pR + (pR === 1 ? ' actividad con fotos' : ' actividades con fotos'));
+                                repEl.textContent = '🔧 Reparados de un import anterior: ' + parts.join(' + ');
+                                repEl.style.display = '';
+                            }
+                        }
+                    }
 
                     /* Listas de PRs y hitos */
                     visSumRenderList('vis-sum-prs-list',        VIS_SUM_PRS_MOCK,        'pr');
@@ -6663,7 +6894,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                Sin el reset, al volver a summary tras un segundo
                                import en la misma sesión las secciones aparecerían
                                sin animación. */
-                            visSumRender(window._MR_StravaImport.analysis);
+                            /* FASE 4.5.2: pasar imp para que visSumRender pinte
+                               cifras reales del pipeline (no del análisis pre-import). */
+                            visSumRender(
+                                window._MR_StravaImport.analysis,
+                                window._MR_StravaImport.imp
+                            );
                             var stagEls = document.querySelectorAll(
                                 '#vis-summary .vis-sum-stagger'
                             );
