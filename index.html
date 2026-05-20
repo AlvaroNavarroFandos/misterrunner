@@ -5801,6 +5801,274 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                         );
                                     }
                                 }
+
+                                /* ---------------------------------------------
+                                   FASE 4.4.b - Reparador de fotos en rama skipped.
+                                   Analogo a 4.3.b (Variante A: Reparador puro)
+                                   pero adaptado a la persistencia activity_photos
+                                   (N filas hijas) en lugar de streams_path (1 columna).
+                                   Detecta reparable por COUNT = 0 en activity_photos.
+                                   Idempotencia BD intacta: imp.skipped++ ya disparo
+                                   arriba en 4.3.b. La reparacion suma a un contador
+                                   separado imp.photosRepaired (por ROW, no por foto;
+                                   sub-dec 6.4). Las fotos fisicas suman a
+                                   imp.photosDone++ igual que en 4.4.a (sub-dec 6.1).
+
+                                   SELECT independiente del de 4.3.b (sub-dec 2.4):
+                                   aunque ambos consultan la misma activity, 4.3.b
+                                   puede no ejecutarse (sin streams) y el contrato
+                                   queda mas claro con queries separadas.
+
+                                   Entrada al bloque (sub-dec 2.3):
+                                     row.mediaFilenames.length > 0 && row.activityId.
+                                   No requiere parsed.streams (puede ser skipped sin
+                                   .fit pero con fotos pendientes).
+
+                                   Caveat blob residual (DEC-4.4-8, cerrada): en tests
+                                   manuales que borren solo la fila BD, el blob
+                                   permanece en bucket y upsert:false rechaza con
+                                   "already exists". Pre-condicion del Test 4.4.b.4:
+                                   borrar BD + blob (simetrico con Test 6 de 4.3.b).
+                                   En produccion (4.4.c) este caso no ocurre porque
+                                   el wipe es atomico via RPC + Edge Function.
+
+                                   Fix MIME (DEC-4.4-5.5, leccion 19): re-envolver
+                                   Blob con type forzado antes del upload. Mismo
+                                   workaround que en 4.4.a; sin el, fallaria
+                                   identico al primer intento del Test 4.4.a.
+
+                                   v14 'Proximo paso: FASE 4.4.b', DEC-4.4-1 a
+                                   DEC-4.4-7 + DEC-4.4-8. */
+                                if (row.mediaFilenames
+                                    && Array.isArray(row.mediaFilenames)
+                                    && row.mediaFilenames.length > 0
+                                    && row.activityId) {
+                                    try {
+                                        var selResPhotos = await sb
+                                            .from('activities')
+                                            .select('id')
+                                            .eq('user_id', imp.userId)
+                                            .eq('source', 'strava_bulk')
+                                            .eq('external_id', row.activityId)
+                                            .maybeSingle();
+
+                                        var existingPhotos    = selResPhotos && selResPhotos.data;
+                                        var selPhotosError    = selResPhotos && selResPhotos.error;
+
+                                        if (selPhotosError) {
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'photos-skipped-select',
+                                                message:      selPhotosError.message || String(selPhotosError)
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.4.b][photos-skipped-select-error] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' \u00b7 ' + (selPhotosError.message || selPhotosError)
+                                            );
+                                        } else if (existingPhotos === null) {
+                                            /* Sub-dec 2.2: caso teorico imposible
+                                               (ignoreDuplicates devolvio null pero
+                                               SELECT por external_id no halla fila).
+                                               Auditable. */
+                                            imp.errors.push({
+                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                externalId:   row.activityId,
+                                                stage:        'photos-skipped-but-not-found',
+                                                message:      'upsert ignoreDuplicates devolvio null pero SELECT por external_id no hallo fila (rama fotos)'
+                                            });
+                                            console.warn(
+                                                '[MR][StravaImport][FASE 4.4.b][photos-skipped-but-not-found] '
+                                                + (row.filenameBase || '(no-track)')
+                                                + ' \u00b7 externalId=' + row.activityId
+                                            );
+                                        } else {
+                                            /* COUNT en activity_photos. head:true =>
+                                               sin filas, solo el contador.
+                                               Sub-dec 2.1: si COUNT > 0, no-op total
+                                               (no verificamos bucket fisicamente,
+                                               idempotencia por BD). */
+                                            var countRes = await sb
+                                                .from('activity_photos')
+                                                .select('id', { count: 'exact', head: true })
+                                                .eq('activity_id', existingPhotos.id);
+
+                                            if (countRes.error) {
+                                                imp.errors.push({
+                                                    filenameBase: row.filenameBase || '(sin filename)',
+                                                    externalId:   row.activityId,
+                                                    stage:        'photos-skipped-count',
+                                                    message:      countRes.error.message || String(countRes.error)
+                                                });
+                                                console.warn(
+                                                    '[MR][StravaImport][FASE 4.4.b][photos-skipped-count-error] '
+                                                    + (row.filenameBase || '(no-track)')
+                                                    + ' \u00b7 ' + (countRes.error.message || countRes.error)
+                                                );
+                                            } else if (countRes.count > 0) {
+                                                /* No-op: ya hay fotos persistidas
+                                                   para esta activity. Idempotente. */
+                                            } else {
+                                                /* REPARACION: BD tiene la activity pero
+                                                   0 filas hijas en activity_photos.
+                                                   Bucle uploads + INSERT, identico a
+                                                   4.4.a pero con existingPhotos.id en
+                                                   lugar de upData.id. */
+                                                var photoRowsRepair = [];
+                                                for (var pir = 0; pir < row.mediaFilenames.length; pir++) {
+                                                    var basenameR = row.mediaFilenames[pir];
+                                                    var photoEntryR = analysis.zipIndex.photosByBasename.get(
+                                                        basenameR.toLowerCase()
+                                                    );
+                                                    if (!photoEntryR) {
+                                                        /* Mismo stage que 4.4.a:
+                                                           foto en CSV pero ausente
+                                                           del ZIP. Auditable. */
+                                                        imp.errors.push({
+                                                            filenameBase: row.filenameBase || '(sin filename)',
+                                                            externalId:   row.activityId,
+                                                            stage:        'photos-missing-in-zip',
+                                                            message:      'basename=' + basenameR + ' no encontrado en photosByBasename (rama reparador)'
+                                                        });
+                                                        console.warn(
+                                                            '[MR][StravaImport][FASE 4.4.b][photos-missing-in-zip] '
+                                                            + (row.filenameBase || '(no-track)')
+                                                            + ' \u00b7 ' + basenameR
+                                                        );
+                                                        continue;
+                                                    }
+                                                    try {
+                                                        var photoBlobR = await photoEntryR.async('blob');
+                                                        var lowerBaseR = basenameR.toLowerCase();
+                                                        var photoContentTypeR;
+                                                        if (lowerBaseR.endsWith('.jpg') || lowerBaseR.endsWith('.jpeg')) {
+                                                            photoContentTypeR = 'image/jpeg';
+                                                        } else if (lowerBaseR.endsWith('.png')) {
+                                                            photoContentTypeR = 'image/png';
+                                                        } else {
+                                                            photoContentTypeR = 'application/octet-stream';
+                                                            console.warn(
+                                                                '[MR][StravaImport][FASE 4.4.b][photos-unknown-ext] '
+                                                                + basenameR + ' \u2192 contentType=application/octet-stream'
+                                                            );
+                                                        }
+                                                        var photoPathR = imp.userId + '/' + existingPhotos.id + '/' + basenameR;
+
+                                                        /* FASE 4.4.b fix MIME (mismo
+                                                           workaround que 4.4.a, leccion 19). */
+                                                        photoBlobR = new Blob([photoBlobR], {
+                                                            type: photoContentTypeR
+                                                        });
+
+                                                        var { error: photoUpErrR } = await sb.storage
+                                                            .from('activity-photos')
+                                                            .upload(photoPathR, photoBlobR, {
+                                                                cacheControl: '3600',
+                                                                upsert: false,
+                                                                contentType: photoContentTypeR
+                                                            });
+
+                                                        if (photoUpErrR) {
+                                                            imp.errors.push({
+                                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                                externalId:   row.activityId,
+                                                                stage:        'photos-repair-upload',
+                                                                message:      'basename=' + basenameR + ' \u00b7 ' + (photoUpErrR.message || String(photoUpErrR))
+                                                            });
+                                                            console.warn(
+                                                                '[MR][StravaImport][FASE 4.4.b][photos-repair-upload-error] '
+                                                                + (row.filenameBase || '(no-track)')
+                                                                + ' \u00b7 ' + basenameR
+                                                                + ' \u00b7 ' + (photoUpErrR.message || photoUpErrR)
+                                                            );
+                                                        } else {
+                                                            photoRowsRepair.push({
+                                                                activity_id:       existingPhotos.id,
+                                                                user_id:           imp.userId,
+                                                                storage_path:      photoPathR,
+                                                                original_filename: basenameR,
+                                                                position:          pir
+                                                            });
+                                                            imp.photosDone++;
+                                                        }
+                                                    } catch (ePhotoR) {
+                                                        imp.errors.push({
+                                                            filenameBase: row.filenameBase || '(sin filename)',
+                                                            externalId:   row.activityId,
+                                                            stage:        'photos-repair-exception',
+                                                            message:      'basename=' + basenameR + ' \u00b7 ' + String(ePhotoR && ePhotoR.message || ePhotoR)
+                                                        });
+                                                        console.error(
+                                                            '[MR][StravaImport][FASE 4.4.b][photos-repair-exception] '
+                                                            + (row.filenameBase || '(no-track)') + ' \u00b7 ' + basenameR + ':',
+                                                            ePhotoR
+                                                        );
+                                                    }
+                                                }
+                                                /* INSERT a activity_photos solo si al
+                                                   menos una foto subio (sub-dec 1.5/1.6).
+                                                   Si todas fallaron, no se hace INSERT;
+                                                   el row queda sin filas hijas y volvera
+                                                   a ser detectable como COUNT=0 en futuros
+                                                   re-imports. photosRepaired++ por ROW
+                                                   reparado (sub-dec 6.4). */
+                                                if (photoRowsRepair.length > 0) {
+                                                    try {
+                                                        var { error: photoInsErrR } = await sb
+                                                            .from('activity_photos')
+                                                            .insert(photoRowsRepair);
+
+                                                        if (photoInsErrR) {
+                                                            imp.errors.push({
+                                                                filenameBase: row.filenameBase || '(sin filename)',
+                                                                externalId:   row.activityId,
+                                                                stage:        'photos-repair-row-insert',
+                                                                message:      photoInsErrR.message || String(photoInsErrR)
+                                                            });
+                                                            console.warn(
+                                                                '[MR][StravaImport][FASE 4.4.b][photos-repair-row-insert-error] '
+                                                                + (row.filenameBase || '(no-track)')
+                                                                + ' \u00b7 ' + (photoInsErrR.message || photoInsErrR)
+                                                            );
+                                                        } else {
+                                                            imp.photosRepaired++;
+                                                            console.info(
+                                                                '[MR][StravaImport][FASE 4.4.b] fotos reparadas \u00b7 '
+                                                                + (row.filenameBase || '(no-track)')
+                                                                + ' \u00b7 ' + photoRowsRepair.length + '/' + row.mediaFilenames.length
+                                                            );
+                                                        }
+                                                    } catch (ePhotoInsR) {
+                                                        imp.errors.push({
+                                                            filenameBase: row.filenameBase || '(sin filename)',
+                                                            externalId:   row.activityId,
+                                                            stage:        'photos-repair-row-insert-exception',
+                                                            message:      String(ePhotoInsR && ePhotoInsR.message || ePhotoInsR)
+                                                        });
+                                                        console.error(
+                                                            '[MR][StravaImport][FASE 4.4.b][photos-repair-row-insert-exception] '
+                                                            + (row.filenameBase || '(no-track)') + ':',
+                                                            ePhotoInsR
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (eRepairPhotos) {
+                                        imp.errors.push({
+                                            filenameBase: row.filenameBase || '(sin filename)',
+                                            externalId:   row.activityId,
+                                            stage:        'photos-repair-block-exception',
+                                            message:      String(eRepairPhotos && eRepairPhotos.message || eRepairPhotos)
+                                        });
+                                        console.error(
+                                            '[MR][StravaImport][FASE 4.4.b][photos-repair-block-exception] '
+                                            + (row.filenameBase || '(no-track)') + ':',
+                                            eRepairPhotos
+                                        );
+                                    }
+                                }
                             } else {
                                 /* INSERT exitoso */
                                 imp.inserted++;
