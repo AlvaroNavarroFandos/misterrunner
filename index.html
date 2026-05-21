@@ -148,7 +148,6 @@
     body.dark-mode .nb.active .ni svg.filled{fill:#1a1a1a;stroke:none;}
     body.dark-mode .nb.active .ps-circle{background:#1a1a1a;}
     body.dark-mode .nb.active .nl{color:#1a1a1a;}
-    body.dark-mode .shoe-imgcell{background:#e8e2d6 !important;border-left:1px solid rgba(255,255,255,.15) !important;}
     body.dark-mode .sheet{background:var(--surface);}
     body.dark-mode .sheet-body input,body.dark-mode .sheet-body select,body.dark-mode .sheet-body textarea{background:var(--card);color:var(--tw);border-color:var(--border);}
     body.dark-mode .sgrp{background:var(--card);}
@@ -1818,7 +1817,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <button onclick="openWarmupModal()" id="warmup-add-btn" style="background:var(--warm-lt);color:var(--warm);border:1px solid var(--warm-bd);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;">+ Añadir</button>
                     </div>
                     <div id="warmup-summary-runner" style="padding:10px 14px 12px;">
-                        <div style="font-size:11px;color:var(--tm);">Sin rutina configurada · pulsa + Añadir</div>
+                        <div style="font-size:11px;color:var(--ts);">Sin rutina configurada · pulsa + Añadir</div>
                     </div>
                 </div>
 
@@ -1832,7 +1831,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                     </div>
                     <div id="injuries-list" style="display:flex;flex-direction:column;gap:6px;padding:10px 14px 12px;">
-                        <div style="font-size:11px;color:var(--tm);">Sin lesiones registradas.</div>
+                        <div style="font-size:11px;color:var(--ts);">Sin lesiones registradas.</div>
                     </div>
                 </div>
 
@@ -9896,6 +9895,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                            : pct >= 65 ? '#c2410c'
                            : '#15803d';
 
+            // Título de la zapatilla: usa shoe.colorHex salvo cuando estamos en modo
+            // oscuro y el color elegido es muy oscuro (luminancia <0.18 → negro, gris
+            // muy oscuro, etc.). En ese caso el título sería ilegible contra --card
+            // casi negro, así que fallback a var(--tw) (texto claro).
+            let titleColor = shoe.colorHex || 'rgba(0,0,0,.80)';
+            if (document.body.classList.contains('dark-mode') && shoe.colorHex) {
+                const _h = shoe.colorHex.replace('#','');
+                if (_h.length === 6) {
+                    const _r = parseInt(_h.slice(0,2),16)/255;
+                    const _g = parseInt(_h.slice(2,4),16)/255;
+                    const _b = parseInt(_h.slice(4,6),16)/255;
+                    const _lin = c => c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4);
+                    const _L = 0.2126*_lin(_r) + 0.7152*_lin(_g) + 0.0722*_lin(_b);
+                    if (_L < 0.18) titleColor = 'var(--tw)';
+                }
+            }
+
             const row = document.createElement('div');
             row.setAttribute('data-shoe-id', shoe.id);
             row.style.cssText = 'display:flex;align-items:stretch;border-bottom:1px solid rgba(0,0,0,.10);overflow:hidden;height:72px;';
@@ -9904,7 +9920,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             info.style.cssText = 'flex:0 0 70%;min-width:0;padding:7px 12px;display:flex;flex-direction:column;justify-content:center;gap:4px;';
             info.innerHTML = `
                   <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <span style="font-size:12px;font-weight:700;color:${shoe.colorHex||'rgba(0,0,0,.80)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:85%;font-family:var(--f);text-shadow:0 0 6px ${shoe.colorHex||'transparent'}22;">${shoe.name}</span>
+                    <span style="font-size:12px;font-weight:700;color:${titleColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:85%;font-family:var(--f);text-shadow:0 0 6px ${shoe.colorHex||'transparent'}22;">${shoe.name}</span>
                     <button style="background:none;border:none;cursor:pointer;color:rgba(0,0,0,.38);font-size:13px;line-height:1;padding:0 0 0 6px;flex-shrink:0;">✕</button>
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
@@ -9917,7 +9933,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             info.querySelector('button').addEventListener('click', () => deleteShoe(shoe.id));
 
             const imgCell = document.createElement('label');
-            imgCell.className = 'shoe-imgcell';
             imgCell.style.cssText = 'flex:0 0 30%;height:72px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;background:rgba(0,0,0,.08);border-left:1px solid rgba(0,0,0,.08);';
             if (shoe.img) {
                 const img = document.createElement('img');
@@ -24358,6 +24373,9 @@ function _applyDark(on, save) {
     if (track) track.style.background = on ? '#8f1a28' : '#e0e0e0';
     if (row) row.style.background = on ? 'var(--card)' : '#fff';
     if (save) localStorage.setItem(_uk('mr_dark_mode'), on ? '1' : '0');
+    // Re-renderiza zapatillas para reevaluar el color del título cuando el color
+    // elegido es muy oscuro (en dark-mode pasa a var(--tw) para legibilidad).
+    try { if (typeof renderShoes === 'function') renderShoes(); } catch(e) {}
 }
 
 /* ══════════════════════════════════════════════════════════════════
