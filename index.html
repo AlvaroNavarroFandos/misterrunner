@@ -11462,6 +11462,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + '</div>';
     }
 
+    // [FASE 5.7.1] Outfit completo PARA LA TARJETA DE BIBLIOTECA:
+    // camiseta + short + calcetines + zapatillas (con su shoeColor).
+    // - Si no hay outfit → solo zapatillas (cuando hay shoeColor).
+    // - Si no hay shoeColor → zapatillas en gris neutro tenue.
+    // - Compacto: gap reducido y alineado hacia arriba para que las cuatro
+    //   piezas quepan visibles en los 158px disponibles (170px - paddings).
+    function buildOutfitFull(act) {
+        const o = act.outfit;
+        const sc = act.shoeColor || null;
+        // Versión "zapatillas compactas" (mismo glyph que buildShoePair pero
+        // en columna por si queremos un día separar). Aquí mantengo par horizontal.
+        const shoePair = buildShoePair(sc);
+        if (!o) {
+            // Solo zapatillas centradas verticalmente
+            return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;width:100%;">'
+                + shoePair + '</div>';
+        }
+        return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;height:100%;width:100%;padding-top:2px;">'
+            + shirtSVG(o.shirtStyle, o.shirtColor1, o.shirtColor2, 30)
+            + shortsSVG(o.shortsColor, 24, 16)
+            + buildLowSockPair(o.socksColor)
+            + '<div style="margin-top:1px;">' + shoePair + '</div>'
+            + '</div>';
+    }
+
     // Short/low socks pair — two tiny socks, left foot pointing left, right foot pointing right
     function buildLowSockPair(color) {
         function lowSock(flip) {
@@ -11492,6 +11517,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</svg>';
         }
         return '<div style="display:flex;gap:1px;align-items:center;flex-shrink:0;">' + shoe(false) + shoe(true) + '</div>';
+    }
+
+    // [FASE 5.7.1] Badge "INDOOR" HTML overlay (no en canvas).
+    // Se muestra centrado, justo encima de la fecha del mapa (bottom:24px,
+    // por encima de los 8px+altura de la fecha).
+    // Mostrar cuando la activity NO tiene GPS válido:
+    //   - records vacío o todos los puntos en (0,0)
+    //   - act._hasPolyline === false (bulk)
+    function _libIndoorBadgeHTML(act) {
+        if (!act) return '';
+        // Detección: misma lógica que drawTrackForLibrary
+        var pts = (act.records || []).filter(function(r){
+            return Math.abs(r.lat) > 0.01 || Math.abs(r.lon) > 0.01;
+        });
+        if (pts.length >= 2) return '';
+        return '<div style="position:absolute;bottom:24px;left:0;right:0;text-align:center;">'
+            + '<span style="background:rgba(201,168,76,.18);border:1px solid rgba(201,168,76,.4);border-radius:4px;padding:1px 6px;font-size:8px;font-weight:700;color:#C9A84C;letter-spacing:1px;font-family:var(--f);">INDOOR</span>'
+            + '</div>';
     }
 
     // [FASE 5.7] Badge mini-cámara dorada esquina sup. dcha del mapa.
@@ -12039,18 +12082,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="position:relative;width:140px;background:#0a0f1c;flex-shrink:0;">
                         <canvas id="${cId}" width="280" height="340" style="width:100%;height:100%;display:block;"></canvas>
                         ${_libPhotoBadgeHTML(act)}
+                        ${_libIndoorBadgeHTML(act)}
                         <div style="position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:9px;color:#C9A84C;font-weight:600;letter-spacing:1.5px;text-shadow:0 1px 4px rgba(0,0,0,.85);font-family:var(--f);">${df.toUpperCase()}</div>
                     </div>
                     <!-- ░░░ COLUMNA CENTRAL: DATOS ░░░ -->
                     <div style="flex:1;padding:10px 8px 10px 12px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
-                        <!-- Fila 1: título + nota -->
+                        <!-- Fila 1: título · iconito tipo · RPE · nota -->
                         <div>
-                            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;">
-                                <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;letter-spacing:-.2px;font-family:var(--f);">${act.name || '—'}${_libTypeIconHTML(act)}</div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;letter-spacing:-.2px;font-family:var(--f);">${act.name || '—'}${_libTypeIconHTML(act)}</div>
+                                ${act.rpe ? buildRpeBadge(act.rpe) : ''}
                                 ${act.nota!=null ? (() => {
                                     const n=act.nota;
                                     const cn=n>=80?'#4CAF50':n>=60?'#FFC107':n>=40?'#FF9500':'#F44336';
-                                    return '<div style="width:24px;height:24px;border-radius:50%;background:'+cn+';display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font-size:10px;font-weight:800;color:#0d1520;font-family:var(--f);">'+n+'</span></div>';
+                                    return '<div style="width:22px;height:22px;border-radius:50%;background:'+cn+';display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font-size:10px;font-weight:800;color:#0d1520;font-family:var(--f);">'+n+'</span></div>';
                                 })() : ''}
                             </div>
                             <!-- Pill clara con km -->
@@ -12065,15 +12110,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <div style="flex:1;"><div style="font-weight:700;color:#fff;letter-spacing:-.2px;font-family:var(--f);">${paceStr(act.distKm, act.durationSec)}</div><div style="font-size:8px;color:#C9A84C;letter-spacing:.5px;text-transform:uppercase;opacity:.7;font-family:var(--f);">Ritmo</div></div>
                             <div style="flex:1;"><div style="font-weight:700;color:#fff;letter-spacing:-.2px;font-family:var(--f);">${act.avgHr > 0 ? act.avgHr : '—'}</div><div style="font-size:8px;color:#C9A84C;letter-spacing:.5px;text-transform:uppercase;opacity:.7;font-family:var(--f);">FC media</div></div>
                         </div>
-                        <!-- Fila 3: RPE + zapatillas, sin border-top -->
-                        <div style="display:flex;align-items:center;gap:5px;padding-top:4px;">
-                            ${act.rpe ? buildRpeBadge(act.rpe) : ''}
-                            <span style="font-size:9px;color:rgba(255,255,255,.5);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--f);">${act.shoeName || ''}</span>
+                        <!-- Fila 3: SOLO nombre zapatillas (RPE ya está arriba) -->
+                        <div style="padding-top:4px;">
+                            <span style="font-size:10px;color:rgba(255,255,255,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-family:var(--f);">${act.shoeName || ''}</span>
                         </div>
                     </div>
                     <!-- ░░░ COLUMNA DERECHA: OUTFIT (sin marco) ░░░ -->
-                    <div style="width:38px;display:flex;flex-direction:column;align-items:center;justify-content:space-evenly;padding:6px 4px 6px 0;flex-shrink:0;">
-                        ${act.outfit ? buildOutfitTop(act.outfit) : buildShoePair(act.shoeColor)}
+                    <div style="width:38px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:4px 4px 4px 0;flex-shrink:0;">
+                        ${buildOutfitFull(act)}
                     </div>
                 </div>`;
 
@@ -12200,7 +12244,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             requestAnimationFrame(() => {
                 const c = document.getElementById(cId);
-                if (c) drawTrackForLibrary(c, act.records);
+                if (c) drawTrackForLibrary(c, act.records, act.shoeColor || null);
             });
         });
 
@@ -12355,19 +12399,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // [FASE 5.7] Versión de drawTrack para la biblioteca: pinta fondo de
-    // mapa (calles oscuras) y el track GPS verde luminoso con bordes en los
-    // puntos de inicio/fin. Para activities sin GPS: solo fondo + treadmill.
-    // El track y los puntos se pintan en el callback de _drawLibMapBg para
-    // que aparezcan ENCIMA del fondo, no debajo ni con parpadeo.
-    function drawTrackForLibrary(canvas, records) {
+    // mapa (calles oscuras) y el track GPS con el color de las zapatillas
+    // (o azul por defecto). Para activities sin GPS: solo fondo + treadmill
+    // sin badge (el badge "INDOOR" se pinta en HTML overlay encima del canvas).
+    // [FASE 5.7.1] Track usa shoeColor cuando disponible (sin halo neón:
+    // contrasta peor con el fondo y queda como verde fluo demasiado fuerte).
+    // Fallback azul Blue 400 (#378ADD) consistente con la tarjeta 1 del visor.
+    function drawTrackForLibrary(canvas, records, shoeColor) {
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
         // Filtrar puntos GPS válidos
         const pts = (records || []).filter(r => Math.abs(r.lat) > 0.01 || Math.abs(r.lon) > 0.01);
         if (pts.length < 2) {
-            // Indoor: fondo + treadmill placeholder ENCIMA (mantiene el badge)
+            // Indoor: fondo + treadmill ENCIMA (sin badge canvas, va en HTML)
             _drawLibMapBg(canvas, function() {
-                _drawIndoorPlaceholder(canvas, true);
+                _drawIndoorPlaceholder(canvas, false);
             });
             return;
         }
@@ -12385,20 +12431,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             x: offX + (r.lon - minLon) * scale,
             y: H - (offY + (r.lat - minLat) * scale)
         }));
+        // Color del track: shoe color, o azul Blue 400 por defecto
+        const trackColor = shoeColor || '#378ADD';
         _drawLibMapBg(canvas, function() {
-            // Trazado verde luminoso con halo suave para destacar sobre el fondo
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
-            // Halo
-            ctx.strokeStyle = 'rgba(0, 255, 136, 0.22)';
-            ctx.lineWidth = 5;
+            // Sombra negra fina debajo para legibilidad sobre el fondo de calles
+            ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+            ctx.lineWidth = 4;
             ctx.beginPath();
             ctx.moveTo(xy[0].x, xy[0].y);
             for (let i = 1; i < xy.length; i++) ctx.lineTo(xy[i].x, xy[i].y);
             ctx.stroke();
             // Track principal
-            ctx.strokeStyle = '#00ff88';
-            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = trackColor;
+            ctx.lineWidth = 2.4;
             ctx.beginPath();
             ctx.moveTo(xy[0].x, xy[0].y);
             for (let i = 1; i < xy.length; i++) ctx.lineTo(xy[i].x, xy[i].y);
