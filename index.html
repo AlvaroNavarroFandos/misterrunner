@@ -13106,13 +13106,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Si activity bulk y streams no cargados aún: mostrar spinner, esperar streams,
     // hidratar act.hrSeries/cadSeries/etc, y entonces llamar al render original.
     // Si single-import o ya cargado: render directo, sin retraso.
+    // FASE 5.6 — extendido para cargar signed URLs de fotos en paralelo con
+    // los streams (mismo spinner, sin doble UX). Si solo hay fotos pendientes
+    // (streams ya en cache pero photos no), también muestra spinner para no
+    // pegar un parpadeo cuando las URLs llegan post-render.
     async function openActivityDetail(act) {
-        var isBulkPendingLoad = act && act._source === 'bulk'
+        var isBulkPendingStreams = act && act._source === 'bulk'
             && act._dbActivityId
             && (!act.hrSeries || act.hrSeries.length === 0)
             && (!act.distSer  || act.distSer.length  === 0);
+        var isBulkPendingPhotos = act && act._source === 'bulk'
+            && act._dbActivityId
+            && Array.isArray(act._dbPhotos) && act._dbPhotos.length > 0
+            && (!Array.isArray(act._photoUrls) || act._photoUrls.length === 0);
 
-        if (isBulkPendingLoad) {
+        if (isBulkPendingStreams || isBulkPendingPhotos) {
             // Mostrar overlay de loading inmediato
             var loadOv = document.getElementById('act-detail-overlay');
             if (loadOv) loadOv.remove();
@@ -13124,11 +13132,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '<div class="det-loading-text">Cargando actividad…</div>'
                 + '</div>';
             document.body.appendChild(loadOv);
-            // Esperar streams (1-2s primera vez, instantáneo si cache hit)
-            var streamsObj = await loadStreamsForActivity(act._dbActivityId);
-            if (streamsObj) {
-                _mapStreamsToActFields(act, streamsObj);
+            // Esperar streams + fotos en paralelo (1-2s primera vez, instantáneo si cache hit)
+            var tasks = [];
+            if (isBulkPendingStreams) {
+                tasks.push(loadStreamsForActivity(act._dbActivityId).then(function(streamsObj){
+                    if (streamsObj) _mapStreamsToActFields(act, streamsObj);
+                }));
             }
+            if (isBulkPendingPhotos) {
+                var photoPaths = act._dbPhotos.map(function(p){ return p.path; });
+                tasks.push(loadPhotoUrlsForActivity(act._dbActivityId, photoPaths).then(function(urls){
+                    if (Array.isArray(urls)) act._photoUrls = urls;
+                }));
+            }
+            try { await Promise.all(tasks); } catch(_){}
             // Eliminar el overlay loading antes de re-construir todo el visor
             if (loadOv && loadOv.parentNode) loadOv.parentNode.removeChild(loadOv);
         }
@@ -13173,9 +13190,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // photo card added after all cards
 
         // Dots
+        // [FASE 5.6] El dot de la photo card se muestra si:
+        //   - act.photoB64 (single import con foto local), o
+        //   - act._photoUrls.length > 0 (bulk con fotos hidratadas)
+        // Independientemente de cuántas fotos haya: la photo card es UNA sola
+        // tarjeta en el swipe horizontal; la galería interna gestiona N fotos
+        // con sus propios dots pequeños dentro.
+        var _hasPhotoCard = !!(act.photoB64 || (Array.isArray(act._photoUrls) && act._photoUrls.length > 0));
         const dotsDiv = document.createElement('div');
         dotsDiv.style.cssText = 'display:flex;justify-content:center;gap:7px;padding:10px 0 5px;flex-shrink:0;';
-        dotsDiv.innerHTML = '<div class="det-dot active" data-idx="0"></div><div class="det-dot" data-idx="1"></div><div class="det-dot" data-idx="2"></div>'+(act.evalScores?'<div class="det-dot" data-idx="3"></div>':'')+(act.photoB64?'<div class="det-dot" data-idx="'+(act.evalScores?4:3)+'" style="background:rgba(196,136,30,.6);"></div>':'');
+        dotsDiv.innerHTML = '<div class="det-dot active" data-idx="0"></div><div class="det-dot" data-idx="1"></div><div class="det-dot" data-idx="2"></div>'+(act.evalScores?'<div class="det-dot" data-idx="3"></div>':'')+(_hasPhotoCard?'<div class="det-dot" data-idx="'+(act.evalScores?4:3)+'" style="background:rgba(196,136,30,.6);"></div>':'');
         ov.appendChild(dotsDiv);
 
         // ══ CARD 1: MAP + STATS + LAPS ═══════════════════════════
@@ -14141,23 +14165,118 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // ── Photo card (last card, swipe to see) ─────────────────
-        if(act.photoB64){
-            const cPh=document.createElement('div');
-            cPh.className='det-card';
-            cPh.style.cssText='position:relative;overflow:hidden;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;';
-            const phImg=document.createElement('img');
-            phImg.src=act.photoB64;
-            phImg.style.cssText='width:100%;flex:1;object-fit:cover;';
-            cPh.appendChild(phImg);
-            const phLbl=document.createElement('div');
-            phLbl.style.cssText='padding:8px;text-align:center;font-size:10px;color:rgba(255,255,255,.4);flex-shrink:0;';
-            phLbl.textContent='Foto de la actividad';
+        // [FASE 5.6] Soporta dos fuentes:
+        //   - act.photoB64       (single import, foto en base64)
+        //   - act._photoUrls[]   (bulk, signed URLs de activity-photos)
+        // Con N>1 fotos: galería interna swipeable + dots pequeños abajo.
+        // El pie es siempre "Foto de la actividad" (decisión Álvaro).
+        var _photoSources = [];
+        if (Array.isArray(act._photoUrls) && act._photoUrls.length > 0) {
+            _photoSources = act._photoUrls.slice();
+        } else if (act.photoB64) {
+            _photoSources = [act.photoB64];
+        }
+        if (_photoSources.length > 0) {
+            const cPh = document.createElement('div');
+            cPh.className = 'det-card';
+            cPh.style.cssText = 'position:relative;overflow:hidden;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+            // Track interna para galería (1 img si solo hay 1; N imgs si hay más)
+            const phTrack = document.createElement('div');
+            phTrack.style.cssText = 'position:relative;flex:1;width:100%;overflow:hidden;display:flex;';
+            const phInner = document.createElement('div');
+            phInner.style.cssText = 'display:flex;width:'+(_photoSources.length*100)+'%;height:100%;transition:transform .3s cubic-bezier(.25,.46,.45,.94);';
+            _photoSources.forEach(function(src){
+                var slide = document.createElement('div');
+                slide.style.cssText = 'width:'+(100/_photoSources.length)+'%;height:100%;display:flex;align-items:center;justify-content:center;background:#000;';
+                var img = document.createElement('img');
+                img.src = src;
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+                slide.appendChild(img);
+                phInner.appendChild(slide);
+            });
+            phTrack.appendChild(phInner);
+            cPh.appendChild(phTrack);
+            // Dots pequeños dentro de la card (solo si hay 2+ fotos)
+            var phDots = null;
+            if (_photoSources.length > 1) {
+                phDots = document.createElement('div');
+                phDots.style.cssText = 'display:flex;justify-content:center;gap:5px;padding:6px 0 2px;flex-shrink:0;';
+                _photoSources.forEach(function(_, i){
+                    var d = document.createElement('div');
+                    d.style.cssText = 'width:5px;height:5px;border-radius:50%;background:'+(i===0?'rgba(255,255,255,.85)':'rgba(255,255,255,.25)')+';transition:background .2s;';
+                    d.dataset.phIdx = String(i);
+                    phDots.appendChild(d);
+                });
+                cPh.appendChild(phDots);
+            }
+            const phLbl = document.createElement('div');
+            phLbl.style.cssText = 'padding:8px;text-align:center;font-size:10px;color:rgba(255,255,255,.4);flex-shrink:0;';
+            phLbl.textContent = 'Foto de la actividad';
             cPh.appendChild(phLbl);
             track.appendChild(cPh);
+
+            // ── Swipe interno de la galería (solo si hay 2+ fotos) ───
+            // OJO: tiene que stopPropagation para que NO dispare también el
+            // swipe horizontal de las cards grandes (que está sobre `wrap`).
+            if (_photoSources.length > 1) {
+                var phCur = 0;
+                var phN = _photoSources.length;
+                function _phGoTo(idx) {
+                    phCur = Math.max(0, Math.min(phN - 1, idx));
+                    phInner.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
+                    phInner.style.transform = 'translateX('+(-phCur * (100/phN))+'%)';
+                    if (phDots) {
+                        var dotsArr = phDots.querySelectorAll('div');
+                        dotsArr.forEach(function(dt, i){
+                            dt.style.background = (i === phCur) ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.25)';
+                        });
+                    }
+                }
+                var phTx = 0, phTy = 0, phDx = 0, phDy = 0, phDrag = false, phDir = null;
+                phTrack.addEventListener('touchstart', function(e){
+                    phTx = e.touches[0].clientX; phTy = e.touches[0].clientY;
+                    phDx = 0; phDy = 0; phDrag = true; phDir = null;
+                    phInner.style.transition = 'none';
+                }, { passive: true });
+                phTrack.addEventListener('touchmove', function(e){
+                    if (!phDrag) return;
+                    phDx = e.touches[0].clientX - phTx;
+                    phDy = e.touches[0].clientY - phTy;
+                    if (!phDir) phDir = Math.abs(phDx) > Math.abs(phDy) ? 'h' : 'v';
+                    if (phDir === 'h') {
+                        // Parar propagación: el swipe horizontal queda confinado
+                        // a la galería; el track de cards grandes no se mueve.
+                        e.stopPropagation();
+                        e.preventDefault();
+                        var bx = -phCur * phTrack.offsetWidth;
+                        phInner.style.transform = 'translateX('+(bx + phDx)+'px)';
+                    }
+                }, { passive: false });
+                phTrack.addEventListener('touchend', function(e){
+                    phDrag = false;
+                    if (phDir === 'h') {
+                        e.stopPropagation();
+                        phInner.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
+                        if (phDx < -40) _phGoTo(phCur + 1);
+                        else if (phDx > 40) _phGoTo(phCur - 1);
+                        else _phGoTo(phCur);
+                    }
+                    phDir = null;
+                });
+                // Click en dots pequeños
+                if (phDots) {
+                    phDots.querySelectorAll('div').forEach(function(dt){
+                        dt.addEventListener('click', function(){ _phGoTo(+dt.dataset.phIdx); });
+                    });
+                }
+            }
         }
 
         // ── Card swipe ───────────────────────────────────────────
-        let curCard=0; const nCards=(act.evalScores?4:3)+(act.photoB64?1:0);
+        // [FASE 5.6] nCards ya no depende solo de act.photoB64: si hay fotos
+        // bulk (_photoUrls), también suma 1 al total (es UNA card con galería
+        // interna, no N cards en el swipe horizontal grande).
+        let curCard=0; const nCards=(act.evalScores?4:3)+(_hasPhotoCard?1:0);
         const dots = dotsDiv.querySelectorAll('.det-dot');
         const allCards = track.querySelectorAll('.det-card');
         function goToCard(idx) {
@@ -17972,6 +18091,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (newFromBd.length > 0) {
                 activities = activities.concat(newFromBd);
             }
+            // [FASE 5.6] Hidratar metadatos de fotos en TODAS las bulk del array
+            // (no solo en newFromBd: en una sesión normal el array ya viene de IDB
+            // o de refresh previo, y queremos que todas las bulk del usuario tengan
+            // act._dbPhotos disponible para que abrir el detalle pueda lazy-load
+            // las signed URLs). Idempotente: re-llamar no duplica ni rompe nada.
+            try { await _hydratePhotosForBulkActs(); } catch(_){}
             // Re-render UI dependiente del array
             try { if (typeof renderActivities === 'function') renderActivities(); } catch(_){}
             try { if (typeof renderHome       === 'function') renderHome();       } catch(_){}
@@ -17986,6 +18111,72 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // desde el handler del botón "Volver" tras importación exitosa.
     window._MR_StravaImport = window._MR_StravaImport || {};
     window._MR_StravaImport.refreshActivities = _refreshActivitiesFromBD;
+
+    // ══════════════════════════════════════════════════════════════
+    // FASE 5.6 — Hidratación de metadatos de fotos (activity_photos)
+    // ══════════════════════════════════════════════════════════════
+    // Estrategia (decisión DEC-5.6-1): SELECT separado a activity_photos,
+    // NO JOIN inline al SELECT principal de activities. Razones:
+    //   1) Coherente con el comentario L17921 ya documentado.
+    //   2) Una activity puede tener 0..N fotos; un JOIN multiplicaría filas.
+    //   3) Tabla pequeña (158 filas para 154 activities en el dataset real),
+    //      una sola petición .order('activity_id, position') agrupa barato.
+    //
+    // Output: rellena act._dbPhotos = [{path, position}, ...] en TODAS las
+    // bulk activities que tengan filas. NO descarga las imágenes: solo
+    // metadatos. La descarga (signed URLs) se hace lazy al abrir el detalle.
+    //
+    // Idempotente: re-llamar sobrescribe act._dbPhotos con la misma data.
+    async function _hydratePhotosForBulkActs() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { hydrated: 0 };
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return { hydrated: 0 };
+            var qRes = await sb
+                .from('activity_photos')
+                .select('activity_id, storage_path, position')
+                .eq('user_id', uid)
+                .order('activity_id', { ascending: true })
+                .order('position',    { ascending: true });
+            if (qRes && qRes.error) {
+                console.warn('[MR][FASE 5.6] _hydratePhotosForBulkActs error:', qRes.error);
+                return { hydrated: 0, error: qRes.error };
+            }
+            var rows = (qRes && qRes.data) ? qRes.data : [];
+            // Agrupar por activity_id
+            var byAct = {};
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                if (!r.activity_id || !r.storage_path) continue;
+                if (!byAct[r.activity_id]) byAct[r.activity_id] = [];
+                byAct[r.activity_id].push({
+                    path:     r.storage_path,
+                    position: (r.position != null) ? r.position : 0
+                });
+            }
+            // Asignar a cada bulk activity del array global
+            var hydrated = 0;
+            for (var j = 0; j < activities.length; j++) {
+                var a = activities[j];
+                if (!a || a._source !== 'bulk' || !a._dbActivityId) continue;
+                var photos = byAct[a._dbActivityId];
+                if (photos && photos.length > 0) {
+                    a._dbPhotos = photos;
+                    hydrated++;
+                }
+            }
+            console.log('[MR][FASE 5.6] hydratePhotos: '+rows.length+' filas · '+hydrated+' bulk con fotos');
+            return { hydrated: hydrated, rows: rows.length };
+        } catch(e) {
+            console.warn('[MR][FASE 5.6] _hydratePhotosForBulkActs exception:', e);
+            return { hydrated: 0, error: e };
+        }
+    }
+    // Exponer para tests y para uso desde otros módulos si hace falta
+    window._MR_StravaImport.hydratePhotos = _hydratePhotosForBulkActs;
 
     // ══════════════════════════════════════════════════════════════
     // FASE 5.4 — Lazy loading + cache en memoria de streams del bucket
@@ -18125,6 +18316,60 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // csvBlocks: aplazado a FASE 6 (Strava no exporta bloques estructurados)
         act.csvBlocks = act.csvBlocks || [];
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // FASE 5.6 — Lazy load + cache de signed URLs de fotos
+    // ══════════════════════════════════════════════════════════════
+    // Estrategia (paralela a loadStreamsForActivity):
+    //   - Cache `_photoUrlsCache[activityId] = [url1, url2, ...]`
+    //   - Vida: la sesión actual. Se limpia en SIGNED_OUT.
+    //   - TTL signed URL: 3600s (1h). Decisión Álvaro (DEC-5.6-2).
+    //     Cubre cualquier sesión normal; al cerrar y reabrir el detalle
+    //     se regeneran URLs frescas.
+    //
+    // Bucket: `activity-photos` (privado). Format de path en BD:
+    //   `{uid}/{activity_uuid}/{basename}.{ext}` (auditado v18 §"Schema").
+    //
+    // Devuelve array de strings (URLs) o [] si nada que cargar / fallo.
+    // En caso de fallo parcial (una URL falla, otras OK) devuelve solo
+    // las exitosas, NO bloquea el render del resto.
+    var _photoUrlsCache = {};
+    var _PHOTO_SIGNED_URL_TTL = 3600;
+
+    async function loadPhotoUrlsForActivity(activityId, paths) {
+        if (!activityId) return [];
+        if (!Array.isArray(paths) || paths.length === 0) return [];
+        if (_photoUrlsCache[activityId]) {
+            return _photoUrlsCache[activityId];
+        }
+        try {
+            var sb = window._sbClient;
+            if (!sb) return [];
+            // Generar signed URLs en paralelo (Promise.all)
+            var results = await Promise.all(paths.map(function(p) {
+                return sb.storage
+                    .from('activity-photos')
+                    .createSignedUrl(p, _PHOTO_SIGNED_URL_TTL)
+                    .then(function(res) {
+                        if (res && res.error) {
+                            console.warn('[MR][FASE 5.6] signed URL falló para '+p+':', res.error);
+                            return null;
+                        }
+                        return (res && res.data && res.data.signedUrl) ? res.data.signedUrl : null;
+                    })
+                    .catch(function(err) {
+                        console.warn('[MR][FASE 5.6] signed URL exception para '+p+':', err);
+                        return null;
+                    });
+            }));
+            var urls = results.filter(function(u){ return !!u; });
+            _photoUrlsCache[activityId] = urls;
+            return urls;
+        } catch(e) {
+            console.warn('[MR][FASE 5.6] loadPhotoUrlsForActivity exception:', e);
+            return [];
+        }
     }
 
     async function deleteActivityFromIDB(id) {
@@ -23447,6 +23692,8 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
                 APP_KEY_OVERRIDE = null;
                 // FASE 5.4: limpiar cache de streams al cerrar sesión
                 try { _streamsCache = {}; } catch(_) {}
+                // FASE 5.6: limpiar cache de signed URLs de fotos al cerrar sesión
+                try { _photoUrlsCache = {}; } catch(_) {}
                 showLoginScreen();
                 // Recargar para limpiar estado en memoria (activities, planes, etc.)
                 setTimeout(() => location.reload(), 100);
