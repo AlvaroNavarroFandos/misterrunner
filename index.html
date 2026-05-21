@@ -11361,6 +11361,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function pickShortsColor(hex) { outfitState.shortsColor = hex; renderColorSwatches('shorts-color-swatches', hex, 'pickShortsColor', SHORTS_COLORS); renderOutfitPreview(); }
     function pickSocksColor(hex)  { outfitState.socksColor  = hex; renderColorSwatches('socks-color-swatches',  hex, 'pickSocksColor',  SOCKS_COLORS);  renderOutfitPreview(); }
 
+    // [FASE 5.7.4-b] Stroke adaptativo para prendas del outfit.
+    // Sobre fondo negro (card biblioteca), las prendas oscuras (negro,
+    // marino muy oscuro, granate muy oscuro) se hunden si su stroke es
+    // negro. Devuelve un stroke gris claro cuando la luminancia del color
+    // está por debajo de 0.22; en caso contrario, conserva el stroke
+    // negro semi-transparente original. Acepta cualquier hex (#rgb / #rrggbb).
+    function _outfitStroke(hex, defaultStroke) {
+        defaultStroke = defaultStroke || 'rgba(0,0,0,.82)';
+        if (!hex || typeof hex !== 'string') return defaultStroke;
+        var h = hex.trim().replace('#','');
+        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+        if (h.length !== 6 || /[^0-9a-f]/i.test(h)) return defaultStroke;
+        var r = parseInt(h.slice(0,2),16) / 255;
+        var g = parseInt(h.slice(2,4),16) / 255;
+        var b = parseInt(h.slice(4,6),16) / 255;
+        // Luminancia relativa Rec.709 (suficiente para nuestro caso, sin gamma)
+        var lum = 0.2126*r + 0.7152*g + 0.0722*b;
+        if (lum < 0.22) return 'rgba(180,180,180,.55)';
+        return defaultStroke;
+    }
+
     // ── T-SHIRT SVG — diagonal sleeves, flat round collar ──
     function shirtSVG(style, c1, c2, w=48, h=52) {
         const id = 'sh' + Math.random().toString(36).slice(2,7);
@@ -11398,16 +11419,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             <clipPath id="${id}c"><path d="${p}"/></clipPath>
           </defs>
           <g clip-path="url(#${id}c)"><rect x="0" y="0" width="100" height="104" fill="${fillAttr}"/></g>
-          <path d="${p}" fill="none" stroke="rgba(0,0,0,.82)" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="${p}" fill="none" stroke="${_outfitStroke(c1)}" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
         </svg>`;
     }
 
     // ── SHORTS SVG ──
     function shortsSVG(color, w=38, h=28) {
         // Width matches shirt waist (26–74 on 100 scale → 48 units centred)
+        // [FASE 5.7.4-b] stroke adaptativo para shorts oscuros
         return `<svg width="${w}" height="${h}" viewBox="0 0 100 74" xmlns="http://www.w3.org/2000/svg">
           <path d="M18,0 L82,0 L88,74 L56,74 L50,38 L44,74 L12,74 Z"
-            fill="${color}" stroke="rgba(0,0,0,.75)" stroke-width="5" stroke-linejoin="round"/>
+            fill="${color}" stroke="${_outfitStroke(color,'rgba(0,0,0,.75)')}" stroke-width="5" stroke-linejoin="round"/>
           <rect x="18" y="0" width="64" height="16" fill="rgba(255,255,255,.14)"/>
         </svg>`;
     }
@@ -11489,13 +11511,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // Short/low socks pair — two tiny socks, left foot pointing left, right foot pointing right
     function buildLowSockPair(color) {
+        // [FASE 5.7.4-b] stroke adaptativo para calcetines oscuros
+        var sk = _outfitStroke(color, 'rgba(0,0,0,.78)');
         function lowSock(flip) {
             var m = flip ? 'transform="scale(-1,1) translate(-30,0)"' : '';
             return '<svg width="13" height="11" viewBox="0 0 30 28" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;">'
                 + '<g ' + m + '>'
-                + '<rect x="6" y="0" width="14" height="16" rx="7" fill="' + color + '" stroke="rgba(0,0,0,.78)" stroke-width="3.5"/>'
+                + '<rect x="6" y="0" width="14" height="16" rx="7" fill="' + color + '" stroke="' + sk + '" stroke-width="3.5"/>'
                 + '<path d="M6,13 L6,20 Q6,28 16,28 L24,28 Q28,28 28,24 L28,19 Q28,15 24,15 L20,15 L20,13 Z"'
-                + ' fill="' + color + '" stroke="rgba(0,0,0,.78)" stroke-width="3.5" stroke-linejoin="round"/>'
+                + ' fill="' + color + '" stroke="' + sk + '" stroke-width="3.5" stroke-linejoin="round"/>'
                 + '</g></svg>';
         }
         // Left sock: foot points left (flip=true), right sock: foot points right (flip=false)
@@ -11508,10 +11532,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var opSole   = sc ? '.48' : '.2';
         var opBody   = sc ? '' : ' opacity=".3"';
         var opTongue = sc ? '.6' : '.18';
+        // [FASE 5.7.4-b] stroke adaptativo: si shoeColor es oscuro, perfila el
+        // body para que no se hunda sobre fondo negro. En otro caso, sin stroke
+        // (mantiene la estética actual de las zapatillas claras/coloridas).
+        var darkStroke = (sc && _outfitStroke(sc, null) === 'rgba(180,180,180,.55)')
+            ? ' stroke="rgba(180,180,180,.55)" stroke-width="2"'
+            : '';
         function shoe(flip) {
             return '<svg width="17" height="12" viewBox="0 0 56 38" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;' + (flip ? 'transform:scaleX(-1);' : '') + '">'
                 + '<ellipse cx="28" cy="34" rx="26" ry="4" fill="' + c + '" opacity="' + opSole + '"/>'
-                + '<path d="M4,28 Q2,18 8,14 L20,10 Q26,7 32,8 L50,12 Q54,13 54,17 L54,28 Z" fill="' + c + '"' + opBody + '/>'
+                + '<path d="M4,28 Q2,18 8,14 L20,10 Q26,7 32,8 L50,12 Q54,13 54,17 L54,28 Z" fill="' + c + '"' + opBody + darkStroke + '/>'
                 + '<path d="M20,10 Q24,4 30,5 L38,8 Q32,8 26,11 Z" fill="' + c + '" opacity="' + opTongue + '"/>'
                 + '<path d="M4,28 L54,28 Q56,28 56,30 L56,32 Q56,34 54,34 L4,34 Q2,34 2,32 L2,30 Q2,28 4,28 Z" fill="rgba(255,255,255,.28)"/>'
                 + '</svg>';
@@ -12077,9 +12107,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //  - Outfit completo sin marco
             //  - Icono cámara dorado si hay foto
             sliding.innerHTML = `
-                <div style="display:flex;height:170px;background:#15192a;border-radius:18px;overflow:hidden;">
-                    <!-- ░░░ COLUMNA IZQUIERDA: MAPA ░░░ -->
-                    <div style="position:relative;width:140px;background:#0a0f1c;flex-shrink:0;">
+                <div style="display:flex;height:170px;background:#000;border-radius:18px;overflow:hidden;">
+                    <!-- ░░░ COLUMNA IZQUIERDA: MAPA ░░░ [FASE 5.7.4-a] fondo negro puro coherente con vignette del track -->
+                    <div style="position:relative;width:140px;background:#000;flex-shrink:0;">
                         <canvas id="${cId}" width="280" height="340" style="width:100%;height:100%;display:block;"></canvas>
                         ${_libPhotoBadgeHTML(act)}
                         ${_libIndoorBadgeHTML(act)}
@@ -12368,7 +12398,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function _drawLibMapBg(canvas, onReady) {
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
-        ctx.fillStyle = '#0a0f1c';
+        // [FASE 5.7.4-a] fondo base negro puro coherente con la card
+        ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, W, H);
         _getLibMapBg(function(img) {
             if (img) {
@@ -12390,13 +12421,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [FASE 5.7.2] Vignette más agresiva: el centro queda nítido
                 // (calles bien visibles) y conforme va hacia los bordes la
                 // imagen se difumina a negro. Tres stops para una caída suave.
+                // [FASE 5.7.4-a] stop final ajustado a negro puro para fundir
+                // perfectamente con el bg #000 de la card.
                 const cx = W/2, cy = H/2;
                 const rInner = Math.min(W, H) * 0.18;
                 const rOuter = Math.hypot(W, H) * 0.62;
                 const grad = ctx.createRadialGradient(cx, cy, rInner, cx, cy, rOuter);
                 grad.addColorStop(0,   'rgba(0,0,0,0)');
                 grad.addColorStop(0.55,'rgba(0,0,0,0.45)');
-                grad.addColorStop(1,   'rgba(10,15,28,0.95)');
+                grad.addColorStop(1,   'rgba(0,0,0,1)');
                 ctx.fillStyle = grad;
                 ctx.fillRect(0, 0, W, H);
             }
