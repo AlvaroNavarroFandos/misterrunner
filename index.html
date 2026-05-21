@@ -7451,7 +7451,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ── BOOT APP ──────────────────────────────────────────────────
+    // [FASE 5.7.5] Guard idempotente contra doble-arranque.
+    // bootApp puede ser invocado desde múltiples caminos de auth (autoLogin,
+    // checkAutoLoginAsync, _onAuthSuccess, listeners de getSession, recovery
+    // handlers...) en paralelo durante el arranque. Sin guard, los logs y
+    // los efectos secundarios (renderActivities, IDB fetch, _refreshFromBD)
+    // se ejecutan dos veces, generando race conditions y trabajo duplicado.
+    // Estrategia: flag global que se setea al primer call y bloquea los
+    // siguientes. NO usamos try/finally para resetear porque el éxito de
+    // bootApp es permanente — una vez la app está arrancada, debe quedar así.
+    var _bootAppCalled = false;
     function bootApp() {
+        if (_bootAppCalled) {
+            console.log('[MR][bootApp] guard: ya arrancado, ignorando llamada duplicada');
+            return;
+        }
+        _bootAppCalled = true;
         const loaded = loadAppState();
         loadStrengthPlanOnBoot();
         loadRehabPlanOnBoot();
@@ -9340,6 +9355,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!window.confirm('¿Cerrar sesión?'))return;
         if(window._sbClient){window._sbClient.auth.signOut().catch(()=>{});}
         currentUser=null;APP_KEY_OVERRIDE=null;activePlan=null;activeStrengthPlan=null;activities=[];
+        // [FASE 5.7.5] Resetear guard de bootApp para permitir arranque limpio
+        // al hacer login con otra cuenta sin necesidad de recargar la página
+        _bootAppCalled = false;
         profileData={name:'',flag:'🏃',meta:'',watch:'',avatar:'',bio:'',dob:'',city:'',weight:'',height:'',sex:'H',vo2max:null,marcas:{'5k':'','10k':'','hm':'','m':''},hrMax:195,hrRest:50,weeksExp:0,weeksExpSavedAt:null,trainingDays:['L','M','J','V','D'],injuries:[]};
         try { window.profileData = profileData; } catch(_) {}
         // Don't clear IDB - each user's activities are tagged with _owner and will be filtered on load
@@ -34014,6 +34032,206 @@ window.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// [FASE 5.7.5] SMOKE TESTS E2E
+// ──────────────────────────────────────────────────────────────────────
+// Suite ligera de verificación accesible desde la consola del navegador:
+//
+//     __mrSmoke()            → ejecuta todos los tests
+//     __mrSmoke('boot')      → solo el grupo de boot
+//     __mrSmoke('dom')       → solo verificación DOM
+//
+// No requiere herramientas externas ni modifica estado de la app (todos
+// los tests son read-only o trabajan en sandboxes propios). Cada test
+// devuelve {name, ok, info} y la suite imprime resumen al final.
+//
+// Ejecutar después de que la app haya arrancado (post-login + bootApp).
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+    function _testBootGuard() {
+        // El guard idempotente debe impedir que bootApp se ejecute más de una
+        // vez. Como bootApp ya fue invocado durante el arranque, _bootAppCalled
+        // debe estar a true. Una invocación adicional debe imprimir el log
+        // de guard y NO ejecutar el cuerpo.
+        if (typeof _bootAppCalled === 'undefined') {
+            return { name:'boot.guard.flag', ok:false, info:'_bootAppCalled no definido' };
+        }
+        if (_bootAppCalled !== true) {
+            return { name:'boot.guard.flag', ok:false, info:'_bootAppCalled='+_bootAppCalled+' (esperado true)' };
+        }
+        // Capturar console.log temporalmente para verificar que el guard imprime
+        var capturedLogs = [];
+        var origLog = console.log;
+        console.log = function(){ capturedLogs.push(Array.prototype.slice.call(arguments).join(' ')); origLog.apply(console, arguments); };
+        try {
+            bootApp(); // debería disparar el guard
+            bootApp();
+        } finally {
+            console.log = origLog;
+        }
+        var guardHits = capturedLogs.filter(function(l){ return l.indexOf('[MR][bootApp] guard') >= 0; }).length;
+        return {
+            name: 'boot.guard.idempotent',
+            ok: guardHits === 2,
+            info: guardHits + ' guard hits (esperados 2)'
+        };
+    }
+
+    function _testDomCritical() {
+        // Elementos críticos que deben existir tras bootApp
+        var critical = ['app','nav','login-screen','search-name','acts-summary','filter-type','filter-date'];
+        var missing = critical.filter(function(id){ return !document.getElementById(id); });
+        return {
+            name: 'dom.critical',
+            ok: missing.length === 0,
+            info: missing.length === 0 ? 'todos presentes ('+critical.length+')' : 'faltan: '+missing.join(',')
+        };
+    }
+
+    function _testGlobalsCritical() {
+        // Funciones globales críticas (deben estar definidas como funciones)
+        var fns = ['bootApp','logoutUser','renderActivities','renderHome',
+                   'loadActivitiesFromIDB','_refreshActivitiesFromBD',
+                   'drawSparkline','drawElevationProfile','drawTrackForLibrary'];
+        var missing = fns.filter(function(n){
+            try { return typeof eval(n) !== 'function'; } catch(_) { return true; }
+        });
+        return {
+            name: 'globals.critical',
+            ok: missing.length === 0,
+            info: missing.length === 0 ? 'todas presentes ('+fns.length+')' : 'faltan: '+missing.join(',')
+        };
+    }
+
+    function _testActivitiesArray() {
+        // activities debe ser array (incluso vacío)
+        if (typeof activities === 'undefined') {
+            return { name:'state.activities', ok:false, info:'variable no definida' };
+        }
+        return {
+            name: 'state.activities',
+            ok: Array.isArray(activities),
+            info: 'array length='+(activities ? activities.length : 'n/a')
+        };
+    }
+
+    function _testUserKeyScoped() {
+        // Verificar que _uk() prefije con el usuario actual
+        if (typeof _uk !== 'function') {
+            return { name:'storage.userkey', ok:false, info:'_uk no es función' };
+        }
+        var k = _uk('mr_smoke_test_key');
+        var ok = (typeof k === 'string') && k.length > 0 && k.indexOf('mr_smoke_test_key') >= 0;
+        return { name:'storage.userkey', ok:ok, info:'k="'+k+'"' };
+    }
+
+    function _testZoomHeroCss() {
+        // Las clases CSS de animación zoom hero deben estar declaradas
+        var sheets = Array.from(document.styleSheets || []);
+        var found = { inClass:false, outClass:false, inKf:false, outKf:false };
+        for (var i=0;i<sheets.length;i++) {
+            try {
+                var rules = sheets[i].cssRules || [];
+                for (var j=0;j<rules.length;j++) {
+                    var r = rules[j];
+                    if (r.selectorText === '.mr-fx-hero-in') found.inClass = true;
+                    if (r.selectorText === '.mr-fx-hero-out') found.outClass = true;
+                    if (r.name === '_fxHeroIn') found.inKf = true;
+                    if (r.name === '_fxHeroOut') found.outKf = true;
+                }
+            } catch(_) {} // cross-origin
+        }
+        var allOk = found.inClass && found.outClass && found.inKf && found.outKf;
+        return {
+            name: 'css.zoomhero',
+            ok: allOk,
+            info: allOk ? 'in/out class+keyframes OK' : JSON.stringify(found)
+        };
+    }
+
+    function _testRendersDontCrash() {
+        // Llamar a los renderers principales no debe lanzar excepciones
+        var tried = [];
+        ['renderActivities','renderHome','updateExpBadge','updateNotifBtn','renderVO2maxCard']
+            .forEach(function(fn) {
+                try {
+                    if (typeof eval(fn) === 'function') {
+                        eval(fn+'()');
+                        tried.push(fn+':ok');
+                    } else {
+                        tried.push(fn+':missing');
+                    }
+                } catch(e) {
+                    tried.push(fn+':THROW('+e.message+')');
+                }
+            });
+        var failed = tried.filter(function(t){ return t.indexOf(':THROW') >= 0 || t.indexOf(':missing') >= 0; });
+        return {
+            name: 'renders.dontcrash',
+            ok: failed.length === 0,
+            info: failed.length === 0 ? 'todos OK' : failed.join(' ')
+        };
+    }
+
+    function _testNoLegacyBgInCanvas() {
+        // Verificación de regresión: el color #0f1828 NO debe aparecer en
+        // strings de fillStyle (paleta dark premium completa)
+        // Inspeccionamos las propias funciones drawSparkline / drawElevation
+        try {
+            var src1 = drawSparkline.toString();
+            var src2 = drawElevationProfile.toString();
+            var leaks = [];
+            if (src1.indexOf('#0f1828') >= 0) leaks.push('drawSparkline');
+            if (src2.indexOf('#0f1828') >= 0) leaks.push('drawElevationProfile');
+            return {
+                name: 'css.darkpremium.canvas',
+                ok: leaks.length === 0,
+                info: leaks.length === 0 ? 'sin restos legacy' : 'legacy en: '+leaks.join(',')
+            };
+        } catch(e) {
+            return { name:'css.darkpremium.canvas', ok:false, info:'error: '+e.message };
+        }
+    }
+
+    var GROUPS = {
+        boot:    [_testBootGuard],
+        dom:     [_testDomCritical, _testGlobalsCritical],
+        state:   [_testActivitiesArray, _testUserKeyScoped],
+        css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
+        renders: [_testRendersDontCrash]
+    };
+
+    window.__mrSmoke = function(group) {
+        var tests = group && GROUPS[group]
+            ? GROUPS[group]
+            : Object.keys(GROUPS).reduce(function(acc, g){ return acc.concat(GROUPS[g]); }, []);
+
+        console.log('%c[MR Smoke] arrancando '+tests.length+' tests...', 'color:#C9A84C;font-weight:700;');
+        var results = tests.map(function(t){
+            try { return t(); }
+            catch(e) { return { name:t.name||'?', ok:false, info:'EXCEPCIÓN: '+e.message }; }
+        });
+
+        var passed = results.filter(function(r){ return r.ok; }).length;
+        var failed = results.length - passed;
+        results.forEach(function(r){
+            var icon = r.ok ? '✅' : '❌';
+            var color = r.ok ? 'color:#4CAF50' : 'color:#FF5757;font-weight:700';
+            console.log('%c'+icon+' '+r.name+' — '+r.info, color);
+        });
+
+        var summaryStyle = failed === 0
+            ? 'color:#4CAF50;font-weight:700;font-size:13px;'
+            : 'color:#FF5757;font-weight:700;font-size:13px;';
+        console.log('%c[MR Smoke] '+passed+'/'+results.length+' OK'+(failed > 0 ? ' · '+failed+' FALLO(S)' : ''), summaryStyle);
+
+        return { passed:passed, failed:failed, total:results.length, results:results };
+    };
+
+    // Aviso solo en consola, sin auto-ejecutar
+    console.log('%c[MR] Smoke tests disponibles: __mrSmoke()', 'color:#C9A84C;font-style:italic;');
+})();
 </script>
 
 
