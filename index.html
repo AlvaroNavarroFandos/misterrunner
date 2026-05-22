@@ -12942,11 +12942,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             y: H - (offY + (r.lat - minLat) * scale)
         }));
         // [FASE 5.7.3 + v5 P.Biblioteca] Color del track:
-        //  - Si hay shoeColor → ese color (coherencia con outfit)
-        //  - Si no hay → en modo OSCURO #C9A84C dorado, en modo CLARO #8f1a28 crimson
-        //    (coherencia con los acentos premium de la tarjeta adaptativa).
+        //  - Si hay shoeColor con buen contraste sobre el fondo del mapa → ese color
+        //  - Si shoeColor tiene mal contraste (zapas negras en oscuro, blancas en claro)
+        //    o no hay shoeColor → fallback paleta (dorado en oscuro, crimson en claro)
         const _isDark = document.body.classList.contains('dark-mode');
-        const trackColor = shoeColor || (_isDark ? '#C9A84C' : '#8f1a28');
+        const _paletteColor = _isDark ? '#C9A84C' : '#8f1a28';
+        // Helper: ¿tiene el hex suficiente contraste con el fondo actual del mapa?
+        // Luminancia Rec.709. En oscuro fondo cercano a negro: requiere lum > 0.18.
+        // En claro fondo cercano a cream: requiere lum < 0.78.
+        function _shoeColorHasContrast(hex) {
+            if (!hex || typeof hex !== 'string') return false;
+            var h = hex.trim().replace('#','');
+            if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+            if (h.length !== 6 || /[^0-9a-f]/i.test(h)) return false;
+            var r = parseInt(h.slice(0,2),16) / 255;
+            var g = parseInt(h.slice(2,4),16) / 255;
+            var b = parseInt(h.slice(4,6),16) / 255;
+            var lum = 0.2126*r + 0.7152*g + 0.0722*b;
+            return _isDark ? (lum > 0.18) : (lum < 0.78);
+        }
+        const trackColor = (shoeColor && _shoeColorHasContrast(shoeColor))
+            ? shoeColor
+            : _paletteColor;
         _drawLibMapBg(canvas, function() {
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
