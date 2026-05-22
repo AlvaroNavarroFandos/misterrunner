@@ -20042,28 +20042,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const vo2 = profileData.vo2max;
         if(!vo2 || vo2 < 10) { card.style.display='none'; return; }
         card.style.display = '';
-        card.style.cssText = 'background:linear-gradient(135deg, #0a1929 0%, #142539 100%);border-radius:16px;overflow:hidden;';
+        // Card respeta paleta clara/oscura (var(--card) + border)
+        card.style.cssText = 'background:var(--card);border-radius:16px;border:1px solid var(--border);overflow:hidden;';
 
-        // Edad
-        let age = 30;
+        // Edad (solo si está definida en perfil)
+        let age = null;
         if(profileData.dob){
             const b=new Date(profileData.dob), now=new Date();
             age = now.getFullYear()-b.getFullYear();
             if(now.getMonth()<b.getMonth()||(now.getMonth()===b.getMonth()&&now.getDate()<b.getDate())) age--;
+            if(age < 5 || age > 120) age = null; // sanity check
         }
         const sex = profileData.sex || 'H';
-        const cat = getVO2maxCategory(vo2, age, sex);
+        // Para la categoría siempre necesitamos una edad: si no hay, usamos 30 como fallback técnico
+        // pero NO mostraremos cohorte/percentil para no engañar al usuario
+        const cat = getVO2maxCategory(vo2, age || 30, sex);
         const pct = cat.pct;
 
-        // Cohorte y top%
-        const sexLabel = sex === 'M' ? 'Mujeres' : 'Hombres';
-        const ageBracket = age <= 29 ? '20-29'
-                         : age <= 39 ? '30-39'
-                         : age <= 49 ? '40-49'
-                         : age <= 59 ? '50-59'
-                         : '60+';
-        const topPct = Math.max(1, 100 - pct);
-        const cohortLabel = sexLabel + ' ' + ageBracket;
+        // Cohorte y Top%: SOLO si hay edad real del perfil
+        let cohortBlock = '';
+        if (age !== null) {
+            const sexLabel = sex === 'M' ? 'Mujeres' : 'Hombres';
+            const ageBracket = age <= 29 ? '20-29'
+                             : age <= 39 ? '30-39'
+                             : age <= 49 ? '40-49'
+                             : age <= 59 ? '50-59'
+                             : '60+';
+            const topPct = Math.max(1, 100 - pct);
+            const cohortLabel = sexLabel + ' ' + ageBracket;
+            cohortBlock =
+                '<div style="text-align:right;flex-shrink:0;">' +
+                    '<div style="font-size:14px;font-weight:800;color:' + cat.color + ';line-height:1;">Top ' + topPct + '%</div>' +
+                    '<div style="font-size:9px;color:var(--tm);margin-top:3px;">' + cohortLabel + '</div>' +
+                '</div>';
+        }
 
         // Mapa de zonas para segmentos de la barra (6 segmentos)
         const zones = [
@@ -20074,51 +20086,46 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             {key:'Superior',  color:'#3b82f6'},
             {key:'Élite',     color:'#a855f7'},
         ];
-        // El segmento "activo" = el de la categoría actual
         const activeIdx = zones.findIndex(z => z.key === cat.label);
 
-        // Construcción de los 6 segmentos: los previos al activo en su color al 30% opacidad,
-        // el activo iluminado (full color + glow), los posteriores apagados
+        // Segmentos: previos en color al 45%, activo iluminado con glow, posteriores apagados (18%)
         const segHtml = zones.map((z, i) => {
             const isActive = i === activeIdx;
             const isPast = i < activeIdx;
-            const opacity = isActive ? '1' : (isPast ? '.45' : '.18');
+            const opacity = isActive ? '1' : (isPast ? '.55' : '.22');
             const glow = isActive ? ('box-shadow:0 0 10px ' + z.color + ';') : '';
             return '<div style="flex:1;height:8px;background:' + z.color + ';border-radius:2px;opacity:' + opacity + ';' + glow + '"></div>';
         }).join('');
 
-        // Labels debajo de la barra: cada zona, el activo destacado
+        // Labels: activa destacada en su color + mayúsculas; resto en --tm
         const labelHtml = zones.map((z, i) => {
             const isActive = i === activeIdx;
-            const color = isActive ? z.color : 'rgba(255,255,255,.4)';
+            const color = isActive ? z.color : 'var(--tm)';
             const weight = isActive ? '700' : '500';
             return '<span style="color:' + color + ';font-weight:' + weight + ';' + (isActive ? 'text-transform:uppercase;letter-spacing:.5px;' : '') + '">' + z.key + '</span>';
         }).join('');
 
-        // Icono pulmón/aire que se tiñe con el color de la categoría
+        // Icono pulmón/aire blanco sobre fondo de color categoría
         const lungIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
 
         card.innerHTML =
             '<div style="padding:16px 16px 14px;">' +
                 '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
-                    // Icono coloreado según categoría
-                    '<div style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,' + cat.color + ',' + cat.color + 'aa);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 16px ' + cat.color + '55;">' +
+                    // Icono coloreado según categoría con glow suave
+                    '<div style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,' + cat.color + ',' + cat.color + 'cc);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 16px ' + cat.color + '55;">' +
                         lungIcon +
                     '</div>' +
-                    // Centro: Título + valor + categoría
+                    // Centro
                     '<div style="flex:1;min-width:0;">' +
-                        '<div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1.3px;font-weight:700;">Capacidad aeróbica</div>' +
+                        '<div style="font-size:9px;color:var(--ts);text-transform:uppercase;letter-spacing:1.3px;font-weight:700;">Capacidad aeróbica <span style="color:var(--tm);font-weight:600;letter-spacing:.5px;">[VO2 max]</span></div>' +
                         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:3px;flex-wrap:wrap;">' +
-                            '<span style="font-size:26px;font-weight:900;color:#fff;line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
-                            '<span style="font-size:10px;color:rgba(255,255,255,.5);">ml/kg/min</span>' +
+                            '<span style="font-size:26px;font-weight:900;color:var(--tw);line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
+                            '<span style="font-size:10px;color:var(--tm);">ml/kg/min</span>' +
                             '<span style="font-size:11px;color:' + cat.color + ';font-weight:800;margin-left:2px;">' + cat.label + '</span>' +
                         '</div>' +
                     '</div>' +
-                    // Derecha: Top% + cohorte
-                    '<div style="text-align:right;flex-shrink:0;">' +
-                        '<div style="font-size:14px;font-weight:800;color:' + cat.color + ';line-height:1;">Top ' + topPct + '%</div>' +
-                        '<div style="font-size:9px;color:rgba(255,255,255,.5);margin-top:3px;">' + cohortLabel + '</div>' +
-                    '</div>' +
+                    // Derecha: Top% + cohorte (solo si hay edad)
+                    cohortBlock +
                 '</div>' +
                 // Barra segmentada
                 '<div style="display:flex;gap:3px;margin-bottom:6px;">' + segHtml + '</div>' +
