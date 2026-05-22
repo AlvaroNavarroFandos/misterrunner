@@ -21352,7 +21352,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── 0b. REHAB PROGRESS CARD (top, like running plan) ─────────
         if(activeRehabPlan && activeRehabPlan.status==='active') {
             const rehabCard = document.createElement('div');
-            rehabCard.style.cssText = 'background:#0a0a0a;border-radius:16px;border:1px solid rgba(239,68,68,.3);padding:16px;';
+            rehabCard.style.cssText = 'background:#0a0a0a;border-radius:16px;border:1px solid rgba(239,68,68,.3);overflow:hidden;';
             const _plan = activeRehabPlan;
             const _totalDays = (_plan.days||[]).filter(d=>d.type!=='rest').length;
             const _doneDays  = (_plan.days||[]).filter(d=>d.type!=='rest'&&d.status==='completed').length;
@@ -21363,10 +21363,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const _weeksTotal = _plan.totalWeeks||0;
             const _wkCurr = getCurrentRehabWeek ? getCurrentRehabWeek() : 1;
             rehabCard.innerHTML = `
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
+                <div style="height:2px;background:linear-gradient(90deg,transparent 0%,#ef4444 30%,#f87171 50%,#ef4444 70%,transparent 100%);"></div>
+                <div style="padding:16px;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;">
                     <div>
-                        <div style="font-size:10px;color:#ef4444;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:2px;">Rehabilitación activa</div>
-                        <div style="font-size:17px;font-weight:800;color:#fff;line-height:1.1;">${_plan.injury.name}</div>
+                        <div style="display:flex;align-items:center;gap:7px;margin-bottom:2px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                            <div style="font-size:10px;color:#ef4444;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Rehabilitación activa</div>
+                        </div>
+                        <div style="font-size:18px;font-weight:800;color:#fff;letter-spacing:-.3px;line-height:1.1;">${_plan.injury.name}</div>
                         <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px;">Sem. ${_wkCurr} / ${_weeksTotal} · ${_phaseName}</div>
                     </div>
                     <div style="text-align:right;flex-shrink:0;margin-left:12px;">
@@ -21374,7 +21379,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div style="font-size:9px;color:rgba(255,255,255,.4);">completado</div>
                     </div>
                 </div>
-                <div style="margin-bottom:8px;">
+                <div style="margin-bottom:10px;">
                     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
                         <span style="font-size:10px;color:rgba(255,255,255,.5);">Sesiones completadas</span>
                         <span style="font-size:12px;font-weight:700;color:${_phaseColor};">${_doneDays} / ${_totalDays}</span>
@@ -21390,6 +21395,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div style="font-size:12px;font-weight:700;color:${_phaseColor};">${_phaseName}</div>
                     </div>
                     <div style="font-size:9px;color:rgba(255,255,255,.3);">${_weeksTotal-_wkCurr+1} sem restantes</div>
+                </div>
                 </div>`;
             container.appendChild(rehabCard);
         }
@@ -21457,6 +21463,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // ── Construir bloque "Hoy" integrado (running + fuerza con paleta dorada) ──
             const _dateLbl = today.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'});
             const _dateLblCap = _dateLbl.charAt(0).toUpperCase()+_dateLbl.slice(1);
+            // Etiqueta de distancia del plan (Maratón / Media maratón / 10K)
+            const _distLabel = (function() {
+                const _pd = activePlan.planDist || 'marathon';
+                if (_pd === '10k') return '10K';
+                if (_pd === 'half') return 'Media maratón';
+                if (_pd === 'marathon_intermediate') return 'Maratón';
+                return 'Maratón';
+            })();
 
             // Helper: HTML de una sesión (running o fuerza) en el Hero
             function _buildSessionRowHtml(sess, opts) {
@@ -21535,15 +21549,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const _hasBoth = todayRunSess && todayStrSess;
             const _hasAny  = todayRunSess || todayStrSess;
             const _hoyLabel = _hasBoth ? 'Hoy · Doble sesión' : ('Hoy · ' + _dateLblCap);
+            // Color de la pill: plateado neutro si doble, color del tipo si solo una
+            let _hoyPillColor = '#b8bcc2';
+            let _hoyPillBg    = 'rgba(184,188,194,.13)';
+            if (!_hasBoth) {
+                if (todayRunSess) {
+                    _hoyPillColor = TYPE_COLOR_HOME[todayRunSess.type] || '#b8bcc2';
+                    _hoyPillBg    = `${_hoyPillColor}22`;
+                } else if (todayStrSess) {
+                    _hoyPillColor = '#fbbf24';
+                    _hoyPillBg    = 'rgba(250,204,21,.18)';
+                }
+            }
 
             if (_hasAny) {
                 _todayHtml = `<div style="height:1px;background:rgba(255,255,255,.08);margin:0 0 14px;"></div>
-                    <div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.6px;color:#b8bcc2;background:rgba(184,188,194,.13);border-radius:6px;padding:3px 8px;margin-bottom:10px;text-transform:uppercase;">${_hoyLabel}</div>`;
+                    <div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.6px;color:${_hoyPillColor};background:${_hoyPillBg};border-radius:6px;padding:3px 8px;margin-bottom:10px;text-transform:uppercase;">${_hoyLabel}</div>`;
                 if (todayRunSess) _todayHtml += _buildSessionRowHtml(todayRunSess, {divider:false});
                 if (todayStrSess) _todayHtml += _buildSessionRowHtml(todayStrSess, {divider:!!todayRunSess});
             } else {
                 _todayHtml = `<div style="height:1px;background:rgba(255,255,255,.08);margin:0 0 14px;"></div>
-                    <div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.6px;color:#b8bcc2;background:rgba(184,188,194,.13);border-radius:6px;padding:3px 8px;margin-bottom:10px;text-transform:uppercase;">Hoy · ${_dateLblCap}</div>
+                    <div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.6px;color:#4ade80;background:rgba(74,222,128,.18);border-radius:6px;padding:3px 8px;margin-bottom:10px;text-transform:uppercase;">Hoy · ${_dateLblCap}</div>
                     <div style="display:flex;align-items:center;gap:11px;">
                         <div style="width:34px;height:34px;border-radius:9px;background:rgba(74,222,128,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="18" height="11" rx="2"/><path d="M22 11v3"/><path d="M7 11l2 2 4-4" stroke-width="1.8"/></svg>
@@ -21565,7 +21591,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <div style="font-size:10px;color:#b8bcc2;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Plan activo</div>
                         </div>
                         <div style="font-size:18px;font-weight:800;color:#fff;letter-spacing:-.3px;line-height:1.1;">${activePlan.name}</div>
-                        <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px;">Maratón: ${raceD} · ${weeksLeft} sem restantes</div>
+                        <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px;">${_distLabel}: ${raceD} · ${weeksLeft} sem restantes</div>
                     </div>
                     <div style="text-align:right;flex-shrink:0;margin-left:12px;">
                         <div style="font-size:28px;font-weight:900;color:#fff;line-height:1;">${activePlan.goalHMS||secsToHMS(activePlan.goalSecs||0)}</div>
@@ -21594,7 +21620,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b8bcc2" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
                     </div>
                     <div style="flex:1;">
-                        <div style="font-size:13px;font-weight:700;color:#fff;">Sin plan de maratón activo</div>
+                        <div style="font-size:13px;font-weight:700;color:#fff;">Sin plan activo</div>
                         <div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:2px;">Ve a Míster para generar tu plan personalizado</div>
                     </div>
                 </div>`;
@@ -21643,16 +21669,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const nextCard = document.createElement('div');
                 nextCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;overflow:hidden;';
                 const _items = upcoming.slice(0,3);
+                // Detectar si la primera sesión es mañana
+                const _tomorrowMs = new Date(todayStr+'T00:00:00').getTime() + 86400000;
+                const _tomorrowStr = localDateStr(new Date(_tomorrowMs));
                 let nextHtml = `<div style="display:inline-block;font-size:11px;font-weight:700;color:#8f1a28;margin-bottom:8px;background:rgba(143,26,40,.08);border-left:3px solid #8f1a28;border-radius:6px;padding:3px 8px;">Próximos entrenamientos</div>`;
                 _items.forEach((s, _idx) => {
-                    const d=new Date(s.dateStr+'T12:00:00').toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+                    const sDate = new Date(s.dateStr+'T12:00:00');
                     const tc=TYPE_COLOR_HOME[s.type]||'var(--tw)';
                     const _distLbl = s.type==='strength' ? '30 min' : (s.dist||0)+' km';
                     const _last = _idx === _items.length-1;
+                    const _isTomorrow = s.dateStr === _tomorrowStr;
+                    // Etiqueta: "MAÑANA · Sáb 23" si es mañana, "Sáb 23 may" en otros casos
+                    const _shortDate = sDate.toLocaleDateString('es-ES',{weekday:'short',day:'numeric'});
+                    const _fullDate  = sDate.toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+                    const _dateHtml  = _isTomorrow
+                        ? `<span style="font-size:9px;font-weight:800;color:${tc};letter-spacing:.5px;">MAÑANA</span> <span style="font-size:10px;color:var(--ts);">· ${_shortDate}</span>`
+                        : `<span style="font-size:10px;color:var(--ts);">${_fullDate}</span>`;
                     nextHtml+=`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;${_last?'':'border-bottom:1px solid var(--border);'}">
                         <div style="width:8px;height:8px;border-radius:2px;background:${tc};flex-shrink:0;"></div>
                         <div style="flex:1;font-size:11.5px;font-weight:600;color:var(--tw);">${getTypeLabel(s.type)} · ${_distLbl}</div>
-                        <div style="font-size:10px;color:var(--ts);">${d}</div>
+                        <div style="text-align:right;line-height:1;">${_dateHtml}</div>
                     </div>`;
                 });
                 nextCard.innerHTML = nextHtml;
@@ -21664,7 +21700,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _hito = pickNextMilestone();
         if (_hito) {
             const hitoCard = document.createElement('div');
-            hitoCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;display:flex;align-items:center;gap:11px;';
+            hitoCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;display:flex;align-items:center;gap:11px;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;';
             hitoCard.innerHTML = `
                 <div style="width:44px;height:44px;border-radius:11px;background:${_hito.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px;line-height:1;">${_hito.icon}</div>
                 <div style="flex:1;min-width:0;">
@@ -21673,6 +21709,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="font-size:10px;color:var(--ts);margin-top:2px;">${_hito.detail}</div>
                 </div>
             `;
+            // Tap feedback (escala suave al pulsar, vuelve al soltar)
+            hitoCard.addEventListener('touchstart', () => {
+                hitoCard.style.transform = 'scale(.97)';
+            }, {passive:true});
+            const _hitoRelease = () => { hitoCard.style.transform = 'scale(1)'; };
+            hitoCard.addEventListener('touchend',    _hitoRelease, {passive:true});
+            hitoCard.addEventListener('touchcancel', _hitoRelease, {passive:true});
             container.appendChild(hitoCard);
         }
 
@@ -21814,7 +21857,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── FEATURE 2: CTL / ATL / FORM (last 8 weeks) ─────────────
         const fatCard = document.createElement('div');
-        fatCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:14px;overflow:hidden;';
+        fatCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);overflow:hidden;';
 
         // Compute daily TRIMP for last 56 days
         const DAY_MS = 86400000;
@@ -21874,7 +21917,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         else if(curTsb>-10){formLabel='Carga activa';formColor='#FF9500';}
         else{formLabel='Fatiga';formColor='#F44336';}
 
-        let fatHtml=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;background:rgba(143,26,40,.08);border-radius:8px;padding:6px 10px;border-left:3px solid #8f1a28;">
+        let fatHtml=`<div style="height:2px;background:linear-gradient(90deg,transparent 0%,#8f1a28 30%,#c52e3f 50%,#8f1a28 70%,transparent 100%);"></div>
+        <div style="padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;background:rgba(143,26,40,.08);border-radius:8px;padding:6px 10px;border-left:3px solid #8f1a28;">
             <div style="font-size:12px;font-weight:700;color:#8f1a28;">Carga crónica · Fatiga · Forma</div>
             <div style="font-size:10px;font-weight:700;color:${formColor};">${formLabel}</div>
         </div>
@@ -21910,6 +21955,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-top:4px;">
             <div style="display:flex;align-items:center;gap:3px;"><div style="width:8px;height:8px;background:#60a5fa;border-radius:1px;"></div><span style="font-size:9px;color:var(--ts);">CTL (crónica)</span></div>
             <div style="display:flex;align-items:center;gap:3px;"><div style="width:8px;height:8px;background:#f97316;border-radius:1px;"></div><span style="font-size:9px;color:var(--ts);">ATL (aguda)</span></div>
+        </div>
         </div>`;
 
         fatCard.innerHTML = fatHtml;
