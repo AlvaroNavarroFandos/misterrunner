@@ -19669,14 +19669,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</div></div>';
         }).join('');
         ov.innerHTML = `<div style="background:var(--bg);width:100%;max-width:500px;border-radius:20px 20px 0 0;max-height:88dvh;display:flex;flex-direction:column;overflow:hidden;">
-            <div style="padding:16px 20px 10px;flex-shrink:0;background:linear-gradient(135deg,#1a4a1a,#1e5c1e);border-radius:20px 20px 0 0;">
-                <div style="width:36px;height:4px;background:rgba(255,255,255,.3);border-radius:999px;margin:0 auto 14px;"></div>
+            <div style="padding:16px 20px 14px;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--border);border-radius:20px 20px 0 0;">
+                <div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 12px;"></div>
                 <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div>
-                        <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;color:#fff;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 4-3 6-4 9H9c-1-3-4-5-4-9a7 7 0 0 1 7-7z"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>Calentamiento${zoneTag}</div>
-                        <div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px;">${r.exercises.length} ejercicios · ${r.durationMin} min antes de correr</div>
+                        <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;color:var(--tw);"><svg width="20" height="20" viewBox="0 0 24 24" fill="#f97316" xmlns="http://www.w3.org/2000/svg"><path d="M12 2c0 0-1 3-3 5s-3 4-3 7c0 4.5 3.5 8 8 8s8-3.5 8-8c0-3-2-5-4-7-1-1-1.5-2.5-1.5-4 0 0-1 2-2.5 2S12 4 12 2z"/><path d="M12 22c2.5 0 4.5-2 4.5-4.5 0-2-1-3-2-4-.7-.7-1-1.5-1-2.5 0 0-.5 1.5-1.5 1.5S10.5 11 10.5 11c0 1.5-1 2-1.5 3-.5.7-1 1.7-1 3.5C8 20 10 22 12 22z" fill="#fbbf24"/></svg>Warm up${zoneTag}</div>
+                        <div style="font-size:11px;color:var(--ts);margin-top:3px;">${r.exercises.length} ejercicios · ${r.durationMin} min antes de correr</div>
                     </div>
-                    <button onclick="document.getElementById('warmup-detail-sheet').remove()" style="background:rgba(255,255,255,.15);border:none;border-radius:50%;width:32px;height:32px;color:#fff;font-size:16px;cursor:pointer;">✕</button>
+                    <button onclick="document.getElementById('warmup-detail-sheet').remove()" aria-label="Cerrar" style="background:var(--bsoft);border:none;border-radius:50%;width:28px;height:28px;color:var(--ts);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0;line-height:1;">✕</button>
                 </div>
             </div>
             <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 16px calc(24px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px;">
@@ -21389,18 +21389,60 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         container.appendChild(todayCard);
 
-        // ── 2b. CALENTAMIENTO Y ESTIRAMIENTOS BLOCK ──────────────
+        // ── 2a. PRÓXIMOS ENTRENAMIENTOS (movido aquí desde el final) ──
+        if (activePlan) {
+            const upcoming = [];
+            const todayMs = new Date(todayStr+'T00:00:00').getTime();
+            for (let _wi=0; _wi<activePlan.weeks.length; _wi++) {
+                const wk = activePlan.weeks[_wi];
+                // Collect running sessions
+                for (const s of wk.sessions) {
+                    if (new Date(s.dateStr+'T00:00:00').getTime() > todayMs) upcoming.push(s);
+                }
+                // Also add strength sessions from independent strength plan if not merged
+                if(activeStrengthPlan && activeStrengthPlan.weeks[_wi]) {
+                    for (const ss of activeStrengthPlan.weeks[_wi].sessions) {
+                        if(ss.isStrength && new Date(ss.dateStr+'T00:00:00').getTime() > todayMs) {
+                            if(!upcoming.some(u=>u.dateStr===ss.dateStr&&u.isStrength)) upcoming.push(ss);
+                        }
+                    }
+                }
+                if (upcoming.length >= 4) break;
+            }
+            upcoming.sort((a,b)=>new Date(a.dateStr+'T00:00:00')-new Date(b.dateStr+'T00:00:00'));
+            if (upcoming.length > 0) {
+                const nextCard = document.createElement('div');
+                nextCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;overflow:hidden;';
+                const _items = upcoming.slice(0,3);
+                let nextHtml = `<div style="display:inline-block;font-size:11px;font-weight:700;color:#8f1a28;margin-bottom:8px;background:rgba(143,26,40,.08);border-left:3px solid #8f1a28;border-radius:6px;padding:3px 8px;">Próximos entrenamientos</div>`;
+                _items.forEach((s, _idx) => {
+                    const d=new Date(s.dateStr+'T12:00:00').toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
+                    const tc=TYPE_COLOR_HOME[s.type]||'var(--tw)';
+                    const _distLbl = s.type==='strength' ? '30 min' : (s.dist||0)+' km';
+                    const _last = _idx === _items.length-1;
+                    nextHtml+=`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;${_last?'':'border-bottom:1px solid var(--border);'}">
+                        <div style="width:8px;height:8px;border-radius:2px;background:${tc};flex-shrink:0;"></div>
+                        <div style="flex:1;font-size:11.5px;font-weight:600;color:var(--tw);">${getTypeLabel(s.type)} · ${_distLbl}</div>
+                        <div style="font-size:10px;color:var(--ts);">${d}</div>
+                    </div>`;
+                });
+                nextCard.innerHTML = nextHtml;
+                container.appendChild(nextCard);
+            }
+        }
+
+        // ── 2b. WARM UP BLOCK (aplanado claro/oscuro) ──────────────
         if(window.warmupRoutine && window.warmupRoutine.exercises && window.warmupRoutine.exercises.length) {
             const wuCard = document.createElement('div');
-            wuCard.style.cssText = 'background:linear-gradient(135deg,#1a4a1a 0%,#1e5c1e 100%);border-radius:16px;border:1.5px solid rgba(80,200,80,.3);padding:11px 14px;cursor:pointer;';
+            wuCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:11px 14px;cursor:pointer;';
             const wuZone = window.warmupRoutine.protectZone ? ` · Foco: ${window.warmupRoutine.protectZone}` : '';
-            wuCard.innerHTML = `<div style="display:flex;align-items:center;gap:10px;">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 4-3 6-4 9H9c-1-3-4-5-4-9a7 7 0 0 1 7-7z"/><path d="M9 18h6"/><path d="M10 22h4"/></svg></div>
+            wuCard.innerHTML = `<div style="display:flex;align-items:center;gap:11px;">
+                <div style="width:36px;height:36px;border-radius:10px;background:rgba(249,115,22,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="22" height="22" viewBox="0 0 24 24" fill="#f97316" xmlns="http://www.w3.org/2000/svg"><path d="M12 2c0 0-1 3-3 5s-3 4-3 7c0 4.5 3.5 8 8 8s8-3.5 8-8c0-3-2-5-4-7-1-1-1.5-2.5-1.5-4 0 0-1 2-2.5 2S12 4 12 2z"/><path d="M12 22c2.5 0 4.5-2 4.5-4.5 0-2-1-3-2-4-.7-.7-1-1.5-1-2.5 0 0-.5 1.5-1.5 1.5S10.5 11 10.5 11c0 1.5-1 2-1.5 3-.5.7-1 1.7-1 3.5C8 20 10 22 12 22z" fill="#fbbf24"/></svg></div>
                 <div style="flex:1;min-width:0;">
-                    <div style="font-size:12px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.6px;">Calentamiento y estiramientos${wuZone}</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,.65);margin-top:2px;">${window.warmupRoutine.exercises.length} ejercicios · ${window.warmupRoutine.durationMin||8} min · toca para ver</div>
+                    <div style="font-size:13px;font-weight:800;color:var(--tw);">Warm up${wuZone}</div>
+                    <div style="font-size:10px;color:var(--ts);margin-top:2px;">${window.warmupRoutine.exercises.length} ejercicios · ${window.warmupRoutine.durationMin||8} min · toca para ver</div>
                 </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>
             </div>`;
             wuCard.addEventListener('click', () => openWarmupDetailSheet());
             container.appendChild(wuCard);
@@ -21459,7 +21501,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const isToday=d.ds===todayStr;
             recentHtml+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;justify-content:flex-end;height:100%;">
                 ${nota!=null?`<div style="width:14px;height:14px;border-radius:50%;background:${notaC};display:flex;align-items:center;justify-content:center;margin-bottom:1px;" title="Nota: ${nota}/100"><span style="font-size:7px;font-weight:800;color:#000;">${nota}</span></div>`:'<div style="height:14px;"></div>'}
-                <div style="width:100%;height:${h>0?h:2}px;background:${h>0?c:'rgba(0,0,0,.08)'};border-radius:3px 3px 0 0;" title="${d.act?d.act.distKm.toFixed(1)+'km':''}"></div>
+                <div style="width:100%;height:${h>0?h:2}px;background:${h>0?c:'var(--bsoft)'};border-radius:3px 3px 0 0;" title="${d.act?d.act.distKm.toFixed(1)+'km':''}"></div>
                 <div style="font-size:8px;color:${isToday?'var(--crimson)':'var(--tm)'};font-weight:${isToday?700:400};">${d.dayShort}</div>
             </div>`;
         });
@@ -21506,7 +21548,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         trimpByDay.forEach(d=>{
             const h=d.trimp>0?Math.max(6,Math.round(d.trimp/maxTrimp*42)):2;
-            const barColor=d.trimp>0?(d.nota!=null?(d.nota>=80?'#4CAF50':d.nota>=60?'#FFC107':d.nota>=40?'#FF9500':'#F44336'):'var(--crimson)'):'rgba(0,0,0,.1)';
+            const barColor=d.trimp>0?(d.nota!=null?(d.nota>=80?'#4CAF50':d.nota>=60?'#FFC107':d.nota>=40?'#FF9500':'#F44336'):'var(--crimson)'):'var(--bsoft)';
             const isToday=d.ds===todayStr;
             trimpHtml+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;justify-content:flex-end;height:100%;">
                 <div style="font-size:7px;color:${d.trimp>0?'var(--tm)':'transparent'};">${d.trimp||''}</div>
@@ -21524,7 +21566,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         trimpCard.innerHTML = trimpHtml;
         // ── FORMA DEL DÍA ─────────────────────────────────────────
         const formCard = document.createElement('div');
-        formCard.style.cssText = 'background:#c4881e;border-radius:14px;padding:14px;border:2px solid #000;';
+        formCard.style.cssText = 'background:var(--card2);border-radius:16px;padding:14px;border:1px solid var(--border);';
         const todaySessHome = (() => {
             if(!activePlan) return null;
             for(const wk of activePlan.weeks)
@@ -21568,8 +21610,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             :                 {emoji:'🔴',label:'Fatiga alta',color:'#f87171',tip:'Considera descanso activo. El cuerpo necesita recuperarse.'};
 
         let formHtml = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
-            +'<div style="font-size:9px;color:rgba(0,0,0,.55);text-transform:uppercase;letter-spacing:1px;font-weight:700;">Estado de forma</div>'
-            +(tsbNow!==null?`<div style="font-size:9px;font-weight:700;color:rgba(0,0,0,.6);">TSB ${tsbNow>0?'+':''}${tsbNow}</div>`:'')
+            +'<div style="display:inline-block;font-size:11px;font-weight:700;color:#c4881e;background:rgba(196,136,30,.10);border-left:3px solid #c4881e;border-radius:6px;padding:3px 8px;">Estado de forma</div>'
+            +(tsbNow!==null?`<div style="font-size:10px;font-weight:700;color:var(--ts);">TSB ${tsbNow>0?'+':''}${tsbNow}</div>`:'')
             +'</div>';
 
         if(readiness) {
@@ -21586,14 +21628,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             formHtml += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">`
                 +`<div style="position:relative;width:56px;height:56px;flex-shrink:0;">`
                 +  `<svg width="56" height="56" viewBox="0 0 60 60" style="transform:rotate(-90deg);">`
-                +    `<circle cx="30" cy="30" r="24" fill="none" stroke="rgba(0,0,0,.15)" stroke-width="6"/>`
+                +    `<circle cx="30" cy="30" r="24" fill="none" stroke="var(--border)" stroke-width="6"/>`
                 +    `<circle id="${_ringId}" cx="30" cy="30" r="24" fill="none" stroke="${readiness.color}" stroke-width="6" stroke-linecap="round" `
-                +      `stroke-dasharray="0 ${_ringCirc}" style="transition:stroke-dasharray .8s cubic-bezier(.4,0,.2,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.18));"/>`
+                +      `stroke-dasharray="0 ${_ringCirc}" style="transition:stroke-dasharray .8s cubic-bezier(.4,0,.2,1);"/>`
                 +  `</svg>`
-                +  `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#000;font-family:var(--f);letter-spacing:-.2px;">${_tsbLabel}</div>`
+                +  `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--tw);font-family:var(--f);letter-spacing:-.2px;">${_tsbLabel}</div>`
                 +`</div>`
                 +`<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:800;color:${readiness.color};">${readiness.label}</div>`
-                +`<div style="font-size:10px;color:rgba(0,0,0,.65);line-height:1.4;">${readiness.tip}</div></div>`
+                +`<div style="font-size:10px;color:var(--ts);line-height:1.4;">${readiness.tip}</div></div>`
                 +`</div>`;
             // Disparar la animación tras montar el SVG en el DOM.
             // Doble RAF garantiza que el navegador haya pintado el estado inicial
@@ -21603,16 +21645,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (_r) _r.setAttribute('stroke-dasharray', _ringFill + ' ' + _ringCirc);
             }));
         } else {
-            formHtml += `<div style="font-size:11px;color:rgba(0,0,0,.55);margin-bottom:10px;">Importa actividades para calcular tu estado de forma (CTL/ATL/TSB).</div>`;
+            formHtml += `<div style="font-size:11px;color:var(--ts);margin-bottom:10px;">Importa actividades para calcular tu estado de forma (CTL/ATL/TSB).</div>`;
         }
 
         if(todaySessHome) {
             const tcMap={easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#fbbf24',race:'#e879f9'};
             const tlMap={easy:'Rodaje fácil',recovery:'Recovery',series:'Calidad',long:'Long Run',race:'MARATÓN'};
-            formHtml += `<div style="background:rgba(0,0,0,.12);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;">`
-                +`<div style="width:8px;height:8px;border-radius:2px;background:${tcMap[todaySessHome.type]||'#fff'};flex-shrink:0;"></div>`
-                +`<div style="flex:1;"><div style="font-size:11px;font-weight:700;color:#000;">${tlMap[todaySessHome.type]||'Entrenamiento'} · ${todaySessHome.dist}km hoy</div>`
-                +`<div style="font-size:9px;color:rgba(0,0,0,.6);margin-top:1px;">${(todaySessHome.desc||'').substring(0,60)}${(todaySessHome.desc||'').length>60?'…':''}</div></div>`
+            formHtml += `<div style="background:var(--bsoft);border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;">`
+                +`<div style="width:8px;height:8px;border-radius:2px;background:${tcMap[todaySessHome.type]||'var(--tw)'};flex-shrink:0;"></div>`
+                +`<div style="flex:1;"><div style="font-size:11px;font-weight:700;color:var(--tw);">${tlMap[todaySessHome.type]||'Entrenamiento'} · ${todaySessHome.dist}km hoy</div>`
+                +`<div style="font-size:9px;color:var(--ts);margin-top:1px;">${(todaySessHome.desc||'').substring(0,60)}${(todaySessHome.desc||'').length>60?'…':''}</div></div>`
                 +`</div>`;
         }
 
@@ -21723,90 +21765,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         fatCard.innerHTML = fatHtml;
         container.appendChild(fatCard);
 
-        // ── STREAK + COUNTDOWN (between TRIMP and CTL) ────────────
-        const extraRow = document.createElement('div');
-        extraRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;';
+        // (streak + countdown eliminados por decisión de diseño Bloque P · Home)
 
-        // Streak
-        let streak=0, DAY_MS2=86400000;
-        for(let i=0;i<365;i++){
-            const ds2=localDateStr(new Date(new Date(todayStr+'T00:00:00').getTime()-i*DAY_MS2));
-            if(activities.some(a=>a.dateStr===ds2)) streak++;
-            else if(i>0) break;
-        }
-        if(!activities.some(a=>a.dateStr===todayStr)&&streak>0) streak--;
-
-        const streakCard = document.createElement('div');
-        streakCard.style.cssText = 'background:#12233a;border-radius:14px;padding:14px 12px;border:1px solid rgba(100,140,220,.22);text-align:center;';
-        streakCard.innerHTML = `<div style="font-size:22px;margin-bottom:2px;">🔥</div>
-            <div style="font-size:20px;font-weight:800;color:#fff;">${streak}</div>
-            <div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;">${streak===1?'día seguido':'días seguidos'}</div>
-            <div style="font-size:9px;color:rgba(255,255,255,.35);margin-top:2px;">${streak>=7?'¡Semana perfecta!':streak>=3?'¡Buen ritmo!':streak===0?'Entrena hoy':'Sigue así'}</div>`;
-        extraRow.appendChild(streakCard);
-
-        // Countdown
-        const countdownCard = document.createElement('div');
-        if(activePlan && activePlan.raceDate){
-            const raceMs2 = new Date(activePlan.raceDate+'T12:00:00').getTime();
-            const daysLeft2 = Math.max(0,Math.round((raceMs2-new Date(todayStr+'T12:00:00').getTime())/DAY_MS2));
-            const urgColor2 = daysLeft2<=7?'#F44336':daysLeft2<=21?'#FFC107':'#c4881e';
-            countdownCard.style.cssText = `background:${urgColor2}18;border-radius:14px;padding:14px 12px;border:1px solid ${urgColor2}40;text-align:center;`;
-            countdownCard.innerHTML = `<div style="font-size:22px;margin-bottom:2px;">🏁</div>
-                <div style="font-size:20px;font-weight:800;color:${urgColor2};">${daysLeft2}</div>
-                <div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;">${daysLeft2===1?'día para carrera':'días para carrera'}</div>
-                <div style="font-size:9px;color:var(--ts);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${activePlan.name}</div>`;
-        } else {
-            countdownCard.style.cssText = 'background:var(--bsoft);border-radius:14px;padding:14px 12px;border:1px solid var(--border);text-align:center;opacity:.45;';
-            countdownCard.innerHTML = `<div style="font-size:22px;margin-bottom:2px;">🏁</div>
-                <div style="font-size:13px;font-weight:700;color:var(--tm);">Sin carrera</div>
-                <div style="font-size:9px;color:var(--ts);">Crea un plan</div>`;
-        }
-        extraRow.appendChild(countdownCard);
-        container.appendChild(extraRow);
-
-        // Quick stats removed — available in Biblioteca tab
-
-        // ── PDF BUTTON ───────────────────────────────────────────
-        // ── 5. NEXT PLANNED SESSIONS (next 3) ────────────────────
-        if (activePlan) {
-            const upcoming = [];
-            const todayMs = new Date(todayStr+'T00:00:00').getTime();
-            for (let _wi=0; _wi<activePlan.weeks.length; _wi++) {
-                const wk = activePlan.weeks[_wi];
-                // Collect running sessions
-                for (const s of wk.sessions) {
-                    if (new Date(s.dateStr+'T00:00:00').getTime() > todayMs) upcoming.push(s);
-                }
-                // Also add strength sessions from independent strength plan if not merged
-                if(activeStrengthPlan && activeStrengthPlan.weeks[_wi]) {
-                    for (const ss of activeStrengthPlan.weeks[_wi].sessions) {
-                        if(ss.isStrength && new Date(ss.dateStr+'T00:00:00').getTime() > todayMs) {
-                            if(!upcoming.some(u=>u.dateStr===ss.dateStr&&u.isStrength)) upcoming.push(ss);
-                        }
-                    }
-                }
-                if (upcoming.length >= 4) break;
-            }
-            // Sort upcoming by date
-            upcoming.sort((a,b)=>new Date(a.dateStr+'T00:00:00')-new Date(b.dateStr+'T00:00:00'));
-            if (upcoming.length > 0) {
-                const nextCard = document.createElement('div');
-                nextCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:14px;overflow:hidden;';
-                let nextHtml = `<div style="font-size:12px;font-weight:700;color:#8f1a28;margin-bottom:8px;background:rgba(143,26,40,.08);border-radius:8px;padding:6px 10px;border-left:3px solid #8f1a28;">Próximos entrenamientos</div>`;
-                upcoming.slice(0,3).forEach(s=>{
-                    const d=new Date(s.dateStr+'T12:00:00').toLocaleDateString('es-ES',{weekday:'short',day:'numeric',month:'short'});
-                    const tc=TYPE_COLOR_HOME[s.type]||'#fff';
-                    const _distLbl = s.type==='strength' ? '30 min' : (s.dist||0)+' km';
-                    nextHtml+=`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bsoft);">
-                        <div style="width:8px;height:8px;border-radius:2px;background:${tc};flex-shrink:0;"></div>
-                        <div style="flex:1;font-size:11px;color:var(--tw);">${getTypeLabel(s.type)} · ${_distLbl}</div>
-                        <div style="font-size:10px;color:var(--tm);">${d}</div>
-                    </div>`;
-                });
-                nextCard.innerHTML = nextHtml;
-                container.appendChild(nextCard);
-            }
-        }
+        // (Próximos entrenamientos movidos arriba, debajo de "Hoy: sesión/descanso")
 
         // ── REHAB TODAY BLOCK ───────────────────────────────────────
         if(activeRehabPlan && activeRehabPlan.status==='active') {
