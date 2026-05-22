@@ -12815,17 +12815,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Se cachea cada uno por separado para no recargar al cambiar tema.
     let _libMapBgImgDark  = null;
     let _libMapBgImgLight = null;
-    function _getLibMapBg(cb) {
-        const isDark = document.body.classList.contains('dark-mode');
+    function _getLibMapBg(cb, isDarkArg) {
+        // isDarkArg permite forzar el tema en la llamada (evita race conditions
+        // si cambia el tema entre la llamada y el onload). Si no se pasa, se
+        // detecta del body.
+        const isDark = (typeof isDarkArg === 'boolean')
+            ? isDarkArg
+            : document.body.classList.contains('dark-mode');
         const cached = isDark ? _libMapBgImgDark : _libMapBgImgLight;
-        if (cached && cached.complete) { cb(cached); return; }
+        if (cached && cached.complete) { cb(cached, isDark); return; }
         const img = new Image();
         img.onload = () => {
             if (isDark) _libMapBgImgDark  = img;
             else        _libMapBgImgLight = img;
-            cb(img);
+            cb(img, isDark);
         };
-        img.onerror = () => cb(null);
+        img.onerror = () => cb(null, isDark);
         img.src = isDark ? _LIB_MAP_BG_DARK_B64 : _LIB_MAP_BG_LIGHT_B64;
     }
     // [FASE 5.7] Pinta el fondo de calles cover-fit en el canvas con un
@@ -12880,7 +12885,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ctx.fillRect(0, 0, W, H);
             }
             if (typeof onReady === 'function') onReady(img);
-        });
+        }, _isDark);
     }
 
     // [FASE 5.7] Versión de drawTrack para la biblioteca: pinta fondo de
@@ -25054,6 +25059,9 @@ function _applyDark(on, save) {
     // Re-renderiza zapatillas para reevaluar el color del título cuando el color
     // elegido es muy oscuro (en dark-mode pasa a var(--tw) para legibilidad).
     try { if (typeof renderShoes === 'function') renderShoes(); } catch(e) {}
+    // [v5 P.Biblioteca] Re-renderizar biblioteca para repintar mapas + tracks
+    // con el JPEG y los colores del tema correcto.
+    try { if (typeof renderActivities === 'function') renderActivities(); } catch(e) {}
 }
 
 /* ══════════════════════════════════════════════════════════════════
