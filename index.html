@@ -18177,9 +18177,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _isStrengthCard = !!(sess.isStrength || sess.type==='strength');
                 const _typeCol = _isStrengthCard ? '#c4881e' : (TYPE_COLOR[sess.type] || 'var(--tw)');
                 const _pillValue = _isStrengthCard ? '30 min' : sess.dist+' km';
-                const _detailShort = sess.desc
-                    ? sess.desc.replace(/^[^a-záéíóúñ0-9]+/i,'').slice(0, 60)
-                    : '';
+                // Detail corto:
+                //  - Strength: solo "Casa" o "Gym" (lo demás va en el detail expandido)
+                //  - Running: primeros 60 chars del desc
+                let _detailShort = '';
+                if (_isStrengthCard) {
+                    _detailShort = sess.strengthEquip === 'gym' ? 'Gym' : 'Casa';
+                } else if (sess.desc) {
+                    _detailShort = sess.desc.replace(/^[^a-záéíóúñ0-9]+/i,'').slice(0, 60);
+                }
                 // ¿Es la última fila visual? (último día + última sesión del día)
                 const _isLastSession = _isLastRow && (sessIdx === daySessions.length - 1);
 
@@ -18216,13 +18222,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div style="font-size:19px;font-weight:800;color:var(--tw);line-height:1;letter-spacing:-.5px;margin:2px 0;font-variant-numeric:tabular-nums;">${_dayNum}</div>
                         <div style="font-size:8px;color:var(--tm);text-transform:uppercase;letter-spacing:.7px;font-weight:600;">${_monthShort}</div>
                        </div>`
-                    : `<div style="flex-shrink:0;width:42px;display:flex;align-items:center;justify-content:center;">
-                        <div style="width:18px;height:18px;border-radius:50%;background:rgba(196,136,30,.15);display:flex;align-items:center;justify-content:center;">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="${_isStrengthCard?'#c4881e':'currentColor'}" xmlns="http://www.w3.org/2000/svg"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>
-                        </div>
-                       </div>`;
+                    : `<div style="flex-shrink:0;width:42px;"></div>`;
 
-                // Type icon (cuadradito de color) o icono strength
+                // Type icon (cuadradito de color para running, mancuerna pequeña para strength)
                 const _typeIcon = _isStrengthCard
                     ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="#c4881e" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>`
                     : `<span style="width:10px;height:10px;border-radius:2px;background:${_typeCol};display:inline-block;flex-shrink:0;"></span>`;
@@ -18271,10 +18273,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             + (b.km ? `<span style="font-weight:700;color:var(--tw);flex-shrink:0;">${b.km} km</span>` : '')
                             + `</div>`;
                     });
-                    // Botón Mover (solo current week y no race)
-                    if (isCurrentWeek && sess.type !== 'race') {
-                        detail += `<button onclick="event.stopPropagation();openMoveDay(event,'${sess.dateStr}',${weekIdx},${_isStrengthCard})" style="margin-top:6px;align-self:flex-start;background:var(--bsoft);border:1px solid var(--border);border-radius:7px;padding:4px 10px;font-size:10px;font-weight:700;color:var(--ts);font-family:var(--f);cursor:pointer;letter-spacing:.3px;">Mover día ↕</button>`;
-                    }
                     detail += `</div>`;
                     html += detail;
                 } else if (sess.exercises && sess.exercises.length > 0) {
@@ -18288,9 +18286,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             +   (e.cue ? `<div style="font-size:9.5px;color:var(--ts);margin-top:2px;line-height:1.3;">${e.cue}</div>` : '')
                             + `</div></div>`;
                     });
-                    if (isCurrentWeek) {
-                        detail += `<button onclick="event.stopPropagation();openMoveDay(event,'${sess.dateStr}',${weekIdx},true)" style="margin-top:6px;align-self:flex-start;background:var(--bsoft);border:1px solid var(--border);border-radius:7px;padding:4px 10px;font-size:10px;font-weight:700;color:var(--ts);font-family:var(--f);cursor:pointer;letter-spacing:.3px;">Mover día ↕</button>`;
-                    }
                     detail += `</div>`;
                     html += detail;
                 } else if (sess.desc) {
@@ -18300,9 +18295,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 card.innerHTML = html;
 
-                // ─── Swipe-to-delete (mantiene la lógica original) ───
+                // ─── Variables compartidas entre handlers (declaradas arriba para closure) ───
                 let startX=0,startY=0,curX=0,swSwiping=false,swRevealed=false,swLocked=false;
                 let SWTH=90;
+                let _longPressTimer = null;
+                let _longPressFired = false;
 
                 function planSnapBack(){
                     card.style.transition='transform .25s cubic-bezier(.25,.46,.45,.94)';
@@ -18312,18 +18309,49 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     swRevealed=false;
                 }
 
+                // ─── Día actual con running: expandido por defecto ───
+                if (_isToday && !_isStrengthCard) {
+                    const _detailEl0 = card.querySelector('.mr-day-detail');
+                    const _chevEl0   = card.querySelector('.mr-day-chev');
+                    if (_detailEl0) _detailEl0.style.display = 'flex';
+                    if (_chevEl0)   _chevEl0.style.transform = 'rotate(90deg)';
+                }
+
                 // ─── Tap toggle: clic en header expande/colapsa detail ───
                 const _headerEl = card.querySelector('.mr-day-header');
                 const _detailEl = card.querySelector('.mr-day-detail');
                 const _chevEl   = card.querySelector('.mr-day-chev');
                 if (_headerEl && _detailEl) {
                     _headerEl.addEventListener('click', function(ev) {
-                        // Si swipe activo, snap back en vez de toggle
                         if (swRevealed) { planSnapBack(); return; }
+                        if (_longPressFired) { _longPressFired = false; return; }
                         const isHidden = _detailEl.style.display === 'none' || _detailEl.style.display === '';
                         _detailEl.style.display = isHidden ? 'flex' : 'none';
                         if (_chevEl) _chevEl.style.transform = isHidden ? 'rotate(90deg)' : 'none';
                     });
+                }
+
+                // ─── Long-press (≥500ms) en header → abre modal mover ───
+                const _canMove = isCurrentWeek && sess.type !== 'race';
+                if (_headerEl && _canMove) {
+                    const _startLongPress = (ev) => {
+                        _longPressFired = false;
+                        _longPressTimer = setTimeout(() => {
+                            _longPressFired = true;
+                            if (navigator.vibrate) try { navigator.vibrate(15); } catch(_){}
+                            try { openMoveDay(ev, sess.dateStr, weekIdx, _isStrengthCard); } catch(_){}
+                        }, 500);
+                    };
+                    const _cancelLongPress = () => {
+                        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+                    };
+                    _headerEl.addEventListener('touchstart', _startLongPress, {passive:true});
+                    _headerEl.addEventListener('touchend',    _cancelLongPress, {passive:true});
+                    _headerEl.addEventListener('touchcancel', _cancelLongPress, {passive:true});
+                    _headerEl.addEventListener('touchmove',   _cancelLongPress, {passive:true});
+                    _headerEl.addEventListener('mousedown', _startLongPress);
+                    _headerEl.addEventListener('mouseup',   _cancelLongPress);
+                    _headerEl.addEventListener('mouseleave',_cancelLongPress);
                 }
 
                 if(isCurrentWeek) {
