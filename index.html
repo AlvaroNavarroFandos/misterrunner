@@ -7844,7 +7844,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             restoreAvatarDOM();
         }).catch(()=>{});
 
-        _renderActivePlanWeek(0);
+        // [v6 P.Plan] Al cargar la app, localizar la semana actual del plan
+        // para que Plan se muestre directamente en HOY (no en semana 1).
+        try {
+            const _plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan :
+                          (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? activeStrengthPlan : null;
+            if (_plan && _plan.weeks && _plan.weeks.length) {
+                const _todayMs = new Date(localDateStr(new Date())+'T00:00:00').getTime();
+                for (let i=0; i<_plan.weeks.length; i++) {
+                    const wkStart = new Date(_plan.weeks[i].weekStart+'T00:00:00').getTime();
+                    const wkEnd   = wkStart + 7*86400000;
+                    if (_todayMs >= wkStart && _todayMs < wkEnd) { planCurrentWeek = i; break; }
+                }
+            }
+        } catch(_) {}
+        _renderActivePlanWeek(planCurrentWeek);
         updatePlanNav();
         renderMisterPlanCard();
         updateExpBadge();
@@ -9984,6 +9998,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         void v.offsetWidth;
                         v.classList.add('mr-fx-view-in');
                     } catch(_) {}
+                    // [v6 P.Plan] Al entrar a Plan, saltar a la semana actual
+                    // y resetear vista a "semana" (no "mes") para localizar HOY.
+                    if (t === 'cal') {
+                        try {
+                            const _plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan :
+                                          (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? activeStrengthPlan : null;
+                            if (_plan && _plan.weeks && _plan.weeks.length) {
+                                const _todayMs = new Date(localDateStr(new Date())+'T00:00:00').getTime();
+                                let _wkIdx = -1;
+                                for (let i=0; i<_plan.weeks.length; i++) {
+                                    const wkStart = new Date(_plan.weeks[i].weekStart+'T00:00:00').getTime();
+                                    const wkEnd   = wkStart + 7*86400000;
+                                    if (_todayMs >= wkStart && _todayMs < wkEnd) { _wkIdx = i; break; }
+                                }
+                                // Si no está dentro del rango del plan, dejar planCurrentWeek como está
+                                if (_wkIdx >= 0) {
+                                    planCurrentWeek = _wkIdx;
+                                }
+                                // Forzar modo semana (no mes) para que se vea el HOY
+                                if (typeof planViewMode !== 'undefined' && planViewMode === 'month') {
+                                    planViewMode = 'week';
+                                    const _btnMes = document.getElementById('plan-view-toggle');
+                                    if (_btnMes) {
+                                        // Restaurar texto y SVG calendar del botón
+                                        _btnMes.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Mes';
+                                    }
+                                }
+                                if (typeof _renderActivePlanWeek === 'function') _renderActivePlanWeek(planCurrentWeek);
+                                if (typeof updatePlanNav === 'function') updatePlanNav();
+                            }
+                        } catch(_) {}
+                    }
                 }
             });
         });
@@ -18082,9 +18128,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function isMatched(sess) {
             return activities.some(a=>{
                 if(!a.dateStr) return false;
-                const pd=new Date(sess.dateStr+'T12:00:00').getTime();
-                const ad=new Date(a.dateStr+'T12:00:00').getTime();
-                return Math.abs(pd-ad)<=86400000&&a.type===sess.type;
+                // [v6 P.Plan] Match estricto: mismo día (sin tolerancia ±1) + mismo tipo
+                return a.dateStr === sess.dateStr && a.type === sess.type;
             });
         }
         // [v6 P.Plan] Devuelve la actividad correspondiente a una sesión (o null).
@@ -18093,9 +18138,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             for (let i=0; i<activities.length; i++) {
                 const a = activities[i];
                 if(!a.dateStr) continue;
-                const pd=new Date(sess.dateStr+'T12:00:00').getTime();
-                const ad=new Date(a.dateStr+'T12:00:00').getTime();
-                if (Math.abs(pd-ad)<=86400000 && a.type===sess.type) return a;
+                if (a.dateStr === sess.dateStr && a.type === sess.type) return a;
             }
             return null;
         }
@@ -18296,7 +18339,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;">${_detailShort}</span>`;
                 }
 
-                let html = `<div class="mr-day-header" style="display:flex;align-items:center;padding:10px 10px 10px ${_isStrengthCard?'30px':'14px'};gap:9px;position:relative;cursor:pointer;">`
+                let html = `<div class="mr-day-header" style="display:flex;align-items:center;padding:10px 10px 10px 14px;gap:9px;position:relative;cursor:pointer;">`
                     + `<span style="${_sideBarStyle}"></span>`
                     + _dateHTML
                     + `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">`
@@ -18311,7 +18354,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // DETAIL collapsable (oculto por defecto)
                 if (sess.blocks && sess.blocks.length > 0) {
                     const totalKmBlocks = sess.blocks.reduce((a,b)=>a+(b.km||0),0)||1;
-                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px ${_isStrengthCard?'52px':'66px'};background:var(--bsoft);flex-direction:column;gap:4px;">`;
+                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px 66px;background:var(--bsoft);flex-direction:column;gap:4px;">`;
                     // Profile bar (visual de bloques)
                     detail += `<div style="display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden;margin:8px 0 6px;">`;
                     sess.blocks.forEach(b => {
@@ -18331,7 +18374,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     html += detail;
                 } else if (sess.exercises && sess.exercises.length > 0) {
                     // Strength con ejercicios
-                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px 52px;background:var(--bsoft);flex-direction:column;gap:4px;padding-top:8px;">`;
+                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px 66px;background:var(--bsoft);flex-direction:column;gap:4px;padding-top:8px;">`;
                     sess.exercises.forEach((e, i) => {
                         detail += `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 9px;background:rgba(250,204,21,.10);border-left:2px solid #facc15;border-radius:0 6px 6px 0;">`
                             + `<div style="width:18px;height:18px;border-radius:50%;background:#facc15;color:#000;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${i+1}</div>`
@@ -18344,7 +18387,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     html += detail;
                 } else if (sess.desc) {
                     // Sesión simple con desc
-                    html += `<div class="mr-day-detail" style="display:none;padding:8px 12px 10px ${_isStrengthCard?'52px':'66px'};background:var(--bsoft);font-size:10.5px;color:var(--ts);line-height:1.5;">${sess.desc}</div>`;
+                    html += `<div class="mr-day-detail" style="display:none;padding:8px 12px 10px 66px;background:var(--bsoft);font-size:10.5px;color:var(--ts);line-height:1.5;">${sess.desc}</div>`;
                 }
 
                 card.innerHTML = html;
