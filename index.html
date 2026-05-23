@@ -972,7 +972,6 @@
     .act-swipe-wrap {
         position: relative;
         border-radius: 14px;
-        overflow: hidden;
     }
     .act-delete-bg {
         position: absolute;
@@ -36112,17 +36111,21 @@ window.addEventListener('DOMContentLoaded', function() {
                     if (el.nodeType === 1) {
                         // Marca explícita opt-out
                         if (el.dataset && el.dataset.hScroll === '1') return true;
-                        // Plan: las cards tienen swipe-to-delete propio
-                        if (el.classList && el.classList.contains('mr-day-card')) return true;
-                        // Detecta overflow-x scroll/auto (carrusel, PR strips, gráficas...)
-                        var cs = el.scrollWidth > el.clientWidth + 4 ? getComputedStyle(el) : null;
-                        if (cs && (cs.overflowX === 'auto' || cs.overflowX === 'scroll')) return true;
-                        // Tags de UI que nunca queremos interceptar
+                        // Detecta overflow-x SCROLLABLE (no hidden):
+                        // requiere AMBAS condiciones para ignorar:
+                        //   1. overflow-x: auto o scroll (explícito)
+                        //   2. scrollWidth > clientWidth (hay contenido que se sale)
+                        // Esto evita falsos positivos con .mr-lib-card-inner (overflow:hidden)
+                        // y otros contenedores con flex layout que NO son scrollables.
                         var tn = el.tagName;
                         if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || tn === 'CANVAS') return true;
                         if (el.isContentEditable) return true;
-                        // Range / sliders (volumen, tonos, etc.)
                         if (el.getAttribute && el.getAttribute('role') === 'slider') return true;
+                        // Comprobar overflow-x sólo si realmente hay desbordamiento
+                        if (el.scrollWidth > el.clientWidth + 4) {
+                            var cs = getComputedStyle(el);
+                            if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') return true;
+                        }
                     }
                     el = el.parentNode;
                 }
