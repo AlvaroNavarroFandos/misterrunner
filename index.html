@@ -13031,36 +13031,72 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // ─── Long-press premium en card → modal Editar / Eliminar ───
             // Feedback visual escalado durante el press + vibración háptica.
             // Click corto = abrir detalle. Long-press (≥500ms) = action sheet.
+            // Si el usuario hace gesto horizontal claro → abortar long-press
+            // SIN aplicar transición de escala para no interferir con el swipe
+            // global entre pestañas (causaba que el swipe desde card se perdiera).
             sliding.style.userSelect = 'none';
             sliding.style.webkitUserSelect = 'none';
             sliding.style.webkitTouchCallout = 'none';
             sliding.style.webkitTapHighlightColor = 'transparent';
-            sliding.style.transition = 'transform .12s ease-out';
 
             let _lpTimer = null;
             let _lpFired = false;
-            const _scaleDown = () => { sliding.style.transform = 'scale(.97)'; };
-            const _scaleUp   = () => { sliding.style.transform = 'scale(1)'; };
+            let _lpStartX = 0;
+            let _lpStartY = 0;
+            let _lpAborted = false;
 
-            const _startLP = () => {
+            const _startLP = (ev) => {
                 _lpFired = false;
-                _scaleDown();
+                _lpAborted = false;
+                if (ev && ev.touches && ev.touches[0]) {
+                    _lpStartX = ev.touches[0].clientX;
+                    _lpStartY = ev.touches[0].clientY;
+                }
+                // Aplicar scale-down inmediato SIN transición (instantáneo).
+                // Si el usuario hace swipe, restauramos sin transición tampoco
+                // para que el swipe se sienta inmediato.
+                sliding.style.transition = 'transform .12s ease-out';
+                sliding.style.transform = 'scale(.97)';
                 _lpTimer = setTimeout(() => {
+                    if (_lpAborted) return;
                     _lpFired = true;
                     if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
-                    _scaleUp();
+                    sliding.style.transform = 'scale(1)';
                     try { openActivityActions(act, wrap, df); } catch(_){}
                 }, 500);
             };
+            const _abortLP = () => {
+                _lpAborted = true;
+                if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                // Restaurar SIN transición para no interferir con swipe global
+                sliding.style.transition = 'none';
+                sliding.style.transform = 'scale(1)';
+            };
             const _cancelLP = () => {
                 if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-                _scaleUp();
+                sliding.style.transition = 'transform .12s ease-out';
+                sliding.style.transform = 'scale(1)';
+            };
+            const _onTouchMove = (ev) => {
+                if (!ev.touches || !ev.touches[0]) return;
+                const dx = Math.abs(ev.touches[0].clientX - _lpStartX);
+                const dy = Math.abs(ev.touches[0].clientY - _lpStartY);
+                // Cualquier movimiento > 8px aborta el long-press.
+                // Si es claramente horizontal, abortamos SIN transición de scale-up
+                // para que el swipe global entre pestañas no se vea bloqueado.
+                if (dx > 8 || dy > 8) {
+                    if (dx > dy * 1.2 && dx > 8) {
+                        _abortLP();
+                    } else {
+                        _cancelLP();
+                    }
+                }
             };
 
             sliding.addEventListener('touchstart', _startLP, {passive:true});
             sliding.addEventListener('touchend',   _cancelLP, {passive:true});
             sliding.addEventListener('touchcancel',_cancelLP, {passive:true});
-            sliding.addEventListener('touchmove',  _cancelLP, {passive:true});
+            sliding.addEventListener('touchmove',  _onTouchMove, {passive:true});
             sliding.addEventListener('mousedown',  _startLP);
             sliding.addEventListener('mouseup',    _cancelLP);
             sliding.addEventListener('mouseleave', _cancelLP);
@@ -18740,34 +18776,57 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // ─── Long-press (≥500ms) en header → abre modal mover ───
                 // Premium UX: feedback visual escalado durante el press +
                 // vibración háptica al disparar + bloqueo total de selección de texto.
+                // Si el usuario hace gesto horizontal claro → abortar long-press
+                // SIN transición de scale-up para no interferir con swipe entre pestañas.
                 const _canMove = isCurrentWeek && sess.type !== 'race';
                 if (_headerEl && _canMove) {
-                    const _doScale = (s) => { _headerEl.style.transform = s; };
+                    let _lpStartX = 0, _lpStartY = 0, _lpAborted = false;
                     const _startLongPress = (ev) => {
                         _longPressFired = false;
-                        // Feedback visual inmediato: scale-down sutil (.97) para
-                        // indicar al usuario que algo va a pasar si mantiene.
-                        _doScale('scale(.97)');
+                        _lpAborted = false;
+                        if (ev && ev.touches && ev.touches[0]) {
+                            _lpStartX = ev.touches[0].clientX;
+                            _lpStartY = ev.touches[0].clientY;
+                        }
+                        // Feedback visual inmediato con transición suave
+                        _headerEl.style.transition = 'transform .12s ease-out';
+                        _headerEl.style.transform = 'scale(.97)';
                         _longPressTimer = setTimeout(() => {
+                            if (_lpAborted) return;
                             _longPressFired = true;
-                            // Vibración háptica más perceptible (25ms = "tap fuerte"
-                            // en Android; iOS Safari ignora navigator.vibrate pero
-                            // el feedback visual ya da la pista táctil-visual).
                             if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
-                            // "Pop" final: escala vuelve a 1 con un micro-bounce
-                            _doScale('scale(1)');
+                            _headerEl.style.transform = 'scale(1)';
                             try { openSessionActions(ev, sess.dateStr, weekIdx, _isStrengthCard); } catch(_){}
                         }, 500);
                     };
+                    const _abortLongPress = () => {
+                        _lpAborted = true;
+                        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+                        // Restaurar SIN transición: el swipe entre pestañas se siente inmediato
+                        _headerEl.style.transition = 'none';
+                        _headerEl.style.transform = 'scale(1)';
+                    };
                     const _cancelLongPress = () => {
                         if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-                        // Restaurar escala suavemente (si no disparó)
-                        _doScale('scale(1)');
+                        _headerEl.style.transition = 'transform .12s ease-out';
+                        _headerEl.style.transform = 'scale(1)';
+                    };
+                    const _onLPTouchMove = (ev) => {
+                        if (!ev.touches || !ev.touches[0]) return;
+                        const dx = Math.abs(ev.touches[0].clientX - _lpStartX);
+                        const dy = Math.abs(ev.touches[0].clientY - _lpStartY);
+                        if (dx > 8 || dy > 8) {
+                            if (dx > dy * 1.2 && dx > 8) {
+                                _abortLongPress();
+                            } else {
+                                _cancelLongPress();
+                            }
+                        }
                     };
                     _headerEl.addEventListener('touchstart', _startLongPress, {passive:true});
                     _headerEl.addEventListener('touchend',    _cancelLongPress, {passive:true});
                     _headerEl.addEventListener('touchcancel', _cancelLongPress, {passive:true});
-                    _headerEl.addEventListener('touchmove',   _cancelLongPress, {passive:true});
+                    _headerEl.addEventListener('touchmove',   _onLPTouchMove, {passive:true});
                     _headerEl.addEventListener('mousedown', _startLongPress);
                     _headerEl.addEventListener('mouseup',   _cancelLongPress);
                     _headerEl.addEventListener('mouseleave',_cancelLongPress);
@@ -33380,7 +33439,9 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     var hasP = !!(post.photo_url);
 
     var card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border-radius:18px;border:1px solid var(--border);overflow:hidden;margin-bottom:10px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;';
+    // [v8.x — V5 Editorial] Card sin border, sombra tabaco cálida, esquinas más
+    // redondeadas. Se siente como una pieza de magazine de fotografía sobre el cream.
+    card.style.cssText = 'background:var(--card);border-radius:22px;overflow:hidden;margin-bottom:12px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;box-shadow:0 8px 24px rgba(101,67,33,.16), 0 2px 6px rgba(74,49,24,.18);';
 
     /* Header */
     var hdr = document.createElement('div');
@@ -33610,7 +33671,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     if (hasP || hasT) {
         var mw = document.createElement('div');
         if (hasP && hasT) {
-            mw.style.cssText = 'position:relative;display:flex;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
+            mw.style.cssText = 'position:relative;display:flex;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
             var photoSide = document.createElement('div');
             photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
@@ -33622,11 +33683,11 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;';
             var cvo = document.createElement('canvas');
             cvo.id = 'club-map-' + post.id;
-            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 180;
+            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 200;
             cvo.style.cssText = 'width:100%;height:100%;display:block;';
             trackSide.appendChild(cvo); mw.appendChild(trackSide);
         } else if (hasP) {
-            mw.style.cssText = 'position:relative;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+            mw.style.cssText = 'position:relative;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
             mw.appendChild(ph);
@@ -33635,11 +33696,11 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             mw.appendChild(gb);
             (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
-            mw.style.cssText = 'position:relative;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            mw.style.cssText = 'position:relative;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
             cvFull.width = Math.round(window.innerWidth);
-            cvFull.height = 180;
+            cvFull.height = 200;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
         }
@@ -33649,7 +33710,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         if (act.pr && Array.isArray(act.pr.records) && act.pr.records.length && typeof window._buildMedalSVG === 'function' && typeof window._getPRMeta === 'function') {
             var prRecs = act.pr.records;
             var medalWrap = document.createElement('div');
-            medalWrap.style.cssText = 'position:absolute;top:10px;right:10px;width:44px;height:50px;z-index:3;filter:drop-shadow(0 3px 8px rgba(0,0,0,.55));pointer-events:none;';
+            medalWrap.style.cssText = 'position:absolute;top:10px;right:10px;width:44px;height:50px;z-index:3;filter:drop-shadow(0 0 12px rgba(217,168,62,.55)) drop-shadow(0 3px 8px rgba(0,0,0,.55));pointer-events:none;';
             if (prRecs.length === 1) {
                 // 1 solo PR → su medalla específica
                 var prMeta = window._getPRMeta(prRecs[0].type) || { tier:'gold', centerText:'PR', label:prRecs[0].type };
