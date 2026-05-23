@@ -945,7 +945,7 @@
     body:not(.dark-mode) .mr-lib-card .mr-lib-title    { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-val { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-lbl { color: var(--crimson); opacity: .8; }
-    body:not(.dark-mode) .mr-lib-card .mr-lib-date     { color: var(--crimson); text-shadow: 0 1px 4px rgba(255,255,255,.85); }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-date     { color: #5a0f1a; font-weight: 800; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-shoe     { color: var(--ts); }
 
     /* [v5 P.Biblioteca] Stat box resumen adaptativo
@@ -1526,7 +1526,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </svg>
                         MES
                     </button>
-                    <button id="plan-export-btn" onclick="exportPlanToICS()" aria-label="Exportar a calendario"
+                    <button id="plan-export-btn" onclick="exportPlanToICS()" aria-label="Sincronizar con calendario"
                         class="mr-plan-export-btn"
                         style="display:inline-flex;align-items:center;gap:5px;border:none;border-radius:10px;padding:0 9px;height:38px;cursor:pointer;font-family:var(--f);flex-shrink:0;margin-left:auto;">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1535,7 +1535,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <line x1="8" y1="2" x2="8" y2="6"/>
                             <line x1="3" y1="10" x2="21" y2="10"/>
                         </svg>
-                        <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">EXPORTAR</span>
+                        <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">SYNC</span>
                     </button>
                 </div>
             </div>
@@ -1559,8 +1559,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <div style="display:flex;align-items:center;gap:7px;">
                     <label for="activity-files-input" aria-label="Importar entreno (.csv, .gpx, .fit)"
                         style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:10px;padding:0 9px;height:38px;cursor:pointer;font-family:var(--f);flex-shrink:0;box-shadow:0 2px 8px rgba(34,197,94,.35);">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
                         </svg>
                         <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">ENTRENO</span>
                     </label>
@@ -18571,7 +18573,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;">${_detailShort}</span>`;
                 }
 
-                let html = `<div class="mr-day-header" style="display:flex;align-items:center;padding:10px 10px 10px 14px;gap:9px;position:relative;cursor:pointer;">`
+                let html = `<div class="mr-day-header" style="display:flex;align-items:center;padding:10px 10px 10px 14px;gap:9px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
                     + `<span style="${_sideBarStyle}"></span>`
                     + _dateHTML
                     + `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">`
@@ -18663,18 +18665,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
 
                 // ─── Long-press (≥500ms) en header → abre modal mover ───
+                // Premium UX: feedback visual escalado durante el press +
+                // vibración háptica al disparar + bloqueo total de selección de texto.
                 const _canMove = isCurrentWeek && sess.type !== 'race';
                 if (_headerEl && _canMove) {
+                    const _doScale = (s) => { _headerEl.style.transform = s; };
                     const _startLongPress = (ev) => {
                         _longPressFired = false;
+                        // Feedback visual inmediato: scale-down sutil (.97) para
+                        // indicar al usuario que algo va a pasar si mantiene.
+                        _doScale('scale(.97)');
                         _longPressTimer = setTimeout(() => {
                             _longPressFired = true;
-                            if (navigator.vibrate) try { navigator.vibrate(15); } catch(_){}
+                            // Vibración háptica más perceptible (25ms = "tap fuerte"
+                            // en Android; iOS Safari ignora navigator.vibrate pero
+                            // el feedback visual ya da la pista táctil-visual).
+                            if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
+                            // "Pop" final: escala vuelve a 1 con un micro-bounce
+                            _doScale('scale(1)');
                             try { openMoveDay(ev, sess.dateStr, weekIdx, _isStrengthCard); } catch(_){}
                         }, 500);
                     };
                     const _cancelLongPress = () => {
                         if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+                        // Restaurar escala suavemente (si no disparó)
+                        _doScale('scale(1)');
                     };
                     _headerEl.addEventListener('touchstart', _startLongPress, {passive:true});
                     _headerEl.addEventListener('touchend',    _cancelLongPress, {passive:true});
@@ -18683,6 +18698,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _headerEl.addEventListener('mousedown', _startLongPress);
                     _headerEl.addEventListener('mouseup',   _cancelLongPress);
                     _headerEl.addEventListener('mouseleave',_cancelLongPress);
+                    // Prevenir el menú contextual / lupa de selección en iOS
+                    // (responsable del "texto seleccionado" durante el long-press).
+                    _headerEl.addEventListener('contextmenu', function(e){ e.preventDefault(); }, {passive:false});
+                    // Suprimir la propia selección si el browser intenta dispararla
+                    _headerEl.addEventListener('selectstart', function(e){ e.preventDefault(); }, {passive:false});
                 }
 
                 if(isCurrentWeek) {
@@ -35786,6 +35806,117 @@ window.addEventListener('DOMContentLoaded', function() {
                     document.body.appendChild(el);
                 }
             });
+        })();
+    </script>
+
+    <!-- ── Swipe horizontal entre pestañas principales ────────────────
+         Permite cambiar entre Plan / Biblioteca / Home / Míster / Runner
+         con un gesto horizontal claro. Respeta scrolls horizontales internos
+         (cualquier descendiente con [data-h-scroll], overflow-x:auto/scroll,
+         elementos dentro de sheets/modales/overlays).
+         Diseñado para que NO interfiera con: carrusel de zapatillas, scroll
+         entre tarjetas de actividad, PR strips, mapas, gráficas, etc. -->
+    <script>
+        (function setupViewSwipe(){
+            // Orden de pestañas (igual que en el navbar)
+            var VIEW_ORDER = ['cal', 'activities', 'home', 'mister', 'runner'];
+            var TH_DX_MIN  = 70;   // px mínimos para considerar swipe válido
+            var TH_RATIO   = 1.4;  // |dx| debe ser > |dy| * ratio
+            var TH_VX_MIN  = 0.35; // px/ms — velocidad mínima alternativa para gesto rápido
+
+            var sx = 0, sy = 0, st = 0;
+            var active = false;
+            var cancelled = false;
+
+            // Detecta si el touch empezó dentro de un elemento que captura
+            // scroll horizontal o que está fuera de #app (overlays, sheets...)
+            function shouldIgnore(target) {
+                if (!target || !(target instanceof Element)) return true;
+                // Si el target no está dentro de #app → fuera de las views (Club, overlays, sheets, modales)
+                var app = document.getElementById('app');
+                if (!app || !app.contains(target)) return true;
+                // Si hay algún overlay full-screen visible (Club, búsqueda, perfil usuario, crew, sheets) → ignorar
+                if (document.body.classList.contains('sheet-open')) return true;
+                if (document.querySelector('#club-view') && document.getElementById('club-view').style.display !== 'none') return true;
+                if (document.querySelector('[data-up-overlay]')) return true;
+                if (document.getElementById('crew-detail-view')) return true;
+                // Subir por el árbol buscando un padre que indique scroll horizontal interno
+                var el = target;
+                while (el && el !== app) {
+                    if (el.nodeType === 1) {
+                        // Marca explícita opt-out
+                        if (el.dataset && el.dataset.hScroll === '1') return true;
+                        // Plan: las cards tienen swipe-to-delete propio
+                        if (el.classList && el.classList.contains('mr-day-card')) return true;
+                        // Detecta overflow-x scroll/auto (carrusel, PR strips, gráficas...)
+                        var cs = el.scrollWidth > el.clientWidth + 4 ? getComputedStyle(el) : null;
+                        if (cs && (cs.overflowX === 'auto' || cs.overflowX === 'scroll')) return true;
+                        // Tags de UI que nunca queremos interceptar
+                        var tn = el.tagName;
+                        if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || tn === 'CANVAS') return true;
+                        if (el.isContentEditable) return true;
+                        // Range / sliders (volumen, tonos, etc.)
+                        if (el.getAttribute && el.getAttribute('role') === 'slider') return true;
+                    }
+                    el = el.parentNode;
+                }
+                return false;
+            }
+
+            function currentIndex() {
+                var actBtn = document.querySelector('#nav .nb.active');
+                if (!actBtn) return -1;
+                return VIEW_ORDER.indexOf(actBtn.dataset.target);
+            }
+
+            function goToView(idx) {
+                if (idx < 0 || idx >= VIEW_ORDER.length) return;
+                var btn = document.querySelector('#nav .nb[data-target="' + VIEW_ORDER[idx] + '"]');
+                if (btn) btn.click();
+            }
+
+            document.addEventListener('touchstart', function(e) {
+                if (!e.touches || e.touches.length !== 1) { active = false; return; }
+                var t = e.touches[0];
+                cancelled = shouldIgnore(e.target);
+                if (cancelled) { active = false; return; }
+                sx = t.clientX;
+                sy = t.clientY;
+                st = Date.now();
+                active = true;
+            }, { passive: true });
+
+            document.addEventListener('touchmove', function(e) {
+                if (!active || cancelled) return;
+                var t = e.touches[0];
+                var dx = t.clientX - sx;
+                var dy = t.clientY - sy;
+                // Si en el movimiento se ve claramente vertical → cancelar
+                if (Math.abs(dy) > Math.abs(dx) * 0.9 && Math.abs(dy) > 14) {
+                    cancelled = true;
+                    active = false;
+                }
+            }, { passive: true });
+
+            document.addEventListener('touchend', function(e) {
+                if (!active || cancelled) { active = false; return; }
+                active = false;
+                var t = (e.changedTouches && e.changedTouches[0]) || null;
+                if (!t) return;
+                var dx = t.clientX - sx;
+                var dy = t.clientY - sy;
+                var dt = Math.max(1, Date.now() - st);
+                var vx = Math.abs(dx) / dt; // px/ms
+                // Criterio: swipe horizontal claro (dx grande O velocidad alta)
+                if (Math.abs(dx) < TH_DX_MIN && vx < TH_VX_MIN) return;
+                if (Math.abs(dx) < Math.abs(dy) * TH_RATIO) return;
+                var idx = currentIndex();
+                if (idx < 0) return;
+                if (dx < 0) goToView(idx + 1);   // swipe izquierda → siguiente
+                else        goToView(idx - 1);   // swipe derecha → anterior
+            }, { passive: true });
+
+            document.addEventListener('touchcancel', function(){ active = false; cancelled = false; }, { passive: true });
         })();
     </script>
 
