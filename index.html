@@ -28394,19 +28394,21 @@ async function openCrewDetail(crew) {
     setActiveTab('feed');
 
     // Cargar stats del crew (Miembros / Posts / Retos) — async sin bloquear UI
+    // Nota: usamos select normal + .length en lugar de count:exact,head:true
+    // porque count:exact requiere policies RLS especiales que pueden fallar
+    // silenciosamente devolviendo null.
     (function _loadCrewStats() {
         try {
             var sbS = window._sbClient;
             if (!sbS || !c || !c.id) return;
-            // Lanzar las 3 queries en paralelo
             Promise.all([
-                sbS.from('crew_members').select('id', { count: 'exact', head: true }).eq('crew_id', c.id),
-                sbS.from('club_posts').select('id', { count: 'exact', head: true }).eq('crew_id', c.id),
-                sbS.from('crew_challenges').select('id', { count: 'exact', head: true }).eq('crew_id', c.id)
+                sbS.from('crew_members').select('user_id').eq('crew_id', c.id),
+                sbS.from('club_posts').select('id').eq('crew_id', c.id),
+                sbS.from('crew_challenges').select('id').eq('crew_id', c.id)
             ]).then(function(results) {
-                var nm = (results[0] && typeof results[0].count === 'number') ? results[0].count : 0;
-                var np = (results[1] && typeof results[1].count === 'number') ? results[1].count : 0;
-                var nc = (results[2] && typeof results[2].count === 'number') ? results[2].count : 0;
+                var nm = (results[0] && Array.isArray(results[0].data)) ? results[0].data.length : 0;
+                var np = (results[1] && Array.isArray(results[1].data)) ? results[1].data.length : 0;
+                var nc = (results[2] && Array.isArray(results[2].data)) ? results[2].data.length : 0;
                 var elM = ov.querySelector('#crew-stat-members');
                 var elP = ov.querySelector('#crew-stat-posts');
                 var elC = ov.querySelector('#crew-stat-challenges');
@@ -28414,8 +28416,7 @@ async function openCrewDetail(crew) {
                 if (elP) elP.textContent = String(np);
                 if (elC) elC.textContent = String(nc);
             }).catch(function(e) {
-                // Si alguna query falla (tabla inexistente etc.), poner 0 silenciosamente
-                console.warn('[MR] crew stats load partial fail:', e);
+                console.warn('[MR] crew stats load fail:', e);
                 var elM = ov.querySelector('#crew-stat-members');
                 var elP = ov.querySelector('#crew-stat-posts');
                 var elC = ov.querySelector('#crew-stat-challenges');
@@ -30337,73 +30338,35 @@ async function toggleClubBoard(opts) {
         return;
     }
     // Crear panel con placeholder de carga.
-    // El fondo es un SVG con textura de muro de ladrillo:
-    //   · Rojo terracota para el Club global
-    //   · Gris plateado para el Crew (combina con el lenguaje plateado)
-    // Construimos el SVG dinámicamente con paleta según contexto.
+    // Fondo: gradiente metálico premium (más limpio que el muro de ladrillo).
+    //   · Dorado para el Club global (combina con el lenguaje dorado)
+    //   · Plateado para el Crew (combina con el lenguaje plateado)
     var panel = document.createElement('div');
     panel.id = panelId;
-    // Paletas de ladrillo
-    var BRICK = crewId ? {
-        // Gris plateado (encaja con la pestaña Crews)
-        bg:      '#8a8f96',
-        mortar:  '%23383c42',  // gris oscuro
-        brick1:  '%23a8adb5',  // gris medio
-        brick2:  '%23b8bcc2',  // gris claro
-        brick3:  '%237d828a',  // gris más oscuro
-        highlight: '%23d4d7dc',
-        shadow:  '%235d6168',
-        textPanel: '#1a1f2e',  // texto del header en oscuro (sobre nota blanca)
-        borderColor: '#5d6168',
-        innerShadow: 'inset 0 0 40px rgba(20,25,30,.45)'
+    // Paletas de gradiente
+    var THEME = crewId ? {
+        // Plateado premium (silver gradient)
+        bg: 'linear-gradient(135deg, #b8bcc2 0%, #9aa0a8 35%, #7d828a 65%, #b8bcc2 100%)',
+        bgOverlay: 'linear-gradient(180deg, rgba(255,255,255,.18) 0%, transparent 30%, transparent 70%, rgba(0,0,0,.18) 100%)',
+        borderColor: 'rgba(93,97,104,.65)',
+        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(0,0,0,.20)',
+        outerShadow: '0 4px 14px rgba(80,85,92,.30)'
     } : {
-        // Rojo terracota tipo cómic (Club global)
-        bg:      '#a83a22',
-        mortar:  '%231f1410',  // marrón muy oscuro
-        brick1:  '%23c0432a',  // rojo terracota
-        brick2:  '%23d65a3a',  // naranja-rojo
-        brick3:  '%238b2818',  // rojo oscuro
-        highlight: '%23e87c50',
-        shadow:  '%23601810',
-        textPanel: '#1a1f2e',
-        borderColor: '#3a1810',
-        innerShadow: 'inset 0 0 40px rgba(40,15,10,.55)'
+        // Dorado premium (gold gradient)
+        bg: 'linear-gradient(135deg, #e8a825 0%, #c4881e 35%, #8b6210 65%, #e8a825 100%)',
+        bgOverlay: 'linear-gradient(180deg, rgba(255,255,255,.20) 0%, transparent 30%, transparent 70%, rgba(0,0,0,.22) 100%)',
+        borderColor: 'rgba(143,98,16,.65)',
+        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.22)',
+        outerShadow: '0 4px 14px rgba(196,136,30,.30)'
     };
-    // SVG patrón: tile 140×60 con 2 filas offset (running bond). Cada
-    // ladrillo es 70×30. Mortero oscuro de 2px alrededor. Brillo arriba +
-    // sombra abajo en cada pieza para dar volumen. Tonos variados para
-    // que el muro no sea monocromo plano.
-    var BRICK_SVG = "data:image/svg+xml;utf8,"
-        + "<svg xmlns='http://www.w3.org/2000/svg' width='140' height='60' viewBox='0 0 140 60'>"
-        // Fondo (mortar)
-        + "<rect width='140' height='60' fill='" + BRICK.mortar + "'/>"
-        // Fila 1 (alineada): 2 ladrillos completos
-        + "<rect x='1' y='1' width='68' height='28' fill='" + BRICK.brick1 + "'/>"
-        + "<rect x='71' y='1' width='68' height='28' fill='" + BRICK.brick2 + "'/>"
-        // Fila 2 (offset 35px): medio ladrillo izq + ladrillo entero + medio ladrillo dcha
-        + "<rect x='1' y='31' width='33' height='28' fill='" + BRICK.brick3 + "'/>"
-        + "<rect x='36' y='31' width='68' height='28' fill='" + BRICK.brick1 + "'/>"
-        + "<rect x='106' y='31' width='33' height='28' fill='" + BRICK.brick2 + "'/>"
-        // Highlights (línea superior clara) para dar volumen
-        + "<rect x='1' y='1' width='68' height='2' fill='" + BRICK.highlight + "' opacity='.45'/>"
-        + "<rect x='71' y='1' width='68' height='2' fill='" + BRICK.highlight + "' opacity='.35'/>"
-        + "<rect x='1' y='31' width='33' height='2' fill='" + BRICK.highlight + "' opacity='.40'/>"
-        + "<rect x='36' y='31' width='68' height='2' fill='" + BRICK.highlight + "' opacity='.50'/>"
-        + "<rect x='106' y='31' width='33' height='2' fill='" + BRICK.highlight + "' opacity='.35'/>"
-        // Shadows (línea inferior oscura)
-        + "<rect x='1' y='27' width='68' height='2' fill='" + BRICK.shadow + "' opacity='.50'/>"
-        + "<rect x='71' y='27' width='68' height='2' fill='" + BRICK.shadow + "' opacity='.55'/>"
-        + "<rect x='1' y='57' width='33' height='2' fill='" + BRICK.shadow + "' opacity='.45'/>"
-        + "<rect x='36' y='57' width='68' height='2' fill='" + BRICK.shadow + "' opacity='.55'/>"
-        + "<rect x='106' y='57' width='33' height='2' fill='" + BRICK.shadow + "' opacity='.50'/>"
-        + "</svg>";
     panel.style.cssText = "flex-shrink:0;max-height:0;opacity:0;overflow:hidden;"
         + "transition:max-height .35s ease,opacity .25s ease,margin-bottom .25s ease;"
-        + "background-image:url(\"" + BRICK_SVG + "\");background-color:" + BRICK.bg + ";"
-        + "background-size:140px 60px;background-repeat:repeat;"
-        + "border:3px solid " + BRICK.borderColor + ";border-radius:8px;margin-bottom:0;"
-        + "box-shadow:" + BRICK.innerShadow + ",0 4px 14px rgba(0,0,0,.45);";
-    panel.innerHTML = '<div style="padding:30px 20px;text-align:center;color:#fff;font-size:12px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.6);">Cargando el muro…</div>';
+        + "background:" + THEME.bg + ";"
+        + "border:1.5px solid " + THEME.borderColor + ";border-radius:14px;margin-bottom:0;"
+        + "box-shadow:" + THEME.innerShadow + "," + THEME.outerShadow + ";"
+        + "position:relative;";
+    panel.innerHTML = '<div aria-hidden="true" style="position:absolute;inset:0;background:' + THEME.bgOverlay + ';pointer-events:none;border-radius:13px;"></div>'
+        + '<div style="padding:24px 20px;text-align:center;color:#fff;font-size:12px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.35);position:relative;z-index:1;">Cargando el muro…</div>';
     feed.insertBefore(panel, feed.firstChild);
     // Reflow → animar a max-height grande
     requestAnimationFrame(function() {
@@ -30485,8 +30448,8 @@ async function _buildClubBoardHTML(opts) {
     // Título contextual: si estamos en un crew, ponemos su nombre.
     function _safeName(n) { return String(n || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     var titleText = crewId
-        ? ('🧱 Esta semana en ' + _safeName(crewName || 'el crew'))
-        : '🧱 Esta semana en el Club';
+        ? ('🏆 Esta semana en ' + _safeName(crewName || 'el crew'))
+        : '🏆 Esta semana en el Club';
     var header = '<div style="' + noteStyle() + 'margin:14px 14px 12px;display:flex;align-items:center;justify-content:space-between;">'
               +    pin('red')
               +    '<div>'
@@ -33132,13 +33095,13 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     var hasP = !!(post.photo_url);
 
     var card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border-radius:20px;border:1px solid var(--border);overflow:hidden;margin-bottom:14px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;';
+    card.style.cssText = 'background:var(--card);border-radius:18px;border:1px solid var(--border);overflow:hidden;margin-bottom:10px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;';
 
     /* Header */
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;gap:11px;padding:13px 15px 11px;flex-shrink:0;';
+    hdr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 13px 9px;flex-shrink:0;';
     var av = document.createElement('div');
-    av.style.cssText = 'width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--crimson),#c0243a);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;';
+    av.style.cssText = 'width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--crimson),#c0243a);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;';
     if (avatarUrl) { var avImg = document.createElement('img'); avImg.src = avatarUrl; avImg.loading = 'lazy'; avImg.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(avImg); }
     else av.textContent = (user[0] || '?').toUpperCase();
     if (!isOwn && userId) { av.style.cursor='pointer'; (function(_id,_un,_ua){av.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
@@ -33362,7 +33325,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     if (hasP || hasT) {
         var mw = document.createElement('div');
         if (hasP && hasT) {
-            mw.style.cssText = 'position:relative;display:flex;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
+            mw.style.cssText = 'position:relative;display:flex;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
             var photoSide = document.createElement('div');
             photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
@@ -33374,11 +33337,11 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;';
             var cvo = document.createElement('canvas');
             cvo.id = 'club-map-' + post.id;
-            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 220;
+            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 180;
             cvo.style.cssText = 'width:100%;height:100%;display:block;';
             trackSide.appendChild(cvo); mw.appendChild(trackSide);
         } else if (hasP) {
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+            mw.style.cssText = 'position:relative;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
             mw.appendChild(ph);
@@ -33387,11 +33350,11 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             mw.appendChild(gb);
             (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            mw.style.cssText = 'position:relative;width:100%;height:180px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
             cvFull.width = Math.round(window.innerWidth);
-            cvFull.height = 220;
+            cvFull.height = 180;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
         }
@@ -33440,8 +33403,8 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
 
     /* Name + type */
     var nameRow = document.createElement('div');
-    nameRow.style.cssText = 'padding:12px 15px 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-shrink:0;';
-    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:20px;font-weight:800;color:var(--tw);letter-spacing:-.4px;line-height:1.2;flex:1;'; nmEl.textContent = act.name || tl;
+    nameRow.style.cssText = 'padding:10px 13px 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-shrink:0;';
+    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:18px;font-weight:800;color:var(--tw);letter-spacing:-.3px;line-height:1.2;flex:1;'; nmEl.textContent = act.name || tl;
     var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-top:4px;';
     // PB badge (own posts only — we don't have remote marcas)
     if (isOwn) {
@@ -33461,7 +33424,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     /* PR strip — fila horizontal con chips compactos de cada récord batido */
     if (act.pr && Array.isArray(act.pr.records) && act.pr.records.length && typeof window._getPRMeta === 'function') {
         var prStrip = document.createElement('div');
-        prStrip.style.cssText = 'display:flex;gap:6px;padding:0 15px 10px;overflow-x:auto;flex-shrink:0;scrollbar-width:none;-ms-overflow-style:none;';
+        prStrip.style.cssText = 'display:flex;gap:6px;padding:0 13px 8px;overflow-x:auto;flex-shrink:0;scrollbar-width:none;-ms-overflow-style:none;';
         prStrip.style.setProperty('-webkit-overflow-scrolling', 'touch');
         var isDarkTheme = document.body.classList.contains('dark-mode');
         // Paletas por tier (modo claro vs oscuro). Buscamos buen contraste:
@@ -33497,10 +33460,10 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
 
     /* Divider */
-    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 15px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv1);
+    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv1);
 
     /* Stats */
-    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:10px 6px 8px;flex-shrink:0;';
+    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:8px 6px 7px;flex-shrink:0;';
     var statCells;
     if (act.type === 'heatmap' && act.heatmapStats) {
         var hs = act.heatmapStats;
@@ -33520,13 +33483,13 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
     statCells.forEach(function(s) {
         var cell = document.createElement('div'); cell.style.cssText = 'text-align:center;padding:2px;';
-        cell.innerHTML = '<div style="font-size:18px;font-weight:800;color:var(--tw);line-height:1.1;font-variant-numeric:tabular-nums;">' + s.v + '</div><div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-top:2px;">' + s.u + '</div>';
+        cell.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--tw);line-height:1.1;font-variant-numeric:tabular-nums;">' + s.v + '</div><div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-top:2px;">' + s.u + '</div>';
         sg.appendChild(cell);
     });
     card.appendChild(sg);
 
     /* Reactions */
-    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 15px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv2);
+    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv2);
     card.appendChild(_renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis));
     /* Comments section */
     card.appendChild(_renderCommentsSection(post.id, myId, profile));
@@ -33543,7 +33506,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
 
     // Toggle button row
     var toggle = document.createElement('button');
-    toggle.style.cssText = 'width:100%;background:none;border:none;padding:9px 15px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-family:var(--f);';
+    toggle.style.cssText = 'width:100%;background:none;border:none;padding:8px 13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-family:var(--f);';
     toggle.innerHTML = '<span style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ts);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '">Comentarios</span></span><svg id="cmt-chev-' + postId + '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2" stroke-linecap="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>';
 
     // Collapsible body
@@ -33957,7 +33920,7 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
     var EMOJIS = (Array.isArray(crewEmojis) && crewEmojis.length === 5) ? crewEmojis.slice() : DEFAULT_EMOJIS;
     var bar = document.createElement('div');
     bar.id = 'rxbar-' + postId;
-    bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px 12px;flex-wrap:nowrap;border-top:1px solid var(--bsoft);';
+    bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 13px 9px;flex-wrap:nowrap;border-top:1px solid var(--bsoft);';
     var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
     EMOJIS.forEach(function(em) {
         var users = (reactions || []).filter(function(r) { return r.emoji === em; }).map(function(r) { return r.user_id; });
