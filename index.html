@@ -12858,6 +12858,114 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
         }
 
+        // Modal premium de acciones sobre una actividad de Biblioteca:
+        // - Editar: abre openActivityEdit
+        // - Eliminar: confirmación in-line + animación de colapso + deleteActivity
+        // Mismo patrón visual que openSessionActions del Plan para coherencia.
+        function openActivityActions(act, wrap, df) {
+            var existing = document.getElementById('act-actions-modal');
+            if (existing) existing.remove();
+            var label = getTypeLabel(act.type)
+                + (act.distKm > 0 ? ' · ' + act.distKm.toFixed(2) + ' km' : '')
+                + ' · ' + df;
+
+            var modal = document.createElement('div');
+            modal.id = 'act-actions-modal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:50000;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s ease-out;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+            modal.innerHTML = ''
+                + '<div id="act-actions-inner" style="background:var(--bg);width:100%;max-width:500px;border-radius:22px 22px 0 0;padding:0 0 calc(20px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 32px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .32s cubic-bezier(.16,1,.3,1);">'
+                +   '<div style="padding:18px 20px 14px;border-bottom:1px solid var(--bsoft);text-align:center;">'
+                +     '<div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 14px;"></div>'
+                +     '<div style="font-size:13px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;">' + (act.name || 'Actividad') + '</div>'
+                +     '<div style="font-size:11px;color:var(--ts);margin-top:3px;">' + label + '</div>'
+                +   '</div>'
+                +   '<div style="padding:14px 16px 4px;display:flex;flex-direction:column;gap:8px;">'
+                +     '<button id="act-actions-edit" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+                +       '<div style="width:38px;height:38px;border-radius:50%;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                +         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>'
+                +       '</div>'
+                +       '<div style="flex:1;text-align:left;">'
+                +         '<div style="font-size:14px;font-weight:800;color:var(--tw);">Editar actividad</div>'
+                +         '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Nombre, fecha, notas, zapatillas…</div>'
+                +       '</div>'
+                +       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                +     '</button>'
+                +     '<button id="act-actions-delete" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(239,68,68,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+                +       '<div style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                +         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'
+                +       '</div>'
+                +       '<div style="flex:1;text-align:left;">'
+                +         '<div style="font-size:14px;font-weight:800;color:#ef4444;">Eliminar actividad</div>'
+                +         '<div style="font-size:11px;color:var(--tm);margin-top:1px;">No se puede deshacer</div>'
+                +       '</div>'
+                +       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                +     '</button>'
+                +     '<button id="act-actions-cancel" style="width:100%;margin-top:6px;padding:13px 16px;background:transparent;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);">Cancelar</button>'
+                +   '</div>'
+                + '</div>';
+            document.body.appendChild(modal);
+
+            // Animar entrada
+            requestAnimationFrame(function() { requestAnimationFrame(function() {
+                modal.style.opacity = '1';
+                var inner = document.getElementById('act-actions-inner');
+                if (inner) inner.style.transform = 'translateY(0)';
+            }); });
+
+            var closeModal = function() {
+                modal.style.opacity = '0';
+                var inner = document.getElementById('act-actions-inner');
+                if (inner) inner.style.transform = 'translateY(100%)';
+                setTimeout(function() { if (modal.parentNode) modal.remove(); }, 320);
+            };
+
+            modal.addEventListener('click', function(ev) { if (ev.target === modal) closeModal(); });
+            document.getElementById('act-actions-cancel').onclick = closeModal;
+
+            document.getElementById('act-actions-edit').onclick = function() {
+                closeModal();
+                setTimeout(function() {
+                    try { openActivityEdit(act); } catch(_){}
+                }, 280);
+            };
+
+            document.getElementById('act-actions-delete').onclick = function() {
+                var inner = document.getElementById('act-actions-inner');
+                if (!inner) return;
+                inner.innerHTML = ''
+                    + '<div style="padding:22px 22px 18px;text-align:center;">'
+                    +   '<div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 18px;"></div>'
+                    +   '<div style="width:54px;height:54px;border-radius:50%;background:rgba(239,68,68,.14);border:1.5px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">'
+                    +     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>'
+                    +   '</div>'
+                    +   '<div style="font-size:16px;font-weight:800;color:var(--tw);margin-bottom:6px;">¿Eliminar actividad?</div>'
+                    +   '<div style="font-size:12px;color:var(--ts);line-height:1.5;margin-bottom:18px;">' + label + '</div>'
+                    +   '<div style="display:flex;gap:10px;">'
+                    +     '<button id="act-actions-del-cancel" style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:13px;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button>'
+                    +     '<button id="act-actions-del-ok" style="flex:1;background:#ef4444;border:none;border-radius:13px;padding:13px;font-family:var(--f);font-size:13px;font-weight:800;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(239,68,68,.35);">Eliminar</button>'
+                    +   '</div>'
+                    + '</div>';
+                document.getElementById('act-actions-del-cancel').onclick = closeModal;
+                document.getElementById('act-actions-del-ok').onclick = function() {
+                    closeModal();
+                    // Animación de colapso del wrapper antes de borrar
+                    var h = wrap.offsetHeight;
+                    wrap.style.transition = 'opacity .2s, max-height .25s, margin .25s';
+                    wrap.style.overflow   = 'hidden';
+                    wrap.style.maxHeight  = h + 'px';
+                    requestAnimationFrame(function() {
+                        wrap.style.maxHeight    = '0';
+                        wrap.style.marginBottom = '0';
+                        wrap.style.opacity      = '0';
+                    });
+                    setTimeout(function() {
+                        try { deleteActivity(act.id); } catch(_){}
+                    }, 280);
+                };
+            };
+        }
+
         function _mrLibRenderOne(act) {
             const cId = 'act-c-' + act.id;
             const d   = new Date(act.dateStr + 'T12:00:00');
@@ -12865,10 +12973,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             const wrap = document.createElement('div');
             wrap.className = 'act-swipe-wrap';
-
-            const delBg = document.createElement('div');
-            delBg.className = 'act-delete-bg';
-            delBg.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
 
             const sliding = document.createElement('div');
             sliding.className = 'act-sliding act-card mr-lib-card';
@@ -12925,125 +13029,51 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>`;
 
-            // Swipe logic — delBg covers right 1/3 of card
-            let startX=0, curX=0, swiping=false, revealed=false;
-            // THRESHOLD = 1/3 of card width, resolved after first touch
-            let THRESHOLD = 90;
+            // ─── Long-press premium en card → modal Editar / Eliminar ───
+            // Feedback visual escalado durante el press + vibración háptica.
+            // Click corto = abrir detalle. Long-press (≥500ms) = action sheet.
+            sliding.style.userSelect = 'none';
+            sliding.style.webkitUserSelect = 'none';
+            sliding.style.webkitTouchCallout = 'none';
+            sliding.style.webkitTapHighlightColor = 'transparent';
+            sliding.style.transition = 'transform .12s ease-out';
 
-            const editBg = document.createElement('div');
-            editBg.className = 'act-edit-bg';
-            editBg.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+            let _lpTimer = null;
+            let _lpFired = false;
+            const _scaleDown = () => { sliding.style.transform = 'scale(.97)'; };
+            const _scaleUp   = () => { sliding.style.transform = 'scale(1)'; };
 
-            function snapBack() {
-                sliding.style.transition = 'transform .25s cubic-bezier(.25,.46,.45,.94)';
-                sliding.style.transform  = 'translateX(0)';
-                delBg.style.opacity      = '0';
-                delBg.style.pointerEvents= 'none';
-                editBg.style.opacity     = '0';
-                revealed = false;
-            }
+            const _startLP = () => {
+                _lpFired = false;
+                _scaleDown();
+                _lpTimer = setTimeout(() => {
+                    _lpFired = true;
+                    if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
+                    _scaleUp();
+                    try { openActivityActions(act, wrap, df); } catch(_){}
+                }, 500);
+            };
+            const _cancelLP = () => {
+                if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                _scaleUp();
+            };
 
-            sliding.addEventListener('touchstart', e => {
-                THRESHOLD = Math.round(wrap.offsetWidth / 3);
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-                curX = 0; swiping = true; swipeAxis = null;
-                sliding.style.transition = 'none';
-            }, {passive:true});
-
-            let startY = 0, swipeAxis = null; // 'h' | 'v' | null
-            sliding.addEventListener('touchmove', e => {
-                if (!swiping) return;
-                const dx = e.touches[0].clientX - startX;
-                const dy = e.touches[0].clientY - startY;
-                // Determine axis on first significant movement
-                if (!swipeAxis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
-                    swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v';
-                }
-                if (swipeAxis !== 'h') return; // let scroll happen
-                if (dx > 0 && !revealed) {
-                    curX = Math.min(THRESHOLD, dx);
-                    sliding.style.transform  = 'translateX(' + curX + 'px)';
-                    editBg.style.opacity     = String(Math.min(1, curX / THRESHOLD));
-                    delBg.style.opacity      = '0';
-                } else if (dx < 0 && !revealed) {
-                    curX = Math.max(-THRESHOLD, dx);
-                    sliding.style.transform  = 'translateX(' + curX + 'px)';
-                    delBg.style.opacity      = String(Math.min(1, Math.abs(curX) / THRESHOLD));
-                    editBg.style.opacity     = '0';
-                } else if (revealed && dx > 0) {
-                    curX = Math.min(0, dx - THRESHOLD);
-                    sliding.style.transform  = 'translateX(' + curX + 'px)';
-                    delBg.style.opacity      = String(Math.max(0, 1 + curX / THRESHOLD));
-                }
-            }, {passive:true});
-
-            sliding.addEventListener('touchend', () => {
-                swiping = false;
-                if (curX > THRESHOLD * 0.5 && !revealed) {
-                    snapBack();
-                    openActivityEdit(act);
-                } else if (curX < -THRESHOLD * 0.55 && !revealed) {
-                    sliding.style.transition = 'transform .25s cubic-bezier(.25,.46,.45,.94)';
-                    sliding.style.transform  = 'translateX(-' + THRESHOLD + 'px)';
-                    delBg.style.opacity      = '1';
-                    delBg.style.pointerEvents= 'auto';
-                    revealed = true;
-                } else if (revealed && curX > -THRESHOLD * 0.5) {
-                    snapBack();
-                } else if (revealed) {
-                    sliding.style.transition = 'transform .25s cubic-bezier(.25,.46,.45,.94)';
-                    sliding.style.transform  = 'translateX(-' + THRESHOLD + 'px)';
-                    delBg.style.opacity      = '1';
-                } else {
-                    snapBack();
-                }
-            });
+            sliding.addEventListener('touchstart', _startLP, {passive:true});
+            sliding.addEventListener('touchend',   _cancelLP, {passive:true});
+            sliding.addEventListener('touchcancel',_cancelLP, {passive:true});
+            sliding.addEventListener('touchmove',  _cancelLP, {passive:true});
+            sliding.addEventListener('mousedown',  _startLP);
+            sliding.addEventListener('mouseup',    _cancelLP);
+            sliding.addEventListener('mouseleave', _cancelLP);
+            sliding.addEventListener('contextmenu', function(e){ e.preventDefault(); }, {passive:false});
+            sliding.addEventListener('selectstart', function(e){ e.preventDefault(); }, {passive:false});
 
             sliding.addEventListener('click', () => {
-                if (revealed) { snapBack(); return; }
+                if (_lpFired) { _lpFired = false; return; }
                 openActivityDetail(act);
             });
 
-            delBg.style.pointerEvents = 'none';
-            (function(_act, _wrap, _snapBack, _df) {
-                delBg.addEventListener('click', e => {
-                    e.stopPropagation();
-                    _snapBack();
-                    // Premium in-app confirm modal
-                    var exMod = document.getElementById('del-act-modal'); if (exMod) exMod.remove();
-                    var modal = document.createElement('div');
-                    modal.id = 'del-act-modal';
-                    modal.style.cssText = 'position:fixed;inset:0;z-index:50000;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(env(safe-area-inset-bottom,0px)+20px);background:rgba(0,0,0,.55);backdrop-filter:blur(4px);opacity:0;transition:opacity .25s;';
-                    var label = getTypeLabel(_act.type) + ' · ' + (_act.distKm > 0 ? _act.distKm.toFixed(2) + ' km' : '') + ' · ' + _df;
-                    modal.innerHTML = '<div style="background:var(--card);border-radius:22px 22px 18px 18px;padding:24px 20px 20px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);" id="del-act-inner"><div style="text-align:center;margin-bottom:18px;"><div style="width:52px;height:52px;border-radius:50%;background:rgba(239,68,68,.12);border:1.5px solid rgba(239,68,68,.3);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:22px;">🗑</div><div style="font-size:17px;font-weight:800;color:var(--tw);margin-bottom:6px;">Eliminar actividad</div><div style="font-size:12px;color:var(--ts);line-height:1.5;">' + label + '</div></div><div style="display:flex;gap:10px;"><button id="del-act-cancel" style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button><button id="del-act-ok" style="flex:1;background:#ef4444;border:none;border-radius:14px;padding:14px;font-family:var(--f);font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Eliminar</button></div></div>';
-                    document.body.appendChild(modal);
-                    requestAnimationFrame(function() { requestAnimationFrame(function() {
-                        modal.style.opacity = '1';
-                        document.getElementById('del-act-inner').style.transform = 'translateY(0)';
-                    }); });
-                    var closeModal = function() { modal.style.opacity='0'; setTimeout(function(){ if(modal.parentNode) modal.remove(); },250); };
-                    document.getElementById('del-act-cancel').onclick = closeModal;
-                    modal.addEventListener('click', function(ev) { if (ev.target === modal) closeModal(); });
-                    document.getElementById('del-act-ok').onclick = function() {
-                        closeModal();
-                        var h = _wrap.offsetHeight;
-                        _wrap.style.transition = 'opacity .2s, max-height .25s, margin .25s';
-                        _wrap.style.overflow   = 'hidden';
-                        _wrap.style.maxHeight  = h + 'px';
-                        requestAnimationFrame(function() {
-                            _wrap.style.maxHeight    = '0';
-                            _wrap.style.marginBottom = '0';
-                            _wrap.style.opacity      = '0';
-                        });
-                        setTimeout(function() { deleteActivity(_act.id); }, 280);
-                    };
-                });
-            })(act, wrap, snapBack, df);
-
-            wrap.appendChild(editBg);
             wrap.appendChild(sliding);
-            wrap.appendChild(delBg);
             list.appendChild(wrap);
 
             requestAnimationFrame(() => {
@@ -30806,6 +30836,117 @@ function _refreshCrewsTabBadge() {
     tCrews.appendChild(badge);
 }
 window._refreshCrewsTabBadge = _refreshCrewsTabBadge;
+
+// ── Swipe horizontal entre tabs del Club (Para ti / Siguiendo / Crews) ──
+// Gesto premium: el feed se desliza al cambiar de tab, reusando las clases
+// `mr-fx-view-slide-l/r` (las mismas que usa el swipe entre pestañas globales).
+// Se attacha una sola vez vigilando que el feed exista, y respeta:
+//   • Scroll vertical del feed
+//   • Elementos con scroll horizontal interno (PR strips, mapas, etc.)
+//   • Tags interactivas (INPUT/CANVAS/TEXTAREA/SELECT)
+(function setupClubFeedSwipe(){
+    var TABS = ['all', 'following', 'crews'];
+    var TH_DX_MIN = 70;
+    var TH_RATIO  = 1.4;
+    var TH_VX_MIN = 0.35;
+
+    var attached = false;
+    function attach() {
+        if (attached) return;
+        var feed = document.getElementById('club-feed');
+        if (!feed) return;
+        attached = true;
+
+        var sx = 0, sy = 0, st = 0, active = false, cancelled = false;
+
+        function shouldIgnore(target) {
+            if (!target || !(target instanceof Element)) return true;
+            var el = target;
+            while (el && el !== feed) {
+                if (el.nodeType === 1) {
+                    if (el.dataset && el.dataset.hScroll === '1') return true;
+                    // overflow-x interno (PR strips de las cards, etc.)
+                    var cs = el.scrollWidth > el.clientWidth + 4 ? getComputedStyle(el) : null;
+                    if (cs && (cs.overflowX === 'auto' || cs.overflowX === 'scroll')) return true;
+                    var tn = el.tagName;
+                    if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || tn === 'CANVAS') return true;
+                    if (el.isContentEditable) return true;
+                }
+                el = el.parentNode;
+            }
+            return false;
+        }
+
+        function currentTabIdx() {
+            var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+            if (mode !== 'crews' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
+            var i = TABS.indexOf(mode);
+            return i < 0 ? 0 : i;
+        }
+
+        function goToTab(idx, dir) {
+            if (idx < 0 || idx >= TABS.length) return;
+            // Aplicar animación direccional al feed antes del cambio
+            try {
+                feed.classList.remove('mr-fx-view-slide-l', 'mr-fx-view-slide-r', 'mr-fx-view-in');
+                void feed.offsetWidth; // forzar reflow
+                feed.classList.add(dir === 'l' ? 'mr-fx-view-slide-l' : 'mr-fx-view-slide-r');
+            } catch(_){}
+            if (navigator.vibrate) try { navigator.vibrate(12); } catch(_){}
+            if (typeof setClubFeedFilter === 'function') setClubFeedFilter(TABS[idx]);
+        }
+
+        feed.addEventListener('touchstart', function(e) {
+            if (!e.touches || e.touches.length !== 1) { active = false; return; }
+            cancelled = shouldIgnore(e.target);
+            if (cancelled) { active = false; return; }
+            sx = e.touches[0].clientX;
+            sy = e.touches[0].clientY;
+            st = Date.now();
+            active = true;
+        }, { passive: true });
+
+        feed.addEventListener('touchmove', function(e) {
+            if (!active || cancelled) return;
+            var t = e.touches[0];
+            var dx = t.clientX - sx;
+            var dy = t.clientY - sy;
+            if (Math.abs(dy) > Math.abs(dx) * 0.9 && Math.abs(dy) > 14) {
+                cancelled = true;
+                active = false;
+            }
+        }, { passive: true });
+
+        feed.addEventListener('touchend', function(e) {
+            if (!active || cancelled) { active = false; return; }
+            active = false;
+            var t = (e.changedTouches && e.changedTouches[0]) || null;
+            if (!t) return;
+            var dx = t.clientX - sx;
+            var dy = t.clientY - sy;
+            var dt = Math.max(1, Date.now() - st);
+            var vx = Math.abs(dx) / dt;
+            if (Math.abs(dx) < TH_DX_MIN && vx < TH_VX_MIN) return;
+            if (Math.abs(dx) < Math.abs(dy) * TH_RATIO) return;
+            var idx = currentTabIdx();
+            if (dx < 0) goToTab(idx + 1, 'l');   // swipe izq → siguiente tab
+            else        goToTab(idx - 1, 'r');   // swipe der → anterior tab
+        }, { passive: true });
+
+        feed.addEventListener('touchcancel', function(){ active = false; cancelled = false; }, { passive: true });
+    }
+
+    // Intentar attachar ahora; si no, esperar a que aparezca #club-feed.
+    if (!attach()) {
+        var observer = new MutationObserver(function() {
+            if (document.getElementById('club-feed')) {
+                attach();
+                if (attached) observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+})();
 
 // ══ HEATMAP — Mapa de calor de rutas (últimos 30 días) ═══════════════
 // Renderiza todas las rutas de un runner superpuestas en un canvas
