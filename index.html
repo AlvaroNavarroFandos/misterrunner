@@ -631,20 +631,35 @@
     body.dark-mode .nb.active .nl {
         color: var(--gold);
     }/* SHEETS */
+    /* [v8 P.Anim] Animación COMBO premium en apertura de sheets:
+       - Backdrop: opacity 0→1 + blur 0→20px (300ms ease-out)
+       - Sheet: translateY(40px) scale(.96) opacity 0 → translateY(0) scale(1) opacity 1
+         (400ms cubic-bezier estilo iOS espring)
+       El uso de visibility + pointer-events permite transiciones reales
+       (display:none rompe transitions) sin romper el comportamiento de
+       openSheet/closeSheet existentes. */
     .sheet-backdrop {
-        display: none;
+        display: flex;
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, .88);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        background: rgba(0, 0, 0, .35);
+        backdrop-filter: blur(0px);
+        -webkit-backdrop-filter: blur(0px);
         z-index: 99990;
         align-items: flex-end;
-        justify-content: center
+        justify-content: center;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity .3s ease-out, visibility .3s ease-out, backdrop-filter .4s ease-out, -webkit-backdrop-filter .4s ease-out;
     }
 
     .sheet-backdrop.show {
-        display: flex
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
     }
 
     /* Cuando hay un sheet abierto, bloqueamos el scroll de la vista activa
@@ -661,7 +676,15 @@
         border-radius: 20px 20px 0 0;
         display: flex;
         flex-direction: column;
-        overflow: hidden
+        overflow: hidden;
+        transform: translateY(40px) scale(.96);
+        opacity: 0;
+        transition: transform .4s cubic-bezier(.16, 1, .3, 1), opacity .3s ease-out
+    }
+
+    .sheet-backdrop.show .sheet {
+        transform: translateY(0) scale(1);
+        opacity: 1;
     }
 
     .sheet-handle-wrap {
@@ -10079,19 +10102,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!el) return;
         // Si está dentro de #app o cualquier otro contenedor, lo movemos al body
         // Y siempre al final del body, para que aparezca por encima de otros sheets ya abiertos
+        var wasReattached = false;
         if (el.parentNode !== document.body || el !== document.body.lastElementChild) {
             document.body.appendChild(el);
+            wasReattached = true;
         }
-        el.classList.add('show');
         document.body.classList.add('sheet-open');
-        // Reset scroll del contenido al abrir (evita que el formulario aparezca
-        // en medio si el usuario ya scrolleó en una apertura anterior)
-        var body = el.querySelector('.sheet-body');
-        if (body) {
-            // Doble RAF para que el browser ya haya pintado el sheet
+        // [v8 P.Anim] Doble RAF para garantizar que el estado inicial (opacity 0,
+        // transform translateY+scale) se pinta ANTES de añadir .show. Sin esto,
+        // el navegador podría colapsar ambos cambios y omitir la transición.
+        var applyShow = function() {
+            el.classList.add('show');
+            // Reset scroll del contenido al abrir
+            var body = el.querySelector('.sheet-body');
+            if (body) {
+                requestAnimationFrame(function(){
+                    requestAnimationFrame(function(){ body.scrollTop = 0; });
+                });
+            }
+        };
+        if (wasReattached) {
             requestAnimationFrame(function(){
-                requestAnimationFrame(function(){ body.scrollTop = 0; });
+                requestAnimationFrame(applyShow);
             });
+        } else {
+            applyShow();
         }
     }
     function closeSheet(id) {
