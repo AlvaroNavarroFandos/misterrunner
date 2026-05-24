@@ -132,7 +132,13 @@
     }
 
     html, body {
-        height: 100%
+        height: 100%;
+        /* [FASE 6 · Fix swipe edge] Bloquear rubber-band horizontal del viewport
+           en iOS PWA. Cuando el usuario hacía swipe entre pestañas con el dedo
+           muy pegado al borde derecho, el browser arrastraba el documento
+           entero horizontalmente, dejando ver el fondo negro del body detrás
+           de la .view activa. overscroll-behavior-x:none lo mata. */
+        overscroll-behavior-x: none;
     }
 
     body {
@@ -141,7 +147,12 @@
         color: var(--tp);
         overflow: hidden;
         -webkit-font-smoothing: antialiased;
-        -webkit-tap-highlight-color: transparent
+        -webkit-tap-highlight-color: transparent;
+        /* [FASE 6 · Fix swipe edge] touch-action pan-y a nivel body: hint al
+           browser de que sólo permita scroll vertical nativo. Los handlers JS
+           específicos del swipe entre pestañas siguen funcionando porque
+           leen touchstart/touchmove/touchend sin depender del scroll nativo. */
+        touch-action: pan-y;
     }
     /* DARK MODE */
     body.dark-mode{--bg:#1a1a1a;--surface:#1f1f1f;--card:#0a0a0a;--card2:#050505;--cream:#2a2a2a;--tw:#f0ebe0;--tp:#e0dbd0;--ts:#a0a8b8;--tm:#606880;--border:rgba(255,255,255,.06);--bsoft:rgba(255,255,255,.03);--gold-lt:rgba(196,136,30,.18);--gold-bd:rgba(196,136,30,.35);--crim-lt:rgba(143,26,40,.18);--crim-bd:rgba(143,26,40,.30);--warm:#4ade80;--warm-lt:rgba(74,222,128,.18);--warm-bd:rgba(74,222,128,.40);--inj:#f87171;--inj-lt:rgba(248,113,113,.16);--acc-blue:#60a5fa;--acc-green:#4ade80;--acc-amber:#fbbf24;--acc-orange:#fb923c;--acc-red:#f87171;--acc-fuchsia:#e879f9;--silver:#a8adb5;--silver-mid:#7d828a;--silver-lt:#5d6168;--silver-dk:#3d4148;--silver-grad:linear-gradient(135deg,#7d828a 0%,#5d6168 50%,#9aa0a8 100%);--silver-grad-pressed:linear-gradient(135deg,#5d6168 0%,#4a4e54 100%);--silver-tint:rgba(168,173,181,.14);--silver-tint-strong:rgba(168,173,181,.26);--silver-bd:rgba(168,173,181,.42);}
@@ -970,6 +981,34 @@
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-lbl { color: var(--crimson); opacity: .8; }
     body:not(.dark-mode) .mr-lib-card .mr-lib-date     { color: #5a0f1a; font-weight: 800; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-shoe     { color: var(--ts); }
+
+    /* [FASE 6 · Badge foto polaroid] Indica que la activity tiene foto.
+       Diseño: rectángulo redondeado con esquina sup. dcha. doblada (corner
+       ribbon), simulando una polaroid o foto recortada. Cámara mini dentro.
+       Reemplaza el badge anterior (círculo dorado con cámara) por algo más
+       distintivo y reconocible. Adaptativo claro/oscuro:
+       — Oscuro: fondo negro semi-transparente + esquina+cámara doradas
+       — Claro:  fondo cream semi-transparente + esquina+cámara crimson
+       La esquina doblada (path.fold) usa los mismos colores acento de la
+       app (gold #C9A84C en oscuro, crimson #8f1a28 en claro). */
+    .mr-lib-photo-badge {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 28px;
+        height: 28px;
+        pointer-events: none;
+        z-index: 2;
+    }
+    .mr-lib-photo-badge svg { display: block; }
+    /* Modo oscuro (default) */
+    .mr-lib-photo-badge .mlpb-bg   { fill: rgba(0,0,0,.78); stroke: rgba(201,168,76,.5); stroke-width: 1; }
+    .mr-lib-photo-badge .mlpb-fold { fill: #C9A84C; }
+    .mr-lib-photo-badge .mlpb-cam  { stroke: #C9A84C; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    /* Modo claro */
+    body:not(.dark-mode) .mr-lib-photo-badge .mlpb-bg   { fill: rgba(255,251,243,.92); stroke: rgba(143,26,40,.35); stroke-width: 1; }
+    body:not(.dark-mode) .mr-lib-photo-badge .mlpb-fold { fill: var(--crimson); }
+    body:not(.dark-mode) .mr-lib-photo-badge .mlpb-cam  { stroke: var(--crimson); stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 
     /* [v5 P.Biblioteca] Stat box resumen adaptativo
        - Oscuro: fondo negro + números blancos + labels dorados
@@ -2853,64 +2892,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 #view-import-strava .vis-warn.is-visible { display: flex; }
 
-                /* ─── Bloque DEV "1 archivo" (Bloque L · FASE 2.7) ──────────
-                   Oculto por defecto (display:none). Lo enseña/oculta
-                   applyDebugVisibility() según ?debug=1 o whitelist UUID.
-                   Estética deliberadamente "tooling" (borde discontinuo,
-                   etiqueta DEV) para que sea inconfundible con el flujo
-                   principal incluso si por error se hace visible. */
-                #view-import-strava .vis-dev-single {
-                    display: none;
-                    margin-top: 18px;
-                    padding: 14px 14px 12px;
-                    border-radius: 12px;
-                    border: 1.5px dashed rgba(0, 0, 0, .18);
-                    background: rgba(0, 0, 0, .025);
-                }
-                #view-import-strava .vis-dev-single-head {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    margin-bottom: 8px;
-                }
-                #view-import-strava .vis-dev-single-badge {
-                    font-size: 9.5px;
-                    font-weight: 700;
-                    letter-spacing: .8px;
-                    padding: 2px 7px;
-                    border-radius: 4px;
-                    background: #6B6B6B;
-                    color: #fff;
-                    text-transform: uppercase;
-                }
-                #view-import-strava .vis-dev-single-title {
-                    font-size: 12.5px;
-                    font-weight: 600;
-                    color: var(--text);
-                }
-                #view-import-strava .vis-dev-single-desc {
-                    font-size: 11px;
-                    color: var(--ts);
-                    line-height: 1.45;
-                    margin-bottom: 10px;
-                }
-                #view-import-strava .vis-dev-single-btn {
-                    width: 100%;
-                    padding: 10px 12px;
-                    border-radius: 10px;
-                    border: 1px solid rgba(0, 0, 0, .18);
-                    background: #fff;
-                    color: var(--text);
-                    font-size: 12.5px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: background .15s ease;
-                }
-                #view-import-strava .vis-dev-single-btn:hover,
-                #view-import-strava .vis-dev-single-btn:active {
-                    background: rgba(0, 0, 0, .04);
-                }
-
                 /* ─── Footer "Compatible with Strava" (Bloque L · FASE 2.9) ──
                    Attribution requerida por Strava API Brand Guidelines
                    (https://developers.strava.com/guidelines/).
@@ -3777,25 +3758,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <span id="vis-warn-msg">—</span>
                     </div>
 
-                    <!-- Bloque DEV "1 archivo" (Bloque L · FASE 2.7) -->
-                    <!-- Oculto por defecto. applyDebugVisibility() lo muestra
-                         si ?debug=1 o UUID del usuario en DEBUG_USER_WHITELIST. -->
-                    <div class="vis-dev-single" id="vis-dev-single">
-                        <div class="vis-dev-single-head">
-                            <span class="vis-dev-single-badge">Dev</span>
-                            <span class="vis-dev-single-title">Modo desarrollador</span>
-                        </div>
-                        <div class="vis-dev-single-desc">
-                            Sube un único archivo <strong>.fit</strong>, <strong>.fit.gz</strong> o <strong>.gpx</strong>
-                            para testear el pipeline sin necesidad de un ZIP completo.
-                            Útil para validar parsers y flujo de import con N=1.
-                        </div>
-                        <button type="button" class="vis-dev-single-btn" id="vis-dev-single-btn">
-                            Subir archivo individual (.fit / .fit.gz / .gpx)
-                        </button>
-                        <input type="file" id="vis-dev-single-input" accept=".fit,.fit.gz,.gpx,.gz,application/gpx+xml,application/octet-stream,application/gzip" style="display:none;">
-                    </div>
-
                     <!-- Footer "Compatible with Strava" (Bloque L · FASE 2.9) -->
                     <!-- Attribution requerida por Strava API Brand Guidelines.
                          El logo NO se modifica, altera ni anima. -->
@@ -4445,21 +4407,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         var files = e.target.files;
                         if (files && files.length > 0) visAcceptFile(files[0]);
                         /* Reset para permitir re-seleccionar el mismo archivo */
-                        try { e.target.value = ''; } catch(_) {}
-                    });
-                })();
-
-                /* Handler · botón DEV "Subir archivo individual" (FASE 2.7).
-                   Solo es invocable cuando applyDebugVisibility() ha mostrado
-                   el bloque. La validación adicional aquí no hace daño. */
-                (function() {
-                    var devBtn   = document.getElementById('vis-dev-single-btn');
-                    var devInput = document.getElementById('vis-dev-single-input');
-                    if (!devBtn || !devInput) return;
-                    devBtn.addEventListener('click', function() { devInput.click(); });
-                    devInput.addEventListener('change', function(e) {
-                        var files = e.target.files;
-                        if (files && files.length > 0) visAcceptDevFile(files[0]);
                         try { e.target.value = ''; } catch(_) {}
                     });
                 })();
@@ -10182,11 +10129,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const show = await isDebugUserAsync();
             const btnWipe = document.getElementById('dev-wipe-activities-btn');
             if (btnWipe) btnWipe.style.display = show ? 'flex' : 'none';
-            /* FASE 2.7 Bloque L: bloque "1 archivo" en la pantalla entry
-               del importador. Display block (no flex) porque su layout
-               interno usa flujo normal y los hijos sí flex donde aplica. */
-            const devSingle = document.getElementById('vis-dev-single');
-            if (devSingle) devSingle.style.display = show ? 'block' : 'none';
+            // [FASE 6 · UI cleanup] El bloque "Modo desarrollador" del
+            // importador Strava (FASE 2.7) ha sido eliminado de la UI:
+            // ya no hace falta el testeo single-file, el pipeline bulk
+            // está probado y estable. Si en el futuro hace falta volver
+            // a inyectar el botón dev, los hooks JS (visAcceptDevFile,
+            // visValidateDevFile, visAnalyzeDevFile, currentDevMode) están
+            // intactos en el módulo del importer.
         } catch(_) {}
     }
     window.applyDebugVisibility = applyDebugVisibility;
@@ -12356,8 +12305,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + '</div>';
     }
 
-    // [FASE 5.7] Badge mini-cámara dorada esquina sup. dcha del mapa.
-    // Indica que la activity tiene foto sin ocupar espacio en datos.
+    // [FASE 6 · Badge foto polaroid] Indica que la activity tiene foto.
+    // Forma: rectángulo redondeado con esquina sup. dcha. doblada (corner
+    // ribbon estilo polaroid) + mini cámara dentro. Adaptativo via CSS:
+    // dorado en oscuro, crimson en claro. Sustituye al círculo anterior.
     // Mostrar cuando:
     //   - act._photoUrls.length > 0  (bulk con fotos hidratadas)
     //   - act.photoB64               (single, foto local base64)
@@ -12367,11 +12318,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             || (act && act.photoB64)
         );
         if (!hasPhoto) return '';
-        return '<div style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);border:1px solid rgba(201,168,76,.45);border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);">'
-            + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" stroke-width="2.3" stroke-linecap="round">'
-            + '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>'
-            + '<circle cx="12" cy="13" r="4"/>'
-            + '</svg></div>';
+        // viewBox 28x28. Path bg = forma con esquina cortada (pentágono).
+        // Path fold = triángulo dorado/crimson que simula la esquina doblada.
+        // Path cam = cámara minimalista centrada.
+        return '<div class="mr-lib-photo-badge" aria-label="Tiene foto">'
+            +   '<svg viewBox="0 0 28 28" width="28" height="28">'
+            +     '<path class="mlpb-bg" d="M0 0 H22 L28 6 V28 H0 Z"/>'
+            +     '<path class="mlpb-fold" d="M22 0 L28 6 H22 Z"/>'
+            +     '<path class="mlpb-cam" d="M9 11 H19 V19 H9 Z M11 11 V9.5 H17 V11 M14 13 a2 2 0 1 1 0 4 a2 2 0 0 1 0 -4"/>'
+            +   '</svg>'
+            + '</div>';
     }
 
     // [v5 P.Biblioteca] Badge mini-trofeo dorado si la actividad es PR.
@@ -36545,6 +36501,15 @@ window.addEventListener('DOMContentLoaded', function() {
             var TH_DX_MIN  = 70;   // px mínimos para considerar swipe válido
             var TH_RATIO   = 1.4;  // |dx| debe ser > |dy| * ratio
             var TH_VX_MIN  = 0.35; // px/ms — velocidad mínima alternativa para gesto rápido
+            // [FASE 6 · Fix swipe edge] Zona de exclusión en los bordes laterales.
+            // Si el touch empieza a menos de EDGE_GUARD_PX del borde izquierdo o
+            // derecho de la pantalla, NO procesamos el swipe (cancelled=true).
+            // Razón: iOS PWA interpreta toques cerca del borde como edge gesture
+            // y arrastra el viewport horizontalmente (rubber-band). Si nuestro
+            // swipe entra en competencia, se ve el fondo del body detrás de la
+            // .view activa. Mejor cedérselo al sistema (que decidirá no hacer
+            // nada en PWA standalone) que pelearnos por el gesto.
+            var EDGE_GUARD_PX = 20;
 
             var sx = 0, sy = 0, st = 0;
             var active = false;
@@ -36623,6 +36588,14 @@ window.addEventListener('DOMContentLoaded', function() {
             document.addEventListener('touchstart', function(e) {
                 if (!e.touches || e.touches.length !== 1) { active = false; return; }
                 var t = e.touches[0];
+                // [FASE 6 · Fix swipe edge] Excluir bordes laterales.
+                // window.innerWidth - EDGE_GUARD_PX da el límite derecho.
+                var _vw = window.innerWidth || document.documentElement.clientWidth || 0;
+                if (t.clientX < EDGE_GUARD_PX || (_vw && t.clientX > _vw - EDGE_GUARD_PX)) {
+                    cancelled = true;
+                    active = false;
+                    return;
+                }
                 cancelled = shouldIgnore(e.target);
                 if (cancelled) { active = false; return; }
                 sx = t.clientX;
