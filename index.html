@@ -933,6 +933,24 @@
     }
     .act-card.mr-lib-card { background: transparent; border: none; }
 
+    /* [FASE 6 · Fix B] content-visibility para Biblioteca cargada.
+       Con 291+ activities en DOM, Safari iOS pagaba layout+paint de todas las
+       cards al activar la vista (causaba el tirón al entrar). content-visibility
+       auto le dice al browser que sólo procese las cards que entran en el
+       viewport; las que están fuera quedan "skipped" hasta que se acercan al
+       scroll. contain-intrinsic-size reserva 150px (alto fijo de la card) para
+       que el scrollbar y el scroll-restore funcionen correctamente.
+       Aplicado al wrapper (.act-swipe-wrap) porque es el bloque hijo directo
+       de #activities-list y tiene altura predecible. */
+    #activities-list > .act-swipe-wrap {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 158px;  /* 150 card + 8 gap = 158 */
+    }
+
+    /* [FASE 6 · Fix C] view-activities como contenedor relativo para el gate
+       visual de transición que cubre el primer paint de las 291+ cards. */
+    #view-activities { position: relative; }
+
     /* [v5 P.Biblioteca] Tarjeta de actividad adaptativa claro/oscuro.
        Ahora TODO se adapta: card + mapa (con dos JPEG distintos) + textos. */
     .mr-lib-card .mr-lib-card-inner    { background: #000; }
@@ -10166,6 +10184,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     /* ── NAV ── */
     document.querySelectorAll('.nb').forEach(btn => {
         btn.addEventListener('click', () => {
+            // [FASE 6 · Fix A] Leer swipeDir ANTES de cualquier mutación DOM, dentro
+            // del mismo tick síncrono. Antes el handler leía swipeDir tarde y el
+            // requestAnimationFrame del swipe podía borrarlo entre medias, dando
+            // animación errónea o "no entra" en Safari iOS. Ahora capturamos el
+            // valor primero y lo consumimos local.
+            var _swipeDir = '';
+            try {
+                var _appElEarly = document.getElementById('app');
+                if (_appElEarly && _appElEarly.dataset && _appElEarly.dataset.swipeDir) {
+                    _swipeDir = _appElEarly.dataset.swipeDir;
+                    // Consumir aquí mismo (evita races con el RAF del swipe)
+                    delete _appElEarly.dataset.swipeDir;
+                }
+            } catch(_) {}
+
             document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             const t = btn.dataset.target;
@@ -10176,15 +10209,52 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     v.scrollTop = 0;
                     // Cross-fade sutil al activar la nueva pestaña; si viene de un
                     // swipe horizontal, aplicar la animación direccional premium.
+                    // [FASE 6 · Fix A] Biblioteca usa fade puro (sin translateX)
+                    // porque con 291+ cards Safari iOS no puede mover y repaintar
+                    // a la vez sin tirones. El resto de vistas mantienen la
+                    // animación direccional editorial.
                     try {
                         v.classList.remove('mr-fx-view-in', 'mr-fx-view-slide-l', 'mr-fx-view-slide-r');
-                        var _appEl = document.getElementById('app');
-                        var _dir = _appEl && _appEl.dataset && _appEl.dataset.swipeDir;
+                        var _isHeavy = (v.id === 'view-activities');
                         // Forzar reflow para reiniciar la animación
                         void v.offsetWidth;
-                        if (_dir === 'l')      v.classList.add('mr-fx-view-slide-l');
-                        else if (_dir === 'r') v.classList.add('mr-fx-view-slide-r');
-                        else                   v.classList.add('mr-fx-view-in');
+                        if (_isHeavy)               v.classList.add('mr-fx-view-in');
+                        else if (_swipeDir === 'l') v.classList.add('mr-fx-view-slide-l');
+                        else if (_swipeDir === 'r') v.classList.add('mr-fx-view-slide-r');
+                        else                        v.classList.add('mr-fx-view-in');
+
+                        // [FASE 6 · Fix C] Gate visual para Biblioteca.
+                        // Cubre el último resto de tirón mientras Safari iOS
+                        // asienta el layout de las 291+ cards (aunque content-
+                        // visibility ya descarga el 95%, los primeros frames
+                        // pueden seguir notándose en iPhones modestos).
+                        // Pintamos una capa del color de fondo que se desvanece
+                        // en 220ms: el usuario ve una transición limpia.
+                        if (_isHeavy) {
+                            try {
+                                var _prev = document.getElementById('mr-lib-gate');
+                                if (_prev) _prev.remove();
+                                var _gate = document.createElement('div');
+                                _gate.id = 'mr-lib-gate';
+                                _gate.style.cssText =
+                                    'position:absolute;inset:0;background:var(--bg);' +
+                                    'z-index:9997;pointer-events:none;opacity:1;' +
+                                    'transition:opacity .22s cubic-bezier(.22,.61,.36,1);' +
+                                    'will-change:opacity;';
+                                v.appendChild(_gate);
+                                // Doble RAF: el primero permite al browser pintar
+                                // el overlay opaco; el segundo dispara el fade.
+                                requestAnimationFrame(function(){
+                                    requestAnimationFrame(function(){
+                                        _gate.style.opacity = '0';
+                                    });
+                                });
+                                // Cleanup tras transición + margen
+                                setTimeout(function(){
+                                    if (_gate && _gate.parentNode) _gate.parentNode.removeChild(_gate);
+                                }, 320);
+                            } catch(_) {}
+                        }
                     } catch(_) {}
                     // [v6 P.Plan] Al entrar a Plan, saltar a la semana actual
                     // y resetear vista a "semana" (no "mes") para localizar HOY.
@@ -36206,16 +36276,21 @@ window.addEventListener('DOMContentLoaded', function() {
                 // Pre-marcar el contenedor #app con la dirección para que el handler
                 // del navbar (en su click) pueda aplicar la animación direccional.
                 // Usamos data-attr en lugar de variable global porque el click es síncrono.
+                // [FASE 6 · Fix A] El handler del navbar ahora CONSUME el flag en el
+                // mismo tick síncrono (lee + delete) — ya no hace falta el cleanup
+                // diferido con doble RAF, que abría una ventana de race en Safari iOS
+                // donde un swipe rápido podía re-setear el flag justo antes del delete.
                 var appEl = document.getElementById('app');
                 if (appEl && dir) {
                     appEl.dataset.swipeDir = dir;  // 'l' (siguiente) o 'r' (anterior)
                 }
                 btn.click();
-                // Limpiar el flag tras el frame para que clicks normales del navbar no usen swipe
+                // Safety net: si por lo que sea el handler no lo consumió, lo limpiamos
+                // en el siguiente frame para no dejar el flag "pegado".
                 if (appEl) {
-                    requestAnimationFrame(function(){ requestAnimationFrame(function(){
-                        delete appEl.dataset.swipeDir;
-                    }); });
+                    requestAnimationFrame(function(){
+                        if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
+                    });
                 }
             }
 
