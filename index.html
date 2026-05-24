@@ -1646,7 +1646,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="psub">Tus actividades</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:7px;">
-                    <label for="activity-files-input" aria-label="Importar entreno (.csv, .gpx, .fit)"
+                    <!-- Sesión 17: el botón verde ahora abre el wizard import manual.
+                         El input file de abajo se mantiene como mecanismo de upload
+                         interno (lo reutiliza openImportManualWizard via vimDoImport). -->
+                    <button type="button" id="open-import-manual-btn" aria-label="Importar entreno (asistente)"
+                        onclick="openImportManualWizard()"
                         style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:10px;padding:0 9px;height:38px;cursor:pointer;font-family:var(--f);flex-shrink:0;box-shadow:0 2px 8px rgba(34,197,94,.35);">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -1654,7 +1658,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <line x1="12" y1="3" x2="12" y2="15"/>
                         </svg>
                         <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">ENTRENO</span>
-                    </label>
+                    </button>
                     <button type="button" id="upload-ios-button" style="display:none">Subir archivos</button>
                     <input type="file" id="activity-files-input" accept=".csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream" multiple style="display:none">
                     <!-- Bloque L · FASE 2.2: pill de entrada al importador Strava -->
@@ -1726,7 +1730,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </svg>
                     <div style="font-size:15px;font-weight:700;color:var(--tw);margin-bottom:6px;">Sin actividades todavía</div>
                     <div style="font-size:12px;opacity:.65;line-height:1.6;margin-bottom:20px;">Importa tu primer archivo <strong>.fit</strong> o <strong>.csv</strong><br>para empezar a ver tu historial aquí.</div>
-                    <button onclick="document.getElementById('activity-files-input').click()" style="background:var(--crimson);color:#fff;border:none;border-radius:10px;padding:10px 24px;font-size:13px;font-weight:700;font-family:var(--f);cursor:pointer;letter-spacing:.3px;">＋ Importar actividad</button>
+                    <button onclick="openImportManualWizard()" style="background:var(--crimson);color:#fff;border:none;border-radius:10px;padding:10px 24px;font-size:13px;font-weight:700;font-family:var(--f);cursor:pointer;letter-spacing:.3px;">＋ Importar actividad</button>
                 </div>
                 <div id="activities-list" style="display:flex;flex-direction:column;gap:8px;"></div>
             </div>
@@ -7506,6 +7510,535 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             </script>
         </section>
 
+        <!-- ════════════════════════════════════════════════════════════
+             VIEW IMPORT MANUAL · Sesión 17 (Wizard import manual)
+             Pantalla completa que sustituye al input file genérico del
+             botón verde "ENTRENO" de biblioteca. Guía al usuario por:
+               Step 1 — Selector de marca de reloj
+               Step 2 — Instrucciones específicas + drop zone + validación
+               Step 3 — Loading mientras se parsean los archivos
+             Al validar archivos OK, abre el import-modal existente
+             (que NO se toca) con la activity ya parseada.
+             CSS aislado con prefijo .vim- (Visual Import Manual).
+        ════════════════════════════════════════════════════════════ -->
+        <section class="view" id="view-import-manual">
+            <style>
+                /* CSS aislado · prefijo .vim- */
+                #view-import-manual .vim-topbar {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 14px 16px 12px;
+                    border-bottom: 1px solid var(--border);
+                    background: var(--bg);
+                }
+                #view-import-manual .vim-back {
+                    flex-shrink: 0;
+                    width: 36px; height: 36px;
+                    border-radius: 50%;
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    display: flex; align-items: center; justify-content: center;
+                    cursor: pointer;
+                    transition: background .12s;
+                }
+                #view-import-manual .vim-back:active { background: var(--card2); }
+                #view-import-manual .vim-titles { flex: 1; min-width: 0; }
+                #view-import-manual .vim-title {
+                    font-size: 18px; font-weight: 700; color: var(--tw);
+                    letter-spacing: -.3px; line-height: 1.15;
+                }
+                #view-import-manual .vim-subtitle {
+                    font-size: 11px; color: var(--tm);
+                    margin-top: 1px; font-weight: 500;
+                }
+                #view-import-manual .vim-body {
+                    padding: 16px;
+                    padding-bottom: calc(var(--nav-h) + 24px);
+                }
+
+                /* Hero card */
+                #view-import-manual .vim-hero-card {
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    border-radius: 16px;
+                    padding: 18px;
+                    margin-bottom: 16px;
+                    display: flex; align-items: center; gap: 14px;
+                }
+                #view-import-manual .vim-hero-icon {
+                    flex-shrink: 0;
+                    width: 50px; height: 50px;
+                    border-radius: 14px;
+                    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+                    box-shadow: 0 2px 8px rgba(34,197,94,.35);
+                    display: flex; align-items: center; justify-content: center;
+                }
+                #view-import-manual .vim-hero-icon.brand-coros {
+                    background: #000;
+                    box-shadow: 0 2px 8px rgba(0,0,0,.35);
+                    padding: 4px;
+                }
+                #view-import-manual .vim-hero-icon.brand-suunto {
+                    background: #fff;
+                    border: 1px solid var(--border);
+                    box-shadow: 0 2px 8px rgba(0,0,0,.10);
+                    padding: 6px;
+                }
+                body.dark-mode #view-import-manual .vim-hero-icon.brand-suunto {
+                    background: #f0ebe0;
+                }
+                #view-import-manual .vim-hero-icon img {
+                    width: 100%; height: 100%;
+                    object-fit: contain; display: block;
+                }
+                #view-import-manual .vim-hero-title {
+                    font-size: 15px; font-weight: 700;
+                    color: var(--tw); line-height: 1.2;
+                }
+                #view-import-manual .vim-hero-desc {
+                    font-size: 11px; color: var(--ts);
+                    line-height: 1.5; margin-top: 3px;
+                }
+
+                /* Section label */
+                #view-import-manual .vim-sec-label {
+                    font-size: 10px; font-weight: 700; color: var(--tm);
+                    text-transform: uppercase; letter-spacing: 1.1px;
+                    margin: 4px 4px 10px;
+                }
+
+                /* Grid marcas — 3 columnas */
+                #view-import-manual .vim-brand-grid {
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    gap: 8px;
+                }
+                #view-import-manual .vim-brand-card {
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    border-radius: 14px;
+                    padding: 14px 6px 10px;
+                    display: flex; flex-direction: column;
+                    align-items: center; justify-content: center;
+                    gap: 8px;
+                    min-height: 118px;
+                    cursor: pointer;
+                    transition: transform .12s ease, background .12s, border-color .12s;
+                    position: relative;
+                }
+                #view-import-manual .vim-brand-card:active {
+                    transform: scale(.97); background: var(--card2);
+                }
+                #view-import-manual .vim-brand-card.is-dev {
+                    opacity: .55;
+                    background: var(--bsoft);
+                    cursor: not-allowed;
+                }
+                #view-import-manual .vim-brand-card.is-dev:active {
+                    transform: none; background: var(--bsoft);
+                }
+                #view-import-manual .vim-brand-logo {
+                    width: 56px; height: 34px;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                #view-import-manual .vim-brand-logo img {
+                    max-width: 100%; max-height: 100%;
+                    object-fit: contain; display: block;
+                }
+                /* Logos cuyo contenido es negro: invertir en oscuro */
+                body.dark-mode #view-import-manual .vim-brand-logo .auto-invert {
+                    filter: invert(.92) hue-rotate(180deg) brightness(1.05);
+                }
+                #view-import-manual .vim-brand-name {
+                    font-size: 11.5px; font-weight: 700; color: var(--tw);
+                    letter-spacing: .2px; text-align: center; line-height: 1.15;
+                }
+                #view-import-manual .vim-brand-meta {
+                    font-size: 8.5px; font-weight: 700; color: var(--tm);
+                    letter-spacing: .5px; text-transform: uppercase;
+                    text-align: center;
+                }
+                #view-import-manual .vim-brand-card.is-active .vim-brand-meta {
+                    color: var(--ok);
+                }
+                #view-import-manual .vim-brand-card.is-dev .vim-brand-meta {
+                    color: var(--warn);
+                }
+                #view-import-manual .vim-brand-flag {
+                    position: absolute; top: 6px; right: 6px;
+                    font-size: 12px;
+                }
+
+                /* Acordeón guía */
+                #view-import-manual .vim-acc {
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    border-radius: 14px;
+                    margin-bottom: 14px;
+                    overflow: hidden;
+                }
+                #view-import-manual .vim-acc-header {
+                    display: flex; align-items: center; gap: 10px;
+                    padding: 12px 14px;
+                    cursor: pointer;
+                    transition: background .12s;
+                }
+                #view-import-manual .vim-acc-header:active { background: var(--card2); }
+                #view-import-manual .vim-acc-icon {
+                    flex-shrink: 0; width: 22px; height: 22px;
+                    border-radius: 50%;
+                    background: var(--gold-lt);
+                    color: var(--gold);
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 12px; font-weight: 800;
+                }
+                #view-import-manual .vim-acc-title {
+                    flex: 1; font-size: 12.5px; font-weight: 700;
+                    color: var(--tw); letter-spacing: -.1px;
+                }
+                #view-import-manual .vim-acc-chevron {
+                    color: var(--tm);
+                    transition: transform .2s;
+                }
+                #view-import-manual .vim-acc.is-open .vim-acc-chevron {
+                    transform: rotate(90deg);
+                }
+                #view-import-manual .vim-acc-body {
+                    max-height: 0; overflow: hidden;
+                    transition: max-height .25s ease;
+                }
+                #view-import-manual .vim-acc.is-open .vim-acc-body {
+                    max-height: 600px;
+                }
+                #view-import-manual .vim-acc-body-inner {
+                    padding: 0 14px 14px;
+                    border-top: 1px solid var(--border);
+                    padding-top: 12px;
+                }
+                #view-import-manual .vim-step {
+                    display: flex; gap: 10px;
+                    padding: 8px 0;
+                }
+                #view-import-manual .vim-step + .vim-step {
+                    border-top: 1px dashed var(--border);
+                    margin-top: 4px;
+                }
+                #view-import-manual .vim-step-num {
+                    flex-shrink: 0;
+                    width: 22px; height: 22px;
+                    border-radius: 50%;
+                    background: var(--bg);
+                    border: 1px solid var(--border);
+                    color: var(--ts);
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 11px; font-weight: 700;
+                }
+                #view-import-manual .vim-step-text {
+                    flex: 1; font-size: 11.5px;
+                    color: var(--ts); line-height: 1.5;
+                }
+                #view-import-manual .vim-step-text strong {
+                    color: var(--tw); font-weight: 600;
+                }
+
+                /* Drop zone */
+                #view-import-manual .vim-drop {
+                    background: var(--card);
+                    border: 2px dashed var(--gold-bd);
+                    border-radius: 14px;
+                    padding: 22px 16px;
+                    text-align: center;
+                    margin-bottom: 12px;
+                    transition: background .12s, border-color .12s;
+                }
+                #view-import-manual .vim-drop.is-dragover {
+                    background: var(--gold-lt);
+                    border-color: var(--gold);
+                }
+                #view-import-manual .vim-drop-icon {
+                    width: 42px; height: 42px;
+                    border-radius: 12px;
+                    background: var(--gold-lt);
+                    color: var(--gold);
+                    display: inline-flex;
+                    align-items: center; justify-content: center;
+                    margin-bottom: 10px;
+                }
+                #view-import-manual .vim-drop-text {
+                    font-size: 13px; font-weight: 700; color: var(--tw);
+                    margin-bottom: 4px;
+                }
+                #view-import-manual .vim-drop-hint {
+                    font-size: 11px; color: var(--tm);
+                    margin-bottom: 12px;
+                }
+                #view-import-manual .vim-drop-browse {
+                    display: inline-block;
+                    background: var(--card2);
+                    border: 1px solid var(--border);
+                    border-radius: 10px;
+                    padding: 9px 18px;
+                    font-size: 12px; font-weight: 700;
+                    color: var(--tw);
+                    cursor: pointer;
+                }
+                #view-import-manual .vim-drop-browse:active { opacity: .85; }
+
+                /* Badges archivos requeridos */
+                #view-import-manual .vim-files {
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    border-radius: 14px;
+                    padding: 14px;
+                    margin-bottom: 12px;
+                }
+                #view-import-manual .vim-files-title {
+                    font-size: 10px; font-weight: 700; color: var(--tm);
+                    text-transform: uppercase; letter-spacing: 1.1px;
+                    margin-bottom: 10px;
+                }
+                #view-import-manual .vim-files-row {
+                    display: flex; gap: 8px; flex-wrap: wrap;
+                }
+                #view-import-manual .vim-file-badge {
+                    flex: 1; min-width: 80px;
+                    display: flex; align-items: center; gap: 8px;
+                    padding: 8px 10px;
+                    background: var(--bsoft);
+                    border: 1px solid var(--border);
+                    border-radius: 10px;
+                }
+                #view-import-manual .vim-file-badge.is-ok {
+                    background: rgba(46,138,96,.10);
+                    border-color: rgba(46,138,96,.35);
+                }
+                body.dark-mode #view-import-manual .vim-file-badge.is-ok {
+                    background: rgba(74,222,128,.10);
+                    border-color: rgba(74,222,128,.35);
+                }
+                #view-import-manual .vim-file-check {
+                    width: 18px; height: 18px;
+                    border-radius: 50%;
+                    background: var(--bg);
+                    border: 1px solid var(--border);
+                    display: flex; align-items: center; justify-content: center;
+                    flex-shrink: 0;
+                }
+                #view-import-manual .vim-file-badge.is-ok .vim-file-check {
+                    background: var(--ok);
+                    border-color: var(--ok);
+                    color: #fff;
+                }
+                body.dark-mode #view-import-manual .vim-file-badge.is-ok .vim-file-check {
+                    background: #4ade80; border-color: #4ade80; color: #0a0a0a;
+                }
+                #view-import-manual .vim-file-info { flex: 1; min-width: 0; }
+                #view-import-manual .vim-file-ext {
+                    font-size: 11px; font-weight: 800; color: var(--tw);
+                    letter-spacing: .3px;
+                }
+                #view-import-manual .vim-file-state {
+                    font-size: 9.5px; color: var(--tm);
+                    margin-top: 1px;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                }
+                #view-import-manual .vim-file-badge.is-ok .vim-file-state {
+                    color: var(--ok); font-weight: 600;
+                }
+                body.dark-mode #view-import-manual .vim-file-badge.is-ok .vim-file-state {
+                    color: #4ade80;
+                }
+
+                /* Warning */
+                #view-import-manual .vim-warn {
+                    display: flex; align-items: flex-start; gap: 9px;
+                    background: rgba(176,96,32,.10);
+                    border: 1px solid rgba(176,96,32,.30);
+                    border-radius: 10px;
+                    padding: 10px 12px;
+                    margin-bottom: 12px;
+                    font-size: 11.5px; color: var(--warn);
+                    line-height: 1.45; font-weight: 600;
+                }
+                body.dark-mode #view-import-manual .vim-warn {
+                    background: rgba(251,191,36,.10);
+                    border-color: rgba(251,191,36,.30);
+                }
+                #view-import-manual .vim-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+                /* Botón */
+                #view-import-manual .vim-submit {
+                    width: 100%;
+                    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+                    border: none;
+                    border-radius: 14px;
+                    padding: 15px;
+                    color: #fff;
+                    font-family: var(--f);
+                    font-size: 14px; font-weight: 800;
+                    letter-spacing: .5px;
+                    text-transform: uppercase;
+                    cursor: pointer;
+                    box-shadow: 0 4px 14px rgba(34,197,94,.40);
+                    transition: transform .12s, box-shadow .12s;
+                    margin-top: 4px;
+                }
+                #view-import-manual .vim-submit:active {
+                    transform: scale(.98);
+                    box-shadow: 0 2px 8px rgba(34,197,94,.40);
+                }
+                #view-import-manual .vim-submit:disabled {
+                    background: var(--card2);
+                    color: var(--tm);
+                    box-shadow: none;
+                    cursor: not-allowed;
+                }
+
+                /* Loading */
+                #view-import-manual .vim-loading {
+                    padding: 60px 24px;
+                    text-align: center;
+                }
+                #view-import-manual .vim-loading-spinner {
+                    width: 56px; height: 56px;
+                    border: 4px solid var(--card);
+                    border-top-color: var(--gold);
+                    border-radius: 50%;
+                    margin: 0 auto 22px;
+                    animation: vimspin 1s linear infinite;
+                }
+                @keyframes vimspin { to { transform: rotate(360deg); } }
+                #view-import-manual .vim-loading-title {
+                    font-size: 16px; font-weight: 700; color: var(--tw);
+                    margin-bottom: 6px;
+                }
+                #view-import-manual .vim-loading-desc {
+                    font-size: 12px; color: var(--ts);
+                    line-height: 1.5;
+                }
+                #view-import-manual .vim-loading-bar {
+                    margin-top: 24px;
+                    height: 4px; background: var(--card);
+                    border-radius: 999px; overflow: hidden;
+                    position: relative;
+                }
+                #view-import-manual .vim-loading-bar-fill {
+                    position: absolute; top: 0; left: 0; bottom: 0;
+                    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+                    width: 40%;
+                    animation: vimbar 1.4s ease-in-out infinite;
+                }
+                @keyframes vimbar {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(350%); }
+                }
+
+                /* Steps · solo el activo es visible */
+                #view-import-manual .vim-step-screen { display: none; }
+                #view-import-manual .vim-step-screen.is-active { display: block; }
+            </style>
+
+            <!-- TOPBAR (cambia título según step activo) -->
+            <div class="vim-topbar">
+                <div class="vim-back" id="vim-back-btn" aria-label="Atrás" onclick="vimBackNav()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--tw);"><polyline points="15 18 9 12 15 6"/></svg>
+                </div>
+                <div class="vim-titles">
+                    <div class="vim-title" id="vim-title">Importar entreno</div>
+                    <div class="vim-subtitle" id="vim-subtitle">Añade una actividad manual</div>
+                </div>
+            </div>
+
+            <div class="vim-body">
+
+                <!-- ═════ STEP 1: Selector de marca ═════ -->
+                <div class="vim-step-screen is-active" id="vim-step-brand">
+                    <div class="vim-hero-card">
+                        <div class="vim-hero-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="vim-hero-title">¿De qué reloj es?</div>
+                            <div class="vim-hero-desc">Selecciona la marca para ver las instrucciones específicas de exportación.</div>
+                        </div>
+                    </div>
+
+                    <div class="vim-sec-label">Marcas soportadas</div>
+                    <!-- Grid se rellena dinámicamente desde JS (renderBrandGrid) -->
+                    <div class="vim-brand-grid" id="vim-brand-grid"></div>
+                </div>
+
+                <!-- ═════ STEP 2: Instrucciones + Upload (dinámico por marca) ═════ -->
+                <div class="vim-step-screen" id="vim-step-upload">
+                    <!-- Hero card de marca -->
+                    <div class="vim-hero-card">
+                        <div class="vim-hero-icon" id="vim-brand-hero-icon"></div>
+                        <div>
+                            <div class="vim-hero-title" id="vim-brand-hero-title">—</div>
+                            <div class="vim-hero-desc" id="vim-brand-hero-desc">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Acordeón guía -->
+                    <div class="vim-acc is-open" id="vim-acc">
+                        <div class="vim-acc-header" onclick="vimToggleAcc()">
+                            <div class="vim-acc-icon">i</div>
+                            <div class="vim-acc-title" id="vim-acc-title">Cómo exportar desde tu app</div>
+                            <svg class="vim-acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        </div>
+                        <div class="vim-acc-body">
+                            <div class="vim-acc-body-inner" id="vim-acc-body-inner"></div>
+                        </div>
+                    </div>
+
+                    <!-- Drop zone -->
+                    <div class="vim-drop" id="vim-drop" onclick="vimTriggerInput()">
+                        <div class="vim-drop-icon">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <div class="vim-drop-text" id="vim-drop-text">Arrastra tus archivos aquí</div>
+                        <div class="vim-drop-hint">o toca para seleccionarlos</div>
+                        <div class="vim-drop-browse">Examinar</div>
+                    </div>
+
+                    <!-- Badges archivos -->
+                    <div class="vim-files">
+                        <div class="vim-files-title" id="vim-files-title">Archivos requeridos · 0 de 0</div>
+                        <div class="vim-files-row" id="vim-files-row"></div>
+                    </div>
+
+                    <!-- Warning condicional -->
+                    <div class="vim-warn" id="vim-warn" style="display:none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                        <span id="vim-warn-text"></span>
+                    </div>
+
+                    <button class="vim-submit" id="vim-submit" disabled onclick="vimDoImport()">Importar entreno</button>
+                </div>
+
+                <!-- ═════ STEP 3: Loading ═════ -->
+                <div class="vim-step-screen" id="vim-step-loading">
+                    <div class="vim-loading">
+                        <div class="vim-loading-spinner"></div>
+                        <div class="vim-loading-title" id="vim-loading-title">Procesando…</div>
+                        <div class="vim-loading-desc" id="vim-loading-desc">Parseando los archivos. Esto suele tardar unos segundos.</div>
+                        <div class="vim-loading-bar"><div class="vim-loading-bar-fill"></div></div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+
         <!-- PULL TO REFRESH (punto 6) -->
         <div id="ptr-indicator" style="display:none;position:fixed;top:0;left:0;right:0;z-index:999;text-align:center;padding:10px 0;background:var(--surface);border-bottom:1px solid var(--border);">
             <svg id="ptr-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2.5" stroke-linecap="round" style="animation:ptr-spin .7s linear infinite;">
@@ -12023,6 +12556,443 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         })();
         openSheet('import-modal');
     }
+
+    // ── BLOQUE WIZARD IMPORT MANUAL · Sesión 17 ─────────────────────
+    // Logos PNG (con alpha) de las marcas soportadas/en desarrollo del wizard
+    // de import manual. Constante separada de BRAND_LOGOS (visor) para no
+    // tocar funcionalidad existente. Ver view-import-manual y openImportManualWizard().
+    const MR_BRAND_LOGOS = {
+        'coros': 'data:image/png;base64,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R6SUWGsRQpTvH1555ZWffNnLXtZMkqSa5519L+M4Rms9czzo3BxzkeayBJ+eniYMQ3p7e9m2bRvXXXedvffee/9HmfYjJUki0jR1z3jGMy5/zWte8xu9vb2pcy7OsuxRJVYcx2RZ9pRqNeX7B0GA1hohBFEUkec5Qois0Wgkn/rUpz720EMP3Vqm68hjlOexbt26//fKV75SLliwgCAIUEqRZRlCiKdc8zLGzJx7mqbEcUwQBGRZRhzHGGPK9Lf+5V/+pee+++67Bihmff6P0dPTU333u9/90QULFjSzLOuRUpJlGb29vRRFQVEU1Ot1Go3GnNQchRAIIWZqJ2XajDEEQUAcx7zlLW9541N+o6PhAx/4wJ9v2rTJZVnmtNbOGOOMMa4oikf92xjjtNZOa+2Kopj5/VP5stY6Y4zLsswVReGyLHPOOXffffe5iy+++DnQuaHLD61Wq8Xvfe97r9+xY4cbHx9/VJqyLHNpmjpr7czP0jR9ymksisK1223XarVclmUuz3M3PT3tms2m27Bhg3v729/+D493XeM4FgBvf/vbr9yyZctoq9V63GtbHvOppvPI4+R5PvNezWbTNRoN99BDD43+1m/91pUAURQ9boHyp3/6p/+wYcMG12q1Zj6jdrs9J2ksr2eaps4YM5NGY4xrtVouTdOZazM9Pe22bNnifvu3f/v6MAxjYOY+KDOglHLlm9/85r+/++67/3tiYmLmfpp97DzPXZ7nzjnn2u32zLWZy68j72k31yXlfHn729/+V61Wy1lrjdY601pnWZZl5ffz/dVutx/17zRNs0ajcWD9+vXZhRde+CzoBIDuBz7wpje96cuNRsNlWTZtjClmvzbP8yzP83lJf5Zl2dTU1My/G43GzPeHDh1yL3nJS96vlJrJUGU1+nd+53eeOzExMemcc3meN49M83ykNc/zx/zMGFPked50zrmxsbHJa6655rmz0wmglBKvf/3r398tCB5z/vP1uT/RsY0xRZZl02NjY+4Nb3jDl4GBssYURREAV1111ZqRkRHnnHPla57oGhyt+zrP86zdbmfzkV/nvAnQaDRcpVLRQoigKIqZyCqEwBjTsNbquX7PHydN08ldu3b1/cZv/Mbz169ff1ccxyLLMrd27do1//Zv/7bp7LPPPmiMGarX6+R5jrWWOI5tlmVT85kuIYSM47heFMVMh16e50gpG3fccUftxS9+sWo0GnZWNflFt9566xcvueSSapZleRiG0awOrVRrnc5negGCIEiklAl0qt5FUeTVajW65ZZbWldeeeWrlFLfsNbinKO3t1fefPPN5txzz20URVFLkgRr7UyHa5ZlU865+X6uSD2KIimlJM/zsvly8IEHHhh64xvfuHbTpk0Ph2GIMYbh4eElH/jAB/7ula985YuMMUkcx1XnHEopnHNWaz2v98OPU6lUBub6mHPe2xHHcQok5U0bBAHWWtI0ZcOGDbXx8XGSJAEevyPmqXbKla9P03SmrRmGYf8DDzzA+Pj4wOy/Wb16dX7eeeflxpiop6eH8sMWQrBnzx5555139g8MDMy0Y621c9aTnec5YRhy2mmnsXjx4pmqaLd5kpx11llpWZpKKTHGcPHFF7+rr6+vWhRFK4qiatlmVEqxe/fu5OGHH06CIJhpBz+VtqlzjiiKmJqammlTj4+Pc+6557Jq1aqZ9AshoqIoWsuWLauec84577r//vu/UfYZhGHIueeemxpjkjAMy4yElJKRkREajUa9LByeSjqNMVQqlZk+hfJ9Wq0WK1asQEpJURRIKenp6aHdbkennnpqvnz58nzTpk0opURRFG758uVnrlu37heBsSiKqkEQUAbnRqMhb7rppv6BgQGstZS/C8OQNE3La/GUzqO8NuXIihBi5h6erxGqOQ8AxpikvODlxZFSpkDyt3/7ty/fsGHDljiOpbXWzkcPfHlMY8xMZlVKmUajofbt27e9+zsHlBk+cs61tNZEUYSU0gLy1ltv3fNHf/RHL6hUKqJsf81VM0xKKbTWrlKpLHrnO995y+tf//rcWhuVaeiWoMmR5zQ0NLS5Wq0+V0oZlCW/MSYNgiD5yle+8hd///d//5lKpRKkaaqfasaCTjDK8xylFFEUBZOTk/pd73rXL/7mb/7mH1trUyFE0j2fQEppBwYGNsPh6+Sco91uJ729vbq8sbtpzq+99tros5/97BVFURwSQoin0sa11s50PpcBABBFUbg//MM/vPH5z3/+MiGEdc7JMojX6/XoyIIoSZJGEAS5EEJ204kQwgJy48aNd//e7/3eL9fr9URrbcrzK4OwlPIp3R+zOyRn/18IkUsphRBiXvoA5jwAlO1rKSVp2qmRWmvTNE2TBx544IZHHnlkXtoyP4nyApdVVXhs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',
+        'suunto': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAE5ElEQVR4nO3bwYtkRwHH8V/V69mZTWZ3MjsbPAkR9JJTQHKQELwEvMWLXmJOAUEEPah4UFGMIWr+Bg/+K/4retRAVshmt/u9qhy6k7iwMSaZcZZXnw/0QA89j4Z69e33qmsSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACuTbmCY/YrOCaXoBx+1NQsafn29HRePjrNWw//mU1q5jZf91vkv7v0+Vov+4A82Wqp6X3K7VLzy3IrP90d5zv1JHOfM13J5wFPMgEYSC9J7T0tu/xqupNvLTXbec6b9SJfrcdZcjWXhDy5BGDtyieTeuo1u568evRUXu83c68veZjk6/Mub9ezHKenlJpakiIFQxCAlas96TWZSsmSnuc2x/l9uUhr25Rssklyr5W80o/zoxvnaWmppv8wBGDtSvb39qXkxtTzp3Ke57Y9D1PSs1+x3aRkO8/5Wbudl+pJ5vSUai13BAKwci1J7SVLWn5S7+aVdpR3yy43ek36fpIvJZlLydGyzR+ni3ylTGndyTECY7xym1Ky6zUv15P8OE/n/WXOlCnp/7Hg15NNT94vyfNLye82F/u1g1Iz1cMVhFNllYzqipUkrU05n5I/1IvcmreZk5T+6GaNcnictJr32pzvtZt5fXOWpbcc9ZpS+uGGgbURgJX6aFL3suTN6U5e2NXcS8v0Ka9fkuxqS82UD5b7+XU/zwubkzyoPSmWBNdKANbocPnekry2Oc1ry0n+lZajTJ/6OV7SU1rP1Etaak6Xbd4pd3PWktazv2w4VEUO1kMAVqdkSklL8vzmJL/JM7m/zJl6f/S+/zF/V1LT01L6lIet55tL8ovNs2np2aRk6p9sJ2YdBGBlpvS0UnJaev5cnsnd3ZJtPv+cvZGae33OD9vNfHc6y673lFr2+wqu4o1zLQRgZUqSnpafT+d5sU35d/YLeO1zPnZZsqRmbg/y23or36jHmUtPzf5ugHXw34ArUpO0krw63c5f+p3s2gcp2XzBo/WUXrOUltNS87da84P2j9zvJSUti1G+Dpc+X7/o2cETpmS/6eeibvLGdJa/zw/yYKqpaV9iY29Lkix9yddS8/2jO/nr9t1MmdKyKP0KuAJYmeNSc1aSbZLWp9S0wzT+kkqyKTXvLbuUElcA1+PS56sArM5hSOthq29p+w/y/eLAIy9JHvO7xz3/eOl/vz+4tpLWDfM1EAA+21V+S2dwr5U1AD6bScr/yteAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAMDABgIEJAAxMAGBgAgADEwAYmADAwAQABiYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP9XHwJCoSA1iQJ4hAAAAABJRU5ErkJggg==',
+        'garmin': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAEqUlEQVR4nO3cS48c1RkG4PecHhhguBhzN5ZlEWFL5pbYXCxjCcvWCOQFArEIkqVkYRA3s0CIXf5RNvkD+QnJLptskiUSC4RHQ3vG03VYdNvYBmyP6aFrqOeRRhp1l05/iz5v1fnqdCUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMxZ2YEx2w6MCf1QatK6jI6+nXb2y2RjPeXvf8vk//+++t5Ofvq8B6zzHhB+t0pN0lIf3pf21hfpylK6Bx5Lzn6VetfylYMWWeG2CQC4XSUpraWc+TTdfXuSyWYyXstk/5HU43+env3r7ppSu6taWJRak65LfeaVdC++mYy/S+ooGY2S8Vq6k39N3fPkNATK7plWu6dSWJiStKSMlpLVC2mtXf/e5HK6lb0ppz9OaW1XrQIEANxKnTb3yrF3MznwUrKxfv1Zvo6S8XfpXjqbcvBPSbd7lgK7o0pYlFKS1qXe/0hy6vxPJ/81WpKsXkipo11zL0wAwM2UMm38nfog3UNPJFub01D4yXE12VhPO3gs9ejbs4bg6Dcvd7sEAPySMmv8PX0k7eV3ku8v3nxSl5q2sZ526sPUlT2zhmC/GwICAG6ilJKsfp6u3pW0W1zXl5JsbaZ7eF/KG+enx/f8jkC/q4NFqaPp2v+Ft9I9ezy5tHZ7jb06SsYX0155L/Wpw0k36XUI9LcyWJQrjb977k87/VHa5qXtTeJukm7p7pTVC72/IygA4EalprSWevIv6R47mFweb28tX2ebgw69nvr8aq8bggIArlVq0k1SHz2Y7vj7yfhiUpfuaJx2eSM580lGyyuzfkD/rgcEANygJMnqZ+mWV6Zr+DsapCSXL2Xy+DPJiXO93SLcv4pgUWY7/uqhk+mOnE7Ga7/u0r3WZLyWduJcRo8c6GVDsF/VwMKUpLXUpeXpfv/J1hz29Jek20p37wPJmU962RAUAJDMzv4t5dX3Mtl3ONn85S2/2xt3eluwe+5M6h9e691SoD+VwEK16Rn6wB8zPXO36WSdx99kK215Jdn//PSjetQMvIP2JvwOtdnvd/71j4yePZHuvgenL/7aC/fWktEo9Zv/Jf/55+y1HX1s2LZ4JiBcVZK01L370/bun/6s9/q3fvz/ihseDfCz3/5Skq//m7b+7U0Ouu0C50oAwLVKufWe/8WNLQBgx5Vy9QGgc9PaPIJFAMCAeSw4MD8CAAZMAMCACQAYMAEAAyYAYMAEAAyYAIABEwAwYAIABkwAwIAJABgwAQADJgBgwAQADJgAgAETADBgAgAGTADAgAkAGDABAAMmAGDABAAMmACAARMAMGACAAZMAMCACQAYMAEAAyYAYMAEAAyYAIABEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAc/ADdmERXJdWN+UAAAAASUVORK5CYII=',
+        'polar': 'data:image/png;base64,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',
+        'amazfit': 'data:image/png;base64,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',
+    };
+
+    // Catálogo de marcas del wizard. `accepts` define qué archivos pide,
+    // `enabled` si está activa, `instructions` los pasos de exportación.
+    const MR_BRAND_CATALOG = [
+        { key:'coros',   name:'Coros',       enabled:true,  accepts:['fit','gpx','csv'],
+          instructions:[
+              'Abre la <strong>app Coros</strong> en tu móvil y selecciona la actividad que quieres importar.',
+              'Toca el icono de <strong>compartir</strong> y elige <strong>Exportar archivo original</strong>.',
+              'Te dará 3 archivos: <strong>.fit</strong>, <strong>.gpx</strong> y <strong>.csv</strong>. Guárdalos en tu dispositivo.',
+              'Vuelve aquí y arrastra <strong>los 3 archivos a la vez</strong> a la zona de abajo.'
+          ] },
+        { key:'suunto',  name:'Suunto',      enabled:true,  accepts:['fit','gpx'],
+          instructions:[
+              'Abre la <strong>Suunto app</strong> y entra en la actividad que quieres importar.',
+              'Toca el botón de <strong>compartir</strong> y elige <strong>Exportar como .fit + .gpx</strong>.',
+              'Guarda los 2 archivos en tu dispositivo.',
+              'Vuelve aquí y arrastra <strong>los 2 archivos a la vez</strong> a la zona de abajo.'
+          ] },
+        { key:'garmin',  name:'Garmin',      enabled:false, accepts:[], instructions:[] },
+        { key:'polar',   name:'Polar',       enabled:false, accepts:[], instructions:[] },
+        { key:'apple',   name:'Apple Watch', enabled:false, accepts:[], instructions:[] },
+        { key:'amazfit', name:'Amazfit',     enabled:false, accepts:[], instructions:[] }
+    ];
+
+    // ──────────────────────────────────────────────────────────────────
+    // WIZARD IMPORT MANUAL · Sesión 17 · Lógica de pantalla
+    // Estado local del wizard (no persistente, vive sólo mientras la
+    // pantalla está abierta).
+    // ──────────────────────────────────────────────────────────────────
+    const _vimState = {
+        step:     'brand',   // 'brand' | 'upload' | 'loading'
+        brand:    null,      // key de MR_BRAND_CATALOG ('coros' | 'suunto' | ...)
+        files:    {},        // { fit:File, gpx:File, csv:File } según se vayan recibiendo
+    };
+
+    // Input file oculto del wizard (se crea on-demand para que cada apertura
+    // del wizard tenga un input fresco sin valores residuales)
+    let _vimFileInput = null;
+    function _vimEnsureFileInput() {
+        if (_vimFileInput && document.body.contains(_vimFileInput)) return _vimFileInput;
+        _vimFileInput = document.createElement('input');
+        _vimFileInput.type = 'file';
+        _vimFileInput.multiple = true;
+        _vimFileInput.accept = '.csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream';
+        _vimFileInput.style.display = 'none';
+        _vimFileInput.id = 'vim-file-input';
+        _vimFileInput.addEventListener('change', function(e) {
+            const files = Array.from(e.target.files || []);
+            if (!files.length) return;
+            vimOnFilesChange(files);
+        });
+        document.body.appendChild(_vimFileInput);
+        return _vimFileInput;
+    }
+
+    // Entrada principal del wizard — disparada desde el botón "ENTRENO" de biblioteca
+    function openImportManualWizard() {
+        // Reset estado
+        _vimState.step  = 'brand';
+        _vimState.brand = null;
+        _vimState.files = {};
+
+        // Render del Step 1 (grid de marcas) cada vez (por si cambia el catálogo)
+        _vimRenderBrandGrid();
+
+        // Mostrar la view ocultando las demás
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        const view = document.getElementById('view-import-manual');
+        if (view) { view.classList.add('active'); view.scrollTop = 0; }
+
+        // Reset visual de los 3 steps
+        _vimShowStepScreen('brand');
+
+        // Mantener BIBLIOTECA marcada en la nav inferior (igual que strava import)
+        document.querySelectorAll('.nb').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.target === 'activities');
+        });
+    }
+    window.openImportManualWizard = openImportManualWizard;
+
+    // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale a biblioteca
+    function vimBackNav() {
+        if (_vimState.step === 'upload') {
+            _vimShowStepScreen('brand');
+            return;
+        }
+        if (_vimState.step === 'loading') {
+            // No permitir back durante loading (lo bloqueamos visualmente también)
+            return;
+        }
+        // step === 'brand' → salir del wizard a biblioteca
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        const target = document.getElementById('view-activities');
+        if (target) target.classList.add('active');
+        document.querySelectorAll('.nb').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.target === 'activities');
+        });
+    }
+    window.vimBackNav = vimBackNav;
+
+    // Cambia qué step-screen es visible y actualiza topbar
+    function _vimShowStepScreen(step) {
+        _vimState.step = step;
+        document.querySelectorAll('#view-import-manual .vim-step-screen').forEach(function(el) {
+            el.classList.remove('is-active');
+        });
+        const map = { brand:'vim-step-brand', upload:'vim-step-upload', loading:'vim-step-loading' };
+        const el = document.getElementById(map[step]);
+        if (el) el.classList.add('is-active');
+
+        // Topbar dinámico
+        const titleEl = document.getElementById('vim-title');
+        const subEl   = document.getElementById('vim-subtitle');
+        const backEl  = document.getElementById('vim-back-btn');
+        if (step === 'brand') {
+            if (titleEl) titleEl.textContent = 'Importar entreno';
+            if (subEl)   subEl.textContent   = 'Añade una actividad manual';
+            if (backEl)  { backEl.style.opacity = '1'; backEl.style.pointerEvents = 'auto'; }
+        } else if (step === 'upload') {
+            const brand = (MR_BRAND_CATALOG.find(b => b.key === _vimState.brand)) || {};
+            if (titleEl) titleEl.textContent = 'Importar desde ' + (brand.name || '—');
+            if (subEl)   subEl.textContent   = 'Sigue los pasos para exportar';
+            if (backEl)  { backEl.style.opacity = '1'; backEl.style.pointerEvents = 'auto'; }
+        } else if (step === 'loading') {
+            if (titleEl) titleEl.textContent = 'Importando…';
+            if (subEl)   subEl.textContent   = 'Procesando tu actividad';
+            // Bloqueamos back durante loading
+            if (backEl)  { backEl.style.opacity = '.35'; backEl.style.pointerEvents = 'none'; }
+        }
+
+        // Scroll arriba al cambiar de step
+        const view = document.getElementById('view-import-manual');
+        if (view) view.scrollTop = 0;
+    }
+
+    // Render del grid de marcas (Step 1) — cards con logos PNG embedidos
+    function _vimRenderBrandGrid() {
+        const grid = document.getElementById('vim-brand-grid');
+        if (!grid) return;
+
+        // Logos cuyo color principal es negro → llevan filtro auto-invert en oscuro
+        // (Coros es rojo → no se invierte; Apple es pictograma SVG inline → tampoco)
+        const _INVERT_DARK = { coros:false, suunto:true, garmin:true, polar:true, apple:false, amazfit:true };
+
+        let html = '';
+        MR_BRAND_CATALOG.forEach(function(b) {
+            const cls    = b.enabled ? 'is-active' : 'is-dev';
+            const meta   = b.enabled ? 'Soportado' : 'Próximamente';
+            const flag   = b.enabled ? '' : '<span class="vim-brand-flag">🚧</span>';
+            const onTap  = b.enabled
+                ? 'onclick="vimSelectBrand(\'' + b.key + '\')"'
+                : 'onclick="vimShowDevToast(\'' + b.name + '\')"';
+
+            // Logo: para Apple usamos pictograma inline; el resto, PNG embedido
+            let logoHtml;
+            if (b.key === 'apple') {
+                logoHtml = '<div style="background:#1a1a1a;border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;">'
+                         + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                         + '<rect x="6" y="3" width="12" height="18" rx="3"/><circle cx="12" cy="12" r="3"/></svg></div>';
+            } else {
+                const invertCls = _INVERT_DARK[b.key] ? ' class="auto-invert"' : '';
+                logoHtml = '<img src="' + MR_BRAND_LOGOS[b.key] + '"' + invertCls + ' alt="">';
+            }
+
+            html += '<div class="vim-brand-card ' + cls + '" ' + onTap + '>'
+                  + flag
+                  + '<div class="vim-brand-logo">' + logoHtml + '</div>'
+                  + '<div class="vim-brand-name">' + b.name + '</div>'
+                  + '<div class="vim-brand-meta">' + meta + '</div>'
+                  + '</div>';
+        });
+        grid.innerHTML = html;
+    }
+
+    // Toast cuando se tapea una marca en desarrollo (reutiliza el sistema de toasts existente si está)
+    function vimShowDevToast(brandName) {
+        const msg = brandName + ' aún no está soportada. Estamos trabajando en ello 🚧';
+        if (typeof showToast === 'function') {
+            showToast(msg, 'warn');
+        } else {
+            alert(msg);
+        }
+    }
+    window.vimShowDevToast = vimShowDevToast;
+
+    // Selección de marca → ir a Step 2 (upload)
+    function vimSelectBrand(key) {
+        const brand = MR_BRAND_CATALOG.find(b => b.key === key);
+        if (!brand || !brand.enabled) return;
+        _vimState.brand = key;
+        _vimState.files = {};
+        _vimRenderUpload(brand);
+        _vimShowStepScreen('upload');
+    }
+    window.vimSelectBrand = vimSelectBrand;
+
+    // Render del Step 2 (hero card + acordeón + drop zone + badges) según la marca
+    function _vimRenderUpload(brand) {
+        // 1) Hero card: icono con logo + título + descripción
+        const heroIconEl  = document.getElementById('vim-brand-hero-icon');
+        const heroTitleEl = document.getElementById('vim-brand-hero-title');
+        const heroDescEl  = document.getElementById('vim-brand-hero-desc');
+        if (heroIconEl) {
+            // Limpiar clases brand-* previas
+            heroIconEl.className = 'vim-hero-icon';
+            // Sólo activamos brand-coros / brand-suunto que tienen fondo custom
+            if (brand.key === 'coros') heroIconEl.classList.add('brand-coros');
+            else if (brand.key === 'suunto') heroIconEl.classList.add('brand-suunto');
+            // Pintamos el logo
+            heroIconEl.innerHTML = '<img src="' + MR_BRAND_LOGOS[brand.key] + '" alt="">';
+        }
+        if (heroTitleEl) heroTitleEl.textContent = brand.name;
+        if (heroDescEl) {
+            // Descripción según los archivos que pide la marca
+            const exts = brand.accepts.map(e => '.' + e).join(' · ');
+            heroDescEl.innerHTML = 'Exporta los archivos <strong>' + exts + '</strong> y súbelos ' +
+                                   (brand.accepts.length > 2 ? 'los ' + brand.accepts.length + ' juntos.' : 'juntos.');
+        }
+
+        // 2) Acordeón con instrucciones
+        const accTitleEl = document.getElementById('vim-acc-title');
+        const accBodyEl  = document.getElementById('vim-acc-body-inner');
+        if (accTitleEl) accTitleEl.textContent = 'Cómo exportar desde la app ' + brand.name;
+        if (accBodyEl) {
+            let stepsHtml = '';
+            (brand.instructions || []).forEach(function(text, idx) {
+                stepsHtml += '<div class="vim-step">'
+                           + '<div class="vim-step-num">' + (idx + 1) + '</div>'
+                           + '<div class="vim-step-text">' + text + '</div>'
+                           + '</div>';
+            });
+            accBodyEl.innerHTML = stepsHtml;
+        }
+        // Reabrir acordeón cada vez que se entra a Step 2
+        const acc = document.getElementById('vim-acc');
+        if (acc) acc.classList.add('is-open');
+
+        // 3) Drop zone — texto dinámico según marca
+        const dropTextEl = document.getElementById('vim-drop-text');
+        if (dropTextEl) {
+            const exts = brand.accepts.map(e => '.' + e).join(' + ');
+            dropTextEl.textContent = 'Arrastra ' + exts;
+        }
+
+        // 4) Badges archivos requeridos (vacíos al entrar)
+        _vimUpdateFilesUI();
+    }
+
+    // Toggle del acordeón (no destruye contenido, solo cierra/abre con max-height)
+    function vimToggleAcc() {
+        const acc = document.getElementById('vim-acc');
+        if (acc) acc.classList.toggle('is-open');
+    }
+    window.vimToggleAcc = vimToggleAcc;
+
+    // Disparar el selector nativo de archivos
+    function vimTriggerInput() {
+        _vimEnsureFileInput();
+        // Reset value para que un mismo fichero pueda re-seleccionarse
+        try { _vimFileInput.value = ''; } catch(_) {}
+        _vimFileInput.click();
+    }
+    window.vimTriggerInput = vimTriggerInput;
+
+    // Cuando llegan archivos del input: clasificarlos por extensión y refrescar UI
+    function vimOnFilesChange(files) {
+        // Inicializamos el slot por marca activa
+        const brand = MR_BRAND_CATALOG.find(b => b.key === _vimState.brand);
+        if (!brand) return;
+        // Empezamos limpio cada vez que el usuario re-selecciona
+        _vimState.files = {};
+        files.forEach(function(f) {
+            const ext = (f.name || '').toLowerCase().split('.').pop();
+            // Sólo guardamos extensiones que la marca acepta; el resto se descarta silencioso
+            if (brand.accepts.indexOf(ext) >= 0 && !_vimState.files[ext]) {
+                _vimState.files[ext] = f;
+            }
+        });
+        _vimUpdateFilesUI();
+    }
+    window.vimOnFilesChange = vimOnFilesChange;
+
+    // Refrescar UI de archivos: badges + warning + estado botón
+    function _vimUpdateFilesUI() {
+        const brand = MR_BRAND_CATALOG.find(b => b.key === _vimState.brand);
+        if (!brand) return;
+
+        const titleEl  = document.getElementById('vim-files-title');
+        const rowEl    = document.getElementById('vim-files-row');
+        const warnEl   = document.getElementById('vim-warn');
+        const warnText = document.getElementById('vim-warn-text');
+        const submitEl = document.getElementById('vim-submit');
+
+        const accepts  = brand.accepts;
+        const haveCount = accepts.filter(e => _vimState.files[e]).length;
+        const allOK = (haveCount === accepts.length);
+
+        if (titleEl) {
+            titleEl.textContent = 'Archivos requeridos · ' + haveCount + ' de ' + accepts.length +
+                                  (allOK ? ' ✓' : '');
+        }
+        if (rowEl) {
+            let html = '';
+            accepts.forEach(function(ext) {
+                const f = _vimState.files[ext];
+                const ok = !!f;
+                html += '<div class="vim-file-badge' + (ok ? ' is-ok' : '') + '">'
+                      + '<div class="vim-file-check">'
+                      + (ok ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
+                      + '</div>'
+                      + '<div class="vim-file-info">'
+                      + '<div class="vim-file-ext">.' + ext.toUpperCase() + '</div>'
+                      + '<div class="vim-file-state">' + (ok ? (f.name || 'OK') : 'Pendiente') + '</div>'
+                      + '</div>'
+                      + '</div>';
+            });
+            rowEl.innerHTML = html;
+        }
+
+        // Warning
+        if (warnEl && warnText) {
+            const missing = accepts.filter(e => !_vimState.files[e]);
+            if (missing.length === 0) {
+                warnEl.style.display = 'none';
+            } else {
+                warnEl.style.display = '';
+                const missList = missing.map(e => '<strong>.' + e + '</strong>').join(' y ');
+                warnText.innerHTML = 'Falta ' + (missing.length === 1 ? 'el archivo ' : 'los archivos ') + missList +
+                                     '. Selecciona ' + (accepts.length === 1 ? 'el archivo' : 'los ' + accepts.length + ' a la vez') + ' para importar.';
+            }
+        }
+
+        // Botón importar
+        if (submitEl) submitEl.disabled = !allOK;
+    }
+
+    // Disparar el import: copiamos los files validados al input existente
+    // (activity-files-input) y forzamos su evento "change" para reutilizar el
+    // flujo de parsers + import-modal sin duplicar lógica.
+    function vimDoImport() {
+        const brand = MR_BRAND_CATALOG.find(b => b.key === _vimState.brand);
+        if (!brand) return;
+        const have = brand.accepts.filter(e => _vimState.files[e]);
+        if (have.length !== brand.accepts.length) return; // botón debería estar disabled
+
+        // Construir un DataTransfer con los archivos para asignar al input externo
+        const dt = new DataTransfer();
+        brand.accepts.forEach(function(ext) {
+            const f = _vimState.files[ext];
+            if (f) dt.items.add(f);
+        });
+
+        const ext = document.getElementById('activity-files-input');
+        if (!ext) {
+            alert('Error interno: no se encontró el input de archivos.');
+            return;
+        }
+        try { ext.files = dt.files; } catch(e) {
+            console.warn('[VIM] No se pudo asignar files al input externo:', e);
+        }
+
+        // Mostrar pantalla loading mientras el handler change parsea
+        const loadTitle = document.getElementById('vim-loading-title');
+        if (loadTitle) loadTitle.textContent = 'Leyendo archivos ' + brand.name;
+        _vimShowStepScreen('loading');
+
+        // Disparar el evento change → activa el listener original (línea ~11443)
+        // que parsea Coros/Suunto, mergea y abre import-modal.
+        // El handler legacy se encarga de mostrar la edición; al cerrar el modal
+        // el usuario verá que la activity ya está en biblioteca.
+        try {
+            ext.dispatchEvent(new Event('change', { bubbles:true }));
+        } catch(e) {
+            console.error('[VIM] dispatch change falló:', e);
+        }
+
+        // Cuando el modal import-modal se abre, el wizard ya no es visible
+        // (queda detrás). Reseteamos el wizard a brand para la próxima apertura.
+        // Esperamos 1.2s para que el parser tenga tiempo (es asíncrono).
+        setTimeout(function() {
+            // Si el modal está abierto, ocultar la view del wizard volviendo a biblioteca
+            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+            const targetView = document.getElementById('view-activities');
+            if (targetView) targetView.classList.add('active');
+            // Reset interno
+            _vimState.step  = 'brand';
+            _vimState.brand = null;
+            _vimState.files = {};
+            // Volver a Step 1 visualmente por si se reabre el wizard
+            _vimShowStepScreen('brand');
+        }, 1200);
+    }
+    window.vimDoImport = vimDoImport;
+
+    // ───── Drag & drop sobre la drop zone ─────
+    // Listeners idempotentes (sólo se montan una vez) que delegan al mismo
+    // _vimOnFilesChange cuando se sueltan archivos.
+    let _vimDndWired = false;
+    function _vimWireDnd() {
+        if (_vimDndWired) return;
+        const drop = document.getElementById('vim-drop');
+        if (!drop) return;
+        drop.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            drop.classList.add('is-dragover');
+        });
+        drop.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            drop.classList.remove('is-dragover');
+        });
+        drop.addEventListener('drop', function(e) {
+            e.preventDefault();
+            drop.classList.remove('is-dragover');
+            const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+            if (files.length) vimOnFilesChange(files);
+        });
+        _vimDndWired = true;
+    }
+    // Auto-wire cuando el DOM esté listo
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _vimWireDnd);
+    } else {
+        _vimWireDnd();
+    }
+
 
     // ── OUTFIT SELECTOR ─────────────────────────────────────────────
     // Shirt colors (11 options)
