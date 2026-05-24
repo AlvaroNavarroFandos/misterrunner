@@ -12904,6 +12904,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _MR_LIB_CHUNK = 8;
         let _mrLibIdx = 0;
 
+        // [FASE 6 · Fix tracks vacíos] IntersectionObserver para pintar canvas
+        // sólo cuando la card entra en viewport. Causa raíz del bug "tracks
+        // aleatoriamente vacíos": content-visibility:auto (Fix B previo) hace
+        // que el browser salte el paint de cards fuera de viewport, así que
+        // el ctx.stroke() del rAF inicial se perdía silenciosamente.
+        //
+        // Estrategia: en lugar de dibujar dentro de un rAF al insertar, cada
+        // card guarda act.records + shoeColor en dataset y el observer dispara
+        // el draw cuando la card está a punto de aparecer. Idempotente: si la
+        // card sale y vuelve a entrar, el draw se ejecuta otra vez (barato).
+        // rootMargin '300px' = empieza a pintar 300px antes de aparecer, así
+        // el usuario nunca ve el canvas vacío durante el scroll suave.
+        // unobserve tras primer paint exitoso → 0 coste residual.
+        const _mrLibPending = new Map();  // canvas → { records, shoeColor }
+        let _mrLibIO = null;
+        try {
+            _mrLibIO = new IntersectionObserver(function(entries) {
+                entries.forEach(function(ent) {
+                    if (!ent.isIntersecting) return;
+                    const canv = ent.target;
+                    const data = _mrLibPending.get(canv);
+                    if (data) {
+                        try { drawTrackForLibrary(canv, data.records, data.shoeColor); } catch(_) {}
+                        _mrLibPending.delete(canv);
+                    }
+                    _mrLibIO.unobserve(canv);
+                });
+            }, { root: list, rootMargin: '300px 0px', threshold: 0.01 });
+        } catch(_) { _mrLibIO = null; }
+
         function _mrLibRenderChunk() {
             if (_mrLibIdx === 0) {
                 // Quitar skeletons antes del primer chunk real
@@ -13181,10 +13211,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             wrap.appendChild(sliding);
             list.appendChild(wrap);
 
-            requestAnimationFrame(() => {
+            // [FASE 6 · Fix tracks vacíos] Diferir el draw al observer.
+            // Antes: rAF inmediato → si la card está fuera de viewport con
+            // content-visibility:auto, el browser saltaba el paint y el canvas
+            // quedaba vacío para siempre.
+            // Ahora: marcamos el canvas como pendiente y dejamos que el observer
+            // lo pinte cuando entre en el rootMargin. Si el observer falla
+            // (navegadores muy viejos), fallback al rAF clásico.
+            const _doDraw = function() {
                 const c = document.getElementById(cId);
-                if (c) drawTrackForLibrary(c, act.records, act.shoeColor || null);
-            });
+                if (!c) return;
+                try { drawTrackForLibrary(c, act.records, act.shoeColor || null); } catch(_) {}
+            };
+            if (_mrLibIO) {
+                requestAnimationFrame(function() {
+                    const c = document.getElementById(cId);
+                    if (!c) return;
+                    _mrLibPending.set(c, { records: act.records, shoeColor: act.shoeColor || null });
+                    _mrLibIO.observe(c);
+                });
+            } else {
+                requestAnimationFrame(_doDraw);
+            }
         }
 
         // Arrancar el render por chunks
@@ -19788,12 +19836,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             try { if (typeof renderHome       === 'function') renderHome();       } catch(_){}
             console.log('[MR][FASE 5.4.2] refresh: +'+newFromBd.length+' nuevas · '+activities.length+' total');
 
+            // [FASE 6 · Backup audit] Toast principal post-restore (persistente).
+            // Se guarda en sessionStorage durante importBackup y se muestra aquí
+            // tras el reload, cuando la app ya está estable y pintada. Antes el
+            // showToast pre-reload no llegaba a verse en Safari iOS PWA.
+            try {
+                var _restoreMsg = sessionStorage.getItem('mr_backup_restore_toast');
+                if (_restoreMsg) {
+                    sessionStorage.removeItem('mr_backup_restore_toast');
+                    if (typeof showToast === 'function') {
+                        showToast(_restoreMsg, 4500);
+                    }
+                }
+            } catch(_) {}
+
             // [FASE 6 · Backup audit] Verificación del manifiesto tras restore.
             // Si en sessionStorage hay un manifiesto guardado por importBackup,
             // comparamos los dbIds esperados con los hidratados ahora. Si faltan
             // bulk activities (cuenta diferente, datos borrados de Supabase, etc.)
             // avisamos al usuario con un toast informativo. Se consume una vez.
-            try {
+            // Pequeño delay para que el toast principal no se solape con éste.
+            setTimeout(function() {
+              try {
                 var _rawMan = sessionStorage.getItem('mr_backup_verify_manifest');
                 if (_rawMan) {
                     sessionStorage.removeItem('mr_backup_verify_manifest');
@@ -19818,7 +19882,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         }
                     }
                 }
-            } catch(eVer) { console.warn('[MR][Backup verify] exception:', eVer); }
+              } catch(eVer) { console.warn('[MR][Backup verify] exception:', eVer); }
+            }, 5000);  // tras el toast principal de 4.5s
+
+            // [FASE 6 · Backup audit] Aviso explícito si el avatar falló al
+            // restaurar (cuota localStorage agotada). Lo seteamos en importBackup
+            // y lo consumimos aquí, una sola vez. Damos también una sugerencia
+            // accionable: el usuario puede re-subir el avatar manualmente.
+            // Delay aún mayor para que aparezca DESPUÉS del verify del manifiesto.
+            setTimeout(function() {
+              try {
+                var _avFail = sessionStorage.getItem('mr_backup_avatar_failed');
+                if (_avFail) {
+                    sessionStorage.removeItem('mr_backup_avatar_failed');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ El avatar no se pudo restaurar (sin espacio). Súbelo de nuevo desde Editar perfil.', 7000);
+                    }
+                    console.warn('[MR][Backup verify] avatar failed flag presente — usuario avisado');
+                }
+              } catch(_) {}
+            }, 9500);  // tras verify (5s + 4s del toast verify)
 
             return { added: newFromBd.length, total: activities.length };
         } catch(e) {
@@ -25535,6 +25618,10 @@ function exportPlanToICS() {
 }
 
 async function exportBackup() {
+    // [FASE 6 · Backup audit] Toast inmediato de feedback. Si el proceso
+    // tarda (291+ activities + IDB lento) el usuario sabe que se está
+    // generando. Si la función crashea silenciosamente al menos verá éste.
+    try { if (typeof showToast === 'function') showToast('💾 Generando backup…', 8000); } catch(_) {}
     try {
         // Recopilar TODO el localStorage sin filtro — incluye:
         //   mr_data_<hash>       → estado completo (perfil, zapatillas, plan, marcas, ritmos, etc.)
@@ -25742,7 +25829,33 @@ async function importBackup(input) {
                 const avatarVal = backup.localStorage[backupUserKey + '_avatar'];
                 if (stateVal)            { try { localStorage.setItem(currentKey, stateVal); localStorage.setItem(currentKey + '_bak', stateVal); } catch(e) {} }
                 else if (bakVal)         { try { localStorage.setItem(currentKey, bakVal);   localStorage.setItem(currentKey + '_bak', bakVal);   } catch(e) {} }
-                if (avatarVal)           { try { localStorage.setItem(currentKey + '_avatar', avatarVal); } catch(e) {} }
+                // [FASE 6 · Backup audit] Restauración robusta del avatar:
+                // antes el catch silenciaba errores de cuota (avatares de iPhone
+                // pueden pesar 1-3 MB en base64 → QuotaExceededError común).
+                // Ahora: log explícito + retry tras limpiar la clave antigua del
+                // backup que duplicaría espacio (ya está escrita por el loop de
+                // arriba con la clave del backup, no la del usuario actual).
+                if (avatarVal) {
+                    try {
+                        localStorage.setItem(currentKey + '_avatar', avatarVal);
+                        console.log('[Backup] Avatar restaurado correctamente · ' + Math.round(avatarVal.length/1024) + 'KB');
+                    } catch(e1) {
+                        console.warn('[Backup] Avatar primer intento falló (' + (e1 && e1.name) + '), reintentando tras limpiar duplicado…');
+                        try {
+                            // Liberar espacio: la clave del backup ya está escrita arriba pero
+                            // duplica el avatar — la borramos ahora que tenemos el valor en memoria.
+                            localStorage.removeItem(backupUserKey + '_avatar');
+                            localStorage.setItem(currentKey + '_avatar', avatarVal);
+                            console.log('[Backup] Avatar restaurado en 2º intento');
+                        } catch(e2) {
+                            console.error('[Backup] Avatar NO se pudo restaurar (cuota localStorage):', e2);
+                            // Marcamos en sessionStorage para avisar tras reload
+                            try { sessionStorage.setItem('mr_backup_avatar_failed', '1'); } catch(_) {}
+                        }
+                    }
+                } else {
+                    console.log('[Backup] No hay avatar en el backup');
+                }
 
                 // Claves user-scoped: copiar de _<backupSuffix> a _<currentSuffix>
                 userScopedBases.forEach(base => {
@@ -25812,9 +25925,19 @@ async function importBackup(input) {
         const nCloud  = Array.isArray(backup.supabaseManifest) ? backup.supabaseManifest.length : 0;
         let _doneMsg  = '✅ Backup restaurado · ' + nActs + ' actividades locales';
         if (nCloud > 0) _doneMsg += ' · ' + nCloud + ' en la nube se rehidratarán al iniciar sesión';
-        _doneMsg += '. Recargando…';
-        showToast(_doneMsg, 3500);
-        setTimeout(() => location.reload(), 3600);
+
+        // [FASE 6 · Backup audit] Toasts persistentes tras reload:
+        // Antes el showToast pre-reload no llegaba a verse porque el reload
+        // mataba el DOM antes del paint en Safari iOS PWA. Solución: guardar
+        // el mensaje en sessionStorage y mostrarlo tras el reload, cuando la
+        // app ya está pintada y estable. El reload mantiene sessionStorage.
+        try {
+            sessionStorage.setItem('mr_backup_restore_toast', _doneMsg);
+        } catch(_) {}
+
+        // Toast inmediato también (por si acaso) + reload con delay más corto
+        showToast(_doneMsg, 2500);
+        setTimeout(() => location.reload(), 1200);
     } catch(e) {
         showToast('❌ Error al restaurar: ' + e.message, 4500);
         console.warn('[Backup] importBackup error:', e);
