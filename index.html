@@ -19816,11 +19816,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!bdActs || bdActs.length === 0) {
                 return { added: 0, total: activities.length };
             }
+            // [FASE 6 · Fix duplicación bulk post-restore]
+            // Antes la dedup era SÓLO por externalId, pero ~36 de 290 activities
+            // en BD tienen external_id = NULL (.tcx.gz no parseado, formato raro).
+            // Para esas, localExtIds.has(null) siempre devolvía false → se
+            // añadían como "nuevas" en cada arranque, duplicándolas si la copia
+            // de IDB venía de un restore de backup.
+            //
+            // Solución: dedup por DOS llaves en paralelo:
+            //   1) externalId (Strava activity ID, primario)
+            //   2) _dbActivityId / id de BD (UUID, siempre existe en bulk)
+            // Una bulk se considera "ya local" si CUALQUIERA de las dos
+            // coincide. Blindado contra externalId NULL y contra IDs viejos.
             var localExtIds = new Set(
                 activities.map(function(a){ return a.externalId; }).filter(Boolean)
             );
+            var localDbIds = new Set(
+                activities.map(function(a){ return a._dbActivityId || a.id; })
+                          .filter(function(v){ return typeof v === 'string' && v.length > 0; })
+            );
             var newFromBd = bdActs.filter(function(a){
-                return !localExtIds.has(a.externalId);
+                if (a.externalId && localExtIds.has(a.externalId)) return false;
+                var dbId = a._dbActivityId || a.id;
+                if (dbId && localDbIds.has(dbId)) return false;
+                return true;
             });
             if (newFromBd.length > 0) {
                 activities = activities.concat(newFromBd);
