@@ -19787,6 +19787,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             try { if (typeof renderActivities === 'function') renderActivities(); } catch(_){}
             try { if (typeof renderHome       === 'function') renderHome();       } catch(_){}
             console.log('[MR][FASE 5.4.2] refresh: +'+newFromBd.length+' nuevas · '+activities.length+' total');
+
+            // [FASE 6 · Backup audit] Verificación del manifiesto tras restore.
+            // Si en sessionStorage hay un manifiesto guardado por importBackup,
+            // comparamos los dbIds esperados con los hidratados ahora. Si faltan
+            // bulk activities (cuenta diferente, datos borrados de Supabase, etc.)
+            // avisamos al usuario con un toast informativo. Se consume una vez.
+            try {
+                var _rawMan = sessionStorage.getItem('mr_backup_verify_manifest');
+                if (_rawMan) {
+                    sessionStorage.removeItem('mr_backup_verify_manifest');
+                    var _man = JSON.parse(_rawMan);
+                    if (_man && Array.isArray(_man.ids) && _man.ids.length > 0) {
+                        var _hydratedIds = new Set(
+                            activities
+                                .filter(function(a){ return a && a._source === 'bulk' && a._dbActivityId; })
+                                .map(function(a){ return a._dbActivityId; })
+                        );
+                        var _missing = _man.ids.filter(function(id){ return !_hydratedIds.has(id); });
+                        if (_missing.length === 0) {
+                            console.log('[MR][Backup verify] OK · ' + _man.ids.length + ' bulk activities rehidratadas correctamente');
+                            if (typeof showToast === 'function') {
+                                showToast('✅ Backup verificado · ' + _man.ids.length + ' actividades de la nube OK', 4000);
+                            }
+                        } else {
+                            console.warn('[MR][Backup verify] Faltan ' + _missing.length + '/' + _man.ids.length + ' bulk activities tras restore', _missing);
+                            if (typeof showToast === 'function') {
+                                showToast('⚠️ Faltan ' + _missing.length + ' de ' + _man.ids.length + ' actividades de la nube. ¿Es la misma cuenta?', 7000);
+                            }
+                        }
+                    }
+                }
+            } catch(eVer) { console.warn('[MR][Backup verify] exception:', eVer); }
+
             return { added: newFromBd.length, total: activities.length };
         } catch(e) {
             console.warn('[MR][FASE 5.4.2] _refreshActivitiesFromBD exception:', e);
@@ -23667,19 +23700,19 @@ function buildManualHTML() {
                 },
                 {
                     title: '💾 Copia de seguridad — Exportar',
-                    text: 'El bloque "Almacenamiento y Copia de seguridad" tiene dos botones:\n\n⬇ Exportar — descarga un archivo .json con tu perfil completo: datos personales, marcas, planes, zapatillas, lesiones, calentamiento, actividades con GPS, fotos, evaluaciones, preferencias. El archivo se llama misterrunner-backup-AAAA-MM-DD.json.\n\nGuárdalo en Google Drive, iCloud, email o donde prefieras. Recomendado: hacer backup antes de cambiar de dispositivo, desinstalar la app o borrar datos del navegador. Y como mínimo una vez al mes.'
+                    text: 'El bloque "Almacenamiento y Copia de seguridad" tiene dos botones:\n\n⬇ Exportar — descarga un archivo .json con todos los datos LOCALES de la app: perfil, marcas, planes, zapatillas, lesiones, calentamiento, actividades manuales y de .fit/.csv (con GPS, fotos, outfit, RPE), evaluaciones, preferencias. El archivo se llama misterrunner-backup-AAAA-MM-DD.json.\n\nGuárdalo en Google Drive, iCloud, email o donde prefieras. Recomendado: hacer backup antes de cambiar de dispositivo, desinstalar la app o borrar datos del navegador. Y como mínimo una vez al mes.\n\n💡 IMPORTANTE: las actividades importadas masivamente desde Strava NO viajan dentro del archivo .json (pesarían cientos de MB). Esas viven en la nube atadas a tu cuenta y se rehidratan solas al iniciar sesión en cualquier dispositivo. El backup guarda un manifiesto ligero para verificarlas al restaurar.'
                 },
                 {
                     title: '💾 Copia de seguridad — Restaurar',
-                    text: '⬆ Restaurar — selecciona un archivo .json de backup. La app sobreescribe los datos actuales y se recarga con los del backup.\n\nFunciona igual en el mismo dispositivo o en uno diferente, y se adapta automáticamente si el backup pertenece a una cuenta distinta a la activa.\n\n⚠️ La restauración reemplaza los datos actuales. Si tienes datos nuevos sin backup, se perderán.'
+                    text: '⬆ Restaurar — selecciona un archivo .json de backup. La app valida que sea un backup real, sobreescribe los datos LOCALES actuales y recarga.\n\nFunciona igual en el mismo dispositivo o en uno diferente, y se adapta automáticamente si el backup pertenece a una cuenta distinta a la activa (remapea las claves user-scoped).\n\nTras recargar, la app se conecta a Supabase y rehidrata las actividades de la nube. Si detecta que faltan respecto al manifiesto del backup, muestra un aviso.\n\n⚠️ La restauración reemplaza los datos LOCALES actuales. Si tienes actividades manuales nuevas sin backup, se perderán. Los datos de la nube (bulk Strava, posts del Club) no se ven afectados — siguen atados a tu cuenta Supabase.'
                 },
                 {
-                    title: '💾 Qué incluye el backup',
-                    text: 'El archivo .json contiene absolutamente todo lo local:\n\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Todas las actividades importadas con trazado GPS, outfit, fotos y evaluaciones IA\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones)\n\nLo que NO entra en el backup (no hace falta): tus posts del Club, seguidores, comentarios, reacciones y mensajes directos. Están en la nube (Supabase) vinculados a tu cuenta — aparecen automáticamente al iniciar sesión en cualquier dispositivo.'
+                    title: '💾 Qué incluye el backup local',
+                    text: 'El archivo .json contiene TODO lo que vive en el navegador (localStorage + IndexedDB):\n\n✅ EN EL BACKUP LOCAL:\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Actividades manuales + importadas de .fit/.csv (con GPS, outfit, fotos, evaluaciones IA, RPE)\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones, filtros Club)\n• Manifiesto ligero de actividades de la nube (para verificar tras restore)\n\n☁️ NO ESTÁ EN EL BACKUP (vive en la nube, atado a tu cuenta):\n• Actividades importadas masivamente desde Strava (las 290+ con sus streams y fotos en bucket)\n• Posts del Club, seguidores, comentarios, reacciones\n• Crews, retos, mensajes directos\n\nLos datos de la nube se rehidratan automáticamente al iniciar sesión en cualquier dispositivo. Si pierdes el dispositivo o reinstalas, el backup local + tu cuenta Supabase juntos reconstruyen todo.'
                 },
                 {
                     title: '💾 Dónde se guardan tus datos',
-                    text: 'MisterRunner usa dos almacenes estándar del navegador, sin servidor propio:\n\n📦 LocalStorage — datos ligeros (perfil, planes, preferencias). Cada usuario tiene sus claves separadas, así varias personas pueden usar la app en el mismo dispositivo sin mezclar datos.\n\n🗄️ IndexedDB — actividades con trazado GPS completo. Sin límite de tamaño práctico.\n\nAmbos se incluyen íntegramente en el backup.'
+                    text: 'MisterRunner usa tres almacenes:\n\n📦 LocalStorage (navegador) — datos ligeros: perfil, planes, preferencias, manifiestos. Cada usuario tiene sus claves separadas, así varias personas pueden usar la app en el mismo dispositivo sin mezclar datos.\n\n🗄️ IndexedDB (navegador) — actividades locales (manuales + .fit + .csv) con trazado GPS completo, fotos base64, outfit, RPE. Sin límite de tamaño práctico.\n\n☁️ Supabase (nube) — autenticación, actividades importadas de Strava bulk + sus streams gzipados + fotos en bucket, posts del Club, crews, mensajes. Atado a tu cuenta de email.\n\nEl backup .json captura los dos primeros (navegador). El tercero (nube) se rehidrata al iniciar sesión.'
                 },
                 {
                     title: '⚙️ Configuración',
@@ -25534,6 +25567,30 @@ async function exportBackup() {
             });
         } catch(e) { console.warn('exportBackup IDB:', e); }
 
+        // [FASE 6 · Backup audit] Manifiesto ligero de activities bulk en Supabase.
+        // Las activities importadas vía "Import Strava" viven en Supabase (no en
+        // IDB), y por tanto NO entran en este backup local. El manifiesto guarda
+        // sólo metadatos mínimos para que al restaurar (especialmente en otra
+        // cuenta o tras un wipe) podamos comprobar si las bulk activities siguen
+        // hidratándose desde Supabase y avisar si hay discrepancia.
+        // No incluye streams ni fotos: pesarían cientos de MB.
+        let supabaseManifest = [];
+        try {
+            if (Array.isArray(activities)) {
+                supabaseManifest = activities
+                    .filter(a => a && a._source === 'bulk' && a._dbActivityId)
+                    .map(a => ({
+                        dbId:       a._dbActivityId,
+                        externalId: a.externalId || null,
+                        dateStr:    a.dateStr || null,
+                        distKm:     typeof a.distKm === 'number' ? +a.distKm.toFixed(2) : null,
+                        durSec:     a.durationSec || null,
+                        type:       a.type || null,
+                        name:       a.name || null,
+                    }));
+            }
+        } catch(e) { console.warn('exportBackup manifest:', e); }
+
         // Claves explícitas a verificar en el resumen (ya son user-scoped via _uk)
         const userKey = APP_KEY_OVERRIDE || APP_KEY;
         const hasProfile  = !!lsData[userKey];
@@ -25544,22 +25601,29 @@ async function exportBackup() {
         const hasMedal    = !!lsData[_uk('mr_medallero')];
 
         const backup = {
-            _version: 3,
+            _version: 4,  // [FASE 6 · Backup audit] v4 añade supabaseManifest
             _app: 'MisterRunner',
             _date: new Date().toISOString(),
             _user: currentUser || 'unknown',
             _userKey: userKey,   // guardamos la clave de usuario para restaurar correctamente
             _summary: {
                 totalLsKeys: totalKeys,
-                activities: idbActs.length,
+                activitiesIDB:      idbActs.length,
+                activitiesSupabase: supabaseManifest.length,
                 hasProfile, hasPlan, hasStrength, hasRehab, hasAvatar, hasMedal,
-                includes: ['perfil','marcas','plan running','plan fuerza','plan rehab',
-                           'zapatillas','medallero','calentamiento','avatar',
-                           'evaluaciones','ritmos','actividades GPS'],
-                clubNote: 'Posts, seguidores y mensajes del Club están en la nube (Supabase) y no necesitan backup local.',
+                localContents: ['perfil','marcas','plan running','plan fuerza','plan rehab',
+                                'zapatillas','medallero','calentamiento','avatar',
+                                'evaluaciones','ritmos','preferencias',
+                                'actividades manuales y .fit/.csv (con GPS, fotos, outfit, RPE)'],
+                cloudContents: ['actividades importadas desde Strava (bulk)',
+                                'streams GPS de bulk imports',
+                                'fotos de bulk imports',
+                                'posts del Club, seguidores, comentarios, crews, mensajes directos'],
+                cloudNote: 'Lo que vive en Supabase está atado a tu cuenta y se rehidrata al iniciar sesión en cualquier dispositivo. NO entra en este backup local porque pesaría cientos de MB y duplicaría datos.',
             },
             localStorage: lsData,
             idbActivities: idbActs,
+            supabaseManifest,  // [FASE 6] metadatos ligeros para verificación
         };
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
@@ -25577,7 +25641,15 @@ async function exportBackup() {
         if (hasRehab)    parts.push('rehab');
         if (hasAvatar)   parts.push('foto');
         if (hasMedal)    parts.push('medallero');
-        showToast(`✅ Backup completo — ${idbActs.length} actividades · ${parts.join(' · ') || 'datos guardados'}`, 4000);
+        // [FASE 6 · Backup audit] Toast diferenciado:
+        // — N locales (IDB): manuales / .fit / .csv → SÍ en el backup
+        // — M nube (Supabase): bulk Strava → atadas a tu cuenta, se rehidratan
+        const _nLocal = idbActs.length;
+        const _nCloud = supabaseManifest.length;
+        let _msg = '✅ Backup completo · ' + _nLocal + ' actividades locales';
+        if (_nCloud > 0) _msg += ' + ' + _nCloud + ' en la nube (atadas a tu cuenta)';
+        if (parts.length) _msg += ' · ' + parts.join(' · ');
+        showToast(_msg, 5000);
     } catch(e) {
         showToast('❌ Error al exportar: ' + e.message, 4000);
     }
@@ -25590,11 +25662,46 @@ async function importBackup(input) {
     if (!window.confirm('⚠️ Restaurar el backup sobreescribirá TODOS los datos actuales. ¿Continuar?')) return;
     try {
         const text = await file.text();
-        const backup = JSON.parse(text);
+        let backup;
+        try {
+            backup = JSON.parse(text);
+        } catch(parseErr) {
+            showToast('❌ Archivo corrupto — no es JSON válido', 4500);
+            console.warn('[Backup] JSON parse error:', parseErr);
+            return;
+        }
+        if (!backup || typeof backup !== 'object') {
+            showToast('❌ Archivo no válido — formato inesperado', 4500);
+            return;
+        }
         if (!backup._app || backup._app !== 'MisterRunner') {
             showToast('❌ Archivo no válido — no es un backup de MisterRunner', 4000);
             return;
         }
+
+        // [FASE 6 · Backup audit] Validación de integridad:
+        // El backup debe tener al menos UNA de estas secciones; si no hay nada,
+        // probablemente esté corrupto o vacío. Avisamos antes de seguir.
+        const _hasLs  = backup.localStorage && typeof backup.localStorage === 'object' && Object.keys(backup.localStorage).length > 0;
+        const _hasIdb = Array.isArray(backup.idbActivities);
+        const _hasMan = Array.isArray(backup.supabaseManifest);
+        if (!_hasLs && !_hasIdb) {
+            const _ok = window.confirm('⚠️ El backup parece vacío (sin localStorage ni actividades). ¿Continuar de todas formas?');
+            if (!_ok) return;
+        }
+
+        // Log de diagnóstico para que el usuario pueda inspeccionar la consola
+        // si algo va raro tras restaurar.
+        try {
+            console.log('[Backup] Restaurando:', {
+                version:      backup._version || 'desconocida',
+                fecha:        backup._date || 'desconocida',
+                usuario:      backup._user || 'desconocido',
+                lsKeys:       _hasLs  ? Object.keys(backup.localStorage).length : 0,
+                idbActs:      _hasIdb ? backup.idbActivities.length : 0,
+                cloudBulk:    _hasMan ? backup.supabaseManifest.length : 0,
+            });
+        } catch(_) {}
 
         if (backup.localStorage) {
             const backupUserKey = backup._userKey || '';  // ej: 'mr_data_abc123'
@@ -25604,10 +25711,18 @@ async function importBackup(input) {
             const keysNeedRemap = backupSuffix && backupSuffix !== currentSuffix;
 
             // Lista de claves base que ahora son user-scoped (sufijo hash)
+            // [FASE 6 · Backup audit] Añadidas claves que faltaban en versiones
+            // anteriores (al restaurar en otra cuenta se perdían):
+            //   - mr_club_tab            (última pestaña Club seleccionada)
+            //   - mr_feed_only_following (preferencia filtro feed)
+            //   - mr_last_crew_check     (timestamp último check invites crew)
+            // El patrón `mr_challenge_celebrated_<id>` tiene ID dinámico y se
+            // maneja aparte abajo con un loop por prefijo.
             const userScopedBases = [
                 'mr_plan', 'mr_strength_plan', 'mr_rehab_plan',
                 'mr_medallero', 'mr_warmup', 'mr_notif_enabled',
                 'mr_dark_mode', 'mr_last_activity_check', 'mr_welcome_shown',
+                'mr_club_tab', 'mr_feed_only_following', 'mr_last_crew_check',
             ];
 
             // Escribir todas las claves del backup tal cual
@@ -25637,6 +25752,20 @@ async function importBackup(input) {
                              || backup.localStorage[base]; // compatibilidad con backups v2 (clave fija)
                     if (val) { try { localStorage.setItem(newKey, val); } catch(e) {} }
                 });
+
+                // [FASE 6 · Backup audit] Claves con ID dinámico:
+                // `mr_challenge_celebrated_<id>_<hash>` — pueden ser N claves
+                // distintas (una por challenge). Las localizamos por prefijo
+                // y remapeamos el sufijo de hash.
+                const _chPrefix = 'mr_challenge_celebrated_';
+                const _bakSfx   = '_' + backupSuffix;
+                Object.keys(backup.localStorage).forEach(k => {
+                    if (k.indexOf(_chPrefix) !== 0) return;
+                    if (k.slice(-_bakSfx.length) !== _bakSfx) return;
+                    const newK = k.slice(0, -_bakSfx.length) + '_' + currentSuffix;
+                    const val  = backup.localStorage[k];
+                    if (val) { try { localStorage.setItem(newK, val); } catch(e) {} }
+                });
             } else {
                 // Mismo usuario — pero puede ser un backup v2 (claves fijas sin sufijo)
                 // Migrar claves fijas a user-scoped si el backup no las tiene con sufijo
@@ -25664,11 +25793,31 @@ async function importBackup(input) {
             } catch(e) { console.warn('importBackup IDB:', e); }
         }
 
-        const nActs = (backup.idbActivities || []).length;
-        showToast(`✅ Backup restaurado — ${nActs} actividades. Recargando…`, 3000);
-        setTimeout(() => location.reload(), 3100);
+        // [FASE 6 · Backup audit] Guardar el manifiesto de Supabase en
+        // sessionStorage para verificarlo tras el reload contra las bulk
+        // activities que efectivamente se hidraten. Si hay discrepancia
+        // (faltan bulk activities) mostramos un aviso al usuario.
+        // sessionStorage porque sobrevive al reload pero no a cerrar pestaña.
+        try {
+            if (Array.isArray(backup.supabaseManifest) && backup.supabaseManifest.length > 0) {
+                sessionStorage.setItem('mr_backup_verify_manifest', JSON.stringify({
+                    expected: backup.supabaseManifest.length,
+                    ids:      backup.supabaseManifest.map(m => m.dbId).filter(Boolean),
+                    date:     backup._date || null,
+                }));
+            }
+        } catch(_) {}
+
+        const nActs   = (backup.idbActivities || []).length;
+        const nCloud  = Array.isArray(backup.supabaseManifest) ? backup.supabaseManifest.length : 0;
+        let _doneMsg  = '✅ Backup restaurado · ' + nActs + ' actividades locales';
+        if (nCloud > 0) _doneMsg += ' · ' + nCloud + ' en la nube se rehidratarán al iniciar sesión';
+        _doneMsg += '. Recargando…';
+        showToast(_doneMsg, 3500);
+        setTimeout(() => location.reload(), 3600);
     } catch(e) {
-        showToast('❌ Error al restaurar: ' + e.message, 4000);
+        showToast('❌ Error al restaurar: ' + e.message, 4500);
+        console.warn('[Backup] importBackup error:', e);
     }
 }
 
