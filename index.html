@@ -8030,15 +8030,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // _refreshActivitiesFromBD (reutilizable desde post-import).
         loadActivitiesFromIDB().then(async (saved) => {
             activities = (saved && saved.length > 0) ? saved : [];
+            var _refreshResult = null;
             try {
-                await _refreshActivitiesFromBD();
+                _refreshResult = await _refreshActivitiesFromBD();
             } catch(e) {
                 console.warn('[MR][FASE 5.2] hidratación BD falló:', e);
             }
-            // _refreshActivitiesFromBD ya re-renderiza si hay nuevas
-            // filas BD. Si NO había BD bulk pero sí IDB, todavía hay
-            // que renderizar (el refresh con added=0 no llama render).
-            if (activities.length > 0) {
+            // [FASE 6 · Fix doble render]
+            // Antes se llamaba renderActivities/renderHome INCONDICIONALMENTE
+            // aquí. PROBLEMA: _refreshActivitiesFromBD ya re-renderiza cuando
+            // hay activities nuevas, y ambos renders son asíncronos por chunks
+            // (rAF) → quedaban interleavados, duplicando cards en DOM con
+            // patrón "5-6 bien, 5-6 sin track, etc." (ambos renders escribían
+            // tras `list.innerHTML=''` de cada uno, pisándose mutuamente).
+            //
+            // Fix: SOLO renderizar aquí si NO se añadieron filas BD
+            // (refresh.added === 0) PERO sí había datos en IDB. En cualquier
+            // otro caso, _refreshActivitiesFromBD ya hizo el render.
+            var _refreshAdded = (_refreshResult && _refreshResult.added) || 0;
+            if (_refreshAdded === 0 && activities.length > 0) {
                 renderActivities();
                 renderHome();
             }
@@ -12878,6 +12888,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
         list.innerHTML = '';
+        // [FASE 6 · Fix render concurrente]
+        // Cada llamada a renderActivities genera un token único. Los chunks
+        // por rAF verifican este token antes de seguir. Si un segundo render
+        // entra (por bootApp, filtros del buscador, edit/delete, hidratación
+        // post-import, etc.), el token cambia y el render anterior aborta
+        // limpiamente en su próximo rAF. Sin esto, dos renders concurrentes
+        // pisaban list.innerHTML='' del otro y duplicaban cards en lotes
+        // alternados (síntoma: 5-6 con track, 5-6 sin track, repetidamente).
+        window.__mrLibRenderToken = (window.__mrLibRenderToken || 0) + 1;
+        const _myToken = window.__mrLibRenderToken;
         const filtered = getFilteredActivities();
         updateSummary(filtered);
         if (!activities.length) { empty.style.display = ''; return; }
@@ -12920,6 +12940,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _mrLibPending = new Map();  // canvas → { records, shoeColor }
         let _mrLibIO = null;
         try {
+            // [FASE 6 · Fix tracks vacíos · ITERACIÓN 2]
+            // El root anterior era `list` (#activities-list), pero ese div NO
+            // es scrollable: el scroll vive en su ancestor #view-activities
+            // (overflow-y:auto). Cuando el root no es scrollable, isIntersecting
+            // queda en false para siempre tras el observe inicial → las cards
+            // fuera del primer viewport NUNCA recibían el callback con true →
+            // nunca se pintaba el canvas. Síntoma: "5-6 cards bien al inicio,
+            // 5-6 sin track, 5-6 bien, etc." (las primeras que entran al
+            // observe Y están en viewport simultáneamente sí se pintaban).
+            //
+            // Fix: usar el ancestor scrollable real como root. Si no existe
+            // (por timing), null como fallback (= viewport del navegador).
+            var _ioRoot = document.getElementById('view-activities') || null;
             _mrLibIO = new IntersectionObserver(function(entries) {
                 entries.forEach(function(ent) {
                     if (!ent.isIntersecting) return;
@@ -12931,10 +12964,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     _mrLibIO.unobserve(canv);
                 });
-            }, { root: list, rootMargin: '300px 0px', threshold: 0.01 });
+            }, { root: _ioRoot, rootMargin: '300px 0px', threshold: 0.01 });
         } catch(_) { _mrLibIO = null; }
 
         function _mrLibRenderChunk() {
+            // [FASE 6 · Fix render concurrente] Abortar si llegó un render nuevo
+            if (window.__mrLibRenderToken !== _myToken) return;
             if (_mrLibIdx === 0) {
                 // Quitar skeletons antes del primer chunk real
                 list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
