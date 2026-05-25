@@ -13871,6 +13871,99 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // FASE 6.1.b · UPDATE de una activity existente en Supabase
+    // ─────────────────────────────────────────────────────────────────
+    // Funciona para activities bulk Strava Y manuales (ambas tienen
+    // act._dbActivityId tras la migración 6.1). Si la activity no
+    // tiene _dbActivityId, es una activity vieja que solo vive en IDB:
+    // hacemos un upsert nuevo con source='manual' para subirla a BD.
+    //
+    // Campos que SÍ se actualizan: name, workout_type (type), shoe_id,
+    // shoes_name, shoe_color_hex, race_name, rpe, balance_left, outfit.
+    // Foto: si hay nueva, se sube al bucket y se inserta/actualiza fila
+    // en activity_photos.
+    // ─────────────────────────────────────────────────────────────────
+    async function _updateActivityInSupabase(act) {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { ok: false, error: 'no-sb-client' };
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return { ok: false, error: 'no-session' };
+
+            // Si la activity no está aún en BD (es un manual viejo solo en IDB),
+            // delegamos al flujo de creación que ya conocemos. Idempotente: si
+            // ya existiera por external_id, hará update y vinculará _dbActivityId.
+            if (!act._dbActivityId) {
+                console.log('[MR][6.1.b] activity sin _dbActivityId → delegando a _saveManualActivityToSupabase');
+                return await _saveManualActivityToSupabase(act);
+            }
+
+            // Build update payload (solo campos editables — NO tocamos
+            // start_date, dist_km, duration_sec ni metrics de sensor).
+            var outfitStr = null;
+            if (act.outfit && typeof act.outfit === 'object') {
+                try { outfitStr = JSON.stringify(act.outfit); } catch(_) { outfitStr = null; }
+            }
+            var raceName = (act.type === 'race' && act.raceName) ? act.raceName : null;
+            var rpeInt = null;
+            if (act.rpe != null && act.rpe !== '') {
+                var n = parseInt(act.rpe, 10);
+                if (!isNaN(n)) rpeInt = n;
+            }
+
+            var updatePayload = {
+                name:           act.name || null,
+                workout_type:   act.type || null,
+                shoe_id:        act.shoeId ? String(act.shoeId) : null,
+                shoes_name:     act.shoeName || null,
+                shoe_color_hex: act.shoeColor || null,
+                race_name:      raceName,
+                rpe:            rpeInt,
+                balance_left:   (act.balanceL != null && act.balanceL !== '') ? Number(act.balanceL) : null,
+                outfit:         outfitStr
+            };
+
+            var updRes = await sb
+                .from('activities')
+                .update(updatePayload)
+                .eq('id', act._dbActivityId)
+                .eq('user_id', uid)
+                .select('id')
+                .maybeSingle();
+
+            if (updRes && updRes.error) {
+                console.warn('[MR][6.1.b] update error:', updRes.error);
+                return { ok: false, error: updRes.error.message };
+            }
+            if (!updRes || !updRes.data) {
+                console.warn('[MR][6.1.b] update no devolvió row (¿RLS?)');
+                return { ok: false, error: 'no-row-updated' };
+            }
+            console.log('[MR][6.1.b] update OK activityId=' + act._dbActivityId);
+
+            // Foto: solo procesamos si el usuario subió una nueva durante esta edición.
+            // El flag _editPhotoB64 lo limpia saveActivityEdit pero llega aquí en act.photoB64.
+            // Para no re-subir la misma foto cada edición sin cambios, detectamos data URI
+            // (foto nueva) vs URL https (foto ya subida → no tocar).
+            if (act.photoB64 && typeof act.photoB64 === 'string' && act.photoB64.startsWith('data:')) {
+                try {
+                    await _uploadManualPhoto(sb, uid, act._dbActivityId, act.photoB64);
+                    console.log('[MR][6.1.b] photo upload OK');
+                } catch(e) {
+                    console.warn('[MR][6.1.b] photo upload exception:', e);
+                }
+            }
+
+            return { ok: true, error: null };
+        } catch(e) {
+            console.warn('[MR][6.1.b] _updateActivityInSupabase exception:', e);
+            return { ok: false, error: String(e && e.message || e) };
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Modal "Posible duplicado" — control de apertura/cierre y acciones
     // ─────────────────────────────────────────────────────────────────
     function _showDuplicateConfirmModal(dup) {
@@ -14301,9 +14394,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     function deleteActivity(id) {
-        const act = activities.find(a => a.id === id);
+        // FASE 6.1.b: comparación tolerante string/number para UUIDs BD.
+        const act = activities.find(a => String(a.id) === String(id));
         if (act && act.shoeId && act.distKm > 0) {
-            const shoe = shoes.find(s => s.id === act.shoeId);
+            // FASE 6.1.b: shoe lookup también tolerante
+            const shoe = shoes.find(s => String(s.id) === String(act.shoeId));
             if (shoe) {
                 shoe.km = Math.max(0, Math.round((shoe.km - act.distKm) * 10) / 10);
                 renderShoes();
@@ -14312,7 +14407,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Recordar si era running para recalcular PRs después
         var wasRunning = act && ['easy','recovery','series','long','race'].indexOf(String(act.type||'').toLowerCase()) >= 0;
         deleteActivityFromIDB(id);
-        activities = activities.filter(a => a.id !== id);
+        // FASE 6.1.b: filter también tolerante
+        activities = activities.filter(a => String(a.id) !== String(id));
         renderActivities();
         saveAppState();
         // Si la actividad borrada era de running, recalcular los PRs.
@@ -15740,6 +15836,35 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                     </div>
                     <div><div class="field-label">Zapatillas</div><select id="aedit-shoe" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:var(--f);font-size:14px;color:var(--tw);outline:none;appearance:none;box-sizing:border-box;">${shoeOpts}</select></div>
+                    <!-- FASE 6.1.b: RPE, race_name, balance — campos symétricos con import-modal -->
+                    <div>
+                        <div class="field-label">Esfuerzo percibido (1=muy fácil · 10=máximo)</div>
+                        <select id="aedit-rpe" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:var(--f);font-size:14px;color:var(--tw);outline:none;appearance:none;box-sizing:border-box;">
+                            <option value=""${!act.rpe?' selected':''}>— Sin valorar —</option>
+                            <option value="1"${String(act.rpe)==='1'?' selected':''}>1 — Muy fácil</option>
+                            <option value="2"${String(act.rpe)==='2'?' selected':''}>2 — Muy fácil</option>
+                            <option value="3"${String(act.rpe)==='3'?' selected':''}>3 — Fácil</option>
+                            <option value="4"${String(act.rpe)==='4'?' selected':''}>4 — Fácil</option>
+                            <option value="5"${String(act.rpe)==='5'?' selected':''}>5 — Fácil</option>
+                            <option value="6"${String(act.rpe)==='6'?' selected':''}>6 — Moderado</option>
+                            <option value="7"${String(act.rpe)==='7'?' selected':''}>7 — Moderado</option>
+                            <option value="8"${String(act.rpe)==='8'?' selected':''}>8 — Duro</option>
+                            <option value="9"${String(act.rpe)==='9'?' selected':''}>9 — Duro</option>
+                            <option value="10"${String(act.rpe)==='10'?' selected':''}>10 — Máximo esfuerzo</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div class="field-label">Equilibrio I (izquierda %) — p.ej. 49.5</div>
+                        <input id="aedit-balance" type="number" inputmode="decimal" min="40" max="60" step="0.1" placeholder="Ej: 49.5" value="${act.balanceL!=null?act.balanceL:''}" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:var(--f);font-size:14px;color:var(--tw);outline:none;box-sizing:border-box;">
+                    </div>
+                    <div id="aedit-race-wrap" style="display:${act.type==='race'?'block':'none'};background:linear-gradient(135deg,rgba(196,136,30,.10),rgba(196,136,30,.04));border:1.5px solid var(--gold-bd);border-radius:12px;padding:12px;">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span style="font-size:18px;line-height:1;">🏅</span>
+                            <span style="font-size:11px;font-weight:800;color:var(--gold);letter-spacing:1px;text-transform:uppercase;">Carrera oficial</span>
+                        </div>
+                        <div class="field-label" style="color:var(--tw);">Nombre de la carrera</div>
+                        <input id="aedit-race-name" type="text" placeholder="Ej: Maratón de Madrid 2025" value="${act.raceName||''}" style="width:100%;background:var(--card);border:1px solid var(--gold-bd);border-radius:10px;padding:12px;font-family:var(--f);font-size:15px;color:var(--tw);outline:none;box-sizing:border-box;">
+                    </div>
                     <!-- OUTFIT EDIT -->
                     <div style="background:var(--surface);border-radius:12px;padding:12px;border:1px solid var(--border);">
                         <div style="font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;">Outfit de la actividad</div>
@@ -15766,11 +15891,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
                 <div style="display:flex;gap:8px;padding:12px 20px calc(20px + env(safe-area-inset-bottom,0px));flex-shrink:0;border-top:1px solid var(--bsoft);">
                     <button onclick="document.getElementById('act-edit-overlay').remove()" style="flex:1;padding:14px;border-radius:10px;font-family:var(--f);font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:.8px;border:none;background:var(--card);color:var(--ts);">Cancelar</button>
-                    <button onclick="saveActivityEdit(${act.id})" style="flex:1;padding:14px;border-radius:10px;font-family:var(--f);font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:.8px;border:none;background:var(--crimson);color:#fff;">Guardar</button>
+                    <button onclick="saveActivityEdit('${act.id}')" style="flex:1;padding:14px;border-radius:10px;font-family:var(--f);font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:.8px;border:none;background:var(--crimson);color:#fff;">Guardar</button>
                 </div>
             </div>`;
         ov.addEventListener('click', e => { if (e.target===ov) ov.remove(); });
         document.body.appendChild(ov);
+        // FASE 6.1.b: listener type→race para mostrar/ocultar el wrap dorado
+        // de "Carrera oficial" cuando el usuario cambia el tipo. Mismo patrón
+        // que en import-modal.
+        var _aeditTypeSel = document.getElementById('aedit-type');
+        var _aeditRaceWrap = document.getElementById('aedit-race-wrap');
+        if (_aeditTypeSel && _aeditRaceWrap) {
+            _aeditTypeSel.addEventListener('change', function() {
+                _aeditRaceWrap.style.display = (_aeditTypeSel.value === 'race') ? 'block' : 'none';
+            });
+        }
         // Init outfit editor state from existing activity outfit
         const ao = act.outfit || { shirtStyle:'plain', shirtColor1:'#0057FF', shirtColor2:'#F5F5F5', shortsColor:'#1C1C1E', socksColor:'#F5F5F5' };
         window._aeditOutfit = { ...ao };
@@ -15845,41 +15980,70 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     function saveActivityEdit(id) {
-        const act = activities.find(a => a.id === id);
+        // FASE 6.1.b: tolerante a UUID (string) y a Date.now() (number).
+        // Las activities viejas tienen id numérico; las nuevas BD usan UUID.
+        const act = activities.find(a => String(a.id) === String(id));
         if (!act) return;
         const newName  = document.getElementById('aedit-name').value.trim() || null;
         const newType  = document.getElementById('aedit-type').value;
         const newShoeId = document.getElementById('aedit-shoe').value;
-        const newShoeIdNum = newShoeId ? +newShoeId : null;
-        // Shoe km adjustment: compare as numbers to avoid type mismatch bugs
-        // Use Number() on both sides and treat null/0/NaN as "no shoe"
-        const oldShoeIdNum = act.shoeId ? +act.shoeId : null;
-        const shoeChanged = oldShoeIdNum !== newShoeIdNum;
+        // FASE 6.1.b: normalizar a String para comparar shoe ids (las shoes locales
+        // tienen id numérico Date.now, pero las activities BD podrían recibir el
+        // shoe_id como string al volver de Supabase).
+        const newShoeIdStr = newShoeId ? String(newShoeId) : null;
+        const oldShoeIdStr = act.shoeId ? String(act.shoeId) : null;
+        const shoeChanged = oldShoeIdStr !== newShoeIdStr;
         if (shoeChanged && act.distKm > 0) {
-            if (oldShoeIdNum) {
-                const oldShoe = shoes.find(s => +s.id === oldShoeIdNum);
+            if (oldShoeIdStr) {
+                const oldShoe = shoes.find(s => String(s.id) === oldShoeIdStr);
                 if (oldShoe) { oldShoe.km = Math.max(0, Math.round((oldShoe.km - act.distKm)*10)/10); }
             }
-            if (newShoeIdNum) {
-                const newShoe = shoes.find(s => +s.id === newShoeIdNum);
+            if (newShoeIdStr) {
+                const newShoe = shoes.find(s => String(s.id) === newShoeIdStr);
                 if (newShoe) { newShoe.km = Math.round((newShoe.km + act.distKm)*10)/10; }
             }
             renderShoes();
         }
         act.name    = newName;
         act.type    = newType;
-        act.shoeId  = newShoeIdNum;
-        act.shoeName = newShoeIdNum ? (shoes.find(s=>+s.id===newShoeIdNum)?.name || null) : null;
-        act.shoeColor = newShoeIdNum ? (shoes.find(s=>+s.id===newShoeIdNum)?.colorHex || '') : '';
+        act.shoeId  = newShoeIdStr;
+        act.shoeName = newShoeIdStr ? (shoes.find(s=>String(s.id)===newShoeIdStr)?.name || null) : null;
+        act.shoeColor = newShoeIdStr ? (shoes.find(s=>String(s.id)===newShoeIdStr)?.colorHex || '') : '';
         if(window._aeditOutfit) act.outfit = { ...window._aeditOutfit };
         // Photo update
         if(typeof _editPhotoB64 !== 'undefined' && _editPhotoB64 !== null) {
             act.photoB64 = _editPhotoB64;
         }
+        // FASE 6.1.b: nuevos campos editables (RPE, raceName, balance)
+        // Sólo se leen si existe el elemento (compat con editores antiguos).
+        var rpeEl = document.getElementById('aedit-rpe');
+        if (rpeEl) act.rpe = rpeEl.value || '';
+        var raceEl = document.getElementById('aedit-race-name');
+        if (raceEl) {
+            var raceVal = (raceEl.value || '').trim();
+            // race_name solo aplica si type=race; si cambia tipo a otro, lo limpiamos
+            act.raceName = (newType === 'race' && raceVal) ? raceVal : null;
+        }
+        var balanceEl = document.getElementById('aedit-balance');
+        if (balanceEl) {
+            var balVal = (balanceEl.value || '').trim();
+            act.balanceL = balVal === '' ? null : Number(balVal);
+            if (isNaN(act.balanceL)) act.balanceL = null;
+        }
         document.getElementById('act-edit-overlay').remove();
         _editPhotoB64 = undefined;
         renderActivities();
         saveAppState();
+        // FASE 6.1.b: persistencia a Supabase si la activity vive en BD
+        // (tanto manuales como bulk Strava). Se ejecuta en background, no
+        // bloquea UI. Si falla, queda en IDB local con los cambios.
+        (async function() {
+            try {
+                await _updateActivityInSupabase(act);
+            } catch(e) {
+                console.warn('[MR][6.1.b] _updateActivityInSupabase falló (no bloqueante):', e);
+            }
+        })();
     }
 
     // ── OPEN ACTIVITY DETAIL ─────────────────────────────────────
@@ -17443,7 +17607,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         });
         document.getElementById('eval-save-btn').style.display='none';
         if (!id) return;
-        const act = activities.find(a => a.id === id);
+        // FASE 6.1.b: comparación tolerante string/number para UUIDs BD.
+        const act = activities.find(a => String(a.id) === String(id));
         if (!act) return;
         evalCurrentAct = act;
 
@@ -37145,7 +37310,8 @@ async function _doShareActivityToClub(actId, actObj) {
         const myId = session.user.id;
 
         // Use passed actObj directly, or fallback to lookup
-        var act = actObj || ((typeof activities !== 'undefined') ? activities.find(function(a) { return a.id === actId; }) : null);
+        // FASE 6.1.b: comparación tolerante string/number para UUIDs BD.
+        var act = actObj || ((typeof activities !== 'undefined') ? activities.find(function(a) { return String(a.id) === String(actId); }) : null);
         if (!act) { showToast('Actividad no encontrada', 2000); return; }
 
         // Selector de destinos antes de cualquier trabajo (upload de foto, etc.)
