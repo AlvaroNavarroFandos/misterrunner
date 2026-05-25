@@ -6325,6 +6325,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             /* Strava-specific del CSV */
                             shoes_name:   row.activityGear || null,
 
+                            /* [FASE 6.2] TRIMP calculado al insertar; null si faltan HR o profile.
+                               row.movingTime/elapsedTime ya capturados en safeDuration → pasar objeto
+                               sintético con avgHr+durationSec para que _computeTRIMP los encuentre. */
+                            trimp:        _computeTRIMP(
+                                              { avgHr: row.avgHr, durationSec: safeDuration },
+                                              (typeof profileData !== 'undefined' ? profileData : null)
+                                          ),
+
                             /* streams_path: NULL en INSERT, FASE 4.3 UPDATE post-upload */
                             streams_path: null
                         };
@@ -13615,6 +13623,60 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.2 · S20] Cálculo TRIMP — Fórmula Banister (hombres)
+    //
+    //     TRIMP = duration_min × HRr × 0.64 × e^(1.92 × HRr)
+    //     HRr   = (avgHR − HRrest) / (HRmax − HRrest)
+    //
+    // Función pura, testable. Acepta `act` (formato memoria con avgHr +
+    // durationSec) Y rows BD (avg_hr + duration_sec) — autodetecta.
+    // Profile: lee hrRest y hrMax (defaults defensivos 50 y 195).
+    //
+    // Devuelve integer redondeado o null si faltan datos / inputs inválidos.
+    // Constantes k=0.64 / coef=1.92 son los Banister masculinos (Álvaro=H).
+    // Si en futuro se generaliza por género, parametrizar por profile.sex.
+    // ─────────────────────────────────────────────────────────────────
+    function _computeTRIMP(act, profile) {
+        try {
+            if (!act || !profile) return null;
+            // avg_hr / avgHr — autodetect bulk row vs memoria
+            var avgHR = (act.avg_hr != null) ? Number(act.avg_hr)
+                      : (act.avgHr  != null) ? Number(act.avgHr)
+                      : null;
+            // duration_sec / durationSec — autodetect bulk row vs memoria
+            var durSec = (act.duration_sec != null) ? Number(act.duration_sec)
+                       : (act.durationSec  != null) ? Number(act.durationSec)
+                       : null;
+
+            var hrRest = (profile.hrRest != null) ? Number(profile.hrRest) : null;
+            var hrMax  = (profile.hrMax  != null) ? Number(profile.hrMax)  : null;
+
+            // Guards: sin datos suficientes → null (no TRIMP en BD para esta activity)
+            if (!isFinite(avgHR) || avgHR <= 0)       return null;
+            if (!isFinite(durSec) || durSec <= 0)     return null;
+            if (!isFinite(hrRest) || !isFinite(hrMax)) return null;
+            if (hrMax <= hrRest)                      return null;  // profile mal configurado
+
+            // HR ratio normalizado. Clamp defensivo en [0.4, 1.2]:
+            //   - <0.4 → activities con HR muy bajo (probable artefacto) → 0.4 mínimo razonable
+            //   - >1.2 → HR superior al hrMax declarado (umbral aeróbico mal calibrado) → 1.2 techo
+            var HRr = (avgHR - hrRest) / (hrMax - hrRest);
+            if (HRr < 0.4) HRr = 0.4;
+            if (HRr > 1.2) HRr = 1.2;
+
+            var durMin = durSec / 60;
+            var trimp  = durMin * HRr * 0.64 * Math.exp(1.92 * HRr);
+
+            // Sanity check final (overflow defensivo)
+            if (!isFinite(trimp) || trimp < 0) return null;
+            return Math.round(trimp);
+        } catch(e) {
+            console.warn('[MR][6.2] _computeTRIMP exception:', e);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Mapeo objeto-memoria → fila BD para INSERT
     // Convierte un `act` (formato app) a un payload listo para
     // sb.from('activities').upsert(payload).
@@ -13667,7 +13729,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             weather_condition: weatherCond,
             outfit:       outfitStr,
             watch_brand:  act.deviceBrand || null,
-            rpe:          rpeInt
+            rpe:          rpeInt,
+            // [FASE 6.2] TRIMP calculado al insertar; null si faltan HR o profile
+            trimp:        _computeTRIMP(act, (typeof profileData !== 'undefined' ? profileData : null))
             // streams_path → se rellena en update tras subir al bucket
             // polyline_encoded → opcional, lo dejamos null (los manuales tienen records crudos)
         };
@@ -13922,7 +13986,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 race_name:      raceName,
                 rpe:            rpeInt,
                 balance_left:   (act.balanceL != null && act.balanceL !== '') ? Number(act.balanceL) : null,
-                outfit:         outfitStr
+                outfit:         outfitStr,
+                // [FASE 6.2] Recalcular TRIMP en cada edit (idempotente; null si faltan inputs)
+                trimp:          _computeTRIMP(act, (typeof profileData !== 'undefined' ? profileData : null))
             };
 
             var updRes = await sb
@@ -14095,6 +14161,115 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return { ok: false, errors: errors };
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.2 · S20] One-shot DEV — Recalcula TRIMP para todas las
+    // activities ya en BD (las 289 existentes pre-FASE 6.2).
+    //
+    // Uso desde consola del navegador:
+    //     await __mrRecomputeAllTRIMP();
+    //
+    // Lee profileData (hrRest + hrMax), itera activities[], calcula
+    // TRIMP de cada una y hace UPDATE en BD por lotes de 20 en paralelo.
+    // Belt-and-suspenders: eq('user_id', uid) + eq('id', _dbActivityId).
+    // Idempotente: re-ejecutarlo recalcula los mismos valores.
+    //
+    // No expone UI — solo función global ventana, ejecutable a mano.
+    // ─────────────────────────────────────────────────────────────────
+    window.__mrRecomputeAllTRIMP = async function() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) { console.warn('[MR][6.2] no _sbClient'); return null; }
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) { console.warn('[MR][6.2] no session'); return null; }
+            if (!Array.isArray(activities)) {
+                console.warn('[MR][6.2] activities no es array');
+                return null;
+            }
+            if (typeof profileData === 'undefined' || !profileData) {
+                console.warn('[MR][6.2] profileData no disponible');
+                return null;
+            }
+
+            // Solo activities con _dbActivityId (las que viven en BD)
+            var candidates = activities.filter(function(a) { return a && a._dbActivityId; });
+            console.log('[MR][6.2] arranque recompute — '
+                        + candidates.length + ' activities en BD · '
+                        + 'profile hrRest=' + profileData.hrRest + ' hrMax=' + profileData.hrMax);
+
+            var stats = { total: candidates.length, ok: 0, errors: 0, nullTrimp: 0, skipped: 0 };
+            var BATCH = 20;
+            var t0 = Date.now();
+
+            // Procesar en lotes
+            for (var i = 0; i < candidates.length; i += BATCH) {
+                var batch = candidates.slice(i, i + BATCH);
+                var ops = batch.map(function(act) {
+                    return (async function() {
+                        var trimp = _computeTRIMP(act, profileData);
+                        // Si no hay HR/dur válidos → escribir null igualmente para
+                        // dejar la columna consistente con la situación real.
+                        if (trimp === null) stats.nullTrimp++;
+                        try {
+                            var updRes = await sb
+                                .from('activities')
+                                .update({ trimp: trimp })
+                                .eq('id', act._dbActivityId)
+                                .eq('user_id', uid)
+                                .select('id')
+                                .maybeSingle();
+                            if (updRes && updRes.error) {
+                                stats.errors++;
+                                console.warn('[MR][6.2] update error id=' + act._dbActivityId
+                                             + ' · ' + (updRes.error.message || updRes.error));
+                                return;
+                            }
+                            if (!updRes || !updRes.data) {
+                                stats.errors++;
+                                console.warn('[MR][6.2] no-row-updated id=' + act._dbActivityId
+                                             + ' (¿RLS o id inexistente?)');
+                                return;
+                            }
+                            // Actualizar también memoria local para que UI lo vea sin reload
+                            act.trimp = trimp;
+                            stats.ok++;
+                        } catch(e) {
+                            stats.errors++;
+                            console.warn('[MR][6.2] update exception id=' + act._dbActivityId
+                                         + ' · ' + (e && e.message || e));
+                        }
+                    })();
+                });
+                await Promise.all(ops);
+                console.log('[MR][6.2] progreso ' + Math.min(i + BATCH, candidates.length)
+                            + '/' + candidates.length
+                            + ' · ok=' + stats.ok + ' · errors=' + stats.errors
+                            + ' · null=' + stats.nullTrimp);
+            }
+
+            var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            console.log('%c[MR][6.2] ✅ recompute terminado en ' + elapsed + 's',
+                        'color:#C9A84C;font-weight:700');
+            console.log('[MR][6.2] resumen:', stats);
+
+            // Re-render biblioteca tras terminar (si la función existe)
+            try {
+                if (typeof renderActivities === 'function') {
+                    renderActivities();
+                    console.log('[MR][6.2] biblioteca re-renderizada');
+                }
+            } catch(e) {
+                console.warn('[MR][6.2] re-render exception:', e);
+            }
+
+            return stats;
+        } catch(e) {
+            console.warn('[MR][6.2] __mrRecomputeAllTRIMP outer exception:', e);
+            return null;
+        }
+    };
 
     // ─────────────────────────────────────────────────────────────────
     // Modal "Posible duplicado" — control de apertura/cierre y acciones
