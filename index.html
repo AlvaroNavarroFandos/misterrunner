@@ -2482,11 +2482,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 Sin datos suficientes para predecir tu marca.<br>
                                 <span style="color:var(--tm);font-size:11px;">Registra una marca personal en 5K, 10K, Media o Maratón para obtener predicciones basadas en las fórmulas Riegel + Daniels.</span>
                             </div>
-                            <!-- PR HISTORY (aparece cuando hay datos) -->
-                            <div id="pr-history-block" style="background:var(--card);border-radius:12px;padding:14px;border:1px solid var(--border);display:none;margin-top:8px;">
-                                <div style="font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;">📈 Evolución de marcas personales</div>
-                                <div id="pr-history-content"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -7308,7 +7303,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    deshabilita cancelar y transiciona a summary tras 600ms.
                    FASE 4.2.a: llamada por visImpStop('done') NO necesaria
                    (no hay timer). visImpStop sigue invocándose por compat
-                   pero su rol nuevo es solo marcar cancelRequested. */
+                   pero su rol nuevo es solo marcar cancelRequested.
+
+                   [Bloque B · B.3] Tras marcar UI done, lanzamos en paralelo
+                   (fire-and-forget) el rebuild de PRs+hitos sobre el histórico
+                   completo. Necesario porque el bulk inserta directamente en
+                   Supabase sin pasar por _detectNewRecords/_detectMilestones
+                   (que sólo se invocan en saves manuales).
+                   Flujo: refreshActivities → rebuildPRsAndMilestones → toast.
+                   La transición a summary (600ms) NO se bloquea. */
                 function visImpFinish() {
                     visImpStop('done');
                     var fillEl = document.getElementById('vis-imp-progress-fill');
@@ -7319,6 +7322,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (btnCancel) {
                         btnCancel.disabled = true;
                     }
+                    // [Bloque B · B.3] Rebuild PRs+hitos post-bulk (no bloqueante).
+                    // refreshActivities asegura que las activities recién insertadas
+                    // en BD estén también en el array `activities` en memoria, que es
+                    // lo que lee _getActivities() (usado por el rebuild).
+                    (function _bulkPRRebuild() {
+                        if (!window._MR_StravaImport
+                            || typeof window._MR_StravaImport.refreshActivities !== 'function'
+                            || typeof window._rebuildAllPRsAndMilestones !== 'function'
+                            || typeof window._showBulkImportPRToast !== 'function') {
+                            console.warn('[MR][B.3] pre-requisitos rebuild PRs no disponibles');
+                            return;
+                        }
+                        window._MR_StravaImport.refreshActivities()
+                            .then(function(res) {
+                                console.log('[MR][B.3] refreshActivities OK · added=' +
+                                    ((res && res.added) || 0) + ' · total=' +
+                                    ((res && res.total) || 0));
+                                return window._rebuildAllPRsAndMilestones();
+                            })
+                            .then(function(summary) {
+                                if (!summary) return;
+                                var n = summary.total || 0;
+                                if (n > 0) {
+                                    window._showBulkImportPRToast(n);
+                                }
+                            })
+                            .catch(function(err) {
+                                console.warn('[MR][B.3] rebuild post-bulk falló:', err);
+                            });
+                    })();
                     setTimeout(function() {
                         if (window.setImportState) window.setImportState('summary');
                     }, 600);
@@ -8828,7 +8861,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         updateStrengthActiveBanner();
         loadWarmupRoutine();
         renderWarmupSummaryRunner();
-        renderPRHistory();
         loadMedallero();
         renderMedallero();
         renderHome();
@@ -10849,7 +10881,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             '• Tus fotos y streams asociados (Storage)\n' +
             '• Tus PRs y hitos km\n' +
             '• Tus reacciones y comentarios en posts de otros\n' +
-            '• Todos los datos derivados locales (medallero, prHistory)\n\n' +
+            '• Todos los datos derivados locales (medallero)\n\n' +
             'NO se borrará: tu cuenta, perfil, planes, crews ni follows.\n\n' +
             '¿Continuar?'
         );
@@ -10943,7 +10975,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             if (typeof profileData === 'object' && profileData) {
                 profileData.medallero = [];
-                profileData.prHistory = [];
             }
             localStorage.removeItem(_uk('mr_medallero'));
             if (typeof saveAppState === 'function') saveAppState();
@@ -10977,7 +11008,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             msg += '  ⚠ Storage no se pudo limpiar: ' + storageErrorMsg + '\n';
             msg += '    (la BD sí quedó limpia; los binarios huérfanos no afectan)\n';
         }
-        msg += '\nLocal: actividades, medallero e historial PR limpios.\n';
+        msg += '\nLocal: actividades y medallero limpios.\n';
         msg += '\nLa página se recargará para refrescar la UI.';
 
         alert(msg);
@@ -15601,10 +15632,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 .then(function(rows){
                     if (rows && rows.length >= 0) {
                         console.log('[MR][PR] PRs recalculados tras borrar actividad', id);
-                        // Refrescar UI de PRs si está visible
-                        if (typeof renderPRHistory === 'function') {
-                            try { renderPRHistory(); } catch(_){}
-                        }
                     }
                 })
                 .catch(function(err){ console.warn('[MR][PR] recalc fail:', err); });
@@ -22413,7 +22440,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!btn) return;
         if(btn.dataset.target==='home')    setTimeout(renderHome, 50);
         if(btn.dataset.target==='mister')  setTimeout(()=>{initEvalSelect();renderMisterPlanCard();updateStrengthActiveBanner();updateRehabUI();},50);
-        if(btn.dataset.target==='runner')  setTimeout(()=>{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); renderMarathonPredictor(); renderPRHistory(); renderMedallero(); showThresholdValidation(); },50);
+        if(btn.dataset.target==='runner')  setTimeout(()=>{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); renderMarathonPredictor(); renderMedallero(); showThresholdValidation(); },50);
         if(btn.dataset.target==='cal') setTimeout(()=>{
             // Jump to current rehab week if only rehab plan active
             var _rp   = activeRehabPlan && activeRehabPlan.status==='active';
@@ -23009,9 +23036,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         window._rebuildAllRecordsFromHistory()
                             .then(function(){
                                 console.log('[MR][S22 · Reconcile] PRs recalculados tras reconcilio');
-                                if (typeof renderPRHistory === 'function') {
-                                    try { renderPRHistory(); } catch(_){}
-                                }
                             })
                             .catch(function(err){
                                 console.warn('[MR][S22 · Reconcile] PR recalc fail:', err);
@@ -23491,7 +23515,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     sex:       profileData.sex,
                     vo2max:    profileData.vo2max,
                     marcas:    profileData.marcas,
-                    prHistory: profileData.prHistory || [],
                     medallero: profileData.medallero || [],
                     hrMax:           profileData.hrMax,
                     hrRest:          profileData.hrRest,
@@ -23571,7 +23594,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     try { localStorage.setItem(_ak, _storedAvatar); } catch(e){}
                 }
                 if(p.marcas)    profileData.marcas    = p.marcas;
-                if(p.prHistory) profileData.prHistory = p.prHistory;
                 if(p.medallero) profileData.medallero = p.medallero;
                 if(p.hrMax)     profileData.hrMax    = p.hrMax;
                 if(p.hrRest)    profileData.hrRest   = p.hrRest;
@@ -24318,38 +24340,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Uses Riegel formula + Daniels VDOT for cross-distance prediction
     // Then shows predicted marathon + all distances + training paces
     // ── PR HISTORY ────────────────────────────────────────────────
-    function renderPRHistory() {
-        const block   = document.getElementById('pr-history-block');
-        const content = document.getElementById('pr-history-content');
-        if(!block || !content) return;
-        const history = profileData.prHistory || [];
-        if(!history.length) { block.style.display = 'none'; return; }
-        block.style.display = '';
-        const DIST_LABEL = {'5k':'5K','10k':'10K','hm':'Media Maratón','m':'Maratón'};
-        const DIST_COLOR = {'5k':'#4ade80','10k':'#60a5fa','hm':'#c4881e','m':'var(--crimson)'};
-        // Group by distance, show timeline
-        const byDist = {};
-        history.forEach(e => { if(!byDist[e.dist]) byDist[e.dist] = []; byDist[e.dist].push(e); });
-        const ORDER = ['5k','10k','hm','m'];
-        content.innerHTML = ORDER.filter(d => byDist[d] && byDist[d].length > 0).map(dist => {
-            const entries = byDist[dist];
-            const color = DIST_COLOR[dist];
-            const rows = entries.map((e, i) => {
-                const prev = entries[i-1];
-                const date = e.date ? new Date(e.date+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}) : '';
-                const isBest = !entries.slice(i+1).length; // last entry = most recent
-                return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bsoft);">`
-                    + `<div style="width:6px;height:6px;border-radius:50%;background:${isBest?color:'var(--border)'};flex-shrink:0;"></div>`
-                    + `<div style="flex:1;font-size:12px;font-weight:${isBest?700:400};color:${isBest?'var(--tw)':'var(--ts)'};">${e.time}</div>`
-                    + `<div style="font-size:10px;color:var(--tm);">${date}</div>`
-                    + (isBest ? `<div style="font-size:9px;color:${color};font-weight:700;background:${color}15;border-radius:4px;padding:1px 5px;">ACTUAL</div>` : '')
-                    + `</div>`;
-            }).join('');
-            return `<div style="margin-bottom:12px;">`
-                + `<div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px;">${DIST_LABEL[dist]}</div>`
-                + rows + `</div>`;
-        }).join('');
-    }
+    // [Bloque B · B.2] Eliminada `renderPRHistory()` zombie: profileData.prHistory
+    // nunca se poblaba (sólo init=[]) y el bloque DOM #pr-history-block ya no existe.
+    // El Hall of Fame real vive en `_openPRsSheet('me')` que lee user_records directo.
 
     // ── SHARE PLAN WEEK ──────────────────────────────────────────
     function sharePlanWeek() {
@@ -27769,10 +27762,6 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 console.warn('[MR][PR] limpieza total falló:', eDelAll.message);
                 return null;
             }
-            // Refrescar UI de PRs si está visible
-            if (typeof renderPRHistory === 'function') {
-                try { renderPRHistory(); } catch(_){}
-            }
             return [];
         }
 
@@ -27819,6 +27808,135 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         return rows;
     }
     window._rebuildAllRecordsFromHistory = _rebuildAllRecordsFromHistory;
+
+    // ─────────────────────────────────────────────────────────────────
+    // [Bloque B · B.3] _rebuildAllMilestonesFromHistory()
+    //
+    // Reconstruye los hitos kilométricos acumulados (km_50, km_100, ...,
+    // km_40000) desde cero sobre TODO el histórico. Pensada para el final
+    // del bulk Strava: cuando importas 290 actividades de golpe, el flujo
+    // por-activity (_detectMilestones) no se dispara. Esta función:
+    //
+    //   1. Lee activities (vía _getActivities()) y filtra running.
+    //   2. Las ordena por start_date ascendente.
+    //   3. Itera acumulando km. Para CADA hito de KM_MILESTONES, anota
+    //      la activity que hizo cruzar el umbral por primera vez.
+    //   4. Persiste como insert (los hitos NUNCA se sobrescriben — ya
+    //      conseguidos quedan conseguidos). Usa onConflict ignoreDuplicates
+    //      para que sea idempotente.
+    //
+    // Devuelve el array de hitos desbloqueados [{type, value, activity_datestr}].
+    // ─────────────────────────────────────────────────────────────────
+    async function _rebuildAllMilestonesFromHistory() {
+        const sb = window._sbClient;
+        if (!sb) { console.warn('[MR][HITO] sin Supabase'); return null; }
+        const { data: sess } = await sb.auth.getSession();
+        const uid = sess && sess.session && sess.session.user && sess.session.user.id;
+        if (!uid) { console.warn('[MR][HITO] sin sesión'); return null; }
+
+        const acts = (typeof window._getActivities === 'function') ? window._getActivities() : [];
+        const running = acts
+            .filter(a => a && RUNNING_TYPES.has(String(a.type || '').toLowerCase()))
+            .filter(a => Number(a.distKm) > 0)
+            .slice()
+            .sort(function(a, b) {
+                // Ordenar cronológicamente por dateStr (YYYY-MM-DD) ascendente
+                var da = a.dateStr || '';
+                var db = b.dateStr || '';
+                return da < db ? -1 : (da > db ? 1 : 0);
+            });
+
+        if (!running.length) {
+            console.log('[MR][HITO] sin actividades running, nada que reconstruir');
+            return [];
+        }
+
+        // Acumular km cronológicamente, anotando para CADA hito cuál activity
+        // lo cruzó. Iteramos un único pase sobre running.
+        var acumKm = 0;
+        var crossings = {}; // { 'km_50': { totalKm, activity_id, dateStr } }
+        running.forEach(function(act) {
+            var prev = acumKm;
+            acumKm += Number(act.distKm) || 0;
+            // ¿Algún hito cae en el intervalo (prev, acumKm]?
+            KM_MILESTONES.forEach(function(M) {
+                if (crossings[M.type]) return; // ya marcado
+                if (acumKm >= M.km && prev < M.km) {
+                    crossings[M.type] = {
+                        totalKm: acumKm,
+                        activity_id: String(act.id),
+                        dateStr: act.dateStr || null
+                    };
+                }
+            });
+        });
+
+        var unlockedTypes = Object.keys(crossings);
+        if (!unlockedTypes.length) {
+            console.log('[MR][HITO] ningún hito alcanzado · total acumulado:', acumKm.toFixed(1), 'km');
+            return [];
+        }
+
+        // Construir filas para insert (ignora duplicados para idempotencia)
+        var rows = unlockedTypes.map(function(t) {
+            var c = crossings[t];
+            return {
+                user_id: uid,
+                record_type: t,
+                value: c.totalKm,
+                activity_local_id: c.activity_id,
+                activity_datestr: c.dateStr,
+                achieved_at: new Date().toISOString()
+            };
+        });
+
+        // upsert con ignoreDuplicates=true es nuestro "insert idempotente"
+        const { error: eIns } = await sb
+            .from('user_records')
+            .upsert(rows, { onConflict: 'user_id,record_type', ignoreDuplicates: true });
+        if (eIns) {
+            console.warn('[MR][HITO] upsert fail:', eIns.message);
+            return null;
+        }
+
+        console.log('[MR][HITO] ✅ hitos km reconstruidos:');
+        rows.forEach(function(r) {
+            console.log('  ', r.record_type, '=', _formatRecordValue(r.record_type, r.value), '(' + r.activity_datestr + ')');
+        });
+        return rows;
+    }
+    window._rebuildAllMilestonesFromHistory = _rebuildAllMilestonesFromHistory;
+
+    // ─────────────────────────────────────────────────────────────────
+    // [Bloque B · B.3] _rebuildAllPRsAndMilestones()
+    //
+    // Wrapper canónico para el bulk Strava: reconstruye PRs (12 récords)
+    // + hitos km (12 milestones) en serie. Devuelve un resumen agregado.
+    // El bulk import lo llama al terminar para poblar de golpe todos los
+    // récords del histórico.
+    //
+    // Devuelve: { records: <array PRs>, milestones: <array hitos>, total: N }
+    // ─────────────────────────────────────────────────────────────────
+    async function _rebuildAllPRsAndMilestones() {
+        var t0 = Date.now();
+        var records   = [];
+        var milestones = [];
+        try {
+            records   = (await _rebuildAllRecordsFromHistory())   || [];
+        } catch (e) { console.warn('[MR][PR] rebuild records exception:', e); }
+        try {
+            milestones = (await _rebuildAllMilestonesFromHistory()) || [];
+        } catch (e) { console.warn('[MR][HITO] rebuild milestones exception:', e); }
+        var dt = ((Date.now() - t0) / 1000).toFixed(1);
+        console.log('[MR][PR·HITO] ✅ rebuild completo · ' +
+            records.length + ' récords · ' + milestones.length + ' hitos · ' + dt + 's');
+        return {
+            records: records,
+            milestones: milestones,
+            total: records.length + milestones.length
+        };
+    }
+    window._rebuildAllPRsAndMilestones = _rebuildAllPRsAndMilestones;
 })();
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -28608,10 +28726,99 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         return res;
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // [Bloque B · B.3] _showBulkImportPRToast(count)
+    //
+    // Toast clickable post-bulk Strava. Mismo lenguaje visual que
+    // _showPRToast (gradiente oscuro + borde dorado) pero con copy
+    // adaptado a "rebuild completo desde histórico" (no celebra UN
+    // récord puntual sino el descubrimiento de TODOS los récords del
+    // archivo Strava recién importado).
+    //
+    // - count: nº total de logros (récords + hitos) detectados
+    // - Click → abre _openPRsSheet('me') (Hall of Fame con grid 12+12)
+    // - Auto-dismiss 10s (más generoso que _showPRToast porque el usuario
+    //   está viendo la pantalla summary del bulk en paralelo).
+    // - Confeti suave (45 partículas) para celebrar el evento.
+    // ─────────────────────────────────────────────────────────────────
+    function _showBulkImportPRToast(count) {
+        // Evitar duplicados
+        const old = document.getElementById('mr-bulk-pr-toast');
+        if (old) old.remove();
+
+        // Confeti suave (no agresivo: el usuario ya viene del summary del bulk)
+        if (typeof window.fxConfetti === 'function') {
+            try {
+                window.fxConfetti({
+                    count: 45,
+                    origin: { x: window.innerWidth/2, y: window.innerHeight * 0.5 },
+                    colors: ['#C9A84C','#e8a825','#c4881e','#f5e6c8','#fff']
+                });
+            } catch(_) {}
+        }
+
+        const t = document.createElement('div');
+        t.id = 'mr-bulk-pr-toast';
+        t.style.cssText = [
+            'position:fixed',
+            'bottom:calc(var(--nav-h, 64px) + env(safe-area-inset-bottom,0px) + 12px)',
+            'left:50%','transform:translateX(-50%) translateY(20px)',
+            'background:linear-gradient(135deg,#1a1410 0%,#2a2018 100%)',
+            'color:#f5e6c8',
+            'font-family:var(--f)',
+            'font-size:12px','font-weight:600',
+            'padding:12px 18px','border-radius:999px',
+            'z-index:999999',
+            'box-shadow:0 6px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(201,168,76,.45)',
+            'opacity:0','transition:opacity .35s ease, transform .35s ease',
+            'cursor:pointer','user-select:none','-webkit-tap-highlight-color:transparent',
+            'display:flex','align-items:center','gap:10px',
+            'max-width:90vw','letter-spacing:.3px'
+        ].join(';');
+
+        const n = Number(count) || 0;
+        const msg = (n === 1)
+            ? '¡1 récord detectado en tu histórico!'
+            : '¡' + n + ' récords detectados en tu histórico!';
+
+        t.innerHTML =
+            '<i class="ti ti-trophy" aria-hidden="true" style="color:#C9A84C;font-size:18px;line-height:1"></i>' +
+            '<span>' + msg + '</span>' +
+            '<span style="color:#C9A84C;font-weight:700;letter-spacing:0">Ver →</span>';
+
+        document.body.appendChild(t);
+        // Animación de entrada
+        requestAnimationFrame(() => {
+            t.style.opacity = '1';
+            t.style.transform = 'translateX(-50%) translateY(0)';
+        });
+
+        // Auto-dismiss tras 10s (más generoso que el toast normal: el usuario
+        // viene del summary del bulk y puede tardar en verlo)
+        const autoTimer = setTimeout(() => _dismissBulkPRToast(), 10000);
+
+        function _dismissBulkPRToast() {
+            clearTimeout(autoTimer);
+            t.style.opacity = '0';
+            t.style.transform = 'translateX(-50%) translateY(20px)';
+            setTimeout(() => t.remove(), 350);
+        }
+
+        t.addEventListener('click', () => {
+            _dismissBulkPRToast();
+            try {
+                if (typeof window._openPRsSheet === 'function') {
+                    window._openPRsSheet('me');
+                }
+            } catch(e) { console.warn('[MR][B.3] open PRs sheet fail:', e); }
+        }, { once: true });
+    }
+
     // Exponer públicamente (útil para tests desde consola)
     window._showPRCelebration = _showPRCelebration;
     window._showPRToast = _showPRToast;
     window._sharePRToClub = _sharePRToClub;
+    window._showBulkImportPRToast = _showBulkImportPRToast;
     // Exponer también helpers para el feed (medalla en post)
     window._buildMedalSVG = _buildMedalSVG;
     window._getPRMeta = function(type) { return PR_META[type] || null; };
@@ -29553,7 +29760,6 @@ async function _initClubSupabase() {
             if (needsRebuild && typeof window._rebuildAllRecordsFromHistory === 'function') {
                 console.log('[MR][PR cleanup v2] reconstruyendo PRs con sanity cap inteligente...');
                 await window._rebuildAllRecordsFromHistory();
-                if (typeof renderPRHistory === 'function') { try { renderPRHistory(); } catch(_){} }
             }
             localStorage.setItem(FLAG_V2, '1');
         } catch(e) {
