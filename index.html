@@ -13477,7 +13477,507 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     const TYPE_COLOR  = { easy:'#4ade80', recovery:'#60a5fa', series:'#f87171', long:'#C9A84C', race:'#e879f9' };
     const TYPE_BADGE  = { easy:'badge-easy', recovery:'badge-recovery', series:'badge-series', long:'badge-long', race:'badge-race' };
 
-    function saveImportedActivity() {
+
+    // ══════════════════════════════════════════════════════════════════
+    // FASE 6.1 · Sesión 18 · Helpers Import Manual → Supabase
+    // ══════════════════════════════════════════════════════════════════
+    // Migra las activities de import manual desde IDB local a la tabla
+    // Supabase `activities` con source='manual'. Reutiliza los buckets
+    // activity-streams (JSON gzipped) y activity-photos del flujo bulk.
+    // Mantiene IDB local como resiliencia: si el upsert BD falla, la
+    // activity sigue persistida en IDB y se mostrará igual en la UI.
+    // ══════════════════════════════════════════════════════════════════
+
+    // Construye un external_id estable para deduplicación cross-device.
+    // Composición: 'manual:' + ISO start_date + ':' + dist_dm + ':' + dur_sec
+    // dist en decímetros para evitar floats. Esto resiste reimports del mismo
+    // .fit en otro dispositivo: el external_id será idéntico → upsert ignora.
+    function _buildManualExternalId(fitData) {
+        try {
+            // Intenta sacar timestamp de varios sitios (compat Coros/Suunto)
+            var startIso = null;
+            if (fitData.startTimeIso) {
+                startIso = String(fitData.startTimeIso);
+            } else if (fitData.startTimeMs) {
+                startIso = new Date(fitData.startTimeMs).toISOString();
+            } else if (fitData.dateStr) {
+                // Fallback: solo fecha, sin hora → menos preciso pero válido
+                startIso = fitData.dateStr + 'T00:00:00.000Z';
+            } else {
+                startIso = new Date().toISOString();
+            }
+            var distDm = Math.round((Number(fitData.distKm) || 0) * 100); // dm
+            var durSec = Math.round(Number(fitData.durationSec) || 0);
+            return 'manual:' + startIso + ':' + distDm + ':' + durSec;
+        } catch(e) {
+            console.warn('[MR][6.1] _buildManualExternalId fallback:', e);
+            return 'manual:' + Date.now();
+        }
+    }
+
+    // Resuelve el start_date ISO timestamp UTC desde fitData (varios formatos).
+    function _resolveStartDateIso(fitData) {
+        try {
+            if (fitData.startTimeIso) return String(fitData.startTimeIso);
+            if (fitData.startTimeMs)  return new Date(fitData.startTimeMs).toISOString();
+            if (fitData.dateStr) {
+                // Sin hora real → mediodía UTC del día (heurística razonable)
+                return fitData.dateStr + 'T12:00:00.000Z';
+            }
+            return new Date().toISOString();
+        } catch(_) {
+            return new Date().toISOString();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Detección de duplicados
+    // Busca activities cuya start_date sea del mismo día, ±0.2km dist,
+    // ±2min duración. Primero en activities[] local (incluye bulk ya
+    // cargadas y manuales previas). Si no encuentra, fallback SELECT
+    // a Supabase (cubre el caso "importé bulk en otro device hace 5min").
+    // ─────────────────────────────────────────────────────────────────
+    async function _findDuplicateActivity(fitData) {
+        var candidateIso = _resolveStartDateIso(fitData);
+        var candidateDay = candidateIso.slice(0, 10); // 'YYYY-MM-DD'
+        var candidateDist = Number(fitData.distKm) || 0;
+        var candidateDur  = Number(fitData.durationSec) || 0;
+
+        var DIST_TOL_KM = 0.2;
+        var DUR_TOL_SEC = 120;
+
+        // 1) Buscar en memoria (activities[])
+        if (Array.isArray(activities)) {
+            for (var i = 0; i < activities.length; i++) {
+                var a = activities[i];
+                if (!a) continue;
+                var aDay = (a.dateStr || '').slice(0, 10);
+                if (aDay !== candidateDay) continue;
+                var aDist = Number(a.distKm) || 0;
+                var aDur  = Number(a.durationSec) || 0;
+                if (Math.abs(aDist - candidateDist) > DIST_TOL_KM) continue;
+                if (Math.abs(aDur  - candidateDur)  > DUR_TOL_SEC) continue;
+                return { duplicate: a, source: 'local' };
+            }
+        }
+
+        // 2) Fallback Supabase (solo si hay cliente y sesión)
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { duplicate: null, source: null };
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return { duplicate: null, source: null };
+
+            var dayStart = candidateDay + 'T00:00:00.000Z';
+            var dayEnd   = candidateDay + 'T23:59:59.999Z';
+
+            var qRes = await sb
+                .from('activities')
+                .select('id, external_id, source, name, start_date, dist_km, duration_sec, watch_brand')
+                .eq('user_id', uid)
+                .gte('start_date', dayStart)
+                .lte('start_date', dayEnd);
+
+            if (qRes && qRes.error) {
+                console.warn('[MR][6.1] _findDuplicateActivity Supabase error:', qRes.error);
+                return { duplicate: null, source: null };
+            }
+
+            var rows = (qRes && qRes.data) ? qRes.data : [];
+            for (var j = 0; j < rows.length; j++) {
+                var r = rows[j];
+                var rDist = Number(r.dist_km) || 0;
+                var rDur  = Number(r.duration_sec) || 0;
+                if (Math.abs(rDist - candidateDist) > DIST_TOL_KM) continue;
+                if (Math.abs(rDur  - candidateDur)  > DUR_TOL_SEC) continue;
+                // Match
+                return {
+                    duplicate: {
+                        id:          r.id,
+                        externalId:  r.external_id,
+                        name:        r.name,
+                        dateStr:     String(r.start_date || '').slice(0, 10),
+                        distKm:      rDist,
+                        durationSec: rDur,
+                        deviceBrand: r.watch_brand,
+                        _source:     (r.source === 'manual') ? 'manual-supabase' : 'bulk'
+                    },
+                    source: 'supabase'
+                };
+            }
+        } catch(e) {
+            console.warn('[MR][6.1] _findDuplicateActivity Supabase exception:', e);
+        }
+
+        return { duplicate: null, source: null };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Mapeo objeto-memoria → fila BD para INSERT
+    // Convierte un `act` (formato app) a un payload listo para
+    // sb.from('activities').upsert(payload).
+    // ─────────────────────────────────────────────────────────────────
+    function _mapManualActToDbRow(act, uid, externalId, startIso) {
+        // outfit: TEXT en BD (no JSONB) → stringify
+        var outfitStr = null;
+        if (act.outfit && typeof act.outfit === 'object') {
+            try { outfitStr = JSON.stringify(act.outfit); } catch(_) { outfitStr = null; }
+        }
+        // raceName solo si type === 'race'
+        var raceName = (act.type === 'race' && act.raceName) ? act.raceName : null;
+        // RPE: en BD es integer, en memoria es string
+        var rpeInt = null;
+        if (act.rpe != null && act.rpe !== '') {
+            var n = parseInt(act.rpe, 10);
+            if (!isNaN(n)) rpeInt = n;
+        }
+        // weather: solo guardamos condition (la temp ya va en avg_temp_c)
+        var weatherCond = null;
+        if (act.weather && typeof act.weather === 'object' && act.weather.condition) {
+            weatherCond = String(act.weather.condition);
+        }
+
+        return {
+            user_id:      uid,
+            source:       'manual',
+            external_id:  externalId,
+            name:         act.name || null,
+            start_date:   startIso,
+            date_str:     act.dateStr || null,
+            dist_km:      Number(act.distKm) || 0,
+            duration_sec: Math.round(Number(act.durationSec) || 0),
+            avg_hr:       (act.avgHr != null) ? Math.round(act.avgHr) : null,
+            max_hr:       (act.maxHr != null) ? Math.round(act.maxHr) : null,
+            calories:     (act.calories != null) ? Math.round(act.calories) : null,
+            ascent_m:     (act.ascentM != null) ? Math.round(act.ascentM) : null,
+            descent_m:    (act.descentM != null) ? Math.round(act.descentM) : null,
+            avg_cadence:  (act.avgCadence != null) ? Math.round(act.avgCadence) : null,
+            max_cadence:  (act.maxCadence != null) ? Math.round(act.maxCadence) : null,
+            stride_len_cm:(act.strideLen != null) ? Math.round(act.strideLen) : null,
+            balance_left: (act.balanceL != null && act.balanceL !== '') ? Number(act.balanceL) : null,
+            avg_temp_c:   (act.avgTemp != null) ? Number(act.avgTemp) : null,
+            workout_type: act.type || null,
+            shoes_name:   act.shoeName || null,
+            shoe_id:      act.shoeId ? String(act.shoeId) : null,
+            shoe_color_hex: act.shoeColor || null,
+            race_name:    raceName,
+            best_pace_sec:(act.bestPace != null && act.bestPace > 0) ? Math.round(act.bestPace) : null,
+            weather_condition: weatherCond,
+            outfit:       outfitStr,
+            watch_brand:  act.deviceBrand || null,
+            rpe:          rpeInt
+            // streams_path → se rellena en update tras subir al bucket
+            // polyline_encoded → opcional, lo dejamos null (los manuales tienen records crudos)
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Sube los streams (HR, cadencia, eleva, dist, laps) al bucket
+    // activity-streams comprimidos con pako (gzip). Mismo formato JSON
+    // que Strava bulk para que loadStreamsForActivity los lea igual.
+    // Devuelve el storage_path o null si falla.
+    // ─────────────────────────────────────────────────────────────────
+    async function _uploadManualStreams(sb, uid, activityId, act) {
+        try {
+            // Construir streamsObj con la misma estructura que bulk
+            var streamsObj = {
+                version: 1,
+                streams: {
+                    hr:       Array.isArray(act.hrSeries)  ? act.hrSeries  : [],
+                    cadence:  Array.isArray(act.cadSeries) ? act.cadSeries : [],
+                    altitude: Array.isArray(act.eleSeries) ? act.eleSeries : [],
+                    distance: Array.isArray(act.distSer)   ? act.distSer   : []
+                },
+                splits:   Array.isArray(act.laps) ? act.laps : [],
+                polyline: null,
+                summary: {
+                    distKm:      act.distKm,
+                    durationSec: act.durationSec,
+                    avgHr:       act.avgHr,
+                    maxHr:       act.maxHr,
+                    ascentM:     act.ascentM,
+                    csvBlocks:   Array.isArray(act.csvBlocks) ? act.csvBlocks : []
+                }
+            };
+            var jsonStr = JSON.stringify(streamsObj);
+            // pako disponible globalmente (lo usa strava bulk)
+            if (typeof pako === 'undefined') {
+                console.warn('[MR][6.1] pako no disponible, no se suben streams');
+                return null;
+            }
+            var gzipped = pako.gzip(jsonStr);
+            var blob = new Blob([gzipped], { type: 'application/gzip' });
+            var path = uid + '/' + activityId + '.json.gz';
+
+            var upRes = await sb.storage
+                .from('activity-streams')
+                .upload(path, blob, {
+                    cacheControl: '3600',
+                    upsert: true,             // permitir reupload (idempotente)
+                    contentType: 'application/gzip'
+                });
+            if (upRes && upRes.error) {
+                console.warn('[MR][6.1] _uploadManualStreams error:', upRes.error);
+                return null;
+            }
+            return path;
+        } catch(e) {
+            console.warn('[MR][6.1] _uploadManualStreams exception:', e);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Sube la foto (base64 → Blob → bucket activity-photos) e inserta
+    // fila en la tabla activity_photos. Devuelve el storage_path o null.
+    // ─────────────────────────────────────────────────────────────────
+    async function _uploadManualPhoto(sb, uid, activityId, photoB64) {
+        if (!photoB64 || typeof photoB64 !== 'string') return null;
+        try {
+            // Detectar mime type del data URI
+            var mimeMatch = photoB64.match(/^data:(image\/(jpeg|jpg|png|webp));base64,/);
+            if (!mimeMatch) {
+                console.warn('[MR][6.1] _uploadManualPhoto: data URI no soportado');
+                return null;
+            }
+            var mime = mimeMatch[1];
+            var ext = mime.split('/')[1];
+            if (ext === 'jpeg') ext = 'jpg';
+
+            // base64 → bytes
+            var b64data = photoB64.split(',')[1];
+            var binary = atob(b64data);
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            // Workaround MIME (lección 19 strava bulk): re-envolver Blob con type forzado
+            var blob = new Blob([bytes], { type: mime });
+
+            var path = uid + '/' + activityId + '/0.' + ext;
+            var upRes = await sb.storage
+                .from('activity-photos')
+                .upload(path, blob, {
+                    cacheControl: '3600',
+                    upsert: true,
+                    contentType: mime
+                });
+            if (upRes && upRes.error) {
+                console.warn('[MR][6.1] _uploadManualPhoto upload error:', upRes.error);
+                return null;
+            }
+
+            // Insertar fila en activity_photos
+            var insRes = await sb
+                .from('activity_photos')
+                .insert({
+                    activity_id:       activityId,
+                    user_id:           uid,
+                    storage_path:      path,
+                    original_filename: 'photo.' + ext,
+                    position:          0
+                });
+            if (insRes && insRes.error) {
+                console.warn('[MR][6.1] _uploadManualPhoto insert error:', insRes.error);
+                // El archivo está subido pero la fila no se creó. Aceptable.
+            }
+            return path;
+        } catch(e) {
+            console.warn('[MR][6.1] _uploadManualPhoto exception:', e);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Orquesta el guardado completo en Supabase de una activity manual:
+    //   1. upsert en `activities` (idempotente vía external_id)
+    //   2. upload streams al bucket → update streams_path
+    //   3. upload foto (si la hay) → insert en activity_photos
+    // No bloquea UI: se llama en background tras saveAppState.
+    // Si falla cualquier paso, la activity sigue en IDB local intacta.
+    // Devuelve { ok: bool, activityId: uuid|null, error: string|null }
+    // ─────────────────────────────────────────────────────────────────
+    async function _saveManualActivityToSupabase(act) {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { ok: false, activityId: null, error: 'no-sb-client' };
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return { ok: false, activityId: null, error: 'no-session' };
+
+            // Construir external_id y start_date
+            var externalId = _buildManualExternalId(act);
+            var startIso   = _resolveStartDateIso(act);
+
+            // Step 1: upsert en activities (idempotente)
+            var payload = _mapManualActToDbRow(act, uid, externalId, startIso);
+            var upsertRes = await sb
+                .from('activities')
+                .upsert(payload, {
+                    onConflict: 'user_id,source,external_id',
+                    ignoreDuplicates: false
+                })
+                .select('id')
+                .maybeSingle();
+
+            if (upsertRes && upsertRes.error) {
+                console.warn('[MR][6.1] upsert error:', upsertRes.error);
+                return { ok: false, activityId: null, error: upsertRes.error.message };
+            }
+            var activityId = upsertRes && upsertRes.data && upsertRes.data.id;
+            if (!activityId) {
+                console.warn('[MR][6.1] upsert devolvió sin id');
+                return { ok: false, activityId: null, error: 'no-id-returned' };
+            }
+
+            // Vincula act local con el id BD por si lo necesita más adelante
+            act._dbActivityId = activityId;
+
+            console.log('[MR][6.1] upsert OK activityId=' + activityId);
+
+            // Step 2: streams (no bloqueante, mejor esfuerzo)
+            try {
+                var streamsPath = await _uploadManualStreams(sb, uid, activityId, act);
+                if (streamsPath) {
+                    var updRes = await sb
+                        .from('activities')
+                        .update({ streams_path: streamsPath })
+                        .eq('id', activityId);
+                    if (updRes && updRes.error) {
+                        console.warn('[MR][6.1] update streams_path error:', updRes.error);
+                    } else {
+                        console.log('[MR][6.1] streams OK path=' + streamsPath);
+                    }
+                }
+            } catch(e) {
+                console.warn('[MR][6.1] streams exception:', e);
+            }
+
+            // Step 3: foto (si la hay, no bloqueante)
+            if (act.photoB64) {
+                try {
+                    await _uploadManualPhoto(sb, uid, activityId, act.photoB64);
+                } catch(e) {
+                    console.warn('[MR][6.1] photo exception:', e);
+                }
+            }
+
+            return { ok: true, activityId: activityId, error: null };
+        } catch(e) {
+            console.warn('[MR][6.1] _saveManualActivityToSupabase exception:', e);
+            return { ok: false, activityId: null, error: String(e && e.message || e) };
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Modal "Posible duplicado" — control de apertura/cierre y acciones
+    // ─────────────────────────────────────────────────────────────────
+    function _showDuplicateConfirmModal(dup) {
+        var info = dup && dup.duplicate;
+        var src  = dup && dup.source;
+        if (!info) return;
+
+        // Rellenar contenido del modal
+        var nameEl = document.getElementById('dup-name');
+        var dateEl = document.getElementById('dup-date');
+        var distEl = document.getElementById('dup-dist');
+        var durEl  = document.getElementById('dup-dur');
+        var srcEl  = document.getElementById('dup-source');
+
+        if (nameEl) nameEl.textContent = info.name || '(sin nombre)';
+        if (dateEl) dateEl.textContent = info.dateStr || '—';
+        if (distEl) distEl.textContent = (Number(info.distKm) || 0).toFixed(2);
+        if (durEl) {
+            var secs = Number(info.durationSec) || 0;
+            var h = Math.floor(secs/3600);
+            var m = Math.floor((secs%3600)/60);
+            durEl.textContent = (h > 0 ? h + 'h ' : '') + m + 'min';
+        }
+        if (srcEl) {
+            var srcLabel;
+            if (info._source === 'bulk') {
+                srcLabel = '🟧 Importado desde Strava';
+            } else if (info._source === 'manual-supabase') {
+                srcLabel = '⬆ Importado manualmente (otro dispositivo)';
+            } else if (src === 'local') {
+                srcLabel = '📱 En este dispositivo';
+            } else {
+                srcLabel = 'Ya existe';
+            }
+            srcEl.textContent = srcLabel;
+        }
+
+        // Abrir sheet (reutiliza openSheet existente)
+        if (typeof openSheet === 'function') {
+            openSheet('duplicate-modal');
+        } else {
+            // Fallback: mostrar manualmente
+            var modal = document.getElementById('duplicate-modal');
+            if (modal) modal.classList.add('open');
+        }
+    }
+    window._showDuplicateConfirmModal = _showDuplicateConfirmModal;
+
+    function _dismissDuplicateModal() {
+        if (typeof closeSheet === 'function') closeSheet('duplicate-modal');
+        else {
+            var modal = document.getElementById('duplicate-modal');
+            if (modal) modal.classList.remove('open');
+        }
+        // Limpiar pendingFitData y cerrar también el import-modal (que estaba detrás)
+        pendingFitData = null;
+        if (typeof closeSheet === 'function') closeSheet('import-modal');
+        // Reset flag
+        _vimSkipDuplicateCheck = false;
+    }
+    window._dismissDuplicateModal = _dismissDuplicateModal;
+
+    function _forceImportDuplicate() {
+        if (typeof closeSheet === 'function') closeSheet('duplicate-modal');
+        else {
+            var modal = document.getElementById('duplicate-modal');
+            if (modal) modal.classList.remove('open');
+        }
+        // Activar flag y re-invocar el guardado
+        _vimSkipDuplicateCheck = true;
+        // Pequeño delay para que el sheet termine de cerrarse antes
+        setTimeout(function() {
+            saveImportedActivity();
+        }, 250);
+    }
+    window._forceImportDuplicate = _forceImportDuplicate;
+
+    // FASE 6.1: la función original ahora hace detección de duplicados ANTES
+    // de proceder con el guardado real. Si encuentra duplicado, abre modal de
+    // confirmación. Si el usuario confirma "Importar igualmente", llama a
+    // _saveImportedActivityCore() que es el flujo original sin la check.
+    // Flag _vimSkipDuplicateCheck permite saltar la detección (fuerza save).
+    let _vimSkipDuplicateCheck = false;
+
+    async function saveImportedActivity() {
+        if (!pendingFitData) return;
+
+        // ── FASE 6.1 · Detección de duplicados ────────────────────────
+        // Saltamos check si el usuario ya confirmó "importar igualmente"
+        if (!_vimSkipDuplicateCheck) {
+            try {
+                const dup = await _findDuplicateActivity(pendingFitData);
+                if (dup && dup.duplicate) {
+                    _showDuplicateConfirmModal(dup);
+                    return; // Espera decisión del usuario
+                }
+            } catch(e) {
+                // Si la dedup falla (red, etc.), seguimos adelante con el save
+                console.warn('[MR][6.1] Dedup check failed (continuamos):', e);
+            }
+        }
+        _vimSkipDuplicateCheck = false; // reset flag
+
+        _saveImportedActivityCore();
+    }
+
+    function _saveImportedActivityCore() {
         if (!pendingFitData) return;
         const type   = document.getElementById('imp-type').value;
         const shoeId = document.getElementById('imp-shoe').value;
@@ -13561,6 +14061,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _showPRToast(all, act);
                 }
             } catch(e) { console.warn('[MR][PR] post-save flow:', e); }
+            // FASE 6.1 · Sesión 18: upload Supabase post-save.
+            // Va AL FINAL del bloque async (tras weather + PRs) porque:
+            //   - El upsert no debe bloquear UI ni PRs (que leen BD existente)
+            //   - Si falla red, la activity ya está en IDB local (resiliencia)
+            //   - El upload incluye weather.condition (necesitamos weather resuelto)
+            try {
+                await _saveManualActivityToSupabase(act);
+            } catch(e) {
+                console.warn('[MR][6.1] _saveManualActivityToSupabase falló (no bloqueante):', e);
+            }
         })();
         document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -20771,9 +21281,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // 36 de 290 activities (.tcx.gz no parseado) no tienen polyline → records=[].
         // El render ya tolera records vacío (mostrará canvas oscuro sin polyline).
         var records = _decodePolyline(row.polyline_encoded);
+        // FASE 6.1: outfit en BD es TEXT (JSON.stringify). Parsearlo de vuelta.
+        var outfitObj = null;
+        if (row.outfit) {
+            try { outfitObj = JSON.parse(row.outfit); } catch(_) { outfitObj = null; }
+        }
+        // FASE 6.1: weather reconstruido desde avg_temp_c + weather_condition
+        var weatherObj = null;
+        if (row.avg_temp_c != null || row.weather_condition) {
+            weatherObj = {
+                tempC:     (row.avg_temp_c != null) ? Number(row.avg_temp_c) : null,
+                condition: row.weather_condition || null
+            };
+        }
+        // FASE 6.1: _source dinámico (manual o bulk) según row.source
+        var srcKind = (row.source === 'manual') ? 'manual' : 'bulk';
         return {
             id:             row.id,                                    // UUID de BD
-            externalId:     row.external_id || null,                   // Strava activity ID
+            externalId:     row.external_id || null,                   // Strava activity ID o manual:...
             name:           row.name || null,
             dateStr:        dateStr,
             distKm:         distKmNum,
@@ -20794,12 +21319,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             avgPaceSec:     (row.avg_pace_sec != null)    ? Number(row.avg_pace_sec)    : null,
             type:           finalType,
             shoeName:       row.shoes_name || '',
+            // FASE 6.1 · campos symetricos manual+bulk
+            shoeId:         row.shoe_id || null,
+            shoeColor:      row.shoe_color_hex || '',
+            bestPace:       (row.best_pace_sec != null)   ? Number(row.best_pace_sec)   : 0,
+            rpe:            (row.rpe != null)             ? String(row.rpe)             : '',
+            outfit:         outfitObj,
+            weather:        weatherObj,
+            deviceBrand:    row.watch_brand || null,
             notes:          row.notes || null,
             raceName:       row.race_name || null,
+            // FASE 6.1: streams_path para que loadStreamsForActivity sepa qué bajar
+            streams_path:   row.streams_path || null,
+            // FASE 6.2-6.4: campos derivados (todavía null para manuales)
+            trimp:          (row.trimp != null) ? Number(row.trimp) : null,
+            decoupling:     (row.decoupling != null) ? Number(row.decoupling) : null,
+            bestEfforts:    row.best_efforts || null,
             // FASE 5.3.2: records hidratados desde polyline para mini-mapa + visor
             records:        records,
             // Metadatos para FASE 5.4+
-            _source:        'bulk',
+            _source:        srcKind,    // 'bulk' | 'manual'
             _dbActivityId:  row.id,
             _polyline:      row.polyline_encoded || null,
             _hasPolyline:   records.length > 0,
@@ -20820,12 +21359,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // (cards 2/3 leen series desde bucket, no columnas BD; card 4 hace SELECT separado).
             // Hotfix 5.3.3: race_name no existe como columna BD (mi error de assumption);
             // raceName quedará null en bulk hasta migración futura.
+            // FASE 6.1 (sesión 18): race_name SÍ existe ya. Ampliado SELECT con
+            // campos symétricos para manual+bulk: source, shoe_id/color, best_pace,
+            // weather_condition, outfit, watch_brand, rpe, date_str, streams_path,
+            // trimp, decoupling, best_efforts (los 3 últimos para FASE 6.2-6.4).
             var qRes = await sb
                 .from('activities')
-                .select('id, external_id, name, start_date, dist_km, duration_sec, elapsed_sec, avg_pace_sec, ' +
-                        'avg_hr, max_hr, ascent_m, descent_m, calories, avg_cadence, max_cadence, ' +
-                        'stride_len_cm, balance_left, avg_temp_c, ele_min, ele_max, ' +
-                        'workout_type, shoes_name, notes, polyline_encoded')
+                .select('id, external_id, source, name, start_date, date_str, ' +
+                        'dist_km, duration_sec, elapsed_sec, avg_pace_sec, best_pace_sec, ' +
+                        'avg_hr, max_hr, ascent_m, descent_m, calories, ' +
+                        'avg_cadence, max_cadence, stride_len_cm, ' +
+                        'balance_left, avg_temp_c, ele_min, ele_max, ' +
+                        'workout_type, shoes_name, shoe_id, shoe_color_hex, ' +
+                        'race_name, weather_condition, outfit, watch_brand, rpe, ' +
+                        'streams_path, trimp, decoupling, best_efforts, ' +
+                        'notes, polyline_encoded')
                 .eq('user_id', uid)
                 .order('start_date', { ascending: false });
             if (qRes && qRes.error) {
@@ -26442,6 +26990,168 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
 </script>
 
     <!-- MODAL IMPORTAR ACTIVIDAD -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         FASE 6.1 · Sesión 18 · Modal "Posible duplicado"
+         Se abre cuando saveImportedActivity detecta una activity en
+         BD/IDB del mismo día, ±0.2km dist, ±2min duración. Pregunta
+         al usuario si quiere importar igualmente.
+         CSS aislado prefijo .dup-
+    ════════════════════════════════════════════════════════════ -->
+    <div id="duplicate-modal" class="sheet-backdrop">
+        <style>
+            #duplicate-modal .dup-body {
+                padding: 18px 18px 24px;
+            }
+            #duplicate-modal .dup-hero {
+                display: flex; align-items: center; gap: 14px;
+                margin-bottom: 16px;
+            }
+            #duplicate-modal .dup-icon {
+                flex-shrink: 0;
+                width: 50px; height: 50px;
+                border-radius: 14px;
+                background: rgba(176, 96, 32, .15);
+                color: var(--warn);
+                display: flex; align-items: center; justify-content: center;
+            }
+            body.dark-mode #duplicate-modal .dup-icon {
+                background: rgba(251, 191, 36, .15);
+                color: var(--warn);
+            }
+            #duplicate-modal .dup-title {
+                font-size: 16px; font-weight: 700; color: var(--tw);
+                letter-spacing: -.2px;
+            }
+            #duplicate-modal .dup-subtitle {
+                font-size: 11px; color: var(--ts);
+                margin-top: 2px;
+            }
+            #duplicate-modal .dup-card {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 14px 16px;
+                margin-bottom: 14px;
+            }
+            #duplicate-modal .dup-card-label {
+                font-size: 9.5px; font-weight: 700; color: var(--tm);
+                text-transform: uppercase; letter-spacing: 1.1px;
+                margin-bottom: 8px;
+            }
+            #duplicate-modal .dup-card-name {
+                font-size: 14px; font-weight: 700; color: var(--tw);
+                line-height: 1.25;
+                margin-bottom: 8px;
+            }
+            #duplicate-modal .dup-card-stats {
+                display: flex; gap: 16px; flex-wrap: wrap;
+            }
+            #duplicate-modal .dup-stat {
+                display: flex; flex-direction: column; gap: 1px;
+            }
+            #duplicate-modal .dup-stat-value {
+                font-size: 14px; font-weight: 700; color: var(--tw);
+                line-height: 1;
+            }
+            #duplicate-modal .dup-stat-label {
+                font-size: 9px; color: var(--tm);
+                text-transform: uppercase; letter-spacing: .8px;
+                margin-top: 3px;
+            }
+            #duplicate-modal .dup-source-badge {
+                display: inline-block;
+                background: var(--bsoft);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 3px 8px;
+                font-size: 9.5px; font-weight: 700;
+                color: var(--ts);
+                letter-spacing: .5px;
+                text-transform: uppercase;
+                margin-top: 10px;
+            }
+            #duplicate-modal .dup-explain {
+                font-size: 12px; color: var(--ts);
+                line-height: 1.55;
+                margin-bottom: 18px;
+            }
+            #duplicate-modal .dup-buttons {
+                display: flex; gap: 10px;
+            }
+            #duplicate-modal .dup-btn {
+                flex: 1;
+                border-radius: 12px;
+                padding: 13px;
+                font-family: var(--f);
+                font-size: 13px; font-weight: 800;
+                letter-spacing: .3px;
+                cursor: pointer;
+                border: none;
+                transition: transform .12s;
+            }
+            #duplicate-modal .dup-btn:active { transform: scale(.97); }
+            #duplicate-modal .dup-btn-cancel {
+                background: var(--card2);
+                color: var(--tw);
+                border: 1px solid var(--border);
+            }
+            #duplicate-modal .dup-btn-force {
+                background: var(--crimson);
+                color: #fff;
+                box-shadow: 0 2px 8px rgba(143,26,40,.30);
+            }
+        </style>
+        <div class="sheet">
+            <div class="sheet-handle-wrap">
+                <div class="sheet-handle"></div>
+                <div class="sheet-title">Posible duplicado</div>
+            </div>
+            <div class="sheet-body dup-body">
+                <div class="dup-hero">
+                    <div class="dup-icon">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    </div>
+                    <div>
+                        <div class="dup-title">Ya tienes este entreno</div>
+                        <div class="dup-subtitle" id="dup-subtitle">Mismo día, distancia y duración</div>
+                    </div>
+                </div>
+
+                <div class="dup-card">
+                    <div class="dup-card-label">Actividad ya importada</div>
+                    <div class="dup-card-name" id="dup-name">—</div>
+                    <div class="dup-card-stats">
+                        <div class="dup-stat">
+                            <div class="dup-stat-value" id="dup-date">—</div>
+                            <div class="dup-stat-label">fecha</div>
+                        </div>
+                        <div class="dup-stat">
+                            <div class="dup-stat-value" id="dup-dist">—</div>
+                            <div class="dup-stat-label">km</div>
+                        </div>
+                        <div class="dup-stat">
+                            <div class="dup-stat-value" id="dup-dur">—</div>
+                            <div class="dup-stat-label">tiempo</div>
+                        </div>
+                    </div>
+                    <div class="dup-source-badge" id="dup-source">—</div>
+                </div>
+
+                <div class="dup-explain">
+                    Detectado por mismo día, distancia (±0,2&nbsp;km) y duración (±2&nbsp;min).
+                    Puedes <strong>cancelar</strong> el import o <strong>importar igualmente</strong>
+                    si crees que es un entreno distinto.
+                </div>
+
+                <div class="dup-buttons">
+                    <button type="button" class="dup-btn dup-btn-cancel" onclick="_dismissDuplicateModal()">Cancelar</button>
+                    <button type="button" class="dup-btn dup-btn-force" onclick="_forceImportDuplicate()">Importar igualmente</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="import-modal" class="sheet-backdrop">
         <div class="sheet">
             <div class="sheet-handle-wrap">
