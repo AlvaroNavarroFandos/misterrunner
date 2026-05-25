@@ -22264,6 +22264,91 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!bdActs || bdActs.length === 0) {
                 return { added: 0, total: activities.length };
             }
+
+            // ══════════════════════════════════════════════════════════════
+            // [Sesión 22 · Reconcile huérfanas cross-device]
+            // ══════════════════════════════════════════════════════════════
+            // Caso de uso real: usuario borra activity desde device A (móvil).
+            // El delete en sesión 19 limpia BD + buckets correctamente, pero
+            // device B (incógnito PC) conserva la activity en su IDB local
+            // porque nunca recibe push. Se manifiesta en cada one-shot
+            // (__mrRecomputeAllTRIMP / __mrRecomputeAllDecoupling) como
+            // errors:1 — UPDATE devuelve 0 rows.
+            //
+            // Solución: tras traer las activities BD frescas, identificar
+            // en activities[] (memoria local) las que tienen _dbActivityId
+            // apuntando a un UUID que YA NO existe en BD. Esas son huérfanas
+            // cross-device → eliminarlas del array local + persistir.
+            //
+            // Seguro porque:
+            //  - Solo afecta activities CON _dbActivityId (las que estuvieron
+            //    en BD alguna vez). Manuales pre-FASE 6.1 sin _dbActivityId
+            //    quedan intactas.
+            //  - Si bdActs viene vacío, ya retornamos antes (no borra todo).
+            //  - Solo toca memoria + IDB local, NO toca BD ni buckets.
+            //  - Es idempotente: si no hay huérfanas, no hace nada.
+            try {
+                var bdUuids = new Set(
+                    bdActs.map(function(a){ return a._dbActivityId || a.id; })
+                          .filter(function(v){ return typeof v === 'string' && v.length > 0; })
+                );
+                var orphans = activities.filter(function(a){
+                    // Solo candidatas: activities que dicen estar en BD pero no están
+                    var dbId = a._dbActivityId;
+                    return dbId && typeof dbId === 'string' && !bdUuids.has(dbId);
+                });
+                if (orphans.length > 0) {
+                    // Recordar si alguna era running (afecta a PRs)
+                    var anyRunning = orphans.some(function(a){
+                        return ['easy','recovery','series','long','race']
+                               .indexOf(String(a.type||'').toLowerCase()) >= 0;
+                    });
+                    // Construir descripciones legibles para el toast antes de mutar
+                    var orphanDescs = orphans.map(function(a){
+                        var nm = a.name || 'Actividad';
+                        var dt = a.dateStr || '';
+                        return nm + (dt ? ' · ' + dt : '');
+                    });
+                    var orphanIds = new Set(orphans.map(function(a){ return a._dbActivityId; }));
+                    console.log('[MR][S22 · Reconcile] Huérfanas detectadas (' +
+                                orphans.length + '):', orphanDescs);
+                    // Filtrar del array local
+                    activities = activities.filter(function(a){
+                        return !(a._dbActivityId && orphanIds.has(a._dbActivityId));
+                    });
+                    // Persistir (saveAppState delega en saveActivitiesToIDB + localStorage)
+                    try { if (typeof saveAppState === 'function') saveAppState(); } catch(_){}
+                    // Toast informativo (decisión usuario: ver qué borra)
+                    try {
+                        if (typeof showToast === 'function') {
+                            var firstName = orphans[0].name || 'Actividad';
+                            var msg = orphans.length === 1
+                                ? 'Sincronización: "' + firstName + '" eliminada (ya no existe en servidor)'
+                                : 'Sincronización: ' + orphans.length + ' actividades obsoletas eliminadas';
+                            showToast(msg, 4500);
+                        }
+                    } catch(_){}
+                    // Si alguna era running, recalcular PRs (igual que deleteActivity)
+                    if (anyRunning && typeof window._rebuildAllRecordsFromHistory === 'function') {
+                        window._rebuildAllRecordsFromHistory()
+                            .then(function(){
+                                console.log('[MR][S22 · Reconcile] PRs recalculados tras reconcilio');
+                                if (typeof renderPRHistory === 'function') {
+                                    try { renderPRHistory(); } catch(_){}
+                                }
+                            })
+                            .catch(function(err){
+                                console.warn('[MR][S22 · Reconcile] PR recalc fail:', err);
+                            });
+                    }
+                }
+            } catch(reconErr) {
+                console.warn('[MR][S22 · Reconcile] excepción no bloqueante:', reconErr);
+            }
+            // ══════════════════════════════════════════════════════════════
+            // FIN Reconcile huérfanas
+            // ══════════════════════════════════════════════════════════════
+
             // [FASE 6 · Fix duplicación bulk post-restore]
             // Antes la dedup era SÓLO por externalId, pero ~36 de 290 activities
             // en BD tienen external_id = NULL (.tcx.gz no parseado, formato raro).
