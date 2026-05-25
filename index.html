@@ -6290,6 +6290,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             }
                         }
 
+                        /* [FASE 6.3] Decoupling desde streams del parser bulk Strava.
+                           parsed.streams tiene shape {time:[], hr:[], distance:[]} con
+                           arrays paralelos. _computeDecoupling espera {t,v}/{t,spd}.
+                           Convertimos derivando spd[i] = (dist[i+1]-dist[i])/(time[i+1]-time[i]).
+                           Si falta HR o distance → decouplingValue queda null (no se calcula). */
+                        var decouplingValue = null;
+                        if (parsed && parsed.ok && parsed.streams
+                            && Array.isArray(parsed.streams.time)
+                            && Array.isArray(parsed.streams.hr)
+                            && Array.isArray(parsed.streams.distance)
+                            && parsed.streams.time.length >= 20) {
+                            try {
+                                var ts = parsed.streams.time;
+                                var hrs = parsed.streams.hr;
+                                var dst = parsed.streams.distance;
+                                var hrPairs = [];
+                                var spdPairs = [];
+                                for (var ix = 0; ix < ts.length; ix++) {
+                                    var tv = ts[ix];
+                                    if (tv == null) continue;
+                                    // HR pair
+                                    if (hrs[ix] != null) hrPairs.push({ t: tv, v: hrs[ix] });
+                                    // Spd derivada: (d[i+1]-d[i])/(t[i+1]-t[i]) en m/s.
+                                    // parsed.streams.distance está en KM (Strava CSV/FIT estándar).
+                                    if (ix < ts.length - 1
+                                        && dst[ix] != null && dst[ix + 1] != null
+                                        && ts[ix + 1] != null) {
+                                        var dt = ts[ix + 1] - tv;
+                                        if (dt > 0) {
+                                            var dd = (dst[ix + 1] - dst[ix]) * 1000; // km → m
+                                            var spd = dd / dt;
+                                            if (spd >= 0 && spd < 15) {  // sane bound (max ~54km/h)
+                                                spdPairs.push({ t: tv, spd: spd });
+                                            }
+                                        }
+                                    }
+                                }
+                                decouplingValue = _computeDecoupling(hrPairs, spdPairs);
+                            } catch(decErr) {
+                                console.warn('[MR][6.3] decoupling calc bulk error:', decErr);
+                                decouplingValue = null;
+                            }
+                        }
+
                         var insertPayload = {
                             user_id:      imp.userId,
                             source:       'strava_bulk',
@@ -6332,6 +6376,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                               { avgHr: row.avgHr, durationSec: safeDuration },
                                               (typeof profileData !== 'undefined' ? profileData : null)
                                           ),
+
+                            /* [FASE 6.3] Decoupling calculado arriba desde streams parseados */
+                            decoupling:   decouplingValue,
 
                             /* streams_path: NULL en INSERT, FASE 4.3 UPDATE post-upload */
                             streams_path: null
@@ -13704,6 +13751,61 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.3 · S21] Aerobic Decoupling — porcentaje de drift cardio
+    //
+    //     EF = velocidad / FC instantánea
+    //     decoupling = (EF_1ª_mitad − EF_2ª_mitad) / EF_1ª_mitad × 100
+    //
+    // Positivo = HR drifted up (corazón trabaja más en 2ª mitad para
+    // mantener la misma velocidad → fatiga aeróbica / deshidratación).
+    // Negativo = al revés (entrenado en frío, calentando, o velocidad cayendo).
+    //
+    // Función pura. Acepta arrays de muestras con shape { t, v } / { t, spd }.
+    // Filtra spd > 0.5 m/s (descarta paradas) y hr > 80 ppm (descarta gaps).
+    // Necesita ≥20 muestras de cada serie y ≥10 pares válidos.
+    //
+    // Devuelve Number redondeado a 1 decimal o null si faltan datos.
+    // Mismo algoritmo que el decouplingDisplay del visor pre-6.3, ahora
+    // reutilizable para imports + one-shot recompute.
+    // ─────────────────────────────────────────────────────────────────
+    function _computeDecoupling(hrSeries, distSer) {
+        try {
+            if (!Array.isArray(hrSeries) || !Array.isArray(distSer)) return null;
+            if (hrSeries.length < 20 || distSer.length < 20) return null;
+            // Build time-indexed HR map
+            var hrMap = {};
+            for (var i = 0; i < hrSeries.length; i++) {
+                var p = hrSeries[i];
+                if (p && p.t != null && p.v != null) hrMap[p.t] = p.v;
+            }
+            // Collect paired (spd, hr) by timestamp
+            var paired = [];
+            for (var j = 0; j < distSer.length; j++) {
+                var d = distSer[j];
+                if (!d || d.spd == null || d.spd <= 0.5) continue;
+                var hr = hrMap[d.t];
+                if (hr == null || hr <= 80) continue;
+                paired.push(d.spd / hr);
+            }
+            if (paired.length < 10) return null;
+            var mid = Math.floor(paired.length / 2);
+            var sum1 = 0, sum2 = 0;
+            for (var k = 0; k < mid; k++) sum1 += paired[k];
+            for (var k2 = mid; k2 < paired.length; k2++) sum2 += paired[k2];
+            var ef1 = sum1 / mid;
+            var ef2 = sum2 / (paired.length - mid);
+            if (!isFinite(ef1) || ef1 <= 0) return null;
+            var dc = ((ef1 - ef2) / ef1) * 100;
+            if (!isFinite(dc)) return null;
+            // Round to 1 decimal; column is numeric so almacenamos número con decimales
+            return Math.round(dc * 10) / 10;
+        } catch(e) {
+            console.warn('[MR][6.3] _computeDecoupling exception:', e);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Mapeo objeto-memoria → fila BD para INSERT
     // Convierte un `act` (formato app) a un payload listo para
     // sb.from('activities').upsert(payload).
@@ -13758,7 +13860,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             watch_brand:  act.deviceBrand || null,
             rpe:          rpeInt,
             // [FASE 6.2] TRIMP calculado al insertar; null si faltan HR o profile
-            trimp:        _computeTRIMP(act, (typeof profileData !== 'undefined' ? profileData : null))
+            trimp:        _computeTRIMP(act, (typeof profileData !== 'undefined' ? profileData : null)),
+            // [FASE 6.3] Decoupling desde streams en memoria (manual los tiene ya)
+            decoupling:   _computeDecoupling(act.hrSeries, act.distSer)
             // streams_path → se rellena en update tras subir al bucket
             // polyline_encoded → opcional, lo dejamos null (los manuales tienen records crudos)
         };
@@ -14294,6 +14398,146 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return stats;
         } catch(e) {
             console.warn('[MR][6.2] __mrRecomputeAllTRIMP outer exception:', e);
+            return null;
+        }
+    };
+
+    // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.3 · S21] One-shot DEV — Recalcula decoupling para todas
+    // las activities en BD descargando sus streams del bucket.
+    //
+    // Uso desde consola del navegador:
+    //     await __mrRecomputeAllDecoupling();
+    //
+    // A diferencia del recompute de TRIMP (que solo necesita avg_hr +
+    // duration_sec ya en BD), este descarga el .json.gz de cada activity
+    // del bucket activity-streams, lo descomprime con pako, mapea con
+    // _mapStreamsToActFields (mismo flujo que el visor) y calcula con
+    // _computeDecoupling. Si no hay streams_path o falla la descarga
+    // → decoupling queda null para esa activity.
+    //
+    // Concurrencia: lotes de 5 (descargas pesadas + parsing pako, vs los
+    // 20 paralelos de TRIMP que es local). Tarda ~5-10 min para 288 acts.
+    //
+    // Belt-and-suspenders: eq('user_id', uid) + eq('id', _dbActivityId).
+    // Idempotente: re-ejecutarlo recalcula los mismos valores.
+    // ─────────────────────────────────────────────────────────────────
+    window.__mrRecomputeAllDecoupling = async function() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) { console.warn('[MR][6.3] no _sbClient'); return null; }
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) { console.warn('[MR][6.3] no session'); return null; }
+            if (!Array.isArray(activities)) {
+                console.warn('[MR][6.3] activities no es array');
+                return null;
+            }
+            if (typeof loadStreamsForActivity !== 'function' ||
+                typeof _mapStreamsToActFields !== 'function') {
+                console.warn('[MR][6.3] helpers de streams no disponibles');
+                return null;
+            }
+
+            // Solo activities con _dbActivityId (las que viven en BD)
+            var candidates = activities.filter(function(a) { return a && a._dbActivityId; });
+            console.log('[MR][6.3] arranque recompute decoupling — '
+                        + candidates.length + ' activities en BD');
+
+            var stats = {
+                total: candidates.length,
+                ok: 0,
+                errors: 0,
+                nullDc: 0,        // streams existen pero datos insuficientes
+                noStreams: 0,     // sin streams_path o descarga falla
+                skipped: 0
+            };
+            var BATCH = 5;  // descargas pesadas; no saturar Supabase
+            var t0 = Date.now();
+
+            for (var i = 0; i < candidates.length; i += BATCH) {
+                var batch = candidates.slice(i, i + BATCH);
+                var ops = batch.map(function(act) {
+                    return (async function() {
+                        try {
+                            // 1) Descargar streams (cache compartido con visor)
+                            var streamsObj = await loadStreamsForActivity(act._dbActivityId, uid);
+                            if (!streamsObj || !streamsObj.streams) {
+                                stats.noStreams++;
+                                // Aún así escribimos null en BD para limpiar valor obsoleto si lo hubiera
+                                var updResNs = await sb
+                                    .from('activities')
+                                    .update({ decoupling: null })
+                                    .eq('id', act._dbActivityId)
+                                    .eq('user_id', uid);
+                                if (updResNs && updResNs.error) {
+                                    stats.errors++;
+                                    console.warn('[MR][6.3] update null error id=' + act._dbActivityId, updResNs.error.message);
+                                }
+                                return;
+                            }
+                            // 2) Mapear a act.hrSeries + act.distSer (sin tocar act vivo,
+                            //    usamos un wrapper temporal para no mutar memoria)
+                            var tmpAct = {};
+                            _mapStreamsToActFields(tmpAct, streamsObj);
+                            // 3) Calcular decoupling
+                            var dc = _computeDecoupling(tmpAct.hrSeries, tmpAct.distSer);
+                            if (dc == null) stats.nullDc++;
+
+                            // 4) UPDATE BD
+                            var updRes = await sb
+                                .from('activities')
+                                .update({ decoupling: dc })
+                                .eq('id', act._dbActivityId)
+                                .eq('user_id', uid)
+                                .select('id')
+                                .maybeSingle();
+                            if (updRes && updRes.error) {
+                                stats.errors++;
+                                console.warn('[MR][6.3] update error id=' + act._dbActivityId, updRes.error.message);
+                                return;
+                            }
+                            if (!updRes || !updRes.data) {
+                                stats.errors++;
+                                console.warn('[MR][6.3] no-row-updated id=' + act._dbActivityId);
+                                return;
+                            }
+                            // Actualizar memoria local para coherencia inmediata
+                            act.decoupling = dc;
+                            stats.ok++;
+                        } catch(e) {
+                            stats.errors++;
+                            console.warn('[MR][6.3] op exception id=' + act._dbActivityId, e);
+                        }
+                    })();
+                });
+                await Promise.all(ops);
+                console.log('[MR][6.3] progreso ' + Math.min(i + BATCH, candidates.length)
+                            + '/' + candidates.length
+                            + ' · ok=' + stats.ok
+                            + ' · errors=' + stats.errors
+                            + ' · nullDc=' + stats.nullDc
+                            + ' · noStreams=' + stats.noStreams);
+            }
+
+            var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            console.log('%c[MR][6.3] ✅ recompute decoupling terminado en ' + elapsed + 's',
+                        'color:#C9A84C;font-weight:700');
+            console.log('[MR][6.3] resumen:', stats);
+
+            // Re-render biblioteca por coherencia (aunque decoupling no se ve en card)
+            try {
+                if (typeof renderActivities === 'function') {
+                    renderActivities();
+                }
+            } catch(e) {
+                console.warn('[MR][6.3] re-render exception:', e);
+            }
+
+            return stats;
+        } catch(e) {
+            console.warn('[MR][6.3] __mrRecomputeAllDecoupling outer exception:', e);
             return null;
         }
     };
@@ -16634,24 +16878,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         })();
 
         // ── Aerobic Decoupling ─────────────────────────────────────
-        // EF = speed/HR; decoupling = (EF1-EF2)/EF1 * 100 (positive = HR drifted up)
+        // [FASE 6.3 · S21] Refactor: fuente primaria es act.decoupling (BD,
+        // calculado en import por _computeDecoupling). Fallback al recálculo
+        // desde stream SOLO si act.decoupling es null Y hay streams cargados.
+        // EF = speed/HR; decoupling = (EF1-EF2)/EF1 * 100 (positive = HR drift up).
         const decouplingDisplay = (() => {
-            const ds0 = act.distSer || [], hr0 = act.hrSeries || [];
-            if (ds0.length < 20 || hr0.length < 20) return '—';
-            // Build time-indexed HR map
-            const hrMap = {};
-            hr0.forEach(p => { hrMap[p.t] = p.v; });
-            // Collect paired (spd, hr) by timestamp
-            const paired = ds0.filter(d => d.spd > 0.5).map(d => {
-                const hr = hrMap[d.t] || 0;
-                return hr > 80 ? { ef: d.spd / hr } : null;
-            }).filter(Boolean);
-            if (paired.length < 10) return '—';
-            const mid = Math.floor(paired.length / 2);
-            const ef1 = paired.slice(0, mid).reduce((a,b)=>a+b.ef,0) / mid;
-            const ef2 = paired.slice(mid).reduce((a,b)=>a+b.ef,0) / (paired.length - mid);
-            const dc = ((ef1 - ef2) / ef1 * 100);
-            return (dc >= 0 ? '+' : '') + dc.toFixed(1) + '%';
+            // 1) Preferir decoupling de BD si existe
+            if (act.decoupling != null && isFinite(act.decoupling)) {
+                var dcBd = Number(act.decoupling);
+                return (dcBd >= 0 ? '+' : '') + dcBd.toFixed(1) + '%';
+            }
+            // 2) Fallback: recálculo desde streams en memoria via helper común
+            var dcFallback = _computeDecoupling(act.hrSeries, act.distSer);
+            if (dcFallback == null) return '—';
+            return (dcFallback >= 0 ? '+' : '') + dcFallback.toFixed(1) + '%';
         })();
 
         // ── TRIMP (Banister) ──────────────────────────────────────
