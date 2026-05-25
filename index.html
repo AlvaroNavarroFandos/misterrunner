@@ -966,6 +966,83 @@
        visual de transición que cubre el primer paint de las 291+ cards. */
     #view-activities { position: relative; }
 
+    /* ───────────────────────────────────────────────────────────────
+       [Sesión 24] Biblioteca loader premium · Progress bar + stagger
+       ───────────────────────────────────────────────────────────────
+       Sustituye el gate cream (sesión 15.1) por un efecto cinematográfico
+       en dos capas:
+         1. Barra dorada de 2px en la parte superior de la vista (0→100% en 1s)
+         2. Las cards entran de 1 en 1 con fade+slide (40ms entre cada, máximo
+            8 cards visibles en primer paint → resto entra normal)
+       Combinado con pre-render en idle time tras boot (ver bootApp), el
+       efecto es puramente decorativo: la biblioteca ya está dibujada cuando
+       el usuario salta, pero la animación da la "sensación premium" de
+       construcción.
+       ─────────────────────────────────────────────────────────────── */
+    .mr-lib-progress {
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 2px;
+        background: rgba(196,136,30,.06);
+        z-index: 9998;
+        overflow: hidden;
+        pointer-events: none;
+        opacity: 0;
+        animation: mr-lib-progress-show 1.0s ease forwards;
+    }
+    body.dark-mode .mr-lib-progress {
+        background: rgba(201,168,76,.06);
+    }
+    .mr-lib-progress::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; bottom: 0;
+        width: 0%;
+        background: linear-gradient(90deg, var(--gold), #e5b550);
+        border-radius: 999px;
+        box-shadow: 0 0 8px rgba(196,136,30,.4);
+        animation: mr-lib-progress-fill 1.0s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    body.dark-mode .mr-lib-progress::after {
+        background: linear-gradient(90deg, #C9A84C, #e5b550);
+        box-shadow: 0 0 8px rgba(201,168,76,.4);
+    }
+    @keyframes mr-lib-progress-show {
+        0%   { opacity: 0; }
+        12%  { opacity: 1; }
+        88%  { opacity: 1; }
+        100% { opacity: 0; }
+    }
+    @keyframes mr-lib-progress-fill {
+        0%   { width: 0%; }
+        30%  { width: 60%; }
+        100% { width: 100%; }
+    }
+
+    /* Stagger reveal de las primeras cards al entrar a biblioteca.
+       Solo se aplica cuando el contenedor tiene la clase mr-lib-staggering.
+       Después de la animación inicial, la clase se quita para que los
+       re-renders (filtros, búsquedas) NO disparen stagger. */
+    .mr-lib-staggering > .act-swipe-wrap {
+        opacity: 0;
+        transform: translateY(8px);
+        animation: mr-lib-card-in .35s cubic-bezier(.16,1,.3,1) forwards;
+    }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(1)  { animation-delay: 0.00s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(2)  { animation-delay: 0.04s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(3)  { animation-delay: 0.08s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(4)  { animation-delay: 0.12s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(5)  { animation-delay: 0.16s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(6)  { animation-delay: 0.20s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(7)  { animation-delay: 0.24s; }
+    .mr-lib-staggering > .act-swipe-wrap:nth-child(8)  { animation-delay: 0.28s; }
+    /* Las cards 9+ heredan animation-delay base (0) — entran sin escalonar.
+       Esto evita que el stagger se vea "infinito" en biblio con 290+ cards. */
+
+    @keyframes mr-lib-card-in {
+        to { opacity: 1; transform: translateY(0); }
+    }
+
     /* [v5 P.Biblioteca] Tarjeta de actividad adaptativa claro/oscuro.
        Ahora TODO se adapta: card + mapa (con dos JPEG distintos) + textos. */
     .mr-lib-card .mr-lib-card-inner    { background: #000; }
@@ -8761,6 +8838,69 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const app = document.getElementById('app');
             if(app) { app.style.opacity = '1'; }
         });
+
+        // ─────────────────────────────────────────────────────────────
+        // [Sesión 24] Pre-paint warm-up de Biblioteca (Op 5)
+        // ─────────────────────────────────────────────────────────────
+        // renderActivities() ya se llama en bootApp (línea ~8800) y dibuja
+        // las cards en el DOM con chunked rendering por rAF. Sin embargo,
+        // como #view-activities tiene display:none mientras estás en Home,
+        // Safari iOS pospone el layout final hasta el momento del switch.
+        // Eso es lo que causa el "tirón" al saltar a Biblioteca: el layout
+        // de las 290+ cards se calcula EN EL MISMO FRAME que el cambio de
+        // vista.
+        //
+        // Fix Op 5: en idle time tras boot, forzamos un layout pass leyendo
+        // offsetHeight de la vista temporalmente visible (off-screen).
+        // Esto obliga al browser a calcular el layout completo MIENTRAS
+        // el usuario está mirando Home, sin tirón perceptible. Cuando
+        // luego salte a Biblioteca, el layout ya está cacheado y el
+        // cambio es instantáneo.
+        //
+        // Se ejecuta solo una vez por boot. Idempotente.
+        // ─────────────────────────────────────────────────────────────
+        function _warmUpLibrary() {
+            try {
+                var v = document.getElementById('view-activities');
+                if (!v) return;
+                if (window.__mrLibWarmDone) return;
+                window.__mrLibWarmDone = true;
+                // Posicionar fuera de pantalla y forzar visibilidad para que
+                // el browser calcule layout completo SIN que el usuario lo vea.
+                var _origDisplay  = v.style.display;
+                var _origPosition = v.style.position;
+                var _origLeft     = v.style.left;
+                var _origTop      = v.style.top;
+                var _origVis      = v.style.visibility;
+                v.style.position   = 'absolute';
+                v.style.left       = '-99999px';
+                v.style.top        = '-99999px';
+                v.style.visibility = 'hidden';
+                v.style.display    = 'block';
+                // Forzar layout pass leyendo offsetHeight
+                void v.offsetHeight;
+                // Tras un microtask, también forzamos paint de los canvas IO-pending
+                // (los tracks). El IntersectionObserver de renderActivities tiene
+                // root #view-activities, así que necesitamos que esté "visible"
+                // (aunque off-screen) para que el observer se entere.
+                requestAnimationFrame(function(){
+                    try { void v.offsetHeight; } catch(_){}
+                    // Restaurar estado original
+                    v.style.display    = _origDisplay;
+                    v.style.position   = _origPosition;
+                    v.style.left       = _origLeft;
+                    v.style.top        = _origTop;
+                    v.style.visibility = _origVis;
+                });
+            } catch(_) {}
+        }
+        // Programar el warm-up en idle time (1.5s tras boot para no competir
+        // con el primer paint de Home y el restore de avatar/storage info).
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(_warmUpLibrary, { timeout: 2500 });
+        } else {
+            setTimeout(_warmUpLibrary, 1500);
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -10906,36 +11046,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         else if (_swipeDir === 'r') v.classList.add('mr-fx-view-slide-r');
                         else                        v.classList.add('mr-fx-view-in');
 
-                        // [FASE 6 · Fix C] Gate visual para Biblioteca.
-                        // Cubre el último resto de tirón mientras Safari iOS
-                        // asienta el layout de las 291+ cards (aunque content-
-                        // visibility ya descarga el 95%, los primeros frames
-                        // pueden seguir notándose en iPhones modestos).
-                        // Pintamos una capa del color de fondo que se desvanece
-                        // en 220ms: el usuario ve una transición limpia.
+                        // [Sesión 24] Biblioteca loader premium · combo Op5+P4
+                        // ─────────────────────────────────────────────────
+                        // 1. PROGRESS BAR dorada de 2px arriba del view → 1s
+                        // 2. STAGGER REVEAL en las primeras 8 cards → 280ms
+                        //
+                        // Como ahora biblioteca pre-renderiza en idle time
+                        // tras boot (ver bootApp), el render real es instantáneo.
+                        // Esta animación es PURAMENTE COSMÉTICA: da el toque
+                        // cinematográfico premium sin que el usuario perciba
+                        // ningún tirón técnico.
+                        //
+                        // Sustituye el gate cream (FASE 6 · Fix C, sesión 15.1)
+                        // que ocultaba el contenido durante 220ms. Ahora se
+                        // VEN las cards desde el primer frame, entrando una a
+                        // una con fade+slide muy sutil.
                         if (_isHeavy) {
                             try {
-                                var _prev = document.getElementById('mr-lib-gate');
-                                if (_prev) _prev.remove();
-                                var _gate = document.createElement('div');
-                                _gate.id = 'mr-lib-gate';
-                                _gate.style.cssText =
-                                    'position:absolute;inset:0;background:var(--bg);' +
-                                    'z-index:9997;pointer-events:none;opacity:1;' +
-                                    'transition:opacity .22s cubic-bezier(.22,.61,.36,1);' +
-                                    'will-change:opacity;';
-                                v.appendChild(_gate);
-                                // Doble RAF: el primero permite al browser pintar
-                                // el overlay opaco; el segundo dispara el fade.
-                                requestAnimationFrame(function(){
-                                    requestAnimationFrame(function(){
-                                        _gate.style.opacity = '0';
-                                    });
-                                });
-                                // Cleanup tras transición + margen
+                                // Quitar restos previos por si acaso (re-entradas)
+                                var _prevProg = document.getElementById('mr-lib-progress');
+                                if (_prevProg) _prevProg.remove();
+                                // 1) Barra de progreso dorada
+                                var _prog = document.createElement('div');
+                                _prog.id = 'mr-lib-progress';
+                                _prog.className = 'mr-lib-progress';
+                                v.appendChild(_prog);
+                                // Cleanup tras 1100ms (1s anim + margen)
                                 setTimeout(function(){
-                                    if (_gate && _gate.parentNode) _gate.parentNode.removeChild(_gate);
-                                }, 320);
+                                    if (_prog && _prog.parentNode) _prog.parentNode.removeChild(_prog);
+                                }, 1100);
+                                // 2) Stagger reveal de las primeras cards
+                                var _actList = document.getElementById('activities-list');
+                                if (_actList) {
+                                    _actList.classList.add('mr-lib-staggering');
+                                    // Tras 400ms quitar la clase (suficiente para
+                                    // que las 8 primeras cards completen su entrada
+                                    // 0.28s delay + 0.35s anim = 0.63s, pero con
+                                    // 400ms ya están casi todas dentro y futuros
+                                    // re-renders por filtros/búsquedas no escalonan).
+                                    setTimeout(function(){
+                                        _actList.classList.remove('mr-lib-staggering');
+                                    }, 700);
+                                }
                             } catch(_) {}
                         }
                     } catch(_) {}
