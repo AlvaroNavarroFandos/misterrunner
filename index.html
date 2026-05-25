@@ -13964,6 +13964,139 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // [Sesión 19 · Bloque A] Delete de activity en Supabase (BD + buckets)
+    //
+    // Si act._dbActivityId existe → borra en cadena:
+    //   1) Lista + remove TODAS las fotos del bucket activity-photos/<uid>/<activity_uuid>/
+    //   2) Remove el stream del bucket activity-streams (si streams_path existe)
+    //   3) DELETE filas en activity_photos (FK lógica activity_id)
+    //   4) DELETE fila en activities
+    //
+    // Orden: primero buckets, luego BD. Si el storage falla y la fila BD se
+    // borra → tendríamos archivos huérfanos en bucket sin fila padre (peor).
+    // Si los buckets se borran OK pero el DELETE BD falla → la fila queda
+    // apuntando a paths vacíos pero loadActivitiesFromSupabase no peta; los
+    // signed URLs darán 404 al lazy load (ya tolerado).
+    //
+    // Cada operación con try/catch independiente: un fallo aislado no aborta
+    // las demás. Devuelve { ok, errors: [...] } para diagnostic.
+    //
+    // RLS verificado (sesión 19): activities_own_delete (qual: auth.uid()=user_id),
+    // activity_photos_own_all (cubre DELETE), activity_streams_delete_own +
+    // activity_photos_delete_own en storage (qual: foldername[1]=uid).
+    // ─────────────────────────────────────────────────────────────────
+    async function _deleteActivityFromSupabase(act) {
+        var errors = [];
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { ok: false, errors: ['no-sb-client'] };
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return { ok: false, errors: ['no-session'] };
+
+            if (!act || !act._dbActivityId) {
+                // Activity local-only (manual viejo pre-FASE 6.1 nunca migrado).
+                // No hay nada que borrar en BD. No es un error.
+                console.log('[MR][S19] activity sin _dbActivityId → nothing to delete in Supabase');
+                return { ok: true, errors: [] };
+            }
+
+            var activityId = act._dbActivityId;
+            var streamsPath = act.streams_path || null;
+            var photosFolder = uid + '/' + activityId;
+
+            // 1) Listar + remove fotos del bucket activity-photos/<uid>/<activity_uuid>/
+            try {
+                var listRes = await sb.storage
+                    .from('activity-photos')
+                    .list(photosFolder, { limit: 100 });
+                if (listRes && listRes.error) {
+                    console.warn('[MR][S19] storage list photos error:', listRes.error);
+                    errors.push('storage-list-photos:' + listRes.error.message);
+                } else if (listRes && listRes.data && listRes.data.length > 0) {
+                    var paths = listRes.data.map(function(f) { return photosFolder + '/' + f.name; });
+                    var rmRes = await sb.storage.from('activity-photos').remove(paths);
+                    if (rmRes && rmRes.error) {
+                        console.warn('[MR][S19] storage remove photos error:', rmRes.error);
+                        errors.push('storage-remove-photos:' + rmRes.error.message);
+                    } else {
+                        console.log('[MR][S19] storage photos removed (' + paths.length + ' files)');
+                    }
+                } else {
+                    console.log('[MR][S19] no photos in bucket for ' + photosFolder);
+                }
+            } catch(e) {
+                console.warn('[MR][S19] storage photos exception:', e);
+                errors.push('storage-photos-exc:' + String(e && e.message || e));
+            }
+
+            // 2) Remove stream del bucket activity-streams (si streams_path)
+            if (streamsPath) {
+                try {
+                    var rmStr = await sb.storage.from('activity-streams').remove([streamsPath]);
+                    if (rmStr && rmStr.error) {
+                        console.warn('[MR][S19] storage remove stream error:', rmStr.error);
+                        errors.push('storage-remove-stream:' + rmStr.error.message);
+                    } else {
+                        console.log('[MR][S19] storage stream removed: ' + streamsPath);
+                    }
+                } catch(e) {
+                    console.warn('[MR][S19] storage stream exception:', e);
+                    errors.push('storage-stream-exc:' + String(e && e.message || e));
+                }
+            }
+
+            // 3) DELETE filas en activity_photos (FK lógica)
+            try {
+                var delPhotosRes = await sb
+                    .from('activity_photos')
+                    .delete()
+                    .eq('activity_id', activityId)
+                    .eq('user_id', uid);
+                if (delPhotosRes && delPhotosRes.error) {
+                    console.warn('[MR][S19] db delete activity_photos error:', delPhotosRes.error);
+                    errors.push('db-delete-photos:' + delPhotosRes.error.message);
+                } else {
+                    console.log('[MR][S19] db activity_photos rows deleted');
+                }
+            } catch(e) {
+                console.warn('[MR][S19] db delete activity_photos exception:', e);
+                errors.push('db-photos-exc:' + String(e && e.message || e));
+            }
+
+            // 4) DELETE fila en activities (la principal)
+            try {
+                var delActRes = await sb
+                    .from('activities')
+                    .delete()
+                    .eq('id', activityId)
+                    .eq('user_id', uid);
+                if (delActRes && delActRes.error) {
+                    console.warn('[MR][S19] db delete activity error:', delActRes.error);
+                    errors.push('db-delete-activity:' + delActRes.error.message);
+                    return { ok: false, errors: errors };
+                } else {
+                    console.log('[MR][S19] db activity row deleted: ' + activityId);
+                }
+            } catch(e) {
+                console.warn('[MR][S19] db delete activity exception:', e);
+                errors.push('db-activity-exc:' + String(e && e.message || e));
+                return { ok: false, errors: errors };
+            }
+
+            // Si llegamos aquí, la fila principal en `activities` se borró.
+            // Errores en buckets/photos son no-críticos (no impiden que la
+            // activity desaparezca del SELECT de loadActivitiesFromSupabase).
+            return { ok: true, errors: errors };
+        } catch(e) {
+            console.warn('[MR][S19] _deleteActivityFromSupabase exception:', e);
+            errors.push('outer-exc:' + String(e && e.message || e));
+            return { ok: false, errors: errors };
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Modal "Posible duplicado" — control de apertura/cierre y acciones
     // ─────────────────────────────────────────────────────────────────
     function _showDuplicateConfirmModal(dup) {
@@ -14393,7 +14526,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         document.getElementById('sum-pace').textContent  = avgPace;
     }
 
-    function deleteActivity(id) {
+    // [Sesión 19 · Bloque A] async para encadenar delete Supabase no bloqueante.
+    // Snapshot del act (dbActivityId, streams_path) ANTES de eliminarlo de
+    // activities[] — luego ya no estaría disponible para la función async.
+    async function deleteActivity(id) {
         // FASE 6.1.b: comparación tolerante string/number para UUIDs BD.
         const act = activities.find(a => String(a.id) === String(id));
         if (act && act.shoeId && act.distKm > 0) {
@@ -14406,6 +14542,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // Recordar si era running para recalcular PRs después
         var wasRunning = act && ['easy','recovery','series','long','race'].indexOf(String(act.type||'').toLowerCase()) >= 0;
+        // [Sesión 19 · Bloque A] Snapshot pre-delete para limpieza Supabase.
+        // Si act vive en BD, capturamos su _dbActivityId + streams_path antes
+        // de mutar activities[]. Si no tiene _dbActivityId, no hay nada que
+        // hacer en BD (manual viejo pre-FASE 6.1 nunca migrado).
+        var actSnapshot = (act && act._dbActivityId) ? {
+            _dbActivityId: act._dbActivityId,
+            streams_path:  act.streams_path || null
+        } : null;
+
         deleteActivityFromIDB(id);
         // FASE 6.1.b: filter también tolerante
         activities = activities.filter(a => String(a.id) !== String(id));
@@ -14426,6 +14571,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 })
                 .catch(function(err){ console.warn('[MR][PR] recalc fail:', err); });
+        }
+
+        // [Sesión 19 · Bloque A] Persistencia delete a Supabase en background.
+        // Misma estrategia que sesiones 18/18.b: no bloqueante, resiliente.
+        // Si falla → toast informativo, pero el delete local ya quedó hecho.
+        // Si actSnapshot=null (activity local-only sin _dbActivityId), saltamos.
+        if (actSnapshot) {
+            (async function() {
+                try {
+                    var res = await _deleteActivityFromSupabase(actSnapshot);
+                    if (!res.ok) {
+                        console.warn('[MR][S19] delete Supabase falló:', res.errors);
+                        if (typeof showToast === 'function') {
+                            try { showToast('Borrado local OK. Falló sincronización con servidor.', 5000); } catch(_){}
+                        }
+                    } else if (res.errors && res.errors.length > 0) {
+                        // OK con errores parciales (storage no crítico)
+                        console.warn('[MR][S19] delete Supabase OK con errores parciales:', res.errors);
+                    }
+                } catch(e) {
+                    console.warn('[MR][S19] _deleteActivityFromSupabase exception (no bloqueante):', e);
+                    if (typeof showToast === 'function') {
+                        try { showToast('Borrado local OK. Falló sincronización con servidor.', 5000); } catch(_){}
+                    }
+                }
+            })();
         }
     }
 
