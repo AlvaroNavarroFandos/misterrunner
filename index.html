@@ -13677,6 +13677,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.2 · S20] Interpretación TRIMP → tag + color + % de barra
+    //
+    // Escala calibrada con dataset Álvaro (mediana=86, p90=148, max=497):
+    //   < 30   · Ligero      verde   (recovery/calentamiento)
+    //   30-80  · Moderado    cyan    (easy hasta ~1h)
+    //   80-150 · Fuerte      azul    (tempo, intervalos, long medio)
+    //   150-250· Muy duro    naranja (long large, series duras, HM)
+    //   > 250  · Extremo     rojo    (maratón, ultra)
+    //
+    // pct: ancho de la barra fina (0-100), capada al 100% en TRIMP>=300
+    // para que el gradiente verde→rojo sea legible incluso en maratones.
+    // ─────────────────────────────────────────────────────────────────
+    function _trimpLevel(t) {
+        if (t == null || !isFinite(t)) return null;
+        var v = Number(t);
+        var tag, color;
+        if      (v <  30) { tag = 'LIGERO';   color = '#4CAF50'; }
+        else if (v <  80) { tag = 'MODERADO'; color = '#7aaff5'; }
+        else if (v < 150) { tag = 'FUERTE';   color = '#5b8fd9'; }
+        else if (v < 250) { tag = 'MUY DURO'; color = '#FF9500'; }
+        else              { tag = 'EXTREMO';  color = '#F44336'; }
+        // pct para la barra: lineal hasta 300, capado
+        var pct = Math.min(100, Math.max(2, Math.round(v / 3)));
+        return { tag: tag, color: color, pct: pct };
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Mapeo objeto-memoria → fila BD para INSERT
     // Convierte un `act` (formato app) a un payload listo para
     // sb.from('activities').upsert(payload).
@@ -16628,12 +16655,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         })();
 
         // ── TRIMP (Banister) ──────────────────────────────────────
-        // TRIMP = Σ dt * HR_ratio * e^(b * HR_ratio)  / 60  (score in AU)
-        // b=1.92 for men. HR_rest≈50, HR_max≈195 (defaults)
+        // [FASE 6.2 · S20] Refactor: fuente primaria es act.trimp (BD,
+        // calculado con profileData.hrRest/hrMax reales por _computeTRIMP).
+        // Fallback al recálculo desde stream SOLO si act.trimp es null Y
+        // hay hrSeries cargado. Usa profileData en fallback (no hardcoded).
         const trimpDisplay = (() => {
+            // 1) Preferir TRIMP de BD si existe
+            if (act.trimp != null && isFinite(act.trimp)) {
+                return Math.round(Number(act.trimp)) + ' AU';
+            }
+            // 2) Fallback: recálculo desde hrSeries con profileData real
             const hr0 = act.hrSeries || [];
             if (hr0.length < 2) return '—';
-            const HR_REST = 50, HR_MAX = 195, b = 1.92;
+            var pd = (typeof profileData !== 'undefined' && profileData) ? profileData : {};
+            const HR_REST = (pd.hrRest != null) ? Number(pd.hrRest) : 50;
+            const HR_MAX  = (pd.hrMax  != null) ? Number(pd.hrMax)  : 195;
+            const b = 1.92;
+            if (HR_MAX <= HR_REST) return '—';
             let trimp = 0;
             hr0.forEach((p, i) => {
                 if (p.v < 60) return;
@@ -16642,6 +16680,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 trimp += dt * ratio * Math.exp(b * ratio);
             });
             return Math.round(trimp / 60) + ' AU';
+        })();
+
+        // ── Eficiencia aeróbica (EF = velocidad/FC) ──────────────────
+        // [FASE 6.2 · S20] Pareja temática del Decoupling. Métrica clásica
+        // de eficiencia aeróbica: spd_media / hr_media. Más alto = mejor
+        // forma a esa FC. Mismas dependencias que decoupling: hrSeries +
+        // distSer. Devuelve número con 2 decimales (m/s por ppm × 100).
+        const efDisplay = (() => {
+            const ds0 = act.distSer || [], hr0 = act.hrSeries || [];
+            if (ds0.length < 20 || hr0.length < 20) return '—';
+            const hrMap = {};
+            hr0.forEach(p => { hrMap[p.t] = p.v; });
+            const paired = ds0.filter(d => d.spd > 0.5).map(d => {
+                const hr = hrMap[d.t] || 0;
+                return hr > 80 ? { ef: d.spd / hr } : null;
+            }).filter(Boolean);
+            if (paired.length < 10) return '—';
+            const avgEf = paired.reduce((a,b) => a+b.ef, 0) / paired.length;
+            // Multiplicar ×100 para que sea legible (~1.8-2.2 típico)
+            return (avgEf * 100).toFixed(2);
         })();
 
         // ── Temperature ──────────────────────────────────────────
@@ -16668,9 +16726,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             {v: avgCadDisplay,  u:'', l:'Cadencia'},
             {v: avgStrideDisplay, u:'', l:'Zancada'},
             {v: balDisplay,     u: balDisplay!=='—'?'%':'', l:'Eq. I/D'},
-            // Row 4: Desacople · TRIMP · Temperatura
+            // Row 4: Desacople · Eficiencia · Temperatura  ([FASE 6.2 · S20] EF reemplaza a TRIMP — TRIMP se mueve al strip fino bajo el grid)
             {v: decouplingDisplay, u:'', l:'Desacople'},
-            {v: trimpDisplay,      u:'', l:'TRIMP'},
+            {v: efDisplay,         u:'', l:'Eficiencia'},
             {v: tempDisplay,       u:'', l:'Temperatura'},
         ];
         sData.forEach((s,i) => {
@@ -16681,14 +16739,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (i%3===1) cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;padding:8px 4px;background:#000;border-left:1px solid rgba(255,255,255,.04);border-right:1px solid rgba(255,255,255,.04);';
             // Rows 3-4 (indices 6-11) smaller padding + font
             if (i>=6) cell.style.padding = '7px 4px';
-            // Row 4 (decoupling, TRIMP, temp): add colour hints
+            // Row 4 (decoupling, EF, temp): add colour hints
             let valColor = '';
             if (i===9 && s.v!=='—') {
                 // Decoupling: green <5%, orange 5-10%, red >10%
                 const dcNum = parseFloat(s.v);
                 valColor = Math.abs(dcNum)<5?'#4CAF50':Math.abs(dcNum)<10?'#FF9500':'#F44336';
             }
-            if (i===10 && s.v!=='—') valColor = '#7aaff5';  // TRIMP: blue
+            // [FASE 6.2 · S20] EF reemplaza a TRIMP — color azul cyan (es ratio spd/hr, neutro)
+            if (i===10 && s.v!=='—') valColor = '#7aaff5';  // Eficiencia: blue
             if (i===11 && s.v!=='—') {
                 // Temperature: cool=blue, warm=orange, hot=red
                 const tempNum = parseInt(s.v);
@@ -16700,23 +16759,67 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         });
         c1.appendChild(sg);
 
-        // RPE strip — número 1-10 con color + etiqueta (estilo Coros)
+        // ─────────────────────────────────────────────────────────────
+        // [FASE 6.2 · S20] Strips finos RPE + TRIMP (~28px cada uno)
+        // Reemplazan el RPE strip gordo (~56px) anterior y añaden TRIMP.
+        // Estructura: LABEL dorado · barra gradiente · valor coloreado · tag.
+        // Si act.rpe ausente → no se pinta strip RPE (igual que antes).
+        // Si act.trimp ausente Y fallback null → no se pinta strip TRIMP.
+        // ─────────────────────────────────────────────────────────────
+
+        // Strip RPE fino
         if (act.rpe) {
             const rd = rpeData(act.rpe);
             if (rd) {
                 const rpeStrip = document.createElement('div');
-                // [FASE 5.7.4-c] strip a #000 + label "Esfuerzo percibido" dorado
-                rpeStrip.style.cssText = 'flex-shrink:0;background:#000;border-top:1px solid rgba(255,255,255,.04);padding:8px 14px;';
+                rpeStrip.style.cssText = 'flex-shrink:0;background:#000;border-top:1px solid rgba(255,255,255,.04);padding:6px 14px;';
+                // Tag corto (Coros style): Muy fácil / Fácil / Moderado / Duro / Máximo
+                var rpeTag = String(rd.label || '').toUpperCase();
+                // Ancho de barra proporcional al RPE (10 → 100%)
+                var rpePct = Math.max(2, Math.min(100, rd.n * 10));
                 rpeStrip.innerHTML =
-                    '<div style="display:flex;align-items:center;gap:10px;background:'+rd.color+'22;border-radius:12px;padding:8px 14px;">'
-                    +'<span style="font-size:18px;font-weight:800;color:#fff;background:'+rd.color+';border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:var(--f);">'+rd.n+'</span>'
-                    +'<div style="display:flex;flex-direction:column;gap:1px;">'
-                    +'<span style="font-size:9px;color:#C9A84C;opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.8px;">Esfuerzo percibido</span>'
-                    +'<span style="font-size:14px;font-weight:700;color:'+rd.color+';font-family:var(--f);">'+rd.label+'</span>'
+                    '<div style="display:flex;align-items:center;gap:10px;background:'+rd.color+'1a;border-radius:8px;padding:6px 12px;">'
+                    +'<span style="font-size:9px;color:#C9A84C;opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">RPE</span>'
+                    +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
+                    +'<div style="flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:100px;overflow:hidden;">'
+                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:100px;background:linear-gradient(90deg,#4CAF50 0%,#FFC107 35%,#FF9500 65%,#F44336 100%);"></div>'
+                    +'</div>'
+                    +'<span style="font-size:13px;font-weight:800;color:'+rd.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+rd.n+'</span>'
+                    +'<span style="font-size:10px;color:'+rd.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+rpeTag+'</span>'
                     +'</div></div>';
                 c1.appendChild(rpeStrip);
             }
         }
+
+        // Strip TRIMP fino — fuente primaria act.trimp (BD); fallback al
+        // recálculo de trimpDisplay (que ya hace fallback con hrSeries).
+        // Resolvemos el número aquí para tener int crudo + tag interpretativa.
+        (function() {
+            var trimpValue = null;
+            if (act.trimp != null && isFinite(act.trimp)) {
+                trimpValue = Math.round(Number(act.trimp));
+            } else {
+                // Fallback: parse del trimpDisplay (formato "NNN AU" o "—")
+                var m = String(trimpDisplay).match(/^(\d+)/);
+                if (m) trimpValue = parseInt(m[1], 10);
+            }
+            if (trimpValue == null || !isFinite(trimpValue)) return;
+            var lvl = _trimpLevel(trimpValue);
+            if (!lvl) return;
+            const trimpStrip = document.createElement('div');
+            trimpStrip.style.cssText = 'flex-shrink:0;background:#000;border-top:1px solid rgba(255,255,255,.04);padding:6px 14px;';
+            trimpStrip.innerHTML =
+                '<div style="display:flex;align-items:center;gap:10px;background:'+lvl.color+'1a;border-radius:8px;padding:6px 12px;">'
+                +'<span style="font-size:9px;color:#C9A84C;opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">TRIMP</span>'
+                +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
+                +'<div style="flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:100px;overflow:hidden;">'
+                +'<div style="height:100%;width:'+lvl.pct+'%;border-radius:100px;background:linear-gradient(90deg,#4CAF50 0%,#7aaff5 35%,#FF9500 70%,#F44336 100%);"></div>'
+                +'</div>'
+                +'<span style="font-size:13px;font-weight:800;color:'+lvl.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+trimpValue+'<span style="font-size:8px;color:rgba(255,255,255,.35);font-weight:600;margin-left:1px;"> AU</span></span>'
+                +'<span style="font-size:10px;color:'+lvl.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+lvl.tag+'</span>'
+                +'</div></div>';
+            c1.appendChild(trimpStrip);
+        })();
 
         // ── Elevation profile ──────────────────────────────────────
         if (act.eleSeries && act.eleSeries.length > 10) {
