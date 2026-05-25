@@ -21482,17 +21482,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── Swipe horizontal para cambiar semana ───────────────────────
         // Touch tracking + visual drag con tope elástico cuando no hay semana
         // anterior/siguiente. Al soltar: snap-back o cambio de semana.
-        (function _attachWeekSwipe() {
+        // [Sesión 24] Refactor: función reutilizable. Se aplica a la cabecera
+        // (hCard) Y al bloque de días (daysCard) más abajo para que el swipe
+        // entre semanas funcione desde ambas zonas. Esto evita tocar
+        // accidentalmente entrenos al hacer swipe en la zona de días.
+        function _attachWeekSwipeTo(targetEl) {
             let _wsx = 0, _wsy = 0, _wlocked = false, _wHorizontal = false, _wActive = false;
             const _WTH = 60; // umbral px para cambio de semana
-            hCard.addEventListener('touchstart', function(ev) {
+            targetEl.addEventListener('touchstart', function(ev) {
                 if (!ev.touches || ev.touches.length !== 1) return;
                 _wsx = ev.touches[0].clientX;
                 _wsy = ev.touches[0].clientY;
                 _wlocked = false; _wHorizontal = false; _wActive = true;
-                hCard.style.transition = 'none';
+                targetEl.style.transition = 'none';
             }, { passive: true });
-            hCard.addEventListener('touchmove', function(ev) {
+            targetEl.addEventListener('touchmove', function(ev) {
                 if (!_wActive) return;
                 const _dx = ev.touches[0].clientX - _wsx;
                 const _dy = ev.touches[0].clientY - _wsy;
@@ -21504,20 +21508,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Resistencia elástica si no hay semana en esa dirección
                 let _eff = _dx;
                 if ((_dx < 0 && !_hasNext) || (_dx > 0 && !_hasPrev)) _eff = _dx * 0.32;
-                hCard.style.transform = 'translateX(' + _eff + 'px)';
+                targetEl.style.transform = 'translateX(' + _eff + 'px)';
             }, { passive: true });
-            hCard.addEventListener('touchend', function(ev) {
+            targetEl.addEventListener('touchend', function(ev) {
                 if (!_wActive) return;
                 _wActive = false;
                 if (!_wHorizontal) {
-                    hCard.style.transition = 'transform .25s cubic-bezier(.22,.61,.36,1)';
-                    hCard.style.transform = 'translateX(0)';
+                    targetEl.style.transition = 'transform .25s cubic-bezier(.22,.61,.36,1)';
+                    targetEl.style.transform = 'translateX(0)';
                     return;
                 }
                 const _t = (ev.changedTouches && ev.changedTouches[0]);
                 if (!_t) return;
                 const _dx = _t.clientX - _wsx;
-                hCard.style.transition = 'transform .28s cubic-bezier(.22,.61,.36,1)';
+                targetEl.style.transition = 'transform .28s cubic-bezier(.22,.61,.36,1)';
                 if (_dx < -_WTH && _hasNext) {
                     // Siguiente semana
                     if (navigator.vibrate) try { navigator.vibrate(15); } catch(_){}
@@ -21530,15 +21534,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _renderActivePlanWeek(planCurrentWeek);
                     if (typeof updatePlanNav === 'function') updatePlanNav();
                 } else {
-                    hCard.style.transform = 'translateX(0)';
+                    targetEl.style.transform = 'translateX(0)';
                 }
             }, { passive: true });
-            hCard.addEventListener('touchcancel', function() {
+            targetEl.addEventListener('touchcancel', function() {
                 _wActive = false;
-                hCard.style.transition = 'transform .25s cubic-bezier(.22,.61,.36,1)';
-                hCard.style.transform = 'translateX(0)';
+                targetEl.style.transition = 'transform .25s cubic-bezier(.22,.61,.36,1)';
+                targetEl.style.transform = 'translateX(0)';
             }, { passive: true });
-        })();
+        }
+        _attachWeekSwipeTo(hCard);
 
         container.appendChild(hCard);
 
@@ -21880,6 +21885,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 daysCard.appendChild(outerWrap);
             }); // end daySessions.forEach
         }); // end ORDERED_DAYS.forEach
+
+        // [Sesión 24] Swipe entre semanas también desde el bloque de días.
+        // Replica el mismo comportamiento que la cabecera (hCard) para que
+        // el usuario pueda cambiar de semana desde cualquier zona del Plan.
+        // Como el listener solo dispara con desplazamiento horizontal claro
+        // (>60px y ratio dx/dy > 1.4), los taps verticales / clicks en
+        // entrenos individuales no se ven afectados.
+        _attachWeekSwipeTo(daysCard);
 
         container.appendChild(daysCard);
     }
@@ -23647,7 +23660,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(ov) ov.remove();
         ov = document.createElement('div');
         ov.id = 'warmup-detail-sheet';
-        ov.style.cssText = 'position:fixed;inset:0;z-index:99995;background:rgba(0,0,0,.8);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;';
+        // [Sesión 24] Refactor: usar class="sheet-backdrop" + class="sheet" para
+        // heredar la animación premium iOS (translateY 40px scale .96 → 0/1 con
+        // cubic-bezier(.16,1,.3,1) 400ms + backdrop-filter blur 0→20px 400ms).
+        // Antes era un overlay inline sin transición que aparecía de golpe.
+        ov.className = 'sheet-backdrop';
+        ov.onclick = function(e) { if(e.target===ov) closeSheet('warmup-detail-sheet'); };
         const zoneTag = r.protectZone && r.protectZone !== 'Sin zona específica' ? ' · Foco: ' + r.protectZone : '';
         function _fmtDur2(d) { return d < 60 ? d + 's' : Math.round(d/60) + 'min'; }
         const exHtml = r.exercises.map(function(e, i) {
@@ -23664,23 +23682,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + zoneEx
                 + '</div></div>';
         }).join('');
-        ov.innerHTML = `<div style="background:var(--bg);width:100%;max-width:500px;border-radius:20px 20px 0 0;height:95dvh;display:flex;flex-direction:column;overflow:hidden;">
-            <div style="padding:16px 20px 14px;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--border);border-radius:20px 20px 0 0;box-shadow:0 4px 12px -8px rgba(0,0,0,.18);position:relative;z-index:2;">
-                <div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 12px;"></div>
+        ov.innerHTML = `<div class="sheet">
+            <div class="sheet-handle-wrap">
+                <div class="sheet-handle"></div>
                 <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <div>
-                        <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:800;color:var(--tw);"><svg width="20" height="20" viewBox="0 0 24 24" fill="#f97316" xmlns="http://www.w3.org/2000/svg"><path d="M12 2c0 0-1 3-3 5s-3 4-3 7c0 4.5 3.5 8 8 8s8-3.5 8-8c0-3-2-5-4-7-1-1-1.5-2.5-1.5-4 0 0-1 2-2.5 2S12 4 12 2z"/><path d="M12 22c2.5 0 4.5-2 4.5-4.5 0-2-1-3-2-4-.7-.7-1-1.5-1-2.5 0 0-.5 1.5-1.5 1.5S10.5 11 10.5 11c0 1.5-1 2-1.5 3-.5.7-1 1.7-1 3.5C8 20 10 22 12 22z" fill="#fbbf24"/></svg>Warm up${zoneTag}</div>
-                        <div style="font-size:11px;color:var(--ts);margin-top:3px;">${r.exercises.length} ejercicios · ${r.durationMin} min antes de correr</div>
+                    <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="#f97316" xmlns="http://www.w3.org/2000/svg"><path d="M12 2c0 0-1 3-3 5s-3 4-3 7c0 4.5 3.5 8 8 8s8-3.5 8-8c0-3-2-5-4-7-1-1-1.5-2.5-1.5-4 0 0-1 2-2.5 2S12 4 12 2z"/><path d="M12 22c2.5 0 4.5-2 4.5-4.5 0-2-1-3-2-4-.7-.7-1-1.5-1-2.5 0 0-.5 1.5-1.5 1.5S10.5 11 10.5 11c0 1.5-1 2-1.5 3-.5.7-1 1.7-1 3.5C8 20 10 22 12 22z" fill="#fbbf24"/></svg>
+                        Warm up${zoneTag}
                     </div>
-                    <button onclick="document.getElementById('warmup-detail-sheet').remove()" aria-label="Cerrar" style="background:var(--bsoft);border:none;border-radius:50%;width:28px;height:28px;color:var(--ts);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0;line-height:1;">✕</button>
+                    <button onclick="closeSheet('warmup-detail-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
                 </div>
+                <div style="font-size:11px;color:var(--ts);margin-top:6px;">${r.exercises.length} ejercicios · ${r.durationMin} min antes de correr</div>
             </div>
-            <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 16px calc(24px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px;">
+            <div class="sheet-body" style="gap:6px;">
                 ${exHtml}
             </div>
         </div>`;
-        ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
         document.body.appendChild(ov);
+        openSheet('warmup-detail-sheet');
     }
 
     // (warmup loaded in bootApp)
@@ -39720,64 +39739,38 @@ window.addEventListener('DOMContentLoaded', function() {
          Diseñado para que NO interfiera con: carrusel de zapatillas, scroll
          entre tarjetas de actividad, PR strips, mapas, gráficas, etc. -->
     <script>
+        // ════════════════════════════════════════════════════════════════
+        // [Sesión 24] SWIPE entre pestañas — ahora SOLO en la barra de nav
+        // ════════════════════════════════════════════════════════════════
+        // Cambio respecto a versiones anteriores: antes el listener escuchaba
+        // en `document` y usaba un complejo `shouldIgnore()` para descartar
+        // touches dentro de scrolls horizontales internos (carrusel zapatillas,
+        // cards de actividad, mapas, etc.). Eso era frágil y a veces causaba
+        // gestos accidentales al editar planes o desplazarse por contenido.
+        //
+        // Ahora el swipe solo se detecta cuando el touchstart cae DENTRO de
+        // #nav. Esto:
+        //   - Elimina shouldIgnore() entero (~40 líneas más simples)
+        //   - Carrusel zapatillas, cards actividad, mapas, etc. quedan
+        //     automáticamente protegidos porque están fuera de #nav
+        //   - Los clicks normales en los tabs siguen funcionando (solo
+        //     procesamos cuando hay desplazamiento horizontal claro)
+        //   - Edge guard sigue activo por si acaso (rubber-band iOS)
+        // ════════════════════════════════════════════════════════════════
         (function setupViewSwipe(){
             // Orden de pestañas (igual que en el navbar)
             var VIEW_ORDER = ['cal', 'activities', 'home', 'mister', 'runner'];
-            var TH_DX_MIN  = 70;   // px mínimos para considerar swipe válido
+            var TH_DX_MIN  = 50;   // px mínimos para considerar swipe válido
+                                    // (más bajo que antes 70 porque la nav es más
+                                    // estrecha que la pantalla completa)
             var TH_RATIO   = 1.4;  // |dx| debe ser > |dy| * ratio
-            var TH_VX_MIN  = 0.35; // px/ms — velocidad mínima alternativa para gesto rápido
-            // [FASE 6 · Fix swipe edge] Zona de exclusión en los bordes laterales.
-            // Si el touch empieza a menos de EDGE_GUARD_PX del borde izquierdo o
-            // derecho de la pantalla, NO procesamos el swipe (cancelled=true).
-            // Razón: iOS PWA interpreta toques cerca del borde como edge gesture
-            // y arrastra el viewport horizontalmente (rubber-band). Si nuestro
-            // swipe entra en competencia, se ve el fondo del body detrás de la
-            // .view activa. Mejor cedérselo al sistema (que decidirá no hacer
-            // nada en PWA standalone) que pelearnos por el gesto.
-            var EDGE_GUARD_PX = 20;
+            var TH_VX_MIN  = 0.35; // px/ms — velocidad mínima alternativa
+            var EDGE_GUARD_PX = 20; // ignorar bordes laterales (rubber-band iOS)
 
             var sx = 0, sy = 0, st = 0;
             var active = false;
             var cancelled = false;
-
-            // Detecta si el touch empezó dentro de un elemento que captura
-            // scroll horizontal o que está fuera de #app (overlays, sheets...)
-            function shouldIgnore(target) {
-                if (!target || !(target instanceof Element)) return true;
-                // Si el target no está dentro de #app → fuera de las views (Club, overlays, sheets, modales)
-                var app = document.getElementById('app');
-                if (!app || !app.contains(target)) return true;
-                // Si hay algún overlay full-screen visible (Club, búsqueda, perfil usuario, crew, sheets) → ignorar
-                if (document.body.classList.contains('sheet-open')) return true;
-                if (document.querySelector('#club-view') && document.getElementById('club-view').style.display !== 'none') return true;
-                if (document.querySelector('[data-up-overlay]')) return true;
-                if (document.getElementById('crew-detail-view')) return true;
-                // Subir por el árbol buscando un padre que indique scroll horizontal interno
-                var el = target;
-                while (el && el !== app) {
-                    if (el.nodeType === 1) {
-                        // Marca explícita opt-out
-                        if (el.dataset && el.dataset.hScroll === '1') return true;
-                        // Detecta overflow-x SCROLLABLE (no hidden):
-                        // requiere AMBAS condiciones para ignorar:
-                        //   1. overflow-x: auto o scroll (explícito)
-                        //   2. scrollWidth > clientWidth (hay contenido que se sale)
-                        // Esto evita falsos positivos con .mr-lib-card-inner (overflow:hidden)
-                        // y otros contenedores con flex layout que NO son scrollables.
-                        var tn = el.tagName;
-                        if (tn === 'INPUT' || tn === 'TEXTAREA' || tn === 'SELECT' || tn === 'CANVAS') return true;
-                        if (el.isContentEditable) return true;
-                        if (el.getAttribute && el.getAttribute('role') === 'slider') return true;
-                        // Comprobar overflow-x sólo si realmente hay desbordamiento
-                        if (el.scrollWidth > el.clientWidth + 4) {
-                            var cs = getComputedStyle(el);
-                            if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') return true;
-                        }
-                    }
-                    el = el.parentNode;
-                }
-                return false;
-            }
+            var navEl = null;
 
             function currentIndex() {
                 var actBtn = document.querySelector('#nav .nb.active');
@@ -39789,20 +39782,14 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (idx < 0 || idx >= VIEW_ORDER.length) return;
                 var btn = document.querySelector('#nav .nb[data-target="' + VIEW_ORDER[idx] + '"]');
                 if (!btn) return;
-                // Pre-marcar el contenedor #app con la dirección para que el handler
-                // del navbar (en su click) pueda aplicar la animación direccional.
-                // Usamos data-attr en lugar de variable global porque el click es síncrono.
-                // [FASE 6 · Fix A] El handler del navbar ahora CONSUME el flag en el
-                // mismo tick síncrono (lee + delete) — ya no hace falta el cleanup
-                // diferido con doble RAF, que abría una ventana de race en Safari iOS
-                // donde un swipe rápido podía re-setear el flag justo antes del delete.
+                // Pre-marcar el contenedor #app con la dirección para que el
+                // handler del navbar (en su click) pueda aplicar animación direccional.
                 var appEl = document.getElementById('app');
                 if (appEl && dir) {
-                    appEl.dataset.swipeDir = dir;  // 'l' (siguiente) o 'r' (anterior)
+                    appEl.dataset.swipeDir = dir;  // 'l' siguiente / 'r' anterior
                 }
                 btn.click();
-                // Safety net: si por lo que sea el handler no lo consumió, lo limpiamos
-                // en el siguiente frame para no dejar el flag "pegado".
+                // Safety net: limpiar el flag si no se consumió
                 if (appEl) {
                     requestAnimationFrame(function(){
                         if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
@@ -39810,38 +39797,37 @@ window.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
-            document.addEventListener('touchstart', function(e) {
+            function onTouchStart(e) {
                 if (!e.touches || e.touches.length !== 1) { active = false; return; }
+                // Si hay un sheet abierto, no procesamos (lo gestiona el sheet)
+                if (document.body.classList.contains('sheet-open')) {
+                    cancelled = true; active = false; return;
+                }
                 var t = e.touches[0];
-                // [FASE 6 · Fix swipe edge] Excluir bordes laterales.
-                // window.innerWidth - EDGE_GUARD_PX da el límite derecho.
+                // Edge guard (rubber-band iOS)
                 var _vw = window.innerWidth || document.documentElement.clientWidth || 0;
                 if (t.clientX < EDGE_GUARD_PX || (_vw && t.clientX > _vw - EDGE_GUARD_PX)) {
-                    cancelled = true;
-                    active = false;
-                    return;
+                    cancelled = true; active = false; return;
                 }
-                cancelled = shouldIgnore(e.target);
-                if (cancelled) { active = false; return; }
+                cancelled = false;
                 sx = t.clientX;
                 sy = t.clientY;
                 st = Date.now();
                 active = true;
-            }, { passive: true });
+            }
 
-            document.addEventListener('touchmove', function(e) {
+            function onTouchMove(e) {
                 if (!active || cancelled) return;
                 var t = e.touches[0];
                 var dx = t.clientX - sx;
                 var dy = t.clientY - sy;
                 // Si en el movimiento se ve claramente vertical → cancelar
                 if (Math.abs(dy) > Math.abs(dx) * 0.9 && Math.abs(dy) > 14) {
-                    cancelled = true;
-                    active = false;
+                    cancelled = true; active = false;
                 }
-            }, { passive: true });
+            }
 
-            document.addEventListener('touchend', function(e) {
+            function onTouchEnd(e) {
                 if (!active || cancelled) { active = false; return; }
                 active = false;
                 var t = (e.changedTouches && e.changedTouches[0]) || null;
@@ -39855,11 +39841,29 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (Math.abs(dx) < Math.abs(dy) * TH_RATIO) return;
                 var idx = currentIndex();
                 if (idx < 0) return;
-                if (dx < 0) goToView(idx + 1, 'l');   // swipe izquierda → siguiente (entra desde derecha)
-                else        goToView(idx - 1, 'r');   // swipe derecha → anterior (entra desde izquierda)
-            }, { passive: true });
+                if (dx < 0) goToView(idx + 1, 'l');   // swipe izquierda → siguiente
+                else        goToView(idx - 1, 'r');   // swipe derecha → anterior
+            }
 
-            document.addEventListener('touchcancel', function(){ active = false; cancelled = false; }, { passive: true });
+            function onTouchCancel() { active = false; cancelled = false; }
+
+            // Bind listeners SOLO en #nav. Esperamos a que exista (puede no
+            // estar todavía en DOM si el script se ejecuta antes que el body
+            // termine de parsear, aunque al estar al final del body debería
+            // estar siempre).
+            function bindNavListeners() {
+                navEl = document.getElementById('nav');
+                if (!navEl) {
+                    // Retry tras un tick (defensivo)
+                    setTimeout(bindNavListeners, 60);
+                    return;
+                }
+                navEl.addEventListener('touchstart',  onTouchStart,  { passive: true });
+                navEl.addEventListener('touchmove',   onTouchMove,   { passive: true });
+                navEl.addEventListener('touchend',    onTouchEnd,    { passive: true });
+                navEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+            }
+            bindNavListeners();
         })();
     </script>
 
