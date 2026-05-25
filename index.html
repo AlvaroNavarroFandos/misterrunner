@@ -1318,6 +1318,85 @@
     .laps-table td:first-child { text-align: left; color: rgba(255,255,255,.38); font-size: 10px; }
     .laps-table tr:last-child td { border-bottom: none; }
 
+    /* [FASE 6.4 · S23] Best Efforts premium UI (Propuesta A · V2) */
+    .be-section-head {
+        padding: 14px 14px 8px;
+        font-size: 9px; color: #C9A84C;
+        text-transform: uppercase; letter-spacing: 1.2px;
+        font-weight: 800; opacity: .85;
+        font-family: var(--f);
+    }
+    .be-container {
+        padding: 0 0 16px;
+    }
+    .be-row {
+        display: grid;
+        grid-template-columns: 44px 1fr auto auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(255,255,255,.04);
+        transition: opacity .15s ease, background .15s ease;
+    }
+    .be-row:last-child { border-bottom: none; }
+    .be-row.be-locked { opacity: .42; }
+    .be-medal {
+        width: 44px; height: 50px;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+    }
+    .be-medal-lock {
+        width: 30px; height: 30px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 999px;
+        border: 1px dashed rgba(201,168,76,.18);
+        color: rgba(255,255,255,.4);
+    }
+    .be-medal-lock svg { width: 14px; height: 14px; }
+    .be-meta { min-width: 0; }
+    .be-distance {
+        font-size: 14px; font-weight: 800;
+        color: #fff;
+        letter-spacing: -.3px;
+        font-family: var(--f);
+    }
+    .be-row.be-locked .be-distance { color: rgba(255,255,255,.5); }
+    .be-distance-sub {
+        font-size: 9px; color: rgba(255,255,255,.5);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .8px;
+        margin-top: 1px;
+        font-family: var(--f);
+    }
+    .be-time {
+        font-size: 17px; font-weight: 800;
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -.5px;
+        text-align: right;
+        min-width: 64px;
+        font-family: var(--f);
+    }
+    .be-pace {
+        font-size: 10px; color: #C9A84C;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        opacity: .85;
+        min-width: 60px;
+        font-family: var(--f);
+    }
+    .be-locked-msg {
+        grid-column: 3 / 5;
+        text-align: right;
+        font-size: 10px;
+        color: rgba(255,255,255,.4);
+        font-style: italic;
+        font-weight: 600;
+        font-family: var(--f);
+    }
+
     /* LOGIN SCREEN */
     #login-screen {
         position: fixed; inset: 0; z-index: 9999;
@@ -6334,6 +6413,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             }
                         }
 
+                        /* [FASE 6.4 · S23] Best efforts desde streams del parser bulk.
+                           Pasamos directamente parsed.streams (shape A: arrays paralelos
+                           time/distance/hr en KM). _computeBestEfforts detecta shape
+                           automáticamente y devuelve objeto jsonb-friendly o null. */
+                        var bestEffortsValue = null;
+                        if (parsed && parsed.ok && parsed.streams
+                            && Array.isArray(parsed.streams.time)
+                            && Array.isArray(parsed.streams.distance)
+                            && parsed.streams.time.length >= 2) {
+                            try {
+                                bestEffortsValue = _computeBestEfforts(parsed.streams);
+                            } catch(beErr) {
+                                console.warn('[MR][6.4] best_efforts calc bulk error:', beErr);
+                                bestEffortsValue = null;
+                            }
+                        }
+
                         var insertPayload = {
                             user_id:      imp.userId,
                             source:       'strava_bulk',
@@ -6379,6 +6475,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                             /* [FASE 6.3] Decoupling calculado arriba desde streams parseados */
                             decoupling:   decouplingValue,
+
+                            /* [FASE 6.4 · S23] Best efforts (jsonb) calculados arriba */
+                            best_efforts: bestEffortsValue,
 
                             /* streams_path: NULL en INSERT, FASE 4.3 UPDATE post-upload */
                             streams_path: null
@@ -13806,6 +13905,146 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.4 · S23] _computeBestEfforts
+    // ─────────────────────────────────────────────────────────────────
+    // Calcula los mejores parciales por distancias estándar dentro de una
+    // activity. Para cada distancia objetivo, encuentra la ventana de
+    // duración mínima cuya distancia recorrida >= target.
+    //
+    // Acepta dos shapes de input (compatibilidad bulk + manual + visor):
+    //   A) Shape "parser" (bulk Strava): { time:[s], distance:[km], hr:[ppm] }
+    //      arrays paralelos del parser FIT/GPX.
+    //   B) Shape "memoria" (manual + visor live): distSer = [{t, d (cm), spd}],
+    //      hrSeries = [{t, v}].
+    //
+    // Detección automática: si el primer arg es Array y los items tienen .d
+    // o .t, asumimos shape B. Si es objeto plano con time/distance, shape A.
+    //
+    // Algoritmo: ventana deslizante O(N²) — para cada punto inicial i, avanza
+    // j hasta cubrir target. Quedarse con el min duration. Mismo enfoque que
+    // el visor original (líneas 17152-17188) pero ahora función pura reutilizable.
+    //
+    // Distancias finales: 1k, 1mi, 3k, 5k, 10k, HM (21.097), M (42.195).
+    //
+    // Output: objeto jsonb-friendly
+    //   {
+    //     "1km":   { time_sec:222, pace_sec:222, hr_avg:178, start_offset_sec:1234 },
+    //     "5km":   { ... },
+    //     "21097m":{ ... },
+    //     ...
+    //   }
+    // Solo se incluyen las distancias alcanzadas. Devuelve null si no hay
+    // datos suficientes (menos de 2 puntos en distancia).
+    // ─────────────────────────────────────────────────────────────────
+    var _BE_TARGETS = [
+        { key: '1km',   meters: 1000   },
+        { key: '1mi',   meters: 1609.34 },
+        { key: '3km',   meters: 3000   },
+        { key: '5km',   meters: 5000   },
+        { key: '10km',  meters: 10000  },
+        { key: '21km',  meters: 21097  },   // HM oficial 21.0975 km
+        { key: '42km',  meters: 42195  }    // M oficial 42.195 km
+    ];
+
+    function _computeBestEfforts(arg1, arg2) {
+        try {
+            // ── Normalizar a arrays paralelos: tArr (s), dArr (metros), hrMap (por t) ──
+            var tArr = [], dArr = [], hrMap = {};
+            if (arg1 && Array.isArray(arg1) && (Array.isArray(arg2) || arg2 == null)) {
+                // Shape B (memoria): arg1 = distSer [{t,d,spd}], arg2 = hrSeries [{t,v}]
+                var distSer = arg1, hrSeries = arg2 || [];
+                if (distSer.length < 2) return null;
+                for (var i = 0; i < distSer.length; i++) {
+                    var p = distSer[i];
+                    if (!p || p.t == null || p.d == null) continue;
+                    tArr.push(p.t);
+                    dArr.push(p.d / 100);  // cm → m
+                }
+                for (var hi = 0; hi < hrSeries.length; hi++) {
+                    var hp = hrSeries[hi];
+                    if (hp && hp.t != null && hp.v != null) hrMap[hp.t] = hp.v;
+                }
+            } else if (arg1 && typeof arg1 === 'object' && Array.isArray(arg1.time) && Array.isArray(arg1.distance)) {
+                // Shape A (parser bulk): arg1 = {time, distance, hr}
+                var s = arg1;
+                if (s.time.length < 2 || s.distance.length < 2) return null;
+                var n = Math.min(s.time.length, s.distance.length);
+                for (var k = 0; k < n; k++) {
+                    if (s.time[k] == null || s.distance[k] == null) continue;
+                    tArr.push(s.time[k]);
+                    dArr.push(s.distance[k] * 1000);  // km → m
+                }
+                if (Array.isArray(s.hr)) {
+                    for (var hk = 0; hk < Math.min(s.time.length, s.hr.length); hk++) {
+                        if (s.time[hk] != null && s.hr[hk] != null) hrMap[s.time[hk]] = s.hr[hk];
+                    }
+                }
+            } else {
+                return null;
+            }
+
+            if (tArr.length < 2 || dArr.length < 2) return null;
+            // La distancia total real recorrida (último - primero) determina
+            // qué targets son alcanzables. Pequeña tolerancia (-50m) por GPS drift.
+            var totalM = dArr[dArr.length - 1] - dArr[0];
+            if (totalM <= 0) return null;
+
+            var result = {};
+            for (var ti = 0; ti < _BE_TARGETS.length; ti++) {
+                var tgt = _BE_TARGETS[ti];
+                if (totalM < tgt.meters - 50) continue;  // tolerancia GPS
+
+                var best = Infinity, bestStartT = null, bestEndT = null;
+                for (var ii = 0; ii < dArr.length; ii++) {
+                    var d0 = dArr[ii];
+                    var t0 = tArr[ii];
+                    for (var jj = ii + 1; jj < dArr.length; jj++) {
+                        var dd = dArr[jj] - d0;
+                        if (dd < tgt.meters) continue;
+                        var dt = tArr[jj] - t0;
+                        if (dt > 0 && dt < best) {
+                            best = dt;
+                            bestStartT = t0;
+                            bestEndT = tArr[jj];
+                        }
+                        break;  // ya cubierto, no seguir avanzando j
+                    }
+                }
+                if (best < Infinity && best > 0) {
+                    // HR medio en la ventana
+                    var hrSum = 0, hrCnt = 0;
+                    for (var hM in hrMap) {
+                        if (!Object.prototype.hasOwnProperty.call(hrMap, hM)) continue;
+                        var hT = Number(hM);
+                        if (hT >= bestStartT && hT <= bestEndT) {
+                            hrSum += hrMap[hM];
+                            hrCnt++;
+                        }
+                    }
+                    var hrAvg = hrCnt > 0 ? Math.round(hrSum / hrCnt) : null;
+                    // pace_sec = duración / (distancia_target en km)
+                    var paceSec = Math.round(best / (tgt.meters / 1000));
+                    result[tgt.key] = {
+                        time_sec: Math.round(best),
+                        pace_sec: paceSec,
+                        hr_avg:   hrAvg,
+                        start_offset_sec: Math.round(bestStartT - tArr[0])
+                    };
+                }
+            }
+
+            // Si no se alcanzó NINGUNA distancia (activity < 1km), devolver null
+            // en lugar de objeto vacío para que la BD distinga "no calculado"
+            // (null) de "calculado pero vacío" ({}).
+            if (Object.keys(result).length === 0) return null;
+            return result;
+        } catch(e) {
+            console.warn('[MR][6.4] _computeBestEfforts exception:', e);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Mapeo objeto-memoria → fila BD para INSERT
     // Convierte un `act` (formato app) a un payload listo para
     // sb.from('activities').upsert(payload).
@@ -13862,7 +14101,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [FASE 6.2] TRIMP calculado al insertar; null si faltan HR o profile
             trimp:        _computeTRIMP(act, (typeof profileData !== 'undefined' ? profileData : null)),
             // [FASE 6.3] Decoupling desde streams en memoria (manual los tiene ya)
-            decoupling:   _computeDecoupling(act.hrSeries, act.distSer)
+            decoupling:   _computeDecoupling(act.hrSeries, act.distSer),
+            // [FASE 6.4 · S23] Best efforts desde streams en memoria
+            best_efforts: _computeBestEfforts(act.distSer, act.hrSeries)
             // streams_path → se rellena en update tras subir al bucket
             // polyline_encoded → opcional, lo dejamos null (los manuales tienen records crudos)
         };
@@ -14541,6 +14782,194 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return null;
         }
     };
+
+    // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.4 · S23] One-shot recompute de best_efforts
+    // ─────────────────────────────────────────────────────────────────
+    // Idéntica arquitectura al de decoupling (descarga streams, lotes de 5).
+    // Cuando termine, las 288 activities en BD tendrán best_efforts jsonb
+    // poblado (o null para las sin streams). Esto habilita el ranking
+    // gold/silver/bronze comparando todas vs todas.
+    //
+    // Uso desde consola dev:
+    //     await __mrRecomputeAllBestEfforts();
+    //
+    // Belt-and-suspenders: eq('user_id', uid) + eq('id', _dbActivityId).
+    // Idempotente.
+    // ─────────────────────────────────────────────────────────────────
+    window.__mrRecomputeAllBestEfforts = async function() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) { console.warn('[MR][6.4] no _sbClient'); return null; }
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) { console.warn('[MR][6.4] no session'); return null; }
+            if (!Array.isArray(activities)) {
+                console.warn('[MR][6.4] activities no es array');
+                return null;
+            }
+            if (typeof loadStreamsForActivity !== 'function' ||
+                typeof _mapStreamsToActFields !== 'function') {
+                console.warn('[MR][6.4] helpers de streams no disponibles');
+                return null;
+            }
+
+            var candidates = activities.filter(function(a) { return a && a._dbActivityId; });
+            console.log('[MR][6.4] arranque recompute best_efforts — '
+                        + candidates.length + ' activities en BD');
+
+            var stats = {
+                total: candidates.length,
+                ok: 0,
+                errors: 0,
+                nullBE: 0,        // streams existen pero datos insuficientes
+                noStreams: 0,     // sin streams_path o descarga falla
+                skipped: 0
+            };
+            var BATCH = 5;
+            var t0 = Date.now();
+
+            for (var i = 0; i < candidates.length; i += BATCH) {
+                var batch = candidates.slice(i, i + BATCH);
+                var ops = batch.map(function(act) {
+                    return (async function() {
+                        try {
+                            var streamsObj = await loadStreamsForActivity(act._dbActivityId, uid);
+                            if (!streamsObj || !streamsObj.streams) {
+                                stats.noStreams++;
+                                var updResNs = await sb
+                                    .from('activities')
+                                    .update({ best_efforts: null })
+                                    .eq('id', act._dbActivityId)
+                                    .eq('user_id', uid);
+                                if (updResNs && updResNs.error) {
+                                    stats.errors++;
+                                    console.warn('[MR][6.4] update null error id=' + act._dbActivityId, updResNs.error.message);
+                                }
+                                return;
+                            }
+                            // Mapear a estructura memoria (igual que el visor)
+                            var tmpAct = {};
+                            _mapStreamsToActFields(tmpAct, streamsObj);
+                            // Calcular best efforts (shape B: distSer + hrSeries)
+                            var be = _computeBestEfforts(tmpAct.distSer, tmpAct.hrSeries);
+                            if (be == null) stats.nullBE++;
+
+                            var updRes = await sb
+                                .from('activities')
+                                .update({ best_efforts: be })
+                                .eq('id', act._dbActivityId)
+                                .eq('user_id', uid)
+                                .select('id')
+                                .maybeSingle();
+                            if (updRes && updRes.error) {
+                                stats.errors++;
+                                console.warn('[MR][6.4] update error id=' + act._dbActivityId, updRes.error.message);
+                                return;
+                            }
+                            if (!updRes || !updRes.data) {
+                                stats.errors++;
+                                console.warn('[MR][6.4] no-row-updated id=' + act._dbActivityId);
+                                return;
+                            }
+                            // Actualizar memoria local para coherencia inmediata
+                            act.bestEfforts = be;
+                            stats.ok++;
+                        } catch(e) {
+                            stats.errors++;
+                            console.warn('[MR][6.4] op exception id=' + act._dbActivityId, e);
+                        }
+                    })();
+                });
+                await Promise.all(ops);
+                console.log('[MR][6.4] progreso ' + Math.min(i + BATCH, candidates.length)
+                            + '/' + candidates.length
+                            + ' · ok=' + stats.ok
+                            + ' · errors=' + stats.errors
+                            + ' · nullBE=' + stats.nullBE
+                            + ' · noStreams=' + stats.noStreams);
+            }
+
+            var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            console.log('%c[MR][6.4] ✅ recompute best_efforts terminado en ' + elapsed + 's',
+                        'color:#C9A84C;font-weight:700');
+            console.log('[MR][6.4] resumen:', stats);
+
+            // Re-render biblioteca para que el visor coja el bestEfforts BD al abrir
+            try {
+                if (typeof renderActivities === 'function') {
+                    renderActivities();
+                    console.log('[MR][6.4] biblioteca re-renderizada');
+                }
+            } catch(e) {
+                console.warn('[MR][6.4] re-render exception:', e);
+            }
+
+            return stats;
+        } catch(e) {
+            console.warn('[MR][6.4] __mrRecomputeAllBestEfforts outer exception:', e);
+            return null;
+        }
+    };
+
+    // ─────────────────────────────────────────────────────────────────
+    // [FASE 6.4 · S23] _computeBERanking
+    // ─────────────────────────────────────────────────────────────────
+    // Calcula el ranking gold/silver/bronze de cada activity por cada
+    // distancia, comparando todas las activities del usuario.
+    //
+    // Para cada distancia (1km, 1mi, 3km, 5km, 10km, 21km, 42km):
+    //   - Recoge todos los time_sec de las activities con best_efforts en BD/memoria
+    //   - Ordena ascendente (menor tiempo = mejor)
+    //   - Asigna gold al #1, silver al #2, bronze al #3
+    //
+    // Output: Map donde key = _dbActivityId, value = { '5km': 'gold', '10km': 'bronze', ... }
+    // Solo incluye activities que tengan al menos un rank.
+    //
+    // Llamado desde el visor en tiempo real cada vez que se abre una activity.
+    // Coste: O(N * D) por construcción del map + O(D * N log N) por sort,
+    // donde N ≈ 288 y D = 7 → ~2k ops, instantáneo.
+    // ─────────────────────────────────────────────────────────────────
+    function _computeBERanking() {
+        try {
+            if (!Array.isArray(activities)) return new Map();
+            var rankMap = new Map();
+            var distKeys = ['1km', '1mi', '3km', '5km', '10km', '21km', '42km'];
+
+            for (var di = 0; di < distKeys.length; di++) {
+                var dk = distKeys[di];
+                // Recoger todos los esfuerzos de esta distancia
+                var entries = [];
+                for (var ai = 0; ai < activities.length; ai++) {
+                    var act = activities[ai];
+                    if (!act || !act._dbActivityId) continue;
+                    var be = act.bestEfforts;
+                    if (!be || !be[dk] || be[dk].time_sec == null) continue;
+                    entries.push({
+                        id:   act._dbActivityId,
+                        time: be[dk].time_sec
+                    });
+                }
+                if (entries.length === 0) continue;
+                // Ordenar ascendente (menor tiempo = mejor)
+                entries.sort(function(a, b) { return a.time - b.time; });
+                // Asignar tiers al top 3
+                var tiers = ['gold', 'silver', 'bronze'];
+                for (var ti = 0; ti < Math.min(3, entries.length); ti++) {
+                    var entry = entries[ti];
+                    var existing = rankMap.get(entry.id) || {};
+                    existing[dk] = tiers[ti];
+                    rankMap.set(entry.id, existing);
+                }
+            }
+
+            return rankMap;
+        } catch(e) {
+            console.warn('[MR][6.4] _computeBERanking exception:', e);
+            return new Map();
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────────
     // Modal "Posible duplicado" — control de apertura/cierre y acciones
@@ -17149,58 +17578,126 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // ── Mejores esfuerzos de la sesión ───────────────────────────
-        const bestEfforts = (() => {
-            const ds0 = act.distSer || [];
-            if (ds0.length < 2) return [];
-            const efforts = [];
-            const targets = [
-                { label: 'Mejor km',   dist: 1000 },
-                { label: 'Mejor 5km',  dist: 5000 },
-                { label: 'Mejor 10km', dist: 10000 },
-            ];
-            targets.forEach(({ label, dist: targetD }) => {
-                let best = Infinity;
-                let bestHr = 0;
-                for (let i = 0; i < ds0.length; i++) {
-                    const d0 = ds0[i].d / 100;   // cm → m
-                    const t0 = ds0[i].t;
-                    for (let j = i + 1; j < ds0.length; j++) {
-                        const dd = ds0[j].d / 100 - d0;
-                        if (dd < targetD) continue;
-                        const dt = ds0[j].t - t0;
-                        if (dt < best) {
-                            best = dt;
-                            // avg HR in this window
-                            const hrSeg = (act.hrSeries || []).filter(h => h.t >= t0 && h.t <= ds0[j].t);
-                            bestHr = hrSeg.length ? Math.round(hrSeg.reduce((a,b)=>a+b.v,0)/hrSeg.length) : 0;
-                        }
-                        break;
-                    }
+        // [FASE 6.4 · S23] Refactor completo:
+        //   - Fuente primaria: act.bestEfforts (BD jsonb) → instantáneo
+        //   - Fallback: _computeBestEfforts desde streams en memoria si BD null
+        //   - Ranking gold/silver/bronze via _computeBERanking() (compara
+        //     contra TODAS las activities del usuario, estilo Strava)
+        //   - UI premium V2: filas grid + medalla SVG (gold/silver/bronze)
+        //     + distancias no alcanzadas atenuadas con candado
+        (function renderBestEfforts() {
+            // 1) Obtener BE: BD primero, fallback streams
+            var be = (act && act.bestEfforts && typeof act.bestEfforts === 'object')
+                ? act.bestEfforts
+                : null;
+            if (!be) {
+                // Fallback: computar desde streams en memoria (compatible con visor live)
+                if (Array.isArray(act.distSer) && act.distSer.length >= 2) {
+                    try {
+                        be = _computeBestEfforts(act.distSer, act.hrSeries);
+                    } catch(_) { be = null; }
                 }
-                if (best < Infinity && best > 0) {
-                    const paceS = best / (targetD / 1000);
-                    const pm = Math.floor(paceS / 60), ps = Math.round(paceS % 60);
-                    const bm = Math.floor(best / 60), bs = Math.round(best % 60);
-                    efforts.push({ label, pace: pm+"'"+String(ps).padStart(2,'"')+'', time: bm+':'+String(bs).padStart(2,'0'), hr: bestHr });
-                }
-            });
-            return efforts;
-        })();
+            }
 
-        if (bestEfforts.length > 0) {
-            c1.insertAdjacentHTML('beforeend',
-                '<div style="padding:10px 14px 4px;font-size:9px;color:#C9A84C;opacity:.75;text-transform:uppercase;letter-spacing:1px;font-family:var(--f);">MEJORES ESFUERZOS</div>');
-            const beTbl = document.createElement('table'); beTbl.className = 'laps-table';
-            beTbl.innerHTML = '<thead><tr><th>Distancia</th><th>Tiempo</th><th>Ritmo</th><th>FC</th></tr></thead>';
-            const beTb = document.createElement('tbody');
-            bestEfforts.forEach(e => {
-                beTb.insertAdjacentHTML('beforeend',
-                    '<tr><td style="font-weight:600;">'+e.label+'</td><td>'+e.time+'</td><td>'+e.pace+'/km</td><td>'+(e.hr||'—')+'</td></tr>');
+            // 2) Calcular ranking gold/silver/bronze comparando todas las activities
+            //    Solo si esta activity está en BD (sino no compite en el ranking)
+            var actRank = {};
+            if (act && act._dbActivityId && typeof _computeBERanking === 'function') {
+                try {
+                    var rankMap = _computeBERanking();
+                    actRank = rankMap.get(act._dbActivityId) || {};
+                } catch(_) { actRank = {}; }
+            }
+
+            // 3) Definir distancias en orden ascendente + metadata UI
+            var allTargets = [
+                { key: '1km',  label: '1 km',           sub: '',             meters: 1000   },
+                { key: '1mi',  label: '1 milla',        sub: '1.609 km',     meters: 1609.34 },
+                { key: '3km',  label: '3 km',           sub: '',             meters: 3000   },
+                { key: '5km',  label: '5 km',           sub: '',             meters: 5000   },
+                { key: '10km', label: '10 km',          sub: '',             meters: 10000  },
+                { key: '21km', label: 'Media maratón',  sub: '21.097 km',    meters: 21097  },
+                { key: '42km', label: 'Maratón',        sub: '42.195 km',    meters: 42195  }
+            ];
+
+            // 4) Decidir qué filas mostrar:
+            //    - Las alcanzadas (en be) siempre
+            //    - Las no alcanzadas: candado (V2). Si activity < 1km, no mostrar nada.
+            var actDistKm = Number(act.distKm) || 0;
+            if (actDistKm < 0.5) return;  // demasiado corta para tener sentido
+
+            // 5) Construir HTML
+            var rows = [];
+            var hasAny = false;
+            allTargets.forEach(function(tgt) {
+                var info = be ? be[tgt.key] : null;
+                var isDone = !!(info && info.time_sec != null);
+
+                if (isDone) {
+                    hasAny = true;
+                    var timeSec = Math.round(info.time_sec);
+                    var bm = Math.floor(timeSec / 3600);
+                    var bMin = Math.floor((timeSec % 3600) / 60);
+                    var bSec = timeSec % 60;
+                    var timeStr = bm > 0
+                        ? bm + ':' + String(bMin).padStart(2,'0') + ':' + String(bSec).padStart(2,'0')
+                        : bMin + ':' + String(bSec).padStart(2,'0');
+                    var paceSec = info.pace_sec != null ? info.pace_sec : 0;
+                    var pm2 = Math.floor(paceSec / 60), ps2 = Math.round(paceSec % 60);
+                    var paceStr = pm2 + "'" + String(ps2).padStart(2,'0') + '"/km';
+                    // Medalla SVG si tiene rank
+                    var rankTier = actRank[tgt.key] || null;
+                    var medalHtml = '';
+                    if (rankTier && typeof _buildMedalSVG === 'function') {
+                        // _buildMedalSVG espera meta {tier, centerText}; usamos número del rank
+                        var rankNum = rankTier === 'gold' ? '1' : (rankTier === 'silver' ? '2' : '3');
+                        try {
+                            medalHtml = _buildMedalSVG({ tier: rankTier, centerText: rankNum });
+                        } catch(_) { medalHtml = ''; }
+                    }
+                    rows.push(
+                        '<div class="be-row be-done">'
+                          + '<div class="be-medal">' + medalHtml + '</div>'
+                          + '<div class="be-meta">'
+                            + '<div class="be-distance">' + tgt.label + '</div>'
+                            + (tgt.sub ? '<div class="be-distance-sub">' + tgt.sub + '</div>' : '')
+                          + '</div>'
+                          + '<div class="be-time">' + timeStr + '</div>'
+                          + '<div class="be-pace">' + paceStr + '</div>'
+                        + '</div>'
+                    );
+                } else {
+                    // No alcanzada: V2 atenuada con candado, solo si la activity tiene
+                    // potencial de haberla alcanzado (target >= 1km y < 100km, defensivo)
+                    rows.push(
+                        '<div class="be-row be-locked">'
+                          + '<div class="be-medal">'
+                            + '<div class="be-medal-lock">'
+                              + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+                                + '<rect x="5" y="11" width="14" height="9" rx="2"/>'
+                                + '<path d="M8 11V8a4 4 0 1 1 8 0v3"/>'
+                              + '</svg>'
+                            + '</div>'
+                          + '</div>'
+                          + '<div class="be-meta">'
+                            + '<div class="be-distance">' + tgt.label + '</div>'
+                            + (tgt.sub ? '<div class="be-distance-sub">' + tgt.sub + '</div>' : '')
+                          + '</div>'
+                          + '<div class="be-locked-msg">No alcanzado</div>'
+                        + '</div>'
+                    );
+                }
             });
-            beTbl.appendChild(beTb);
-            const beW = document.createElement('div'); beW.style.cssText = 'padding:0 14px 20px;';
-            beW.appendChild(beTbl); c1.appendChild(beW);
-        }
+
+            // 6) Solo renderizar si hay al menos una distancia alcanzada
+            //    (si una activity tiene 0 alcanzadas significa que es <1km o sin streams,
+            //    en cuyo caso no tiene sentido mostrar 7 candados)
+            if (!hasAny) return;
+
+            var header = '<div class="be-section-head">Mejores parciales</div>';
+            var container = '<div class="be-container">' + rows.join('') + '</div>';
+            c1.insertAdjacentHTML('beforeend', header + container);
+        })();
 
         // (extra stats now in main 3×3 grid)
         track.appendChild(c1);
@@ -27592,6 +28089,15 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
             const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F5F7F9"/><stop offset="0.5" stop-color="#8A95A0"/><stop offset="1" stop-color="#4A5560"/></linearGradient>';
             const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.45" stop-color="#CCD0D6"/><stop offset="1" stop-color="#5D6168"/></radialGradient>';
             return _circleLayered(rim, face, '#4A5560', '#3A4550', txt, fontSize, '');
+        }
+
+        // ─── BRONZE (FASE 6.4 · S23) — cobre/tabaco oscuro ───────────────
+        // Paleta coherente con gold/silver pero en tonos cobre profundo.
+        // Usado en best efforts cuando el parcial es el #3 histórico.
+        if (tier === 'bronze') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4C68C"/><stop offset="0.5" stop-color="#A35730"/><stop offset="1" stop-color="#4A2615"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#FBDAA8"/><stop offset="0.45" stop-color="#C57E4A"/><stop offset="1" stop-color="#5C2D14"/></radialGradient>';
+            return _circleLayered(rim, face, '#4A2615', '#3A1A0A', txt, fontSize, '');
         }
 
         // ─── LIGHTNING (100m) ────────────────────────────────────────────
