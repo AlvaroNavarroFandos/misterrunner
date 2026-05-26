@@ -9250,6 +9250,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 renderHome();
             }
             restoreAvatarDOM();
+            // [HOTFIX hitos 26-may · Auto-healing]
+            // Red de seguridad ante pérdida de hitos km en BD (escenario observado
+            // tras rebuild parcial 2026-05-26: PRs running OK pero hitos km a 0).
+            // Si tenemos ≥50 km de running acumulado en memoria PERO 0 hitos en BD,
+            // disparamos el rebuild de hitos. Idempotente y barato:
+            //   - SELECT 1 fila para chequear → upsert ignoreDuplicates si procede
+            //   - No corre si el rebuild ya está en proceso (lock _autoHealRunning)
+            //   - Diferido 1500ms tras boot para no competir con el primer render
+            setTimeout(function() {
+                try { _autoHealMilestones(); } catch(_) {}
+            }, 1500);
         }).catch(()=>{});
 
         // [S26.A · Sesión 26] Cargar shoes desde Supabase (fuente única).
@@ -17059,17 +17070,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         activities = activities.filter(a => String(a.id) !== String(id));
         renderActivities();
         saveAppState();
-        // Si la actividad borrada era de running, recalcular los PRs.
-        // Si era un PR establecido por esta actividad, se revertirá automáticamente
-        // al siguiente mejor registro del resto del histórico.
-        if (wasRunning && typeof window._rebuildAllRecordsFromHistory === 'function') {
-            window._rebuildAllRecordsFromHistory()
-                .then(function(rows){
-                    if (rows && rows.length >= 0) {
-                        console.log('[MR][PR] PRs recalculados tras borrar actividad', id);
+        // Si la actividad borrada era de running, recalcular los PRs Y los hitos.
+        // [HOTFIX hitos 26-may] Antes solo se llamaba _rebuildAllRecordsFromHistory
+        // (PRs), pero los hitos km acumulados también necesitan recalcularse: si
+        // borras una activity que cruzó un hito y deja el acumulado bajo el umbral,
+        // el hito debe revertirse al siguiente upsert (en realidad NO se borra:
+        // _rebuildAllMilestonesFromHistory hace upsert idempotente, no DELETE; pero
+        // si la activity borrada poblaba un hito posterior, el rebuild lo reasigna
+        // a la siguiente activity cronológica que cruzó el umbral).
+        if (wasRunning && typeof window._rebuildAllPRsAndMilestones === 'function') {
+            window._rebuildAllPRsAndMilestones()
+                .then(function(summary){
+                    if (summary) {
+                        console.log('[MR][PR·HITO] recalculados tras borrar actividad ' + id +
+                            ' · ' + summary.records.length + ' PRs · ' + summary.milestones.length + ' hitos');
                     }
                 })
-                .catch(function(err){ console.warn('[MR][PR] recalc fail:', err); });
+                .catch(function(err){ console.warn('[MR][PR·HITO] recalc post-delete fail:', err); });
         }
 
         // [Sesión 19 · Bloque A] Persistencia delete a Supabase en background.
@@ -18654,6 +18671,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Las activities viejas tienen id numérico; las nuevas BD usan UUID.
         const act = activities.find(a => String(a.id) === String(id));
         if (!act) return;
+        // [HOTFIX hitos 26-may] Guardar tipo previo para detectar cambio
+        // y disparar rebuild de PRs+hitos sólo si el tipo realmente cambió.
+        act._editPrevType = act.type;
         const newName  = document.getElementById('aedit-name').value.trim() || null;
         const newType  = document.getElementById('aedit-type').value;
         const newShoeId = document.getElementById('aedit-shoe').value;
@@ -18726,6 +18746,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 console.warn('[MR][6.1.b] _updateActivityInSupabase falló (no bloqueante):', e);
             }
         })();
+        // [HOTFIX hitos 26-may] Si el tipo cambió, recalcular PRs+hitos.
+        // Los 5 tipos editables (easy/recovery/series/long/race) son todos
+        // running, así que en teoría el acumulado no cambia. Pero por defensa
+        // en profundidad (y por si más adelante se permiten tipos no-running
+        // en el editor), disparamos el rebuild fire-and-forget cuando hubo
+        // cambio de tipo. Para edits que sólo tocan name/shoe/foto/RPE no
+        // gastamos request BD innecesario.
+        var _oldType = act._editPrevType || null;
+        if (_oldType && _oldType !== newType
+            && typeof window._rebuildAllPRsAndMilestones === 'function') {
+            window._rebuildAllPRsAndMilestones()
+                .then(function(summary){
+                    if (summary) {
+                        console.log('[MR][PR·HITO] recalculados tras editar tipo ' +
+                            _oldType + '→' + newType + ' · ' +
+                            summary.records.length + ' PRs · ' + summary.milestones.length + ' hitos');
+                    }
+                })
+                .catch(function(err){ console.warn('[MR][PR·HITO] recalc post-edit fail:', err); });
+        }
     }
 
     // ── OPEN ACTIVITY DETAIL ─────────────────────────────────────
@@ -24478,14 +24518,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             showToast(msg, 4500);
                         }
                     } catch(_){}
-                    // Si alguna era running, recalcular PRs (igual que deleteActivity)
-                    if (anyRunning && typeof window._rebuildAllRecordsFromHistory === 'function') {
-                        window._rebuildAllRecordsFromHistory()
-                            .then(function(){
-                                console.log('[MR][S22 · Reconcile] PRs recalculados tras reconcilio');
+                    // Si alguna era running, recalcular PRs Y hitos (igual que deleteActivity)
+                    // [HOTFIX hitos 26-may] Antes solo PRs; ahora ambos para mantener
+                    // coherencia tras eliminar huérfanas cross-device.
+                    if (anyRunning && typeof window._rebuildAllPRsAndMilestones === 'function') {
+                        window._rebuildAllPRsAndMilestones()
+                            .then(function(summary){
+                                if (summary) {
+                                    console.log('[MR][S22 · Reconcile] PRs+hitos recalculados · ' +
+                                        summary.records.length + ' PRs · ' + summary.milestones.length + ' hitos');
+                                }
                             })
                             .catch(function(err){
-                                console.warn('[MR][S22 · Reconcile] PR recalc fail:', err);
+                                console.warn('[MR][S22 · Reconcile] PR·HITO recalc fail:', err);
                             });
                     }
                 }
@@ -29430,6 +29475,102 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         };
     }
     window._rebuildAllPRsAndMilestones = _rebuildAllPRsAndMilestones;
+
+    // ─────────────────────────────────────────────────────────────────
+    // [HOTFIX hitos 26-may] _autoHealMilestones()
+    //
+    // Auto-healing defensivo: detecta el escenario "tengo ≥50 km de running
+    // en memoria pero 0 hitos km en BD" y dispara el rebuild de hitos en
+    // background. Disparado desde bootApp con setTimeout(1500ms) para no
+    // competir con el primer render.
+    //
+    // Por qué existe esta función:
+    //   El 2026-05-26 el usuario reportó hitos km a 0 en BD pese a tener
+    //   ~300 activities running y >2000 km acumulados. Causa raíz desconocida
+    //   (probablemente: rebuild parcial en sesión previa donde
+    //   _rebuildAllRecordsFromHistory corrió pero _rebuildAllMilestonesFromHistory
+    //   no, o falló silenciosamente). Esta función blinda contra el escenario
+    //   sin pedir intervención manual del usuario.
+    //
+    // Características:
+    //   - Idempotente: si los hitos ya están, no hace nada
+    //   - Barato: SELECT 1 fila WHERE record_type LIKE 'km_%' LIMIT 1
+    //   - Lock simple (_autoHealRunning) evita ejecuciones solapadas
+    //   - No corre si <50 km acumulados (umbral del primer hito)
+    //   - Fire-and-forget: nunca bloquea, nunca lanza
+    // ─────────────────────────────────────────────────────────────────
+    var _autoHealRunning = false;
+    async function _autoHealMilestones() {
+        if (_autoHealRunning) return;
+        _autoHealRunning = true;
+        try {
+            // Acumulado de running en memoria (cheap)
+            var acts = (typeof window._getActivities === 'function')
+                ? (window._getActivities() || [])
+                : [];
+            var totalKm = 0;
+            for (var i = 0; i < acts.length; i++) {
+                var a = acts[i];
+                if (!a) continue;
+                if (!RUNNING_TYPES.has(String(a.type || '').toLowerCase())) continue;
+                var k = Number(a.distKm) || 0;
+                if (k > 0) totalKm += k;
+            }
+            // Bajo el primer hito → no hay nada que healear
+            if (totalKm < 50) {
+                console.log('[MR][HITO·AutoHeal] acumulado ' + totalKm.toFixed(1)
+                    + ' km < 50, sin acción');
+                return;
+            }
+            // ¿Hay al menos 1 hito en BD? Si sí, no toques nada.
+            var sb = window._sbClient;
+            if (!sb) {
+                console.warn('[MR][HITO·AutoHeal] sin Supabase, abortando');
+                return;
+            }
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) {
+                console.warn('[MR][HITO·AutoHeal] sin sesión, abortando');
+                return;
+            }
+            var qres = await sb
+                .from('user_records')
+                .select('record_type', { count: 'exact', head: false })
+                .eq('user_id', uid)
+                .like('record_type', 'km_%')
+                .limit(1);
+            if (qres.error) {
+                console.warn('[MR][HITO·AutoHeal] select fail:', qres.error.message);
+                return;
+            }
+            var existing = (qres.data || []).length;
+            if (existing > 0) {
+                console.log('[MR][HITO·AutoHeal] hitos ya presentes en BD, sin acción');
+                return;
+            }
+            // Discrepancia detectada: acumulado >=50 km pero 0 hitos en BD
+            console.warn('[MR][HITO·AutoHeal] DISCREPANCIA detectada · '
+                + totalKm.toFixed(1) + ' km acumulados pero 0 hitos en BD · '
+                + 'disparando rebuild...');
+            var rebuilt = await _rebuildAllMilestonesFromHistory();
+            if (rebuilt && rebuilt.length > 0) {
+                console.log('[MR][HITO·AutoHeal] ✅ rehealed ' + rebuilt.length + ' hitos km');
+                // Toast informativo opcional, no intrusivo (usa el sistema
+                // existente si está disponible; si no, silencio)
+                if (typeof showToast === 'function') {
+                    try { showToast('✓ ' + rebuilt.length + ' hitos kilométricos recuperados', 4000); } catch(_){}
+                }
+            } else {
+                console.warn('[MR][HITO·AutoHeal] rebuild devolvió 0 hitos, esperaba al menos 1');
+            }
+        } catch (e) {
+            console.warn('[MR][HITO·AutoHeal] excepción no bloqueante:', e && e.message ? e.message : e);
+        } finally {
+            _autoHealRunning = false;
+        }
+    }
+    window._autoHealMilestones = _autoHealMilestones;
 })();
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -41509,13 +41650,52 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [HOTFIX hitos 26-may] Coherencia hitos km
+    // Solo comprueba lo accesible desde este scope (las funciones expuestas
+    // a window). KM_MILESTONES y RUNNING_TYPES viven en otro IIFE closure
+    // y no son accesibles aquí; no se testan.
+    function _testHitosCoherence() {
+        var checks = [];
+        var fns = ['_rebuildAllMilestonesFromHistory', '_rebuildAllPRsAndMilestones',
+                   '_autoHealMilestones', '_detectMilestones', '_getActivities'];
+        fns.forEach(function(n) {
+            try {
+                if (typeof window[n] !== 'function') checks.push(n+':missing');
+            } catch(_) { checks.push(n+':eval-fail'); }
+        });
+        // Acumulado en memoria usando _getActivities expuesto (no requiere
+        // RUNNING_TYPES del otro closure: replicamos el set aquí para
+        // mantener el test self-contained).
+        var totalKm = 0;
+        var ridingTypes = { easy:1, recovery:1, series:1, long:1, race:1 };
+        try {
+            var acts = (typeof window._getActivities === 'function') ? (window._getActivities() || []) : [];
+            for (var i = 0; i < acts.length; i++) {
+                var a = acts[i];
+                if (!a) continue;
+                var t = String(a.type || '').toLowerCase();
+                if (!ridingTypes[t]) continue;
+                var k = Number(a.distKm) || 0;
+                if (k > 0) totalKm += k;
+            }
+        } catch(e) { checks.push('compute:'+e.message); }
+        return {
+            name: 'hitos.coherence',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'fns OK · acum '+totalKm.toFixed(1)+' km running'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
         state:   [_testActivitiesArray, _testUserKeyScoped],
         css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
         renders: [_testRendersDontCrash],
-        s26b:    [_testS26BCatalog, _testS26BWizard]
+        s26b:    [_testS26BCatalog, _testS26BWizard],
+        hitos:   [_testHitosCoherence]
     };
 
     window.__mrSmoke = function(group) {
