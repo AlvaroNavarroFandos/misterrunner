@@ -8836,6 +8836,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             restoreAvatarDOM();
         }).catch(()=>{});
 
+        // [S26.A · Sesión 26] Cargar shoes desde Supabase (fuente única).
+        // Independiente del load de activities — no bloquea ni se bloquea.
+        // Tras poblar shoes[], renderShoes() pinta tarjetas con foto placeholder.
+        // _hydrateShoePhotoUrls() carga URLs firmadas en paralelo y re-render.
+        (async () => {
+            try {
+                var res = await _loadShoesFromSupabase();
+                if (res && res.ok && res.count > 0) {
+                    // Hidratar fotos lazy (si hay shoes con photoPath)
+                    _hydrateShoePhotoUrls().catch(function(e) {
+                        console.warn('[MR][S26.A] hidratación fotos warn:', e);
+                    });
+                }
+            } catch(e) {
+                console.warn('[MR][S26.A] load shoes desde BD warning:', e);
+            }
+        })();
+
         // [v6 P.Plan] Al cargar la app, localizar la semana actual del plan
         // para que Plan se muestre directamente en HOY (no en semana 1).
         try {
@@ -11363,51 +11381,122 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     document.getElementById('btn-add-shoe').addEventListener('click', () => openSheet('shoe-add-modal'));
     document.getElementById('btn-save-shoe').addEventListener('click', addShoe);
 
-    function addShoe() {
+    // [S26.A] addShoe ahora persiste a Supabase: INSERT y obtiene UUID
+    // generado por BD. Mantiene firma síncrona (botón onClick), pero
+    // internamente lanza el INSERT async. Si BD falla, NO añade a shoes[]
+    // (evitamos zapas fantasma local-only sin contraparte BD).
+    async function addShoe() {
         const name = document.getElementById('shoe-name').value.trim();
         const km = parseFloat(document.getElementById('shoe-km').value) || 0;
         const maxKm = parseFloat(document.getElementById('shoe-max').value) || 800;
         const colorHex  = document.getElementById('shoe-color-hex').value  || '#1C1C1E';
         const colorName = document.getElementById('shoe-color-name').value || 'Negro';
         if (!name) { document.getElementById('shoe-name').focus(); return; }
-        shoes.push({ id: Date.now(), name, km, maxKm, img:'', colorHex, colorName });
-        renderShoes();
-        saveAppState();
-        document.getElementById('shoe-name').value = '';
-        document.getElementById('shoe-km').value = '';
-        document.getElementById('shoe-max').value = '';
-        closeSheet('shoe-add-modal');
+
+        // [S26.A] Deshabilitar botón mientras se persiste (evita doble click)
+        var btnSave = document.getElementById('btn-save-shoe');
+        if (btnSave) btnSave.disabled = true;
+
+        try {
+            var res = await _saveShoeToSupabase({ name, km, maxKm, colorHex, colorName });
+            if (!res.ok || !res.row) {
+                console.warn('[MR][S26.A] addShoe falló:', res.error);
+                if (typeof showToast === 'function') {
+                    showToast('No se pudo guardar la zapatilla. Reintenta.');
+                }
+                return;
+            }
+            // BD OK → poblar memoria con el row mapeado (id es uuid de BD)
+            shoes.push(_mapDbRowToShoe(res.row));
+            renderShoes();
+            document.getElementById('shoe-name').value = '';
+            document.getElementById('shoe-km').value = '';
+            document.getElementById('shoe-max').value = '';
+            closeSheet('shoe-add-modal');
+        } finally {
+            if (btnSave) btnSave.disabled = false;
+        }
     }
 
-    function deleteShoe(id) {
-        shoes = shoes.filter(s => s.id !== id);
+    // [S26.A] deleteShoe ahora borra de BD + cleanup bucket. Cambio UI
+    // optimista: quitamos de shoes[] inmediatamente; si BD falla, re-cargamos
+    // desde BD para restaurar (poco probable con RLS configurada).
+    async function deleteShoe(id) {
+        var shoe = shoes.find(s => String(s.id) === String(id));
+        if (!shoe) return;
+        var photoPath = shoe.photoPath || null;
+        // UI optimista
+        shoes = shoes.filter(s => String(s.id) !== String(id));
         renderShoes();
-        saveAppState();
+        // BD async
+        var res = await _deleteShoeFromSupabase(id, photoPath);
+        if (!res.ok) {
+            console.warn('[MR][S26.A] deleteShoe BD falló, recargando:', res.error);
+            try { await _loadShoesFromSupabase(); } catch(_) {}
+            if (typeof showToast === 'function') showToast('No se pudo eliminar. Reintenta.');
+        }
     }
 
+    // [S26.A] setShoeImg sube la foto al bucket shoe-photos y guarda
+    // el photo_path en BD. La URL firmada se cachea en shoe.img para el
+    // render inmediato. Si BD/upload falla, mantenemos la dataURI local
+    // como fallback visual (la próxima sesión no la verá, pero el usuario
+    // ve algo). Mejor que romper la UI.
     function setShoeImg(event, id) {
         const file = event.target.files[0];
         if (!file)
             return;
         const reader = new FileReader();
-        reader.onload = e => {
-            const shoe = shoes.find(s => s.id === id);
-            if (shoe) {
-                shoe.img = e.target.result;
-                renderShoes();
-                saveAppState();
+        reader.onload = async (e) => {
+            const shoe = shoes.find(s => String(s.id) === String(id));
+            if (!shoe) return;
+            const dataUri = e.target.result;
+            // UI optimista: pintamos la foto inmediatamente
+            shoe.img = dataUri;
+            renderShoes();
+            // Upload al bucket
+            try {
+                const newPath = await _uploadShoePhoto(id, dataUri);
+                if (newPath) {
+                    // Si había foto previa con otro path/ext, la borramos
+                    if (shoe.photoPath && shoe.photoPath !== newPath) {
+                        try {
+                            var sb = window._sbClient;
+                            if (sb) await sb.storage.from('shoe-photos').remove([shoe.photoPath]);
+                        } catch(_) {}
+                    }
+                    shoe.photoPath = newPath;
+                    // Cachear signed URL para esta sesión (evita re-pedirla)
+                    var signedUrl = await _getShoePhotoUrl(newPath);
+                    if (signedUrl) {
+                        _shoePhotoUrlCache[newPath] = signedUrl;
+                        shoe.img = signedUrl;
+                    }
+                    // Persistir photo_path en BD
+                    await _updateShoeInSupabase(id, { photo_path: newPath });
+                    renderShoes();
+                } else {
+                    console.warn('[MR][S26.A] setShoeImg upload devolvió null');
+                }
+            } catch (err) {
+                console.warn('[MR][S26.A] setShoeImg exception:', err);
             }
         };
         reader.readAsDataURL(file);
     }
 
+    // [S26.A] addKmToShoe ahora persiste km en BD. Se llama desde
+    // _saveImportedActivityCore (añadir activity nueva con zapa). UI
+    // optimista: actualizamos memoria primero, BD en background.
     function addKmToShoe(id, km) {
-        const s = shoes.find(s => s.id === id);
-        if (s) {
-            s.km = Math.round((s.km + km) * 10) / 10;
-            renderShoes();
-            saveAppState();
-        }
+        const s = shoes.find(s => String(s.id) === String(id));
+        if (!s) return;
+        s.km = Math.round((s.km + km) * 10) / 10;
+        renderShoes();
+        // [S26.A] persistir en BD (fire-and-forget, no bloquea UI)
+        _updateShoeInSupabase(id, { km: s.km }).catch(function(e) {
+            console.warn('[MR][S26.A] addKmToShoe BD warning:', e);
+        });
     }
 
     function renderShoes() {
@@ -14424,6 +14513,312 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // [S26.A · Sesión 26] SHOES → SUPABASE (CRUD + Storage)
+    // ═══════════════════════════════════════════════════════════════════
+    // Reemplaza la persistencia localStorage del array `shoes[]`. Fuente
+    // de verdad única: tabla `user_shoes` Supabase + bucket `shoe-photos`.
+    //
+    // Convención de campos (mapeo BD ↔ JS):
+    //   BD                   JS in-memory
+    //   ────────────────────────────────────
+    //   id (uuid)            shoe.id            (string uuid)
+    //   user_id              (no se expone)
+    //   name                 shoe.name
+    //   km                   shoe.km            (number)
+    //   max_km               shoe.maxKm         (number)
+    //   color_hex            shoe.colorHex
+    //   color_name           shoe.colorName
+    //   photo_path           shoe.photoPath     (path en bucket, NO data URI)
+    //   shoe.img             URL firmada (lazy), NO se persiste en BD
+    //   retired_at, brand_key, model_key, category, purchased_at, retired_reason
+    //                        → reservados para S26.B/S26.C
+    //
+    // Garantía no-regresión: act.shoeName/shoeColor son SNAPSHOTS en
+    // activities, no consultan shoes[]. Por tanto el visor, biblioteca y
+    // posts del club siguen funcionando aunque shoes[] cambie.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Helper: obtener UID de sesión activa. null si no hay sesión.
+    async function _getShoesUid() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return null;
+            var sess = await sb.auth.getSession();
+            return (sess && sess.data && sess.data.session
+                    && sess.data.session.user && sess.data.session.user.id) || null;
+        } catch(_) { return null; }
+    }
+
+    // Mapea fila BD → shape JS (in-memory shoe).
+    function _mapDbRowToShoe(row) {
+        if (!row) return null;
+        return {
+            id:         row.id,                                // uuid string
+            name:       row.name || '',
+            km:         row.km != null ? Number(row.km) : 0,
+            maxKm:      row.max_km != null ? Number(row.max_km) : 800,
+            colorHex:   row.color_hex || '#1C1C1E',
+            colorName:  row.color_name || 'Negro',
+            photoPath:  row.photo_path || null,
+            img:        '',  // URL firmada se carga lazy en renderShoes
+            // Campos S26.B/C (no usados en S26.A pero se conservan en memoria):
+            brandKey:        row.brand_key || null,
+            modelKey:        row.model_key || null,
+            category:        row.category || null,
+            purchasedAt:     row.purchased_at || null,
+            retiredAt:       row.retired_at || null,
+            retiredReason:   row.retired_reason || null
+        };
+    }
+
+    // Carga todas las zapas del usuario desde BD. Pobla `shoes[]`.
+    // Llamada desde bootApp tras login. Idempotente (cada llamada
+    // resetea el array). No genera URLs firmadas de fotos aún (lazy
+    // en renderShoes para no gastar Storage requests innecesarios).
+    async function _loadShoesFromSupabase() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { ok: false, error: 'no-sb-client' };
+            var uid = await _getShoesUid();
+            if (!uid) return { ok: false, error: 'no-session' };
+
+            var res = await sb.from('user_shoes')
+                .select('id, name, km, max_km, color_hex, color_name, photo_path, '
+                      + 'brand_key, model_key, category, purchased_at, retired_at, retired_reason')
+                .eq('user_id', uid)
+                .order('created_at', { ascending: true });
+
+            if (res && res.error) {
+                console.warn('[MR][S26.A] _loadShoesFromSupabase error:', res.error);
+                return { ok: false, error: res.error.message };
+            }
+            var rows = (res && res.data) || [];
+            shoes = rows.map(_mapDbRowToShoe).filter(Boolean);
+            console.log('[MR][S26.A] shoes cargadas desde BD: ' + shoes.length);
+            try { if (typeof renderShoes === 'function') renderShoes(); } catch(_) {}
+            return { ok: true, count: shoes.length };
+        } catch(e) {
+            console.warn('[MR][S26.A] _loadShoesFromSupabase exception:', e);
+            return { ok: false, error: String(e && e.message || e) };
+        }
+    }
+    // Exponer para debug + uso desde bootApp
+    window._loadShoesFromSupabase = _loadShoesFromSupabase;
+
+    // INSERT de una shoe nueva. Recibe el shape JS, devuelve la fila BD
+    // (con id uuid generado). Persiste user_id explícito (Lección S26.A:
+    // RLS exige user_id en with_check, no se rellena automáticamente).
+    async function _saveShoeToSupabase(shoe) {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return { ok: false, error: 'no-sb-client' };
+            var uid = await _getShoesUid();
+            if (!uid) return { ok: false, error: 'no-session' };
+
+            var payload = {
+                user_id:    uid,
+                name:       shoe.name || 'Zapatilla',
+                km:         shoe.km != null ? Number(shoe.km) : 0,
+                max_km:     shoe.maxKm != null ? Math.round(Number(shoe.maxKm)) : 800,
+                color_hex:  shoe.colorHex || '#1C1C1E',
+                color_name: shoe.colorName || 'Negro',
+                photo_path: shoe.photoPath || null
+            };
+
+            var ins = await sb.from('user_shoes').insert(payload).select().maybeSingle();
+            if (ins && ins.error) {
+                console.warn('[MR][S26.A] _saveShoeToSupabase error:', ins.error);
+                return { ok: false, error: ins.error.message };
+            }
+            if (!ins || !ins.data) {
+                return { ok: false, error: 'no-row-inserted' };
+            }
+            console.log('[MR][S26.A] shoe INSERT OK id=' + ins.data.id);
+            return { ok: true, row: ins.data };
+        } catch(e) {
+            console.warn('[MR][S26.A] _saveShoeToSupabase exception:', e);
+            return { ok: false, error: String(e && e.message || e) };
+        }
+    }
+
+    // UPDATE parcial: actualiza solo los campos pasados en `patch`.
+    // Útil para cambios de km, color, name, photo_path, etc.
+    async function _updateShoeInSupabase(shoeId, patch) {
+        try {
+            var sb = window._sbClient;
+            if (!sb || !shoeId || !patch) return { ok: false, error: 'bad-args' };
+            var uid = await _getShoesUid();
+            if (!uid) return { ok: false, error: 'no-session' };
+
+            // Whitelist de campos editables. Cualquier otro se ignora
+            // para evitar enviar basura inadvertida.
+            var allowed = {
+                name:           1, km: 1, max_km: 1, color_hex: 1, color_name: 1,
+                photo_path:     1, brand_key: 1, model_key: 1, category: 1,
+                purchased_at:   1, retired_at: 1, retired_reason: 1
+            };
+            var clean = {};
+            Object.keys(patch).forEach(function(k) { if (allowed[k]) clean[k] = patch[k]; });
+            if (Object.keys(clean).length === 0) return { ok: false, error: 'no-fields' };
+
+            var upd = await sb.from('user_shoes')
+                .update(clean)
+                .eq('id', shoeId)
+                .eq('user_id', uid)
+                .select('id')
+                .maybeSingle();
+            if (upd && upd.error) {
+                console.warn('[MR][S26.A] _updateShoeInSupabase error:', upd.error);
+                return { ok: false, error: upd.error.message };
+            }
+            if (!upd || !upd.data) {
+                console.warn('[MR][S26.A] update no devolvió row (¿RLS?)');
+                return { ok: false, error: 'no-row-updated' };
+            }
+            return { ok: true };
+        } catch(e) {
+            console.warn('[MR][S26.A] _updateShoeInSupabase exception:', e);
+            return { ok: false, error: String(e && e.message || e) };
+        }
+    }
+
+    // DELETE de shoe + cleanup foto del bucket (si tiene photo_path).
+    // No descuenta km de activities (las activities mantienen su shoe_id
+    // como string libre — el visor seguirá mostrando shoeName snapshot).
+    async function _deleteShoeFromSupabase(shoeId, photoPath) {
+        try {
+            var sb = window._sbClient;
+            if (!sb || !shoeId) return { ok: false, error: 'bad-args' };
+            var uid = await _getShoesUid();
+            if (!uid) return { ok: false, error: 'no-session' };
+
+            // 1) Borrar foto del bucket primero (Lección 19-1: storage antes que BD)
+            if (photoPath) {
+                try {
+                    var rmRes = await sb.storage.from('shoe-photos').remove([photoPath]);
+                    if (rmRes && rmRes.error) {
+                        console.warn('[MR][S26.A] foto delete warning:', rmRes.error);
+                        // No bloquea: continuamos con el DELETE de la fila igualmente
+                    }
+                } catch(eFoto) {
+                    console.warn('[MR][S26.A] foto delete exception:', eFoto);
+                }
+            }
+
+            // 2) Borrar fila
+            var del = await sb.from('user_shoes')
+                .delete()
+                .eq('id', shoeId)
+                .eq('user_id', uid)
+                .select('id')
+                .maybeSingle();
+            if (del && del.error) {
+                console.warn('[MR][S26.A] _deleteShoeFromSupabase error:', del.error);
+                return { ok: false, error: del.error.message };
+            }
+            return { ok: true };
+        } catch(e) {
+            console.warn('[MR][S26.A] _deleteShoeFromSupabase exception:', e);
+            return { ok: false, error: String(e && e.message || e) };
+        }
+    }
+
+    // Sube una foto de zapatilla al bucket shoe-photos (data URI → blob).
+    // Devuelve el path o null si falla. Sigue exactamente el patrón de
+    // _uploadManualPhoto (mismo workaround MIME, mismo blob re-wrap).
+    async function _uploadShoePhoto(shoeId, photoB64) {
+        try {
+            var sb = window._sbClient;
+            if (!sb || !shoeId || !photoB64 || typeof photoB64 !== 'string') return null;
+            var uid = await _getShoesUid();
+            if (!uid) return null;
+
+            var mimeMatch = photoB64.match(/^data:(image\/(jpeg|jpg|png|webp));base64,/);
+            if (!mimeMatch) {
+                console.warn('[MR][S26.A] _uploadShoePhoto: data URI no soportado');
+                return null;
+            }
+            var mime = mimeMatch[1];
+            var ext = mime.split('/')[1];
+            if (ext === 'jpeg') ext = 'jpg';
+
+            var b64data = photoB64.split(',')[1];
+            var binary = atob(b64data);
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            var blob = new Blob([bytes], { type: mime });
+
+            // Path: <uid>/<shoeId>.<ext>  (sin subcarpeta — solo 1 foto por shoe)
+            var path = uid + '/' + shoeId + '.' + ext;
+            var upRes = await sb.storage
+                .from('shoe-photos')
+                .upload(path, blob, {
+                    cacheControl: '3600',
+                    upsert: true,
+                    contentType: mime
+                });
+            if (upRes && upRes.error) {
+                console.warn('[MR][S26.A] _uploadShoePhoto error:', upRes.error);
+                return null;
+            }
+            console.log('[MR][S26.A] foto upload OK path=' + path);
+            return path;
+        } catch(e) {
+            console.warn('[MR][S26.A] _uploadShoePhoto exception:', e);
+            return null;
+        }
+    }
+
+    // Genera signed URL firmada para una photo_path (1h de validez).
+    // Devuelve la URL o null si falla. Usado lazy en renderShoes para
+    // pintar las fotos sin gastar requests innecesarios al cargar.
+    async function _getShoePhotoUrl(photoPath) {
+        try {
+            var sb = window._sbClient;
+            if (!sb || !photoPath) return null;
+            var sig = await sb.storage
+                .from('shoe-photos')
+                .createSignedUrl(photoPath, 3600);
+            if (sig && sig.error) {
+                console.warn('[MR][S26.A] signed URL error:', sig.error);
+                return null;
+            }
+            return (sig && sig.data && sig.data.signedUrl) || null;
+        } catch(e) {
+            console.warn('[MR][S26.A] _getShoePhotoUrl exception:', e);
+            return null;
+        }
+    }
+
+    // Cache de URLs firmadas en memoria (vida = sesión).
+    // Evita re-pedir signed URLs cada vez que renderShoes corre.
+    var _shoePhotoUrlCache = {};
+    async function _hydrateShoePhotoUrls() {
+        try {
+            var pending = shoes.filter(function(s) {
+                return s.photoPath && !s.img && !_shoePhotoUrlCache[s.photoPath];
+            });
+            if (pending.length === 0) return;
+            // Pedir en paralelo
+            await Promise.all(pending.map(async function(s) {
+                var url = await _getShoePhotoUrl(s.photoPath);
+                if (url) {
+                    _shoePhotoUrlCache[s.photoPath] = url;
+                    s.img = url;
+                }
+            }));
+            // Re-render para mostrar las fotos
+            try { if (typeof renderShoes === 'function') renderShoes(); } catch(_) {}
+        } catch(e) {
+            console.warn('[MR][S26.A] _hydrateShoePhotoUrls exception:', e);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [S26.A] FIN BLOQUE SHOES → SUPABASE
+    // ═══════════════════════════════════════════════════════════════════
+
     // ─────────────────────────────────────────────────────────────────
     // Orquesta el guardado completo en Supabase de una activity manual:
     //   1. upsert en `activities` (idempotente vía external_id)
@@ -15613,6 +16008,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (shoe) {
                 shoe.km = Math.max(0, Math.round((shoe.km - act.distKm) * 10) / 10);
                 renderShoes();
+                // [S26.A] persistir el km descontado en BD (fire-and-forget)
+                _updateShoeInSupabase(shoe.id, { km: shoe.km }).catch(function(e){
+                    console.warn('[MR][S26.A] km on delete BD warning:', e);
+                });
             }
         }
         // Recordar si era running para recalcular PRs después
@@ -17238,11 +17637,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (shoeChanged && act.distKm > 0) {
             if (oldShoeIdStr) {
                 const oldShoe = shoes.find(s => String(s.id) === oldShoeIdStr);
-                if (oldShoe) { oldShoe.km = Math.max(0, Math.round((oldShoe.km - act.distKm)*10)/10); }
+                if (oldShoe) {
+                    oldShoe.km = Math.max(0, Math.round((oldShoe.km - act.distKm)*10)/10);
+                    // [S26.A] persistir km en BD (fire-and-forget)
+                    _updateShoeInSupabase(oldShoeIdStr, { km: oldShoe.km }).catch(function(e){
+                        console.warn('[MR][S26.A] km decrease BD warning:', e);
+                    });
+                }
             }
             if (newShoeIdStr) {
                 const newShoe = shoes.find(s => String(s.id) === newShoeIdStr);
-                if (newShoe) { newShoe.km = Math.round((newShoe.km + act.distKm)*10)/10; }
+                if (newShoe) {
+                    newShoe.km = Math.round((newShoe.km + act.distKm)*10)/10;
+                    // [S26.A] persistir km en BD (fire-and-forget)
+                    _updateShoeInSupabase(newShoeIdStr, { km: newShoe.km }).catch(function(e){
+                        console.warn('[MR][S26.A] km increase BD warning:', e);
+                    });
+                }
             }
             renderShoes();
         }
@@ -23508,7 +23919,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             const state = {
                 activities,
-                shoes,
+                // [S26.A] shoes ya no se persiste en localStorage. Fuente única
+                // de verdad = tabla user_shoes Supabase. Se mantiene la key
+                // con [] vacío para compat con loadAppState (que la ignora).
+                shoes: [],
                 profile: {
                     name:      profileData.name,
                     flag:      profileData.flag,
@@ -23563,11 +23977,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // Activities loaded from IndexedDB async (see bootApp)
             // state.activities may be empty [] since we store in IDB now
             // Keep any activities already in memory if IDB hasn't loaded yet
-            // Shoes
-            if (state.shoes && Array.isArray(state.shoes)) {
-                shoes = state.shoes;
-                renderShoes();
-            }
+            // [S26.A] Shoes: ya NO se cargan desde localStorage. La carga
+            // canónica es _loadShoesFromSupabase() desde bootApp tras el
+            // login. Ignoramos state.shoes incluso si existiera (compat
+            // con backups antiguos de usuarios pre-S26.A).
             // Profile
             const p = state.profile;
             if (p) {
@@ -25288,15 +25701,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ── SHOE KM EDIT ──────────────────────────────────────────────
+    // [S26.A] editShoeKm ahora persiste km en BD tras prompt.
     function editShoeKm(shoeId) {
-        const shoe = shoes.find(s=>s.id===shoeId);
+        const shoe = shoes.find(s=>String(s.id)===String(shoeId));
         if(!shoe) return;
         const newKm = parseFloat(prompt(`Km actuales de "${shoe.name}"\nActual: ${shoe.km} km\nNuevo valor:`, shoe.km));
         if(isNaN(newKm)||newKm<0) return;
         shoe.km = Math.round(newKm*10)/10;
         renderShoes();
-        saveAppState();
-        showToast(`✓ Km actualizados: ${shoe.km} km`);
+        // [S26.A] persistir en BD (fire-and-forget)
+        _updateShoeInSupabase(shoeId, { km: shoe.km }).then(function(res) {
+            if (res.ok) {
+                showToast(`✓ Km actualizados: ${shoe.km} km`);
+            } else {
+                console.warn('[MR][S26.A] editShoeKm BD falló:', res.error);
+                showToast('Cambio local, error de sync. Reintenta.');
+            }
+        }).catch(function(e) {
+            console.warn('[MR][S26.A] editShoeKm exception:', e);
+        });
     }
 
     // ══ HOME TAB ════════════════════════════════════════════════════
