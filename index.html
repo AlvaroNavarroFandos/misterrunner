@@ -121,7 +121,7 @@
         --acc-fuchsia: #a21caf;
         --border: rgba(0, 0, 0, .08);
         --bsoft: rgba(0, 0, 0, .05);
-        --nav-h: 62px;
+        --nav-h: 64px; /* [S26.C+] +2px vs 62px previo: más zona táctil; el gradient #app::after se recortó a 14px en paralelo */
         --f: "Poppins", -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
@@ -242,14 +242,16 @@
        Sin esto se ve un trozo del fondo del contenido asomar entre el contenido
        y la nav, rompiendo la sensación premium. El gradient difumina los
        últimos píxeles del contenido a var(--bg) creando un "fade out" limpio.
-       Se posiciona justo encima del nav (que está a bottom: 8px + safe-area). */
+       Se posiciona justo encima del nav (que está a bottom: 8px + safe-area).
+       [S26.C+] Altura reducida 24px → 14px: el fade queda mucho más fino;
+       más espacio visual util y sigue evitando el "asomo" del contenido. */
     #app::after {
         content: '';
         position: fixed;
         left: 0;
         right: 0;
         bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 2px);
-        height: 24px;
+        height: 14px;
         background: linear-gradient(to bottom, transparent 0%, var(--bg) 100%);
         pointer-events: none;
         z-index: 9998;
@@ -1368,10 +1370,14 @@
         font-size: 12px;
         font-weight: 700;
         color: var(--tm);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
         font-family: var(--f);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        line-height: 1.2;
+        min-height: 28.8px;
+        word-break: break-word;
     }
     .mr-rip-icon-wrap {
         display: flex; align-items: center; justify-content: center;
@@ -5031,13 +5037,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         });
                         /* FASE 5.4.2: refrescar tras transición de view, fire-and-forget.
                            No bloqueamos el cambio visual. La función es idempotente:
-                           si llaman 2 veces seguidas, segundo intento añade 0. */
+                           si llaman 2 veces seguidas, segundo intento añade 0.
+                           [S26.C+ P2-Fix] Aplazado adicional con requestIdleCallback
+                           para que la animación del cambio de view termine ANTES
+                           de que arranque el refresh (que internamente re-renderiza
+                           290+ items). Fallback setTimeout(50) para Safari/iOS PWA. */
                         if (cameFromSummary
                             && window._MR_StravaImport
                             && typeof window._MR_StravaImport.refreshActivities === 'function') {
-                            window._MR_StravaImport.refreshActivities().catch(function(err){
-                                console.warn('[MR][FASE 5.4.2] refresh post-import falló:', err);
-                            });
+                            var _deferStravaRefresh = function() {
+                                window._MR_StravaImport.refreshActivities().catch(function(err){
+                                    console.warn('[MR][FASE 5.4.2] refresh post-import falló:', err);
+                                });
+                            };
+                            if (typeof requestIdleCallback === 'function') {
+                                requestIdleCallback(_deferStravaRefresh, { timeout: 800 });
+                            } else {
+                                setTimeout(_deferStravaRefresh, 50);
+                            }
                         }
                     });
                 })();
@@ -13014,7 +13031,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const info = document.createElement('div');
             info.style.cssText = 'padding:9px 10px;display:flex;flex-direction:column;gap:4px;flex:1;';
             info.innerHTML =
-                '<div style="font-size:12px;font-weight:700;color:' + titleColor + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--f);">' + shoe.name + '</div>'
+                '<div style="font-size:12px;font-weight:700;color:' + titleColor + ';font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.2;min-height:28.8px;word-break:break-word;">' + shoe.name + '</div>'
                 + catHtml
                 + '<div style="display:flex;align-items:center;gap:5px;">'
                 +   '<span style="font-size:9px;color:var(--ts);font-family:var(--f);">' + shoe.km + '/' + shoe.maxKm + ' km</span>'
@@ -17555,11 +17572,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
         activities.push(act);
         if (shoe && act.distKm > 0) addKmToShoe(shoe.id, act.distKm);
-        renderActivities();
+        // [S26.C+ P2-Fix] Cerrar el sheet PRIMERO para que la animación de
+        // 300ms arranque limpia, y aplazar el re-render pesado (290+ items
+        // en DOM) + saveAppState (serialización + localStorage) al próximo
+        // idle. Antes el patrón era render → close → save, lo que bloqueaba
+        // el thread y dejaba el cierre con lag. requestIdleCallback con
+        // fallback a setTimeout(50) porque Safari/iOS PWA no lo soporta.
         closeSheet('import-modal');
         const ni = document.getElementById('imp-name'); if(ni) ni.value = '';
         pendingFitData = null;
-        saveAppState();
+        var _deferHeavyImport = function() {
+            try { renderActivities(); } catch(e) { console.warn('[MR][P2-Fix] renderActivities:', e); }
+            try { saveAppState(); }    catch(e) { console.warn('[MR][P2-Fix] saveAppState:', e); }
+        };
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(_deferHeavyImport, { timeout: 500 });
+        } else {
+            setTimeout(_deferHeavyImport, 50);
+        }
         // PASO A+B+C — captura temperatura → detectar PRs → toast clickable
         // El flujo es asíncrono pero no bloqueante: la actividad ya se mostró
         // en la UI; este encadenamiento solo afecta a si aparece el toast de PRs.
@@ -19889,7 +19919,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 valColor = Math.abs(dcNum)<5?'#4CAF50':Math.abs(dcNum)<10?'#FF9500':'#F44336';
             }
             // [FASE 6.2 · S20] EF reemplaza a TRIMP — color azul cyan (es ratio spd/hr, neutro)
-            if (i===10 && s.v!=='—') valColor = '#7aaff5';  // Eficiencia: blue
+            // [S26.C+] EF escalable a 4 colores SOLO en running (otros tipos
+            // mantienen azul neutro). Umbrales calibrados para EF = spd/hr × 100:
+            // ≥2.20 excelente (azul) · 1.90-2.19 buena (verde) · 1.65-1.89
+            // regular (amarillo) · <1.65 mala (rojo). RUNNING_TYPES se replica
+            // localmente porque el set canónico vive en otro IIFE closure
+            // (línea 29622) y no está expuesto a window.
+            if (i===10 && s.v!=='—') {
+                var _isRun_EF = (function(t){
+                    t = String(t || '').toLowerCase();
+                    return t==='easy' || t==='recovery' || t==='series' || t==='long' || t==='race';
+                })(act.type);
+                if (_isRun_EF) {
+                    var efNum = parseFloat(s.v);
+                    if (efNum >= 2.20)      valColor = '#60a5fa';  // Excelente: blue
+                    else if (efNum >= 1.90) valColor = '#4ade80';  // Buena: green
+                    else if (efNum >= 1.65) valColor = '#facc15';  // Regular: yellow
+                    else                    valColor = '#f87171';  // Mala: red
+                } else {
+                    valColor = '#7aaff5';  // Otros tipos: azul neutro (legacy)
+                }
+            }
             if (i===11 && s.v!=='—') {
                 // Temperature: cool=blue, warm=orange, hot=red
                 const tempNum = parseInt(s.v);
