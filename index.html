@@ -14130,6 +14130,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // datos suficientes (menos de 2 puntos en distancia).
     // ─────────────────────────────────────────────────────────────────
     var _BE_TARGETS = [
+        { key: '100m',  meters: 100    },   // [Bloque B] Para detectar best_100m PR
         { key: '1km',   meters: 1000   },
         { key: '1mi',   meters: 1609.34 },
         { key: '3km',   meters: 3000   },
@@ -27423,15 +27424,17 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
     }
 
     // Mapeo entre tipos de PR y claves de best_efforts en BD
-    // best_100m no tiene contrapartida en bestEfforts (la dist mínima es 1km)
+    // [Bloque B fix] Tras añadir '100m' a _BE_TARGETS, best_100m ya tiene
+    // contrapartida en bestEfforts. distSer queda como fallback puro para
+    // activities pre-FASE 6.4 o sin recompute.
     const BE_KEY_BY_PR_TYPE = {
+        best_100m:     '100m',
         best_1k:       '1km',
         best_3000m:    '3km',
         best_5k:       '5km',
         best_10k:      '10km',
         best_half:     '21km',
         best_marathon: '42km'
-        // best_100m: no aplica, se calcula desde distSer
     };
 
     // Construye candidatos (no compara con DB aún) desde el act
@@ -27464,8 +27467,9 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 sec = Math.round(be[beKey].time_sec);
             }
 
-            // 2) Fallback: streams en memoria (para 100m que no está en bestEfforts,
-            //    y para activities pre-FASE 6.4 sin bestEfforts en BD).
+            // 2) Fallback: streams en memoria (compat con activities pre-FASE 6.4
+            //    sin bestEfforts en BD). Tras recompute global del bulk, ya no
+            //    debería ser necesario, pero lo mantenemos por seguridad.
             if (sec == null && ds && Array.isArray(ds) && ds.length >= 2) {
                 sec = _bestTimeForDistanceSafe(act, T.cm, T.minKm);
             }
