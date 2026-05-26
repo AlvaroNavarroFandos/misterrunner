@@ -35684,6 +35684,36 @@ function _openPRsSheet(userId, displayName, isSelf) {
         'opacity:0','transition:opacity .25s ease'
     ].join(';');
 
+    // [Bloque B · UI premium] Inyectar keyframes una sola vez
+    if (!document.getElementById('mr-prs-anim-style')) {
+        var animStyle = document.createElement('style');
+        animStyle.id = 'mr-prs-anim-style';
+        animStyle.textContent = [
+            '@keyframes mrPrsDot {',
+            '  0%, 100% { opacity:.3; transform:scale(.85); }',
+            '  50% { opacity:1; transform:scale(1.1); }',
+            '}',
+            '@keyframes mrPrsShimmer {',
+            '  0% { background-position:-200% 0; }',
+            '  100% { background-position:200% 0; }',
+            '}',
+            '@keyframes mrPrsStaggerIn {',
+            '  0% { opacity:0; transform:translateY(8px) scale(.94); }',
+            '  100% { opacity:1; transform:translateY(0) scale(1); }',
+            '}',
+            '.mr-prs-card-skeleton {',
+            '  background: linear-gradient(90deg,',
+            '    var(--card) 0%, rgba(201,168,76,.12) 50%, var(--card) 100%) !important;',
+            '  background-size: 200% 100% !important;',
+            '  animation: mrPrsShimmer 1.6s ease-in-out infinite;',
+            '}',
+            '.mr-prs-card-stagger {',
+            '  animation: mrPrsStaggerIn .42s cubic-bezier(.34,1.45,.64,1) both;',
+            '}',
+        ].join('\n');
+        document.head.appendChild(animStyle);
+    }
+
     // ── Sheet ─────────────────────────────────────────────────────────
     var sheet = document.createElement('div');
     sheet.style.cssText = [
@@ -35720,8 +35750,14 @@ function _openPRsSheet(userId, displayName, isSelf) {
     ttl.textContent = resolveSelf ? 'Mis récords' : ('Récords de ' + (displayName || 'Runner'));
     var counter = document.createElement('div');
     counter.id = 'mr-prs-counter';
-    counter.style.cssText = 'margin-top:2px;font-size:11px;color:var(--tm);font-weight:600;';
-    counter.textContent = '0 / 12 récords · 0 / 12 hitos';
+    counter.style.cssText = 'margin-top:2px;font-size:11px;color:var(--tm);font-weight:600;display:flex;align-items:center;gap:6px;';
+    // [Bloque B · UI premium] Loading dots animados durante fetch
+    counter.innerHTML = '<span style="opacity:.75;">Cargando récords</span>'
+        + '<span class="mr-prs-dots" style="display:inline-flex;gap:2px;">'
+            + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:0s;"></span>'
+            + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.2s;"></span>'
+            + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.4s;"></span>'
+        + '</span>';
     ttlWrap.appendChild(ttl);
     ttlWrap.appendChild(counter);
     hdr.appendChild(ttlWrap);
@@ -35752,9 +35788,10 @@ function _openPRsSheet(userId, displayName, isSelf) {
         'padding:4px 14px 16px'
     ].join(';');
 
-    // Crear cards de PRs en estado "sin marcar" inicialmente (placeholder)
+    // Crear cards de PRs en estado "sin marcar" inicialmente (placeholder con shimmer)
     ORDER.forEach(function(type) {
         var card = _buildPRGridCard(type, null, isDark);
+        card.classList.add('mr-prs-card-skeleton');
         grid.appendChild(card);
     });
     scrollArea.appendChild(grid);
@@ -35783,6 +35820,7 @@ function _openPRsSheet(userId, displayName, isSelf) {
     ].join(';');
     ORDER_MILESTONES.forEach(function(type) {
         var card = _buildPRGridCard(type, null, isDark);
+        card.classList.add('mr-prs-card-skeleton');
         gridMs.appendChild(card);
     });
     scrollArea.appendChild(gridMs);
@@ -35799,11 +35837,9 @@ function _openPRsSheet(userId, displayName, isSelf) {
     });
 
     // ── E3: carga real de récords desde Supabase ─────────────────────
-    // Aplicamos un "shimmer" sutil a ambos grids mientras llegan los datos
-    grid.style.opacity = '.55';
-    grid.style.transition = 'opacity .2s ease';
-    gridMs.style.opacity = '.55';
-    gridMs.style.transition = 'opacity .2s ease';
+    // [Bloque B · UI premium] Las cards arrancan con clase mr-prs-card-skeleton
+    // (shimmer animado). Al llegar los datos, las reemplazamos por las reales
+    // con animación stagger.
     (async function loadRecords() {
         try {
             if (!sb) throw new Error('Sin Supabase');
@@ -35826,28 +35862,41 @@ function _openPRsSheet(userId, displayName, isSelf) {
             rows.forEach(function(r) { byType[r.record_type] = r; });
 
             // Re-renderizar AMBOS grids con datos reales
+            // [Bloque B · UI premium] Stagger entrance: cards aparecen escalonadas
             grid.innerHTML = '';
             var marked = 0;
-            ORDER.forEach(function(type) {
+            ORDER.forEach(function(type, idx) {
                 var rec = byType[type] || null;
                 if (rec) marked++;
-                grid.appendChild(_buildPRGridCard(type, rec, isDark));
+                var card = _buildPRGridCard(type, rec, isDark);
+                card.classList.add('mr-prs-card-stagger');
+                card.style.animationDelay = (idx * 28) + 'ms';
+                grid.appendChild(card);
             });
             gridMs.innerHTML = '';
             var unlocked = 0;
-            ORDER_MILESTONES.forEach(function(type) {
+            ORDER_MILESTONES.forEach(function(type, idx) {
                 var rec = byType[type] || null;
                 if (rec) unlocked++;
-                gridMs.appendChild(_buildPRGridCard(type, rec, isDark));
+                var card = _buildPRGridCard(type, rec, isDark);
+                card.classList.add('mr-prs-card-stagger');
+                // Hitos arrancan tras los récords para encadenar fluidamente
+                card.style.animationDelay = ((ORDER.length * 28) + idx * 22) + 'ms';
+                gridMs.appendChild(card);
             });
-            // Actualizar contador dual
-            counter.textContent = marked + ' / 12 récords · ' + unlocked + ' / 12 hitos';
-            grid.style.opacity = '1';
-            gridMs.style.opacity = '1';
+            // [Bloque B · UI premium] Sustituir loading dots por contador real
+            counter.innerHTML = '<span style="color:var(--tw);font-weight:700;">' + marked
+                + '</span><span style="opacity:.75;"> / 12 récords</span> '
+                + '<span style="opacity:.5;">·</span> '
+                + '<span style="color:var(--tw);font-weight:700;">' + unlocked
+                + '</span><span style="opacity:.75;"> / 12 hitos</span>';
         } catch (e) {
             console.warn('[MR][PRs] load fail:', e && e.message ? e.message : e);
+            // [Bloque B · UI premium] Sustituir loading dots por mensaje de error
+            counter.innerHTML = '<span style="color:var(--tm);opacity:.85;">Error de carga</span>';
             // Mostrar mensaje de error reemplazando el grid
             grid.innerHTML = '';
+            grid.classList.remove('mr-prs-card-skeleton');
             grid.style.display = 'flex';
             grid.style.flexDirection = 'column';
             grid.style.alignItems = 'center';
@@ -35864,6 +35913,13 @@ function _openPRsSheet(userId, displayName, isSelf) {
             retryBtn.style.cssText = 'margin-top:6px;padding:8px 18px;border-radius:14px;border:1.5px solid var(--gold-bd);background:var(--gold-lt);color:var(--gold);font-family:var(--f);font-size:12px;font-weight:800;cursor:pointer;';
             retryBtn.textContent = 'Reintentar';
             retryBtn.onclick = function() {
+                // [Bloque B · UI premium] Restaurar loading dots y shimmer
+                counter.innerHTML = '<span style="opacity:.75;">Cargando récords</span>'
+                    + '<span class="mr-prs-dots" style="display:inline-flex;gap:2px;">'
+                        + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:0s;"></span>'
+                        + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.2s;"></span>'
+                        + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.4s;"></span>'
+                    + '</span>';
                 // Volver a los grids originales y relanzar
                 grid.style.display = 'grid';
                 grid.style.flexDirection = '';
@@ -35872,11 +35928,15 @@ function _openPRsSheet(userId, displayName, isSelf) {
                 grid.style.padding = '4px 14px 16px';
                 grid.innerHTML = '';
                 ORDER.forEach(function(type) {
-                    grid.appendChild(_buildPRGridCard(type, null, isDark));
+                    var c = _buildPRGridCard(type, null, isDark);
+                    c.classList.add('mr-prs-card-skeleton');
+                    grid.appendChild(c);
                 });
                 gridMs.innerHTML = '';
                 ORDER_MILESTONES.forEach(function(type) {
-                    gridMs.appendChild(_buildPRGridCard(type, null, isDark));
+                    var c = _buildPRGridCard(type, null, isDark);
+                    c.classList.add('mr-prs-card-skeleton');
+                    gridMs.appendChild(c);
                 });
                 loadRecords();
             };
