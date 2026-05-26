@@ -14159,13 +14159,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } else if (arg1 && typeof arg1 === 'object' && Array.isArray(arg1.time) && Array.isArray(arg1.distance)) {
                 // Shape A (parser bulk): arg1 = {time, distance, hr}
+                // [Bloque B · B.3 fix] CORRECCIÓN BUG: parseFitStrava y parseGPXStrava
+                // devuelven `distance` en METROS (no km).
+                //   - FIT: rec.distance del binario está en metros nativos.
+                //   - GPX: cumDist viene de _haversine() que devuelve metros.
+                // El ×1000 anterior multiplicaba metros×1000 → valores absurdos,
+                // produciendo time_sec=1 para todas las distancias.
                 var s = arg1;
                 if (s.time.length < 2 || s.distance.length < 2) return null;
                 var n = Math.min(s.time.length, s.distance.length);
                 for (var k = 0; k < n; k++) {
                     if (s.time[k] == null || s.distance[k] == null) continue;
                     tArr.push(s.time[k]);
-                    dArr.push(s.distance[k] * 1000);  // km → m
+                    dArr.push(s.distance[k]);  // ya en metros desde parser FIT/GPX
                 }
                 if (Array.isArray(s.hr)) {
                     for (var hk = 0; hk < Math.min(s.time.length, s.hr.length); hk++) {
@@ -27416,23 +27422,54 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         return sec;
     }
 
+    // Mapeo entre tipos de PR y claves de best_efforts en BD
+    // best_100m no tiene contrapartida en bestEfforts (la dist mínima es 1km)
+    const BE_KEY_BY_PR_TYPE = {
+        best_1k:       '1km',
+        best_3000m:    '3km',
+        best_5k:       '5km',
+        best_10k:      '10km',
+        best_half:     '21km',
+        best_marathon: '42km'
+        // best_100m: no aplica, se calcula desde distSer
+    };
+
     // Construye candidatos (no compara con DB aún) desde el act
+    // [Bloque B · B.3 fix] Refactor para usar act.bestEfforts (BD jsonb) como
+    // fuente primaria de los récords de tiempo. Solo cae a distSer si no hay
+    // bestEfforts (compat con activities pre-FASE 6.4 o pre-recompute).
+    // Razón: las bulk activities no tienen distSer hidratado tras refresh BD.
     function _buildCandidates(act) {
         const out = []; // {type, value, label, valueKind}
         // valueKind: 'time_sec' | 'pace_spk' | 'distance_km' | 'temp_c'
+
+        const be = act && act.bestEfforts;
         const ds = act && act.distSer;
 
         // PRs de distancia (mejor tiempo continuo) — con sanity cap
         // Filtro de plausibilidad para distancias cortas (anti-outlier GPS):
         //  - 100m: pace mínimo 2:00/km (30 km/h, récord mundial real ~26 km/h)
         //  - 3000m: pace mínimo 2:30/km (24 km/h, récord mundial ~22 km/h)
-        // Si el tiempo calculado da un pace por debajo del mínimo, descartamos.
         const PACE_MIN_BY_TYPE = {
             best_100m: 120,  // 2:00/km en s/km
             best_3000m: 150  // 2:30/km en s/km
         };
         for (const T of DIST_TARGETS) {
-            const sec = _bestTimeForDistanceSafe(act, T.cm, T.minKm);
+            let sec = null;
+
+            // 1) Fuente primaria: bestEfforts en BD (rápido, fiable, ya calculado)
+            const beKey = BE_KEY_BY_PR_TYPE[T.type];
+            if (beKey && be && be[beKey] && typeof be[beKey].time_sec === 'number'
+                && be[beKey].time_sec > 0) {
+                sec = Math.round(be[beKey].time_sec);
+            }
+
+            // 2) Fallback: streams en memoria (para 100m que no está en bestEfforts,
+            //    y para activities pre-FASE 6.4 sin bestEfforts en BD).
+            if (sec == null && ds && Array.isArray(ds) && ds.length >= 2) {
+                sec = _bestTimeForDistanceSafe(act, T.cm, T.minKm);
+            }
+
             if (sec != null && sec > 0) {
                 // Filtro anti-outlier: pace por km del segmento
                 const paceMin = PACE_MIN_BY_TYPE[T.type];
