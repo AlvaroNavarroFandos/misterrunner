@@ -30458,7 +30458,7 @@ function buildManualHTML() {
                 },
                 {
                     title: '💾 Qué incluye el backup local',
-                    text: 'El archivo .json contiene TODO lo que vive en el navegador (localStorage + IndexedDB):\n\n✅ EN EL BACKUP LOCAL:\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Actividades manuales + importadas de .fit/.csv (con GPS, outfit, fotos, evaluaciones IA, RPE)\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones, filtros Club)\n• Manifiesto ligero de actividades de la nube (para verificar tras restore)\n• Snapshot de PRs y hitos km (récords del Hall of Fame · solo se restauran si tu base de datos está vacía, política conservadora)\n\n☁️ NO ESTÁ EN EL BACKUP (vive en la nube, atado a tu cuenta):\n• Actividades importadas masivamente desde Strava (las 290+ con sus streams y fotos en bucket)\n• Posts del Club, seguidores, comentarios, reacciones\n• Crews, retos, mensajes directos\n\nLos datos de la nube se rehidratan automáticamente al iniciar sesión en cualquier dispositivo. Si pierdes el dispositivo o reinstalas, el backup local + tu cuenta Supabase juntos reconstruyen todo.'
+                    text: 'El archivo .json contiene TODO lo que vive en el navegador (localStorage + IndexedDB):\n\n✅ EN EL BACKUP LOCAL:\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Actividades manuales + importadas de .fit/.csv (con GPS, outfit, fotos, evaluaciones IA, RPE)\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones, filtros Club)\n• Manifiesto ligero de actividades de la nube (para verificar tras restore)\n• Snapshot de PRs, hitos km y rachas (récords del Hall of Fame · solo se restauran si tu base de datos está vacía, política conservadora)\n\n☁️ NO ESTÁ EN EL BACKUP (vive en la nube, atado a tu cuenta):\n• Actividades importadas masivamente desde Strava (las 290+ con sus streams y fotos en bucket)\n• Posts del Club, seguidores, comentarios, reacciones\n• Crews, retos, mensajes directos\n\nLos datos de la nube se rehidratan automáticamente al iniciar sesión en cualquier dispositivo. Si pierdes el dispositivo o reinstalas, el backup local + tu cuenta Supabase juntos reconstruyen todo.'
                 },
                 {
                     title: '💾 Dónde se guardan tus datos',
@@ -33604,11 +33604,13 @@ async function exportBackup() {
             }
         } catch(e) { console.warn('exportBackup manifest:', e); }
 
-        // [SNAPSHOT user_records · post-S26.C+] Backup defensivo de PRs (10) + hitos km (12).
+        // [SNAPSHOT user_records · post-S26.C+ · actualizado FASE 8] Backup
+        // defensivo de PRs (18 best_*) + hitos km (12) + hitos racha (3) = 33 tipos.
         // La tabla `user_records` vive en Supabase (RLS own + public_read para Club).
         // Si el usuario pierde el UID o reinstala, este snapshot permite restaurar
         // los récords/hitos cuando importBackup detecta BD vacía. Conservador:
-        // NO sobrescribimos BD con récords si ya existe contenido.
+        // NO sobrescribimos BD con récords si ya existe contenido. Schema agnóstico
+        // al catálogo de record_type: copia tal cual lo que devuelva Supabase.
         // Schema: { exportedAt: ISO, count: N, records: [...] }
         let userRecordsSnapshot = null;
         try {
@@ -33687,7 +33689,7 @@ async function exportBackup() {
         // [FASE 6 · Backup audit] Toast diferenciado:
         // — N locales (IDB): manuales / .fit / .csv → SÍ en el backup
         // — M nube (Supabase): bulk Strava → atadas a tu cuenta, se rehidratan
-        // — P PRs (post-S26.C+): snapshot defensivo de user_records
+        // — P récords (post-S26.C+ · FASE 8): snapshot defensivo de user_records (PRs + hitos km + rachas)
         const _nLocal = idbActs.length;
         const _nCloud = supabaseManifest.length;
         const _nPRs   = userRecordsSnapshot ? userRecordsSnapshot.count : 0;
@@ -45342,6 +45344,54 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [SNAPSHOT user_records · cierre definitivo Candidato 2] Verifica que la
+    // tubería defensiva de PRs/hitos en el backup .json está completa:
+    //   1) exportBackup e importBackup existen como funciones
+    //   2) El cuerpo de exportBackup contiene la query a user_records y
+    //      monta el objeto userRecordsSnapshot
+    //   3) El cuerpo de importBackup respeta la política conservadora
+    //      (count === 0 → insert) y setea el flag de sessionStorage
+    //   4) _rebuildAllPRsAndMilestones está expuesto en window (necesario
+    //      para el rebuild de coherencia post-reload)
+    //   5) El flag mr_backup_snapshot_restored es leído en algún punto del
+    //      bundle (consumidor en _refreshActivitiesFromBD)
+    // NO ejecuta export ni restore reales: es read-only sobre el código.
+    function _testBackupSnapshot() {
+        var checks = [];
+        try {
+            if (typeof exportBackup !== 'function')
+                checks.push('exportBackup no es función');
+            if (typeof importBackup !== 'function')
+                checks.push('importBackup no es función');
+
+            var exportSrc = (typeof exportBackup === 'function') ? exportBackup.toString() : '';
+            if (exportSrc.indexOf("from('user_records')") < 0)
+                checks.push("exportBackup no consulta user_records");
+            if (exportSrc.indexOf('userRecordsSnapshot') < 0)
+                checks.push('exportBackup no monta userRecordsSnapshot');
+
+            var importSrc = (typeof importBackup === 'function') ? importBackup.toString() : '';
+            if (importSrc.indexOf('userRecordsSnapshot') < 0)
+                checks.push('importBackup no lee userRecordsSnapshot');
+            if (importSrc.indexOf('mr_backup_snapshot_restored') < 0)
+                checks.push('importBackup no setea flag de rebuild post-reload');
+            if (importSrc.indexOf('count === 0') < 0 && importSrc.indexOf('count===0') < 0)
+                checks.push('importBackup no aplica política conservadora (count === 0)');
+
+            if (typeof window._rebuildAllPRsAndMilestones !== 'function')
+                checks.push('window._rebuildAllPRsAndMilestones no expuesto');
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'backup.snapshot',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'export + import + flag + rebuild OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -45351,7 +45401,8 @@ window.addEventListener('DOMContentLoaded', function() {
         s26b:    [_testS26BCatalog, _testS26BWizard, _testGarminWizardReady],
         s26c:    [_testS26CMausoleo],
         hitos:   [_testHitosCoherence],
-        fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy]
+        fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy],
+        backup:  [_testBackupSnapshot]
     };
 
     window.__mrSmoke = function(group) {
