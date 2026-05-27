@@ -15868,7 +15868,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimFileInput = document.createElement('input');
         _vimFileInput.type = 'file';
         _vimFileInput.multiple = true;
-        _vimFileInput.accept = '.csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream';
+        _vimFileInput.accept = '.csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream,.zip,application/zip,application/x-zip-compressed';
         _vimFileInput.style.display = 'none';
         _vimFileInput.id = 'vim-file-input';
         _vimFileInput.addEventListener('change', function(e) {
@@ -15905,9 +15905,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window.openImportManualWizard = openImportManualWizard;
 
-    // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale a biblioteca
+    // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale a biblioteca.
+    //
+    // [Bug 3 sesión post-Garmin] Cuando vuelves a biblioteca tras haber estado
+    // en el wizard, el cambio de classList .active dispara un layout pass
+    // pesado en Safari iOS (290+ cards de biblioteca quedaron con display:none
+    // mientras estabas en el wizard). Aplicamos el patrón canónico P2-Fix:
+    // cerrar PRIMERO la view del wizard + limpiar estado, y aplazar el "switch"
+    // a view-activities con requestIdleCallback + fallback setTimeout.
+    // Además limpiamos _vimState.files para liberar referencias a File objects
+    // (no causa lag, pero evita retención innecesaria).
     function vimBackNav() {
         if (_vimState.step === 'upload') {
+            // Back desde paso 2 → volvemos al paso 1 del wizard. Limpiamos los
+            // archivos seleccionados (si los hubiera) para que al volver a
+            // entrar al upload step empiece "limpio". Sin defer porque no
+            // hay cambio de view, solo cambio de step interno.
+            _vimState.files = {};
             _vimShowStepScreen('brand');
             return;
         }
@@ -15915,13 +15929,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // No permitir back durante loading (lo bloqueamos visualmente también)
             return;
         }
-        // step === 'brand' → salir del wizard a biblioteca
-        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-        const target = document.getElementById('view-activities');
-        if (target) target.classList.add('active');
-        document.querySelectorAll('.nb').forEach(function(b) {
-            b.classList.toggle('active', b.dataset.target === 'activities');
-        });
+        // step === 'brand' → salir del wizard a biblioteca.
+        // Paso 1 (síncrono): ocultar la view del wizard y limpiar estado.
+        const wizView = document.getElementById('view-import-manual');
+        if (wizView) wizView.classList.remove('active');
+        _vimState.brand = null;
+        _vimState.files = {};
+        _vimState.step  = 'brand';
+        // Paso 2 (aplazado): activar view-activities + nav inferior.
+        // El defer da al browser tiempo para terminar de pintar la
+        // ocultación del wizard antes de empezar el layout pass de la
+        // biblioteca. Sin esto, ambos passes compiten en el mismo frame
+        // y Safari iOS muestra lag varios segundos.
+        var _vimBackToLib = function() {
+            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+            const target = document.getElementById('view-activities');
+            if (target) target.classList.add('active');
+            document.querySelectorAll('.nb').forEach(function(b) {
+                b.classList.toggle('active', b.dataset.target === 'activities');
+            });
+        };
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(_vimBackToLib, { timeout: 200 });
+        } else {
+            setTimeout(_vimBackToLib, 50);
+        }
     }
     window.vimBackNav = vimBackNav;
 
