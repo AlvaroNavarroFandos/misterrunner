@@ -17614,15 +17614,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Ejecutamos PRs y hitos en paralelo (ambos leen Supabase pero
                 // de columnas distintas, no hay conflicto). Si uno falla, el
                 // otro sigue. Fusionamos resultados para un único toast.
-                const [beaten, milestones] = await Promise.all([
+                // [FASE 8] Añadimos _detectStreakMilestones a la flota paralela.
+                const [beaten, milestones, streakHitos] = await Promise.all([
                     window._detectNewRecords(act).catch(() => []),
                     (typeof window._detectMilestones === 'function')
                         ? window._detectMilestones(act).catch(() => [])
+                        : Promise.resolve([]),
+                    (typeof window._detectStreakMilestones === 'function')
+                        ? window._detectStreakMilestones(act).catch(() => [])
                         : Promise.resolve([])
                 ]);
                 const all = [].concat(
                     Array.isArray(beaten) ? beaten : [],
-                    Array.isArray(milestones) ? milestones : []
+                    Array.isArray(milestones) ? milestones : [],
+                    Array.isArray(streakHitos) ? streakHitos : []
                 );
                 if (all.length > 0) {
                     _showPRToast(all, act);
@@ -25498,6 +25503,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
               } catch(_) {}
             }, 9500);  // tras verify (5s + 4s del toast verify)
 
+            // [SNAPSHOT user_records · post-S26.C+] Toast informativo + rebuild
+            // de coherencia tras restore del snapshot. importBackup() ya insertó
+            // los récords del snapshot ANTES del reload; aquí, una vez la app
+            // tiene activities hidratadas, disparamos el rebuild completo para
+            // verificar y recalcular contra el histórico real (gestiona casos
+            // donde el snapshot quedó "viejo" respecto a las activities actuales).
+            // Delay 12.5s: tras verify (5s), avatar warning (9.5s) y todos los
+            // toasts previos. Evita competir por DOM/render.
+            setTimeout(function() {
+              try {
+                var _snapN = sessionStorage.getItem('mr_backup_snapshot_restored');
+                if (_snapN) {
+                    sessionStorage.removeItem('mr_backup_snapshot_restored');
+                    var _n = parseInt(_snapN, 10) || 0;
+                    console.log('[MR][Backup·Snapshot] post-restore detected · ' + _n + ' PRs recuperados · lanzando rebuild de coherencia…');
+                    if (typeof showToast === 'function') {
+                        try { showToast('✓ ' + _n + ' PRs restaurados · verificando coherencia…', 4000); } catch(_){}
+                    }
+                    // Rebuild completo: recalcula PRs+hitos contra activities reales.
+                    // Si el snapshot estaba alineado con las activities, no cambia nada.
+                    // Si había drift (activities añadidas/borradas), corrige.
+                    if (typeof window._rebuildAllPRsAndMilestones === 'function') {
+                        window._rebuildAllPRsAndMilestones()
+                            .then(function(res) {
+                                console.log('[MR][Backup·Snapshot] rebuild OK · ' +
+                                    (res && res.total != null ? res.total : '?') + ' récords totales');
+                            })
+                            .catch(function(err) {
+                                console.warn('[MR][Backup·Snapshot] rebuild error (no bloqueante):', err);
+                            });
+                    } else {
+                        console.warn('[MR][Backup·Snapshot] _rebuildAllPRsAndMilestones no disponible, skip');
+                    }
+                }
+              } catch(eSnap) { console.warn('[MR][Backup·Snapshot] exception:', eSnap); }
+            }, 12500);
+
             return { added: newFromBd.length, total: activities.length };
         } catch(e) {
             console.warn('[MR][FASE 5.4.2] _refreshActivitiesFromBD exception:', e);
@@ -29373,7 +29415,7 @@ function buildManualHTML() {
                 },
                 {
                     title: '💾 Qué incluye el backup local',
-                    text: 'El archivo .json contiene TODO lo que vive en el navegador (localStorage + IndexedDB):\n\n✅ EN EL BACKUP LOCAL:\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Actividades manuales + importadas de .fit/.csv (con GPS, outfit, fotos, evaluaciones IA, RPE)\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones, filtros Club)\n• Manifiesto ligero de actividades de la nube (para verificar tras restore)\n\n☁️ NO ESTÁ EN EL BACKUP (vive en la nube, atado a tu cuenta):\n• Actividades importadas masivamente desde Strava (las 290+ con sus streams y fotos en bucket)\n• Posts del Club, seguidores, comentarios, reacciones\n• Crews, retos, mensajes directos\n\nLos datos de la nube se rehidratan automáticamente al iniciar sesión en cualquier dispositivo. Si pierdes el dispositivo o reinstalas, el backup local + tu cuenta Supabase juntos reconstruyen todo.'
+                    text: 'El archivo .json contiene TODO lo que vive en el navegador (localStorage + IndexedDB):\n\n✅ EN EL BACKUP LOCAL:\n• Perfil completo (foto incluida en base64)\n• Marcas personales y evolución histórica\n• Hall of Fame con fotos de medallas\n• Zapatillas con km acumulados\n• Plan de running, plan de fuerza y plan de rehab activos\n• Rutina de calentamiento\n• Actividades manuales + importadas de .fit/.csv (con GPS, outfit, fotos, evaluaciones IA, RPE)\n• Lesiones registradas\n• Zonas de FC y Ritmo configuradas\n• Preferencias (modo oscuro, notificaciones, filtros Club)\n• Manifiesto ligero de actividades de la nube (para verificar tras restore)\n• Snapshot de PRs y hitos km (récords del Hall of Fame · solo se restauran si tu base de datos está vacía, política conservadora)\n\n☁️ NO ESTÁ EN EL BACKUP (vive en la nube, atado a tu cuenta):\n• Actividades importadas masivamente desde Strava (las 290+ con sus streams y fotos en bucket)\n• Posts del Club, seguidores, comentarios, reacciones\n• Crews, retos, mensajes directos\n\nLos datos de la nube se rehidratan automáticamente al iniciar sesión en cualquier dispositivo. Si pierdes el dispositivo o reinstalas, el backup local + tu cuenta Supabase juntos reconstruyen todo.'
                 },
                 {
                     title: '💾 Dónde se guardan tus datos',
@@ -29704,6 +29746,17 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         { km: 40000, type: 'km_40000', label: 'Vuelta al mundo' }
     ];
 
+    // [FASE 8] HITOS DE RACHA — análogos a KM_MILESTONES.
+    // Persistencia: misma tabla `user_records` con record_type = 'streak_<N>'.
+    // El value almacena la racha MÁXIMA alcanzada en el momento del desbloqueo
+    // (el momento que el usuario alcanzó/superó el umbral).
+    // Como con km_*, una vez ganados, NO se pierden (aunque la racha se rompa).
+    const STREAK_MILESTONES = [
+        { days: 15,  type: 'streak_15',  label: '15 días seguidos' },
+        { days: 30,  type: 'streak_30',  label: '30 días seguidos' },
+        { days: 100, type: 'streak_100', label: '100 días seguidos' }
+    ];
+
     // Mejor tiempo continuo para una distancia objetivo (en cm) sobre distSer.
     // Algoritmo: dos punteros. Devuelve segundos (entero) o null si la actividad
     // no cubre esa distancia o no tiene distSer fiable.
@@ -29873,6 +29926,49 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
             out.push({ type: 'coldest_day', value: tempForRecord, label: 'Día más frío',       valueKind: 'temp_c' });
         }
 
+        // ─────────────────────────────────────────────────────────────
+        // [FASE 8] PRs nuevos per-activity
+        // ─────────────────────────────────────────────────────────────
+
+        // best_cadence: cadencia media (spm) en activity ≥ 3km
+        // Filtro plausibilidad: 130–220 spm (rango humano realista)
+        const cad = Number(act && act.avgCadence) || 0;
+        if (km >= 3 && cad >= 130 && cad <= 220) {
+            out.push({ type: 'best_cadence', value: Math.round(cad), label: 'Mejor cadencia', valueKind: 'cadence_spm' });
+        }
+
+        // lowest_hr_easy: FC media más baja en rodaje easy/recovery ≥ 5km
+        // a pace decente (sub 7:00/km = 420 s/km). Filtros antifluke:
+        //   - solo type 'easy' o 'recovery'
+        //   - distancia ≥ 5km
+        //   - pace medio < 7:00/km (no caminata)
+        //   - avgHr en rango 80–220 (sanidad sensor)
+        const hr = Number(act && act.avgHr) || 0;
+        const actType = String(act && act.type || '').toLowerCase();
+        if ((actType === 'easy' || actType === 'recovery')
+            && km >= 5 && dur > 0 && hr >= 80 && hr <= 220) {
+            const paceSpk = dur / km;
+            if (paceSpk < 420) { // sub 7:00/km
+                out.push({ type: 'lowest_hr_easy', value: Math.round(hr), label: 'FC más baja en easy', valueKind: 'hr_bpm' });
+            }
+        }
+
+        // best_efficiency_index: eficiencia aeróbica (vel/FC)×100
+        // Misma fórmula que el grid de Card 1 pero usando promedio simple
+        // (distKm/durationSec / avgHr) para que funcione en todas las activities
+        // sin necesidad de hidratar distSer + hrSeries. Filtros:
+        //   - distancia ≥ 3km (excluye outliers de tiradas cortas)
+        //   - avgHr ≥ 80 (sanidad mínima)
+        //   - avgHr ≤ 220 (sanidad sensor)
+        // Valor: número con 2 decimales en rango típico 1.5–2.5
+        if (km >= 3 && dur > 0 && hr >= 80 && hr <= 220) {
+            const speedMs = (km * 1000) / dur; // m/s
+            const ef = (speedMs / hr) * 100;
+            if (ef > 0 && ef < 5 && isFinite(ef)) { // sanidad: <5 plausible
+                out.push({ type: 'best_efficiency_index', value: Math.round(ef * 100) / 100, label: 'Mejor eficiencia', valueKind: 'efficiency' });
+            }
+        }
+
         return out;
     }
 
@@ -29882,6 +29978,8 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         // Hitos kilométricos (km_50, km_100, ...): una vez ganado, no se pierde.
         // Si ya existe en BD, NUNCA se sobrescribe — devolvemos false.
         if (type && type.indexOf('km_') === 0) return false;
+        // [FASE 8] Hitos de racha (streak_15, streak_30, streak_100): igual que km_*
+        if (type && type.indexOf('streak_') === 0) return false;
         switch (type) {
             // Tiempo/pace: menor es mejor
             case 'best_100m': case 'best_1k': case 'best_3000m':
@@ -29893,6 +29991,19 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 return newVal > prevVal;
             // Frío: menor es mejor
             case 'coldest_day':
+                return newVal < prevVal;
+            // [FASE 8] PRs nuevos:
+            //   - best_cadence: mayor es mejor (más spm)
+            //   - lowest_hr_easy: menor es mejor (FC más baja)
+            //   - best_week_km, best_month_km: mayor es mejor (más km)
+            //   - best_streak_days: mayor es mejor (más días)
+            //   - best_efficiency_index: mayor es mejor (más vel por FC)
+            case 'best_cadence':
+            case 'best_week_km': case 'best_month_km':
+            case 'best_streak_days':
+            case 'best_efficiency_index':
+                return newVal > prevVal;
+            case 'lowest_hr_easy':
                 return newVal < prevVal;
             default:
                 return false;
@@ -29917,6 +30028,14 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 return n.toLocaleString('es-ES') + ' km';
             }
         }
+        // [FASE 8] Hitos de racha: el value almacenado es la racha en el momento
+        // del desbloqueo. Al mostrarlos extraemos el umbral del type.
+        if (type && type.indexOf('streak_') === 0) {
+            const n = parseInt(type.slice(7), 10);
+            if (isFinite(n) && n > 0) {
+                return n + ' días';
+            }
+        }
         switch (type) {
             case 'best_100m':
                 // Segundos enteros (consistente con el resto). Ej: "14s".
@@ -29932,9 +30051,188 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 return Math.round(value) + ' m';
             case 'hottest_day': case 'coldest_day':
                 return (Math.round(value * 10) / 10).toFixed(1) + ' °C';
+            // [FASE 8] PRs nuevos
+            case 'best_cadence':
+                return Math.round(value) + ' spm';
+            case 'lowest_hr_easy':
+                return Math.round(value) + ' ppm';
+            case 'best_week_km':
+                return (Math.round(value * 10) / 10).toFixed(1) + ' km';
+            case 'best_month_km':
+                return (Math.round(value * 10) / 10).toFixed(1) + ' km';
+            case 'best_streak_days':
+                return Math.round(value) + ' días';
+            case 'best_efficiency_index':
+                return (Math.round(value * 100) / 100).toFixed(2);
             default:
                 return String(value);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // [FASE 8] Helpers para PRs GLOBALES (sobre todo el historial)
+    // ─────────────────────────────────────────────────────────────────
+    //
+    // best_streak_days, best_week_km, best_month_km no se pueden calcular
+    // desde 1 sola activity (necesitan el historial completo). Estos helpers
+    // los calculan iterando todas las activities running del usuario.
+    //
+    // Devuelven { type, value, dateStr, activityId } o null si no aplica.
+    // ─────────────────────────────────────────────────────────────────
+
+    /** Parsea "YYYY-MM-DD" → epoch ms al inicio del día (UTC). */
+    function _dateStrToEpochDay(ds) {
+        if (!ds || typeof ds !== 'string') return null;
+        const m = ds.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) return null;
+        const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        return isFinite(t) ? Math.floor(t / 86400000) : null; // días desde epoch
+    }
+
+    /** Calcula la racha consecutiva máxima en días corriendo (sin huecos).
+     *  Si hay varias activities en el mismo día, cuenta como 1.
+     *  Devuelve { value, dateStr } con la fecha del último día de la racha
+     *  o null si no hay datos. */
+    function _computeBestStreakDays(runningActs) {
+        if (!runningActs || !runningActs.length) return null;
+        const dayMap = {}; // epochDay → {dateStr, actId}
+        runningActs.forEach(function(act) {
+            const day = _dateStrToEpochDay(act.dateStr);
+            if (day == null) return;
+            if (!dayMap[day]) dayMap[day] = { dateStr: act.dateStr, actId: String(act.id) };
+        });
+        const days = Object.keys(dayMap).map(Number).sort(function(a,b){return a-b;});
+        if (!days.length) return null;
+        let bestLen = 1;
+        let bestEndDay = days[0];
+        let curLen = 1;
+        for (let i = 1; i < days.length; i++) {
+            if (days[i] === days[i-1] + 1) {
+                curLen++;
+                if (curLen > bestLen) { bestLen = curLen; bestEndDay = days[i]; }
+            } else {
+                curLen = 1;
+            }
+        }
+        const endInfo = dayMap[bestEndDay];
+        return { value: bestLen, dateStr: endInfo.dateStr, actId: endInfo.actId };
+    }
+
+    /** Calcula racha ACTUAL (desde el último día hacia atrás).
+     *  Útil para el hito streak_15/30/100 que se desbloquea EN el momento. */
+    function _computeCurrentStreakDays(runningActs) {
+        if (!runningActs || !runningActs.length) return 0;
+        const daySet = new Set();
+        runningActs.forEach(function(act) {
+            const day = _dateStrToEpochDay(act.dateStr);
+            if (day != null) daySet.add(day);
+        });
+        if (!daySet.size) return 0;
+        const days = Array.from(daySet).sort(function(a,b){return b-a;}); // desc
+        // Día "hoy" en UTC
+        const today = Math.floor(Date.now() / 86400000);
+        let streak = 0;
+        let cursor = today;
+        // Tolerancia: si hoy no hay activity pero ayer sí, contamos desde ayer
+        // (no rompemos racha si todavía no salió a correr hoy).
+        if (days[0] === today - 1) cursor = today - 1;
+        else if (days[0] !== today) return 0; // si último día < ayer, racha rota
+        for (let i = 0; i < days.length; i++) {
+            if (days[i] === cursor) { streak++; cursor--; }
+            else if (days[i] < cursor) break;
+        }
+        return streak;
+    }
+
+    /** Convierte epochDay a "lunes de su semana ISO" (lun = inicio).
+     *  Devuelve epochDay del lunes. */
+    function _weekStartEpochDay(epochDay) {
+        // Date(epochDay * 86400000) tiene getUTCDay donde 0=domingo, 1=lunes...6=sábado
+        const d = new Date(epochDay * 86400000);
+        const dow = d.getUTCDay(); // 0=dom..6=sab
+        const daysToMonday = (dow === 0) ? 6 : (dow - 1);
+        return epochDay - daysToMonday;
+    }
+
+    /** Convierte epochDay a clave "YYYY-MM" del mes natural. */
+    function _monthKey(epochDay) {
+        const d = new Date(epochDay * 86400000);
+        return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+    }
+
+    /** Convierte epochDay a "YYYY-MM-DD". */
+    function _epochDayToDateStr(epochDay) {
+        const d = new Date(epochDay * 86400000);
+        return d.getUTCFullYear() + '-'
+             + String(d.getUTCMonth() + 1).padStart(2, '0') + '-'
+             + String(d.getUTCDate()).padStart(2, '0');
+    }
+
+    /** Mejor semana en km (lun-dom). Devuelve { value, dateStr (del lunes), actId (última act de la semana) } */
+    function _computeBestWeekKm(runningActs) {
+        if (!runningActs || !runningActs.length) return null;
+        const weekMap = {}; // mondayEpochDay → { km, lastActId, lastDateStr, lastDay }
+        runningActs.forEach(function(act) {
+            const day = _dateStrToEpochDay(act.dateStr);
+            const km = Number(act.distKm) || 0;
+            if (day == null || km <= 0) return;
+            const monday = _weekStartEpochDay(day);
+            if (!weekMap[monday]) weekMap[monday] = { km: 0, lastActId: null, lastDateStr: null, lastDay: -Infinity };
+            weekMap[monday].km += km;
+            if (day > weekMap[monday].lastDay) {
+                weekMap[monday].lastDay = day;
+                weekMap[monday].lastActId = String(act.id);
+                weekMap[monday].lastDateStr = act.dateStr;
+            }
+        });
+        let best = null;
+        Object.keys(weekMap).forEach(function(mondayKey) {
+            const w = weekMap[mondayKey];
+            if (!best || w.km > best.value) {
+                best = { value: w.km, dateStr: w.lastDateStr, actId: w.lastActId };
+            }
+        });
+        return best;
+    }
+
+    /** Mejor mes en km. Devuelve { value, dateStr (último día con act), actId (última act del mes) } */
+    function _computeBestMonthKm(runningActs) {
+        if (!runningActs || !runningActs.length) return null;
+        const monthMap = {}; // "YYYY-MM" → { km, lastActId, lastDateStr, lastDay }
+        runningActs.forEach(function(act) {
+            const day = _dateStrToEpochDay(act.dateStr);
+            const km = Number(act.distKm) || 0;
+            if (day == null || km <= 0) return;
+            const mk = _monthKey(day);
+            if (!monthMap[mk]) monthMap[mk] = { km: 0, lastActId: null, lastDateStr: null, lastDay: -Infinity };
+            monthMap[mk].km += km;
+            if (day > monthMap[mk].lastDay) {
+                monthMap[mk].lastDay = day;
+                monthMap[mk].lastActId = String(act.id);
+                monthMap[mk].lastDateStr = act.dateStr;
+            }
+        });
+        let best = null;
+        Object.keys(monthMap).forEach(function(mk) {
+            const m = monthMap[mk];
+            if (!best || m.km > best.value) {
+                best = { value: m.km, dateStr: m.lastDateStr, actId: m.lastActId };
+            }
+        });
+        return best;
+    }
+
+    /** Wrapper: calcula los 3 PRs globales desde el array de running acts.
+     *  Devuelve { best_streak_days?: {value, dateStr, actId}, best_week_km?, best_month_km? } */
+    function _computeGlobalRecords(runningActs) {
+        const out = {};
+        const streak = _computeBestStreakDays(runningActs);
+        if (streak && streak.value > 0) out.best_streak_days = streak;
+        const week = _computeBestWeekKm(runningActs);
+        if (week && week.value > 0) out.best_week_km = { value: Math.round(week.value * 100) / 100, dateStr: week.dateStr, actId: week.actId };
+        const month = _computeBestMonthKm(runningActs);
+        if (month && month.value > 0) out.best_month_km = { value: Math.round(month.value * 100) / 100, dateStr: month.dateStr, actId: month.actId };
+        return out;
     }
 
     // Función principal expuesta
@@ -29955,6 +30253,57 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
 
             // Construir candidatos desde el act
             const candidates = _buildCandidates(act);
+
+            // ─────────────────────────────────────────────────────────
+            // [FASE 8] Añadir candidatos GLOBALES (streak/semana/mes)
+            // Se calculan sobre TODO el historial running, no solo el act
+            // actual. Esto garantiza que al guardar una activity nueva, si
+            // contribuye a una mejor semana/mes o extiende racha, se detecte.
+            // ─────────────────────────────────────────────────────────
+            try {
+                const allActs = (typeof window._getActivities === 'function') ? window._getActivities() : [];
+                const allRunning = allActs.filter(function(a) {
+                    return RUNNING_TYPES.has(String(a.type || '').toLowerCase());
+                });
+                // Importante: incluir el `act` actual si todavía no está en allRunning
+                // (escenario manual antes del refresh de BD). Detectamos por id.
+                const hasIt = allRunning.some(function(a) { return String(a.id) === String(act.id); });
+                const actsForGlobal = hasIt ? allRunning : allRunning.concat([act]);
+                const globals = _computeGlobalRecords(actsForGlobal);
+                if (globals.best_streak_days) {
+                    candidates.push({
+                        type: 'best_streak_days',
+                        value: globals.best_streak_days.value,
+                        label: 'Racha más larga',
+                        valueKind: 'streak_days',
+                        _overrideActId: globals.best_streak_days.actId,
+                        _overrideDateStr: globals.best_streak_days.dateStr
+                    });
+                }
+                if (globals.best_week_km) {
+                    candidates.push({
+                        type: 'best_week_km',
+                        value: globals.best_week_km.value,
+                        label: 'Mejor semana',
+                        valueKind: 'week_km',
+                        _overrideActId: globals.best_week_km.actId,
+                        _overrideDateStr: globals.best_week_km.dateStr
+                    });
+                }
+                if (globals.best_month_km) {
+                    candidates.push({
+                        type: 'best_month_km',
+                        value: globals.best_month_km.value,
+                        label: 'Mejor mes',
+                        valueKind: 'month_km',
+                        _overrideActId: globals.best_month_km.actId,
+                        _overrideDateStr: globals.best_month_km.dateStr
+                    });
+                }
+            } catch (eGlob) {
+                console.warn('[MR][PR][global] cálculo globales fail:', eGlob && eGlob.message ? eGlob.message : eGlob);
+            }
+
             if (!candidates.length) return [];
 
             // Leer récords actuales del usuario
@@ -29973,6 +30322,12 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
             for (const c of candidates) {
                 const prev = prevMap[c.type];
                 if (_isBetter(c.type, c.value, prev)) {
+                    // [FASE 8] Para PRs globales, la activity_local_id apunta a la
+                    // act específica que cierra el período (último día de la racha,
+                    // último día de la mejor semana/mes). NO al act actual recién
+                    // guardado, porque puede ser anterior.
+                    const refActId   = c._overrideActId   || String(act.id);
+                    const refDateStr = c._overrideDateStr || act.dateStr;
                     beaten.push({
                         type: c.type,
                         value: c.value,
@@ -29981,8 +30336,8 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                         valueKind: c.valueKind,
                         formatted: _formatRecordValue(c.type, c.value),
                         formattedPrev: (prev == null ? null : _formatRecordValue(c.type, prev)),
-                        activity_local_id: String(act.id),
-                        activity_dateStr: act.dateStr
+                        activity_local_id: refActId,
+                        activity_dateStr: refDateStr
                     });
                 }
             }
@@ -30123,6 +30478,97 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
     window._detectMilestones = _detectMilestones;
 
     // ─────────────────────────────────────────────────────────────────
+    // [FASE 8] _detectStreakMilestones(act)
+    // Equivalente a _detectMilestones pero para hitos de RACHA (días
+    // consecutivos). Una vez desbloqueado, nunca se pierde (aunque la
+    // racha se rompa después).
+    //
+    // Política: comprobamos la mejor racha SOBRE TODO EL HISTORIAL.
+    // Si nunca antes superaste 30 días seguidos pero acabas de cerrar
+    // una racha de 32 días, desbloqueas streak_15 y streak_30.
+    // El value almacenado es la racha máxima en el momento del desbloqueo.
+    // ─────────────────────────────────────────────────────────────────
+    async function _detectStreakMilestones(act) {
+        try {
+            if (!act) return [];
+            if (!RUNNING_TYPES.has(String(act.type || '').toLowerCase())) return [];
+
+            const sb = window._sbClient;
+            if (!sb) { console.warn('[MR][STREAK] sin _sbClient'); return []; }
+            const { data: sess } = await sb.auth.getSession();
+            const uid = sess && sess.session && sess.session.user && sess.session.user.id;
+            if (!uid) { console.warn('[MR][STREAK] sin sesión'); return []; }
+
+            // Calcular la mejor racha sobre TODO el historial running (incluyendo el act actual)
+            const allActs = (typeof window._getActivities === 'function') ? window._getActivities() : [];
+            const allRunning = allActs.filter(function(a) {
+                return RUNNING_TYPES.has(String(a.type || '').toLowerCase());
+            });
+            const hasIt = allRunning.some(function(a) { return String(a.id) === String(act.id); });
+            const actsForStreak = hasIt ? allRunning : allRunning.concat([act]);
+            const streakInfo = _computeBestStreakDays(actsForStreak);
+            if (!streakInfo || !streakInfo.value || streakInfo.value <= 0) return [];
+
+            const bestStreak = streakInfo.value;
+            const refActId   = streakInfo.actId;
+            const refDateStr = streakInfo.dateStr;
+
+            // Hitos ya desbloqueados (record_type empieza por 'streak_')
+            const allStreakTypes = STREAK_MILESTONES.map(M => M.type);
+            const { data: existing, error: e1 } = await sb
+                .from('user_records')
+                .select('record_type')
+                .eq('user_id', uid)
+                .in('record_type', allStreakTypes);
+            if (e1) { console.warn('[MR][STREAK] select fail:', e1.message); return []; }
+            const already = new Set((existing || []).map(r => r.record_type));
+
+            const unlocked = [];
+            for (const M of STREAK_MILESTONES) {
+                if (bestStreak >= M.days && !already.has(M.type)) {
+                    unlocked.push({
+                        type: M.type,
+                        value: bestStreak,
+                        prevValue: null,
+                        label: M.label,
+                        valueKind: 'milestone_streak',
+                        formatted: _formatRecordValue(M.type, bestStreak),
+                        formattedPrev: null,
+                        activity_local_id: refActId,
+                        activity_dateStr: refDateStr
+                    });
+                }
+            }
+            if (!unlocked.length) return [];
+
+            const rows = unlocked.map(u => ({
+                user_id: uid,
+                record_type: u.type,
+                value: u.value,
+                activity_local_id: u.activity_local_id,
+                activity_datestr: u.activity_dateStr,
+                achieved_at: new Date().toISOString()
+            }));
+            const { error: e2 } = await sb.from('user_records').insert(rows);
+            if (e2) {
+                console.warn('[MR][STREAK] insert fail:', e2.message);
+                try {
+                    await sb.from('user_records').upsert(rows, {
+                        onConflict: 'user_id,record_type', ignoreDuplicates: true
+                    });
+                } catch(_) {}
+            }
+            console.log('[MR][STREAK] ✅ desbloqueados:', unlocked.map(u => u.type).join(', '),
+                        '— mejor racha:', bestStreak, 'días');
+            return unlocked;
+        } catch (e) {
+            console.warn('[MR][STREAK] _detectStreakMilestones fail:', e && e.message ? e.message : e);
+            return [];
+        }
+    }
+    window._detectStreakMilestones = _detectStreakMilestones;
+
+    // ─────────────────────────────────────────────────────────────────
     // HELPER de re-cálculo retroactivo: recorre TODAS las actividades
     // locales, reconstruye los 9 récords desde cero y los persiste en
     // Supabase, reemplazando las filas anteriores. Útil cuando cambiamos
@@ -30167,6 +30613,33 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
             const cands = _buildCandidates(act);
             cands.forEach(function(c) { _update(c.type, c.value, act); });
         });
+
+        // [FASE 8] PRs globales (calculados sobre TODO el historial running)
+        // _update aquí necesita un "act sintético" porque el origen del récord
+        // es la activity que cierra el período, no una única act del bucle.
+        try {
+            const globals = _computeGlobalRecords(running);
+            if (globals.best_streak_days) {
+                _update('best_streak_days', globals.best_streak_days.value, {
+                    id: globals.best_streak_days.actId,
+                    dateStr: globals.best_streak_days.dateStr
+                });
+            }
+            if (globals.best_week_km) {
+                _update('best_week_km', globals.best_week_km.value, {
+                    id: globals.best_week_km.actId,
+                    dateStr: globals.best_week_km.dateStr
+                });
+            }
+            if (globals.best_month_km) {
+                _update('best_month_km', globals.best_month_km.value, {
+                    id: globals.best_month_km.actId,
+                    dateStr: globals.best_month_km.dateStr
+                });
+            }
+        } catch (eGlob) {
+            console.warn('[MR][PR][rebuild] globales fail:', eGlob && eGlob.message ? eGlob.message : eGlob);
+        }
 
         // Construir filas para upsert
         const rows = Object.keys(best).map(function(type) {
@@ -30278,6 +30751,7 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 achieved_at: new Date().toISOString()
             };
         });
+        // rows queda mutable porque más abajo concatenamos los streak milestones
 
         // upsert con ignoreDuplicates=true es nuestro "insert idempotente"
         const { error: eIns } = await sb
@@ -30292,6 +30766,79 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         rows.forEach(function(r) {
             console.log('  ', r.record_type, '=', _formatRecordValue(r.record_type, r.value), '(' + r.activity_datestr + ')');
         });
+
+        // ─────────────────────────────────────────────────────────
+        // [FASE 8] Hitos de RACHA — reconstruir desde historial
+        // Estrategia: para cada umbral 15/30/100, encontrar el DÍA
+        // exacto en que se cruzó por primera vez iterando cronológicamente
+        // y manteniendo racha actual. La activity de referencia es la que
+        // cierra el día del cruce.
+        // ─────────────────────────────────────────────────────────
+        try {
+            // Indexar activities por día (epochDay → activity de referencia)
+            const dayToAct = {};
+            running.forEach(function(act) {
+                const day = _dateStrToEpochDay(act.dateStr);
+                if (day == null) return;
+                // Si varias en el mismo día, nos quedamos con la primera ordenada
+                if (!dayToAct[day]) dayToAct[day] = { actId: String(act.id), dateStr: act.dateStr };
+            });
+            const days = Object.keys(dayToAct).map(Number).sort(function(a,b){return a-b;});
+
+            // Recorrer cronológicamente y marcar cruces de streak
+            const streakCrossings = {}; // { 'streak_15': { value, actId, dateStr } }
+            let curStreak = 0;
+            let prevDay = null;
+            for (let i = 0; i < days.length; i++) {
+                const d = days[i];
+                if (prevDay != null && d === prevDay + 1) curStreak++;
+                else curStreak = 1;
+                prevDay = d;
+                // Chequear cada hito
+                for (const SM of STREAK_MILESTONES) {
+                    if (curStreak >= SM.days && !streakCrossings[SM.type]) {
+                        streakCrossings[SM.type] = {
+                            value: curStreak,
+                            actId: dayToAct[d].actId,
+                            dateStr: dayToAct[d].dateStr
+                        };
+                    }
+                }
+            }
+
+            const streakTypes = Object.keys(streakCrossings);
+            if (streakTypes.length) {
+                const streakRows = streakTypes.map(function(t) {
+                    const c = streakCrossings[t];
+                    return {
+                        user_id: uid,
+                        record_type: t,
+                        value: c.value,
+                        activity_local_id: c.actId,
+                        activity_datestr: c.dateStr,
+                        achieved_at: new Date().toISOString()
+                    };
+                });
+                const { error: eStreak } = await sb
+                    .from('user_records')
+                    .upsert(streakRows, { onConflict: 'user_id,record_type', ignoreDuplicates: true });
+                if (eStreak) {
+                    console.warn('[MR][STREAK] rebuild upsert fail:', eStreak.message);
+                } else {
+                    console.log('[MR][STREAK] ✅ hitos racha reconstruidos:');
+                    streakRows.forEach(function(r) {
+                        console.log('  ', r.record_type, '=', _formatRecordValue(r.record_type, r.value), '(' + r.activity_datestr + ')');
+                    });
+                    // Sumar al array de rows que devolvemos
+                    rows = rows.concat(streakRows);
+                }
+            } else {
+                console.log('[MR][STREAK] ninguna racha alcanzó umbral');
+            }
+        } catch (eGlob) {
+            console.warn('[MR][STREAK] rebuild streak exception:', eGlob && eGlob.message ? eGlob.message : eGlob);
+        }
+
         return rows;
     }
     window._rebuildAllMilestonesFromHistory = _rebuildAllMilestonesFromHistory;
@@ -30458,7 +31005,18 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         km_5000:       { label: '5.000 km',          tier: 'milestone_platinum', centerText: '5K' },
         km_10000:      { label: '10.000 km',         tier: 'milestone_platinum', centerText: '10K' },
         km_20000:      { label: 'Medio mundo',       tier: 'milestone_diamond',  centerText: '20K' },
-        km_40000:      { label: 'Vuelta al mundo',   tier: 'milestone_diamond',  centerText: '40K' }
+        km_40000:      { label: 'Vuelta al mundo',   tier: 'milestone_diamond',  centerText: '40K' },
+        // ── [FASE 8] PRs nuevos (6) ──────────────────────────────────────
+        best_streak_days:       { label: 'Racha más larga',  tier: 'streak_fire',      centerText: null  },
+        best_cadence:           { label: 'Mejor cadencia',   tier: 'cadence_metro',    centerText: 'spm' },
+        lowest_hr_easy:         { label: 'FC más baja easy', tier: 'heart_zen',        centerText: null  },
+        best_week_km:           { label: 'Mejor semana',     tier: 'week_calendar',    centerText: null  },
+        best_month_km:          { label: 'Mejor mes',        tier: 'month_calendar',   centerText: null  },
+        best_efficiency_index:  { label: 'Mejor eficiencia', tier: 'efficiency_spark', centerText: null  },
+        // ── [FASE 8] Hitos de racha (3) — diamantes progresivos ──────────
+        streak_15:              { label: '15 días seguidos',  tier: 'streak_15',  centerText: '15'  },
+        streak_30:              { label: '30 días seguidos',  tier: 'streak_30',  centerText: '30'  },
+        streak_100:             { label: '100 días seguidos', tier: 'streak_100', centerText: '100' }
     };
 
     // Formatear diferencia "mejorado en X" según tipo
@@ -30467,6 +31025,10 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         if (type && type.indexOf('km_') === 0) {
             const totalReal = (Math.round(value * 10) / 10).toFixed(1);
             return `Acumulado al desbloquear: ${totalReal} km`;
+        }
+        // [FASE 8] Hitos de racha: también "desbloqueados"
+        if (type && type.indexOf('streak_') === 0) {
+            return `Racha al desbloquear: ${Math.round(value)} días`;
         }
         if (prev == null) return 'Tu primer récord';
         const fmt = window._formatRecordValue;
@@ -30494,6 +31056,27 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         if (type === 'hottest_day' || type === 'coldest_day') {
             const diff = Math.abs(value - prev).toFixed(1);
             return `${diff} °C de diferencia (antes ${fmt(type, prev)})`;
+        }
+        // ── [FASE 8] PRs nuevos ─────────────────────────────────────────
+        if (type === 'best_cadence') {
+            const diff = Math.round(value - prev);
+            return `+${diff} spm (antes ${fmt(type, prev)})`;
+        }
+        if (type === 'lowest_hr_easy') {
+            const diff = Math.round(prev - value);
+            return `-${diff} ppm (antes ${fmt(type, prev)})`;
+        }
+        if (type === 'best_week_km' || type === 'best_month_km') {
+            const diff = (value - prev).toFixed(1);
+            return `+${diff} km (antes ${fmt(type, prev)})`;
+        }
+        if (type === 'best_streak_days') {
+            const diff = Math.round(value - prev);
+            return `+${diff} días (antes ${fmt(type, prev)})`;
+        }
+        if (type === 'best_efficiency_index') {
+            const diff = (value - prev).toFixed(2);
+            return `+${diff} (antes ${fmt(type, prev)})`;
         }
         return `Antes: ${fmt(type, prev)}`;
     }
@@ -30536,7 +31119,8 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         ].join(';');
 
         // Mensaje adaptativo según composición: solo PRs, solo hitos, o mezcla.
-        const isMilestone = (it) => it && it.valueKind === 'milestone_km';
+        // [FASE 8] valueKind 'milestone_streak' también es hito (igual que 'milestone_km')
+        const isMilestone = (it) => it && (it.valueKind === 'milestone_km' || it.valueKind === 'milestone_streak');
         const milestones = beaten.filter(isMilestone);
         const records    = beaten.filter(it => !isMilestone(it));
         let msg;
@@ -30758,7 +31342,17 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
             milestone_silver:   { bg: 'rgba(191,199,207,.08)', border: 'rgba(191,199,207,.45)', labelColor: 'rgba(191,199,207,.95)' },
             milestone_gold:     { bg: 'rgba(201,168,76,.10)',  border: 'rgba(201,168,76,.45)',  labelColor: 'rgba(201,168,76,.95)' },
             milestone_platinum: { bg: 'rgba(168,184,200,.10)', border: 'rgba(168,184,200,.45)', labelColor: 'rgba(200,215,235,.95)' },
-            milestone_diamond:  { bg: 'rgba(140,200,230,.12)', border: 'rgba(140,200,230,.5)',  labelColor: 'rgba(180,230,250,.95)' }
+            milestone_diamond:  { bg: 'rgba(140,200,230,.12)', border: 'rgba(140,200,230,.5)',  labelColor: 'rgba(180,230,250,.95)' },
+            // ── [FASE 8] tiers nuevos (6 PRs + 3 streak hitos) ──────────
+            streak_fire:        { bg: 'rgba(224,122,40,.12)',  border: 'rgba(224,122,40,.5)',  labelColor: 'rgba(255,184,90,.95)' },
+            cadence_metro:      { bg: 'rgba(124,95,208,.12)',  border: 'rgba(124,95,208,.5)',  labelColor: 'rgba(196,170,255,.95)' },
+            heart_zen:          { bg: 'rgba(79,168,104,.12)',  border: 'rgba(79,168,104,.5)',  labelColor: 'rgba(168,232,180,.95)' },
+            week_calendar:      { bg: 'rgba(212,160,64,.12)',  border: 'rgba(212,160,64,.5)',  labelColor: 'rgba(232,200,120,.95)' },
+            month_calendar:     { bg: 'rgba(62,138,212,.12)',  border: 'rgba(62,138,212,.5)',  labelColor: 'rgba(150,200,240,.95)' },
+            efficiency_spark:   { bg: 'rgba(46,176,152,.12)',  border: 'rgba(46,176,152,.5)',  labelColor: 'rgba(168,232,200,.95)' },
+            streak_15:          { bg: 'rgba(216,122,56,.10)',  border: 'rgba(216,122,56,.45)', labelColor: 'rgba(255,184,90,.95)' },
+            streak_30:          { bg: 'rgba(184,192,202,.10)', border: 'rgba(184,192,202,.45)',labelColor: 'rgba(220,228,238,.95)' },
+            streak_100:         { bg: 'rgba(168,224,248,.12)', border: 'rgba(168,224,248,.55)',labelColor: 'rgba(220,240,255,.95)' }
         };
         const s = tierStyles[meta.tier] || tierStyles.gold;
 
@@ -31035,6 +31629,186 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 + '</g>'
                 + '<text x="28" y="40" text-anchor="middle" fill="#FFFFFF" font-size="9" font-weight="900" font-family="system-ui" letter-spacing="0.3">'+_escHtml(txt)+'</text>';
             return _diamondMilestone(rim, face, '#0E2E5C', '#FFFFFF', null, 0, '') .replace('</svg>', globeInside + '</svg>');
+        }
+
+
+        // ═══════════════════════════════════════════════════════════════
+        // [FASE 8] NUEVAS MEDALLAS — 6 PRs + 3 hitos streak
+        // ═══════════════════════════════════════════════════════════════
+
+        // ─── STREAK_FIRE (best_streak_days) — Cadena de eslabones dorada ─
+        if (tier === 'streak_fire') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A5"/><stop offset="0.5" stop-color="#C4881E"/><stop offset="1" stop-color="#5C3D11"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#FFFAEB"/><stop offset="0.45" stop-color="#E8C76A"/><stop offset="1" stop-color="#7A521A"/></radialGradient>';
+            const chain = ''
+                + '<defs>'
+                +   '<linearGradient id="lnk_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAEB"/><stop offset="0.5" stop-color="#E8C76A"/><stop offset="1" stop-color="#7A521A"/></linearGradient>'
+                +   '<linearGradient id="lnkD_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A5"/><stop offset="0.5" stop-color="#C4881E"/><stop offset="1" stop-color="#3A2008"/></linearGradient>'
+                + '</defs>'
+                + '<g transform="translate(28,32)">'
+                +   '<g transform="translate(-9,-9) rotate(45)">'
+                +     '<rect x="-5.5" y="-3.5" width="11" height="7" rx="3.5" ry="3.5" fill="none" stroke="url(#lnkD_'+uid+')" stroke-width="1.8"/>'
+                +     '<rect x="-4.2" y="-2.4" width="8.4" height="4.8" rx="2.4" ry="2.4" fill="none" stroke="url(#lnk_'+uid+')" stroke-width="0.7" opacity="0.7"/>'
+                +   '</g>'
+                +   '<g transform="translate(0,-2) rotate(-45)">'
+                +     '<rect x="-7" y="-4.5" width="14" height="9" rx="4.5" ry="4.5" fill="none" stroke="url(#lnkD_'+uid+')" stroke-width="2.2"/>'
+                +     '<rect x="-5.5" y="-3" width="11" height="6" rx="3" ry="3" fill="none" stroke="#FFFAEB" stroke-width="0.6" opacity="0.85"/>'
+                +   '</g>'
+                +   '<g transform="translate(0,2) rotate(45)">'
+                +     '<rect x="-7" y="-4.5" width="14" height="9" rx="4.5" ry="4.5" fill="none" stroke="url(#lnkD_'+uid+')" stroke-width="2.2"/>'
+                +     '<rect x="-5.5" y="-3" width="11" height="6" rx="3" ry="3" fill="none" stroke="#FFFAEB" stroke-width="0.6" opacity="0.85"/>'
+                +   '</g>'
+                +   '<g transform="translate(9,9) rotate(-45)">'
+                +     '<rect x="-5.5" y="-3.5" width="11" height="7" rx="3.5" ry="3.5" fill="none" stroke="url(#lnkD_'+uid+')" stroke-width="1.8"/>'
+                +     '<rect x="-4.2" y="-2.4" width="8.4" height="4.8" rx="2.4" ry="2.4" fill="none" stroke="url(#lnk_'+uid+')" stroke-width="0.7" opacity="0.7"/>'
+                +   '</g>'
+                + '</g>';
+            return _circleLayered(rim, face, '#3A2408', '', null, 0, chain);
+        }
+
+        // ─── CADENCE_METRO (best_cadence) — "spm" tipográfico violeta ────
+        if (tier === 'cadence_metro') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D8C0FF"/><stop offset="0.5" stop-color="#6A4FB8"/><stop offset="1" stop-color="#2A1A55"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#E8DBFF"/><stop offset="0.45" stop-color="#7C5FD0"/><stop offset="1" stop-color="#1A0E3A"/></radialGradient>';
+            return _circleLayered(rim, face, '#2A1A55', '#FFFAEB', 'spm', 11, '');
+        }
+
+        // ─── HEART_ZEN (lowest_hr_easy) — Onda ECG verde Z2 ──────────────
+        if (tier === 'heart_zen') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#C8F0D0"/><stop offset="0.5" stop-color="#3A8050"/><stop offset="1" stop-color="#0D2A18"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.3"><stop offset="0" stop-color="#D8F5DD"/><stop offset="0.45" stop-color="#4FA868"/><stop offset="1" stop-color="#0A1F10"/></radialGradient>';
+            const pulse = ''
+                + '<g transform="translate(28,32)" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">'
+                +   '<path d="M-13 0 L-9 0 L-7 -8 L-4 8 L-1 -10 L2 10 L5 -7 L8 0 L13 0" opacity="0.95"/>'
+                + '</g>'
+                + '<circle cx="14" cy="32" r="2" fill="#FFFFFF" opacity="0.85"/>'
+                + '<circle cx="42" cy="32" r="2" fill="#FFFFFF" opacity="0.85"/>';
+            return _circleLayered(rim, face, '#0A1F10', '', null, 0, pulse);
+        }
+
+        // ─── WEEK_CALENDAR (best_week_km) — Calendario "7d" + corona ─────
+        if (tier === 'week_calendar') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A5"/><stop offset="0.5" stop-color="#C4881E"/><stop offset="1" stop-color="#5C3D11"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#FFF4D6"/><stop offset="0.45" stop-color="#D4A040"/><stop offset="1" stop-color="#3A2408"/></radialGradient>';
+            const cal = ''
+                + '<defs>'
+                +   '<linearGradient id="crwn_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAEB"/><stop offset="0.5" stop-color="#FFD76E"/><stop offset="1" stop-color="#8A5C20"/></linearGradient>'
+                + '</defs>'
+                + '<g transform="translate(28,34)">'
+                +   '<path d="M-9 -10 L-9 -7 L9 -7 L9 -10 L7 -12 L5 -9 L3 -13 L0 -9 L-3 -13 L-5 -9 L-7 -12 Z" fill="url(#crwn_'+uid+')" stroke="#5C3D11" stroke-width="0.7" stroke-linejoin="round"/>'
+                +   '<circle cx="0" cy="-11" r="1.2" fill="#C8244A" stroke="#FFFAEB" stroke-width="0.3"/>'
+                +   '<circle cx="-5" cy="-10.5" r="0.9" fill="#2A8050" stroke="#FFFAEB" stroke-width="0.3"/>'
+                +   '<circle cx="5" cy="-10.5" r="0.9" fill="#2A8050" stroke="#FFFAEB" stroke-width="0.3"/>'
+                +   '<path d="M-8.5 -8 L8.5 -8" stroke="#FFFAEB" stroke-width="0.5" opacity="0.7"/>'
+                +   '<rect x="-9" y="-6" width="18" height="13" rx="1.5" fill="#FFFAEB" stroke="#5C3D11" stroke-width="0.8"/>'
+                +   '<rect x="-9" y="-6" width="18" height="3" fill="#8F1A28"/>'
+                +   '<rect x="-6" y="-7.5" width="1.5" height="3" rx="0.5" fill="#5C3D11"/>'
+                +   '<rect x="4.5" y="-7.5" width="1.5" height="3" rx="0.5" fill="#5C3D11"/>'
+                +   '<text x="0" y="4.2" text-anchor="middle" fill="#5C3D11" font-size="8" font-weight="900" font-family="system-ui">7d</text>'
+                + '</g>';
+            return _circleLayered(rim, face, '#3A2408', '', null, 0, cal);
+        }
+
+        // ─── MONTH_CALENDAR (best_month_km) — Calendario "30" + laureles ─
+        if (tier === 'month_calendar') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.4" stop-color="#A8E0F8"/><stop offset="1" stop-color="#1A4F8A"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#E8F4FF"/><stop offset="0.45" stop-color="#3E8AD4"/><stop offset="1" stop-color="#0E2E5C"/></radialGradient>';
+            const cal = ''
+                + '<defs>'
+                +   '<linearGradient id="lrl_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE9A5"/><stop offset="0.5" stop-color="#C9A84C"/><stop offset="1" stop-color="#7A521A"/></linearGradient>'
+                + '</defs>'
+                + '<g transform="translate(28,33)">'
+                +   '<g>'
+                +     '<path d="M-13 8 Q-14 0 -11 -8" stroke="url(#lrl_'+uid+')" stroke-width="1.1" fill="none" stroke-linecap="round"/>'
+                +     '<ellipse cx="-13.5" cy="6" rx="2.2" ry="1.1" transform="rotate(-30 -13.5 6)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="-13.8" cy="2.5" rx="2.4" ry="1.2" transform="rotate(-40 -13.8 2.5)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="-13.3" cy="-1" rx="2.3" ry="1.15" transform="rotate(-55 -13.3 -1)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="-12" cy="-5" rx="2" ry="1" transform="rotate(-65 -12 -5)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +   '</g>'
+                +   '<g>'
+                +     '<path d="M13 8 Q14 0 11 -8" stroke="url(#lrl_'+uid+')" stroke-width="1.1" fill="none" stroke-linecap="round"/>'
+                +     '<ellipse cx="13.5" cy="6" rx="2.2" ry="1.1" transform="rotate(30 13.5 6)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="13.8" cy="2.5" rx="2.4" ry="1.2" transform="rotate(40 13.8 2.5)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="13.3" cy="-1" rx="2.3" ry="1.15" transform="rotate(55 13.3 -1)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +     '<ellipse cx="12" cy="-5" rx="2" ry="1" transform="rotate(65 12 -5)" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +   '</g>'
+                +   '<path d="M0 -11 L1 -8.5 L3.5 -8.5 L1.6 -7 L2.3 -4.5 L0 -6 L-2.3 -4.5 L-1.6 -7 L-3.5 -8.5 L-1 -8.5 Z" fill="url(#lrl_'+uid+')" stroke="#7A521A" stroke-width="0.3"/>'
+                +   '<rect x="-8" y="-3" width="16" height="13" rx="1.5" fill="#FFFAEB" stroke="#0E2E5C" stroke-width="0.8"/>'
+                +   '<rect x="-8" y="-3" width="16" height="3.2" fill="#0E2E5C"/>'
+                +   '<rect x="-5.5" y="-4.5" width="1.3" height="2.5" rx="0.4" fill="#0E2E5C"/>'
+                +   '<rect x="4.2" y="-4.5" width="1.3" height="2.5" rx="0.4" fill="#0E2E5C"/>'
+                +   '<text x="0" y="7.5" text-anchor="middle" fill="#0E2E5C" font-size="9" font-weight="900" font-family="system-ui">30</text>'
+                + '</g>';
+            return _circleLayered(rim, face, '#0E2E5C', '', null, 0, cal);
+        }
+
+        // ─── EFFICIENCY_SPARK (best_efficiency_index) — Rayo + corazón ───
+        if (tier === 'efficiency_spark') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B0FFE0"/><stop offset="0.5" stop-color="#1A8A78"/><stop offset="1" stop-color="#062E28"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.35" cy="0.25"><stop offset="0" stop-color="#D8FFF0"/><stop offset="0.45" stop-color="#2EB098"/><stop offset="1" stop-color="#042620"/></radialGradient>';
+            const sparkHeart = ''
+                + '<defs><linearGradient id="sp_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.5" stop-color="#A8FFE0"/><stop offset="1" stop-color="#1A8A78"/></linearGradient></defs>'
+                + '<g transform="translate(28,32)">'
+                +   '<path d="M3 -13 L-7 3 L-1 3 L-4 14 L7 -1 L1 -1 Z" fill="url(#sp_'+uid+')" stroke="#FFFFFF" stroke-width="0.7" stroke-linejoin="round"/>'
+                +   '<path d="M-8 11 C -10 8, -10 5, -8 4 C -7 4, -6 5, -6 6 C -6 5, -5 4, -4 4 C -2 5, -2 8, -8 11 Z" fill="#FF6B7A" opacity="0.9"/>'
+                + '</g>';
+            return _circleLayered(rim, face, '#042620', '', null, 0, sparkHeart);
+        }
+
+        // ─── STREAK_15 — Diamante bronce épico con llama interior ────────
+        if (tier === 'streak_15') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFCB85"/><stop offset="0.5" stop-color="#A05A28"/><stop offset="1" stop-color="#3A1808"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.5" cy="0.5"><stop offset="0" stop-color="#FFE9A5"/><stop offset="0.4" stop-color="#D87A38"/><stop offset="1" stop-color="#4A1A08"/></radialGradient>';
+            const flame = ''
+                + '<g transform="translate(28,32)" opacity="0.45">'
+                +   '<path d="M0 -16 C 8 -10, 11 -3, 9 4 C 9 11, 5 15, 0 15 C -5 15, -9 11, -9 4 C -9 -3, -4 -10, 0 -16 Z" fill="#FFD76E"/>'
+                + '</g>';
+            const fullSvg = _diamondMilestone(rim, face, '#3A1808', '#FFFAEB', txt, 14, 'DÍAS');
+            return fullSvg.replace('<text x="28"', flame + '<text x="28"');
+        }
+
+        // ─── STREAK_30 — Diamante plata legendaria con llama intensa ─────
+        if (tier === 'streak_30') {
+            const rim = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F8FBFF"/><stop offset="0.5" stop-color="#7A858F"/><stop offset="1" stop-color="#2A3540"/></linearGradient>';
+            const face = '<radialGradient id="face_'+uid+'" cx="0.5" cy="0.5"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.4" stop-color="#B8C0CA"/><stop offset="1" stop-color="#3A4555"/></radialGradient>';
+            const flame = ''
+                + '<defs><linearGradient id="flS_'+uid+'" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#FFF4D6"/><stop offset="0.5" stop-color="#FFB347"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient></defs>'
+                + '<g transform="translate(28,32)" opacity="0.55">'
+                +   '<path d="M0 -17 C 9 -11, 12 -3, 10 5 C 10 12, 5 16, 0 16 C -5 16, -10 12, -10 5 C -10 -3, -5 -11, 0 -17 Z" fill="url(#flS_'+uid+')"/>'
+                +   '<path d="M0 -8 C 4 -3, 5 2, 4 6 C 4 10, 2 12, 0 12 C -2 12, -4 10, -4 6 C -4 2, -3 -3, 0 -8 Z" fill="#FFFAEB" opacity="0.85"/>'
+                + '</g>';
+            const fullSvg = _diamondMilestone(rim, face, '#2A3540', '#1F2935', txt, 15, 'DÍAS');
+            return fullSvg.replace('<text x="28"', flame + '<text x="28"');
+        }
+
+        // ─── STREAK_100 — Diamante mítico con pastilla legible ───────────
+        if (tier === 'streak_100') {
+            const rim_grad = '<linearGradient id="rim_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.3" stop-color="#C0EFFF"/><stop offset="0.7" stop-color="#4A8FD8"/><stop offset="1" stop-color="#0A2A55"/></linearGradient>';
+            const face_grad = '<radialGradient id="face_'+uid+'" cx="0.5" cy="0.4"><stop offset="0" stop-color="#FFFFFF"/><stop offset="0.3" stop-color="#D8F0FF"/><stop offset="0.6" stop-color="#5A9FE0"/><stop offset="1" stop-color="#0A2A55"/></radialGradient>';
+            const aura_grad = '<radialGradient id="aura_'+uid+'" cx="0.5" cy="0.5"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/><stop offset="0.6" stop-color="#A8E0F8" stop-opacity="0.18"/><stop offset="1" stop-color="#A8E0F8" stop-opacity="0"/></radialGradient>';
+            const innerColor = '#0A2A55';
+            return ''
+                + '<svg width="56" height="64" viewBox="0 0 56 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+                + '<defs>' + rim_grad + face_grad + aura_grad + '</defs>'
+                + '<circle cx="28" cy="32" r="28" fill="url(#aura_'+uid+')"/>'
+                + '<ellipse cx="28" cy="60" rx="10" ry="2" fill="rgba(0,0,0,.15)"/>'
+                + '<path d="M28 2 L52 32 L28 62 L4 32 Z" fill="url(#face_'+uid+')" opacity="0.18" transform="translate(0,1)"/>'
+                + '<path d="M28 2 L52 32 L28 62 L4 32 Z" fill="url(#rim_'+uid+')"/>'
+                + '<path d="M28 6 L49 32 L28 58 L7 32 Z" fill="'+innerColor+'"/>'
+                + '<path d="M28 8 L47 32 L28 56 L9 32 Z" fill="url(#face_'+uid+')"/>'
+                + '<path d="M28 8 L28 56" stroke="'+innerColor+'" stroke-width="0.5" opacity="0.4"/>'
+                + '<path d="M9 32 L47 32" stroke="'+innerColor+'" stroke-width="0.5" opacity="0.4"/>'
+                + '<path d="M28 8 L18 26 L28 32 Z" fill="#FFFFFF" opacity="0.3"/>'
+                + '<g fill="#FFFFFF" opacity="0.9">'
+                +   '<circle cx="14" cy="18" r="0.9"/>'
+                +   '<circle cx="44" cy="20" r="1.1"/>'
+                +   '<circle cx="46" cy="44" r="0.7"/>'
+                +   '<circle cx="11" cy="42" r="1"/>'
+                + '</g>'
+                + '<rect x="14" y="26" width="28" height="13" rx="6.5" fill="#062040" opacity="0.55"/>'
+                + '<text x="28" y="36.5" text-anchor="middle" fill="#FFFFFF" font-size="13" font-weight="900" font-family="system-ui" letter-spacing="-0.5">'+_escHtml(txt)+'</text>'
+                + '<text x="28" y="46" text-anchor="middle" fill="#FFFFFF" font-size="6" font-weight="700" font-family="system-ui" letter-spacing="1.5">DÍAS</text>'
+                + '</svg>';
         }
 
         // Fallback genérico
@@ -31775,6 +32549,33 @@ async function exportBackup() {
             }
         } catch(e) { console.warn('exportBackup manifest:', e); }
 
+        // [SNAPSHOT user_records · post-S26.C+] Backup defensivo de PRs (10) + hitos km (12).
+        // La tabla `user_records` vive en Supabase (RLS own + public_read para Club).
+        // Si el usuario pierde el UID o reinstala, este snapshot permite restaurar
+        // los récords/hitos cuando importBackup detecta BD vacía. Conservador:
+        // NO sobrescribimos BD con récords si ya existe contenido.
+        // Schema: { exportedAt: ISO, count: N, records: [...] }
+        let userRecordsSnapshot = null;
+        try {
+            const sb = window._sbClient;
+            if (sb) {
+                const sess = await sb.auth.getSession();
+                const uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+                if (uid) {
+                    const { data, error } = await sb.from('user_records')
+                        .select('record_type, value, activity_local_id, activity_datestr, achieved_at')
+                        .eq('user_id', uid);
+                    if (!error && Array.isArray(data) && data.length > 0) {
+                        userRecordsSnapshot = {
+                            exportedAt: new Date().toISOString(),
+                            count:      data.length,
+                            records:    data,
+                        };
+                    }
+                }
+            }
+        } catch(e) { console.warn('exportBackup userRecords:', e); }
+
         // Claves explícitas a verificar en el resumen (ya son user-scoped via _uk)
         const userKey = APP_KEY_OVERRIDE || APP_KEY;
         const hasProfile  = !!lsData[userKey];
@@ -31785,7 +32586,7 @@ async function exportBackup() {
         const hasMedal    = !!lsData[_uk('mr_medallero')];
 
         const backup = {
-            _version: 4,  // [FASE 6 · Backup audit] v4 añade supabaseManifest
+            _version: 4,  // [FASE 6 · Backup audit] v4 añade supabaseManifest · post-S26.C+ añade userRecordsSnapshot (sin bump por compat)
             _app: 'MisterRunner',
             _date: new Date().toISOString(),
             _user: currentUser || 'unknown',
@@ -31794,11 +32595,13 @@ async function exportBackup() {
                 totalLsKeys: totalKeys,
                 activitiesIDB:      idbActs.length,
                 activitiesSupabase: supabaseManifest.length,
+                userRecords:        userRecordsSnapshot ? userRecordsSnapshot.count : 0,
                 hasProfile, hasPlan, hasStrength, hasRehab, hasAvatar, hasMedal,
                 localContents: ['perfil','marcas','plan running','plan fuerza','plan rehab',
                                 'zapatillas','medallero','calentamiento','avatar',
                                 'evaluaciones','ritmos','preferencias',
-                                'actividades manuales y .fit/.csv (con GPS, fotos, outfit, RPE)'],
+                                'actividades manuales y .fit/.csv (con GPS, fotos, outfit, RPE)',
+                                'snapshot de PRs y hitos km (Supabase)'],
                 cloudContents: ['actividades importadas desde Strava (bulk)',
                                 'streams GPS de bulk imports',
                                 'fotos de bulk imports',
@@ -31807,7 +32610,8 @@ async function exportBackup() {
             },
             localStorage: lsData,
             idbActivities: idbActs,
-            supabaseManifest,  // [FASE 6] metadatos ligeros para verificación
+            supabaseManifest,       // [FASE 6] metadatos ligeros para verificación
+            userRecordsSnapshot,    // [post-S26.C+] snapshot defensivo PRs+hitos · null si no hay sesión o sin récords
         };
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
@@ -31828,10 +32632,13 @@ async function exportBackup() {
         // [FASE 6 · Backup audit] Toast diferenciado:
         // — N locales (IDB): manuales / .fit / .csv → SÍ en el backup
         // — M nube (Supabase): bulk Strava → atadas a tu cuenta, se rehidratan
+        // — P PRs (post-S26.C+): snapshot defensivo de user_records
         const _nLocal = idbActs.length;
         const _nCloud = supabaseManifest.length;
+        const _nPRs   = userRecordsSnapshot ? userRecordsSnapshot.count : 0;
         let _msg = '✅ Backup completo · ' + _nLocal + ' actividades locales';
         if (_nCloud > 0) _msg += ' + ' + _nCloud + ' en la nube (atadas a tu cuenta)';
+        if (_nPRs > 0)   _msg += ' · ' + _nPRs + ' PRs';
         if (parts.length) _msg += ' · ' + parts.join(' · ');
         showToast(_msg, 5000);
     } catch(e) {
@@ -32018,10 +32825,59 @@ async function importBackup(input) {
             }
         } catch(_) {}
 
+        // [SNAPSHOT user_records restore · post-S26.C+] Si el backup trae snapshot
+        // de PRs+hitos Y la tabla `user_records` de la BD actual está VACÍA,
+        // restauramos. Política conservadora: si la BD ya tiene récords, NO
+        // tocamos nada (preferimos los récords actuales sobre un snapshot que
+        // puede ser viejo). Tras restore, se dispara _rebuildAllPRsAndMilestones
+        // en el bootApp post-reload para verificar coherencia con activities.
+        let snapshotRestored = 0;
+        try {
+            const _snap = backup.userRecordsSnapshot;
+            if (_snap && Array.isArray(_snap.records) && _snap.records.length > 0) {
+                const sb = window._sbClient;
+                if (sb) {
+                    const sess = await sb.auth.getSession();
+                    const uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+                    if (uid) {
+                        // Comprobar si BD ya tiene récords (count exact + head:true: no trae rows)
+                        const { count, error: eCount } = await sb.from('user_records')
+                            .select('id', { count: 'exact', head: true })
+                            .eq('user_id', uid);
+                        if (eCount) {
+                            console.warn('[Backup] snapshot count check fail:', eCount.message);
+                        } else if (count === 0) {
+                            // BD vacía → restaurar snapshot
+                            const rows = _snap.records.map(r => ({
+                                user_id:           uid,
+                                record_type:       r.record_type,
+                                value:             r.value,
+                                activity_local_id: r.activity_local_id || null,
+                                activity_datestr:  r.activity_datestr  || null,
+                                achieved_at:       r.achieved_at       || new Date().toISOString(),
+                            }));
+                            const { error: eIns } = await sb.from('user_records').insert(rows);
+                            if (!eIns) {
+                                snapshotRestored = rows.length;
+                                console.log('[Backup] Snapshot user_records restaurado · ' + rows.length + ' filas');
+                                // Marcar para auto-rebuild de coherencia post-reload (bootApp lo consume)
+                                try { sessionStorage.setItem('mr_backup_snapshot_restored', String(rows.length)); } catch(_) {}
+                            } else {
+                                console.warn('[Backup] snapshot insert error:', eIns.message);
+                            }
+                        } else {
+                            console.log('[Backup] BD ya tiene ' + count + ' récords · snapshot ignorado (política conservadora)');
+                        }
+                    }
+                }
+            }
+        } catch(e) { console.warn('[Backup] snapshot restore exception:', e); }
+
         const nActs   = (backup.idbActivities || []).length;
         const nCloud  = Array.isArray(backup.supabaseManifest) ? backup.supabaseManifest.length : 0;
         let _doneMsg  = '✅ Backup restaurado · ' + nActs + ' actividades locales';
         if (nCloud > 0) _doneMsg += ' · ' + nCloud + ' en la nube se rehidratarán al iniciar sesión';
+        if (snapshotRestored > 0) _doneMsg += ' · ' + snapshotRestored + ' PRs recuperados';
 
         // [FASE 6 · Backup audit] Toasts persistentes tras reload:
         // Antes el showToast pre-reload no llegaba a verse porque el reload
@@ -38110,9 +38966,13 @@ function _openPRsSheet(userId, displayName, isSelf) {
     if (document.getElementById('mr-prs-sheet')) return;
 
     // Orden FIJO de récords en el grid (de más cotizado a menos)
-    var ORDER = ['best_marathon','best_half','best_10k','best_5k','best_3000m','best_1k','best_100m','best_pace','longest_run','best_ascent','hottest_day','coldest_day'];
+    // [FASE 8] +6 PRs nuevos al final: streak, week, month, cadence, hr_easy, efficiency
+    var ORDER = ['best_marathon','best_half','best_10k','best_5k','best_3000m','best_1k','best_100m','best_pace','longest_run','best_ascent','hottest_day','coldest_day',
+                 'best_streak_days','best_week_km','best_month_km','best_cadence','lowest_hr_easy','best_efficiency_index'];
     // Hitos kilométricos acumulados, en orden ascendente
     var ORDER_MILESTONES = ['km_50','km_100','km_200','km_500','km_1000','km_2000','km_3000','km_4000','km_5000','km_10000','km_20000','km_40000'];
+    // [FASE 8] Hitos de racha (3) — se mostrarán en su propia sección debajo
+    var ORDER_STREAK_MILESTONES = ['streak_15','streak_30','streak_100'];
 
     // Detectar tema
     var isDark = document.body.classList.contains('dark-mode');
@@ -38269,6 +39129,35 @@ function _openPRsSheet(userId, displayName, isSelf) {
     });
     scrollArea.appendChild(gridMs);
 
+    // ── [FASE 8] Divisor + título sección Hitos de RACHA ──────────────
+    var section3Title = document.createElement('div');
+    section3Title.style.cssText = 'display:flex;align-items:center;gap:10px;padding:14px 16px 8px;flex-shrink:0;';
+    section3Title.innerHTML =
+        '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#FFB347 0%,#C25A28 100%);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(224,122,40,.45);">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3D1A08" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 C12 2 6 8 6 13 a6 6 0 0 0 12 0 C18 8 12 2 12 2 z"/></svg>' +
+        '</div>' +
+        '<div style="flex:1;min-width:0;line-height:1.2;">' +
+            '<div style="font-size:14px;font-weight:800;color:var(--tw);">Hitos de racha</div>' +
+            '<div style="font-size:10.5px;color:var(--tm);font-weight:600;margin-top:1px;">Días seguidos sin descanso — proeza máxima</div>' +
+        '</div>';
+    scrollArea.appendChild(section3Title);
+
+    // ── Grid de hitos de racha (3 columnas, 1 fila) ───────────────────
+    var gridStreak = document.createElement('div');
+    gridStreak.id = 'mr-prs-streak-grid';
+    gridStreak.style.cssText = [
+        'display:grid',
+        'grid-template-columns:repeat(3,1fr)',
+        'gap:8px',
+        'padding:0 14px 6px'
+    ].join(';');
+    ORDER_STREAK_MILESTONES.forEach(function(type) {
+        var card = _buildPRGridCard(type, null, isDark);
+        card.classList.add('mr-prs-card-skeleton');
+        gridStreak.appendChild(card);
+    });
+    scrollArea.appendChild(gridStreak);
+
     sheet.appendChild(scrollArea);
 
     back.appendChild(sheet);
@@ -38328,12 +39217,24 @@ function _openPRsSheet(userId, displayName, isSelf) {
                 card.style.animationDelay = ((ORDER.length * 28) + idx * 22) + 'ms';
                 gridMs.appendChild(card);
             });
+            // [FASE 8] Grid de hitos racha
+            gridStreak.innerHTML = '';
+            var streakUnlocked = 0;
+            ORDER_STREAK_MILESTONES.forEach(function(type, idx) {
+                var rec = byType[type] || null;
+                if (rec) streakUnlocked++;
+                var card = _buildPRGridCard(type, rec, isDark);
+                card.classList.add('mr-prs-card-stagger');
+                card.style.animationDelay = ((ORDER.length * 28) + (ORDER_MILESTONES.length * 22) + idx * 22) + 'ms';
+                gridStreak.appendChild(card);
+            });
             // [Bloque B · UI premium] Sustituir loading dots por contador real
+            // [FASE 8] Ampliado a 18 récords (12+6) + 12 hitos km + 3 hitos racha
             counter.innerHTML = '<span style="color:var(--tw);font-weight:700;">' + marked
-                + '</span><span style="opacity:.75;"> / 12 récords</span> '
+                + '</span><span style="opacity:.75;"> / ' + ORDER.length + ' récords</span> '
                 + '<span style="opacity:.5;">·</span> '
-                + '<span style="color:var(--tw);font-weight:700;">' + unlocked
-                + '</span><span style="opacity:.75;"> / 12 hitos</span>';
+                + '<span style="color:var(--tw);font-weight:700;">' + (unlocked + streakUnlocked)
+                + '</span><span style="opacity:.75;"> / ' + (ORDER_MILESTONES.length + ORDER_STREAK_MILESTONES.length) + ' hitos</span>';
         } catch (e) {
             console.warn('[MR][PRs] load fail:', e && e.message ? e.message : e);
             // [Bloque B · UI premium] Sustituir loading dots por mensaje de error
@@ -38381,6 +39282,13 @@ function _openPRsSheet(userId, displayName, isSelf) {
                     var c = _buildPRGridCard(type, null, isDark);
                     c.classList.add('mr-prs-card-skeleton');
                     gridMs.appendChild(c);
+                });
+                // [FASE 8] Grid streak también al retry
+                gridStreak.innerHTML = '';
+                ORDER_STREAK_MILESTONES.forEach(function(type) {
+                    var c = _buildPRGridCard(type, null, isDark);
+                    c.classList.add('mr-prs-card-skeleton');
+                    gridStreak.appendChild(c);
                 });
                 loadRecords();
             };
@@ -38436,8 +39344,9 @@ function _buildPRGridCard(type, rec, isDark) {
     lblEl.textContent = meta.label || type;
     card.appendChild(lblEl);
 
-    // ¿Es un hito kilométrico acumulado?
-    var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0);
+    // ¿Es un hito kilométrico acumulado o un hito de racha?
+    // [FASE 8] Incluimos también streak_* en la categoría hito
+    var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0 || type.indexOf('streak_') === 0);
 
     // Valor
     var valEl = document.createElement('div');
