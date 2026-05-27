@@ -29930,23 +29930,35 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         // [FASE 8] PRs nuevos per-activity
         // ─────────────────────────────────────────────────────────────
 
-        // best_cadence: cadencia media (spm) en activity ≥ 3km
-        // Filtro plausibilidad: 130–220 spm (rango humano realista)
-        const cad = Number(act && act.avgCadence) || 0;
-        if (km >= 3 && cad >= 130 && cad <= 220) {
-            out.push({ type: 'best_cadence', value: Math.round(cad), label: 'Mejor cadencia', valueKind: 'cadence_spm' });
+        // best_cadence: cadencia media en activity ≥ 3km
+        // [FIX 2026-05-27] BD bulk guarda en rpm (un pie, 80-90), pero algunos
+        // parsers manuales guardan en spm (dos pies, 160-180). Detectamos por
+        // rango y normalizamos siempre a SPM totales:
+        //   - cad < 130 → rpm de un pie → ×2 para obtener spm
+        //   - cad ≥ 130 → ya está en spm → tal cual
+        // Filtro plausibilidad final: 130–220 spm (rango humano realista)
+        const cadRaw = Number(act && act.avgCadence) || 0;
+        let cadSpm = 0;
+        if (cadRaw > 0 && cadRaw < 130) {
+            cadSpm = cadRaw * 2;
+        } else if (cadRaw >= 130 && cadRaw <= 220) {
+            cadSpm = cadRaw;
+        }
+        if (km >= 3 && cadSpm >= 130 && cadSpm <= 220) {
+            out.push({ type: 'best_cadence', value: Math.round(cadSpm), label: 'Mejor cadencia', valueKind: 'cadence_spm' });
         }
 
-        // lowest_hr_easy: FC media más baja en rodaje easy/recovery ≥ 5km
-        // a pace decente (sub 7:00/km = 420 s/km). Filtros antifluke:
-        //   - solo type 'easy' o 'recovery'
+        // lowest_hr_easy: FC media más baja en activity ≥ 5km con GPS
+        // [FIX 2026-05-27] Quitado filtro workout_type (en BD está NULL en bulk).
+        // Las activities easy ganarán naturalmente este récord por su FC más baja.
+        // Filtros antifluke:
         //   - distancia ≥ 5km
         //   - pace medio < 7:00/km (no caminata)
-        //   - avgHr en rango 80–220 (sanidad sensor)
+        //   - avgHr en rango 110–220 (sanidad sensor; <110 corriendo casi imposible)
+        //   - REQUIERE GPS (descarta cinta donde FC y pace pueden ser falsos)
         const hr = Number(act && act.avgHr) || 0;
-        const actType = String(act && act.type || '').toLowerCase();
-        if ((actType === 'easy' || actType === 'recovery')
-            && km >= 5 && dur > 0 && hr >= 80 && hr <= 220) {
+        const hasGps = !!(act && act._hasPolyline);
+        if (km >= 5 && dur > 0 && hr >= 110 && hr <= 220 && hasGps) {
             const paceSpk = dur / km;
             if (paceSpk < 420) { // sub 7:00/km
                 out.push({ type: 'lowest_hr_easy', value: Math.round(hr), label: 'FC más baja en easy', valueKind: 'hr_bpm' });
