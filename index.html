@@ -13844,10 +13844,61 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     let pendingFiles = { fit: null, gpx: null, csv: null };
 
     document.getElementById('activity-files-input').addEventListener('change', function(e) {
-        const files = Array.from(e.target.files);
+        let files = Array.from(e.target.files);
         if (!files.length) return;
         pendingFiles = { fit: null, gpx: null, csv: null };
         pendingFitData = null;
+
+        // ── Descompresión ZIP previa (Garmin Connect exporta los .fit dentro
+        //    de un .zip; Coros/Suunto los exportan sueltos). Si entre los
+        //    archivos hay un .zip, lo descomprimimos in-memory con JSZip
+        //    (ya cargado para el import Strava) y reemplazamos cada .zip por
+        //    sus archivos internos (.fit/.gpx/.csv). Los .zip cuyo contenido
+        //    no tenga ninguna extensión soportada se descartan silenciosamente.
+        //    El resto del pipeline NO cambia y sigue siendo síncrono.
+        function _expandZips(fs) {
+            const hasZip = fs.some(f => f.name.toLowerCase().endsWith('.zip'));
+            if (!hasZip) return Promise.resolve(fs);
+            if (typeof window.JSZip !== 'function') {
+                return Promise.reject(new Error('JSZip no disponible para descomprimir el .zip'));
+            }
+            return Promise.all(fs.map(f => {
+                if (!f.name.toLowerCase().endsWith('.zip')) return Promise.resolve([f]);
+                return window.JSZip.loadAsync(f).then(zip => {
+                    const out = [];
+                    const entries = [];
+                    zip.forEach((path, entry) => {
+                        if (entry.dir) return;
+                        const lname = path.toLowerCase();
+                        // Tomar solo extensiones que el pipeline conoce. El nombre
+                        // se queda con su basename (sin la ruta interna del zip).
+                        if (lname.endsWith('.fit') || lname.endsWith('.gpx') || lname.endsWith('.csv')) {
+                            entries.push({ entry, base: path.split('/').pop() });
+                        }
+                    });
+                    return Promise.all(entries.map(({ entry, base }) => {
+                        const lname = base.toLowerCase();
+                        const isText = lname.endsWith('.gpx') || lname.endsWith('.csv');
+                        const kind = isText ? 'string' : 'uint8array';
+                        return entry.async(kind).then(data => {
+                            // Crear File compatible (mismo API que un File del input)
+                            const blobPart = isText ? [data] : [data];
+                            const file = new File(blobPart, base, {
+                                type: isText ? 'text/plain' : 'application/octet-stream'
+                            });
+                            return file;
+                        });
+                    })).then(extracted => {
+                        out.push(...extracted);
+                        return out;
+                    });
+                });
+            })).then(arr => arr.flat());
+        }
+
+        showLoadingBar(5);
+        _expandZips(files).then(expanded => {
+            files = expanded;
 
         const reads = files.map(file => new Promise((resolve, reject) => {
             const ext = file.name.toLowerCase().split('.').pop();
@@ -13877,6 +13928,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ? ((pendingFiles.gpx.content || '').match(/creator="([^"]+)"/i) || [])[1] || ''
                 : '';
             const isSuunto = /suunto/i.test(_fname) || /suunto/i.test(_gpxCreator);
+            // ── Detección Garmin: prioridad al wizard (_vimState.brand) si el
+            //    usuario seleccionó "Garmin" en el catálogo; fallback a heurística
+            //    por nombre de archivo (Garmin Connect suele exportar
+            //    "NNN_ACTIVITY.fit" o "activity_NNN.gpx") o creator del GPX.
+            const _wizBrand = (typeof _vimState !== 'undefined' && _vimState && _vimState.brand) || '';
+            const isGarmin = !isSuunto && (
+                _wizBrand === 'garmin' ||
+                /garmin/i.test(_fname) ||
+                /garmin/i.test(_gpxCreator) ||
+                /^\d+_ACTIVITY\.fit$/i.test((pendingFiles.fit && pendingFiles.fit.name) || '')
+            );
 
             // Parse each file
             let fitData = null, gpxData = null, csvData = null;
@@ -13885,6 +13947,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // Parsers específicos de Suunto (no afectan al flujo Coros)
                     if (pendingFiles.fit) fitData = parseFitSuunto(new Uint8Array(pendingFiles.fit.content));
                     if (pendingFiles.gpx) gpxData = parseGPXSuunto(pendingFiles.gpx.content);
+                } else if (isGarmin) {
+                    // Parser Garmin completo: parseFitGarmin (FIT estándar) +
+                    // parseGPXGarmin (namespace ns3:TrackPointExtension con
+                    // hr/cad/atemp). Validados con Vívoactive 3 y Fenix 8.
+                    if (pendingFiles.fit) fitData = parseFitGarmin(new Uint8Array(pendingFiles.fit.content));
+                    if (pendingFiles.gpx) gpxData = parseGPXGarmin(pendingFiles.gpx.content);
                 } else {
                     if (pendingFiles.fit) fitData = parseFitCoros(new Uint8Array(pendingFiles.fit.content));
                     if (pendingFiles.gpx) gpxData = parseGPX(pendingFiles.gpx.content);
@@ -13937,6 +14005,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (fitData.vo2max)                merged.vo2maxSuunto    = fitData.vo2max;
                     if (fitData.recoveryTimeMin)       merged.recoveryTimeMin = fitData.recoveryTimeMin;
                 }
+
+                // ── Garmin FIT: estructura FIT estándar completa. Propagamos
+                // los mismos extras que Suunto al merged. El Vívoactive 3 no
+                // trae power/temp/altitud/dev fields, pero modelos modernos
+                // (Fenix, Forerunner, Edge, Venu con Connect IQ) sí los emiten
+                // y este bloque está preparado para todos.
+                if (isGarmin) {
+                    if (fitData.calories)              merged.calories   = fitData.calories;
+                    if (fitData.strideLen)             merged.strideLen  = fitData.strideLen;
+                    if (fitData.avgTemp !== null && fitData.avgTemp !== undefined)
+                                                       merged.avgTemp    = fitData.avgTemp;
+                    if (fitData.laps && fitData.laps.length)
+                                                       merged.laps       = fitData.laps;
+                    if (fitData.hrSeries && fitData.hrSeries.length)
+                                                       merged.hrSeries   = fitData.hrSeries;
+                    if (fitData.cadSeries && fitData.cadSeries.length)
+                                                       merged.cadSeries  = fitData.cadSeries;
+                    if (fitData.eleSeries && fitData.eleSeries.length)
+                                                       merged.eleSeries  = fitData.eleSeries;
+                    if (fitData.distSer && fitData.distSer.length)
+                                                       merged.distSer    = fitData.distSer;
+                    if (fitData.records && fitData.records.length)
+                                                       merged.records    = fitData.records;
+                    if (fitData.descentM)              merged.descentM        = fitData.descentM;
+                    if (fitData.avgCadence)            merged.avgCadence      = fitData.avgCadence;
+                    if (fitData.maxCadence)            merged.maxCadence      = fitData.maxCadence;
+                    if (fitData.avgPower)              merged.avgPower        = fitData.avgPower;
+                    if (fitData.maxPower)              merged.maxPower        = fitData.maxPower;
+                    if (fitData.normPower)             merged.normPower       = fitData.normPower;
+                    if (fitData.tss)                   merged.tss             = fitData.tss;
+                    if (fitData.trainingEffect)        merged.trainingEffect  = fitData.trainingEffect;
+                    if (fitData.vo2max)                merged.vo2max          = fitData.vo2max;
+                    if (fitData.recoveryTimeMin)       merged.recoveryTimeMin = fitData.recoveryTimeMin;
+                    if (fitData.elapsedSec)            merged.elapsedSec      = fitData.elapsedSec;
+                    if (fitData.startDate)             merged.startDate       = fitData.startDate;
+                }
             }
             if (csvData) {
                 merged.csvBlocks   = csvData.blocks;
@@ -13985,6 +14089,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             setTimeout(() => { hideLoadingBar(); showImportModal(pendingFitData); }, 300);
         }).catch(err => { hideLoadingBar(); alert('Error: ' + err.message); });
         e.target.value = '';
+        }).catch(err => { hideLoadingBar(); alert('Error leyendo .zip: ' + err.message); e.target.value = ''; });
     });
 
     // ── CSV PARSER ────────────────────────────────────────────────
@@ -14298,6 +14403,169 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return { records: gpsPoints, distKm, durationSec, avgHr, ascentM,
                  maxHr: maxHr || null, laps, hrSeries, distSer, cadSeries, eleSeries, dateStr };
     }
+    // ── GPX PARSER (GARMIN) ───────────────────────────────────────
+    // El GPX exportado por Garmin Connect declara namespace
+    //   xmlns:ns3="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+    // y por cada <trkpt> emite lat/lon/ele/time + dentro de <extensions>
+    // un <ns3:TrackPointExtension> con <ns3:hr>, <ns3:cad> (cadencia 1 pie
+    // en spm) y <ns3:atemp> (temperatura ambiente °C). NO trae distance
+    // ni speed: las calculamos por haversine como hace parseGPXSuunto.
+    // Validado con GPX real de Fenix 8 (3456 trkpts, 11.19 km).
+    //
+    // Nota sobre ascent: el barómetro del FIT es siempre más preciso que
+    // el cálculo desde la altitud GPS del GPX (Garmin Connect lo confirma:
+    // 49 m del FIT vs ~32 m del GPX para la misma actividad). Por eso el
+    // merge prioriza `fitData.ascentM` sobre `gpxData.ascentM` en el
+    // pipeline del wizard. El valor del GPX se mantiene como fallback
+    // por si el FIT no acompaña al GPX o no tiene barómetro.
+    function parseGPXGarmin(xmlText) {
+        const parser = new DOMParser();
+        const doc    = parser.parseFromString(xmlText, 'application/xml');
+        const NS_GPX = 'http://www.topografix.com/GPX/1/1';
+        const NS_TPX = 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1';
+
+        function getEl(parent, ns, tag) {
+            const el = parent.getElementsByTagNameNS(ns, tag)[0];
+            return el ? el.textContent.trim() : null;
+        }
+
+        const trkpts = doc.getElementsByTagNameNS(NS_GPX, 'trkpt');
+        if (!trkpts.length) {
+            // GPX vacío (caso Vívoactive 3 sin GPS): devolvemos shape vacío
+            // para que el merge tome todo del FIT. No es error.
+            return { records: [], distKm: 0, durationSec: 0, avgHr: 0, ascentM: 0,
+                     maxHr: null, laps: [], hrSeries: [], distSer: [],
+                     cadSeries: [], eleSeries: [], dateStr: '', avgTemp: null };
+        }
+
+        const R_EARTH = 6371000;
+        const toRad = d => d * Math.PI / 180;
+        function haversineM(la1, lo1, la2, lo2) {
+            const dLa = toRad(la2 - la1), dLo = toRad(lo2 - lo1);
+            const a = Math.sin(dLa/2)**2 + Math.cos(toRad(la1)) * Math.cos(toRad(la2)) * Math.sin(dLo/2)**2;
+            return R_EARTH * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        const gpsPoints = [];
+        const hrSeries  = [];
+        const distSer   = [];
+        const cadSeries = [];
+        const eleSeries = [];
+        const temps     = [];
+        let   maxHr     = 0;
+        let   firstTs   = 0;
+        let   prevLat   = null, prevLon = null, prevTs = null;
+        let   cumDistM  = 0;
+
+        for (let i = 0; i < trkpts.length; i++) {
+            const pt  = trkpts[i];
+            const lat = parseFloat(pt.getAttribute('lat'));
+            const lon = parseFloat(pt.getAttribute('lon'));
+            if (!isFinite(lat) || !isFinite(lon)) continue;
+            const timeStr = getEl(pt, NS_GPX, 'time');
+            if (!timeStr) continue;
+            const ts = Math.round(new Date(timeStr).getTime() / 1000);
+
+            // Extensiones Garmin: ns3:hr, ns3:cad, ns3:atemp
+            const ext = pt.getElementsByTagNameNS(NS_GPX, 'extensions')[0];
+            const hrEl   = ext ? ext.getElementsByTagNameNS(NS_TPX, 'hr')[0]    : null;
+            const cadEl  = ext ? ext.getElementsByTagNameNS(NS_TPX, 'cad')[0]   : null;
+            const tempEl = ext ? ext.getElementsByTagNameNS(NS_TPX, 'atemp')[0] : null;
+            const hr   = hrEl   ? parseInt(hrEl.textContent, 10)     : 0;
+            const cad  = cadEl  ? parseInt(cadEl.textContent, 10)    : 0;
+            const tempC = tempEl ? parseFloat(tempEl.textContent)    : null;
+
+            if (firstTs === 0) firstTs = ts;
+            const t = ts - firstTs;
+
+            // Distancia acumulada por haversine
+            let segM = 0, spd = 0;
+            if (prevLat !== null) {
+                segM = haversineM(prevLat, prevLon, lat, lon);
+                const dt = ts - prevTs;
+                // Descarta saltos GPS imposibles (>50 m/s = 180 km/h)
+                if (segM > 50 * Math.max(1, dt)) segM = 0;
+                cumDistM += segM;
+                if (dt > 0) spd = segM / dt;
+            }
+            prevLat = lat; prevLon = lon; prevTs = ts;
+
+            if (hr > 30 && hr < 250) {
+                if (hr > maxHr) maxHr = hr;
+                hrSeries.push({ t, v: hr });
+            }
+            distSer.push({ t, d: Math.round(cumDistM * 100), spd }); // d en cm
+            // Cadencia: ns3:cad es 1 pie en spm (igual que el FIT). El 0 es
+            // "parado", lo filtramos para no ensuciar la serie.
+            if (cad > 0 && cad < 255) cadSeries.push({ t, v: cad });
+            const eleVal = getEl(pt, NS_GPX, 'ele');
+            if (eleVal !== null) eleSeries.push(parseFloat(eleVal));
+            // Temperatura ambiente (°C), rango sensato
+            if (tempC !== null && isFinite(tempC) && tempC > -40 && tempC < 60) {
+                temps.push(tempC);
+            }
+
+            gpsPoints.push({ lat, lon, hr: (hr > 30 && hr < 250) ? hr : null });
+        }
+
+        // ── Resumen de sesión ─────────────────────────────────────
+        const distKm     = Math.round(cumDistM / 10) / 100;
+        const durationSec = (prevTs && firstTs) ? (prevTs - firstTs) : 0;
+
+        const firstTime = trkpts[0].getElementsByTagNameNS(NS_GPX, 'time')[0];
+        const d = firstTime ? new Date(firstTime.textContent) : new Date();
+        const dateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+
+        const hrVals = hrSeries.map(h => h.v);
+        const avgHr  = hrVals.length ? Math.round(hrVals.reduce((a,b)=>a+b,0)/hrVals.length) : 0;
+
+        // Ascent con umbral 3m para descartar ruido GPS de altitud
+        let ascentM = 0;
+        if (eleSeries.length) {
+            let ref = eleSeries[0];
+            for (let i = 1; i < eleSeries.length; i++) {
+                const e = eleSeries[i];
+                if (e > ref + 3)      { ascentM += (e - ref); ref = e; }
+                else if (e < ref - 1) { ref = e; }
+            }
+        }
+
+        // Temperatura media
+        const avgTemp = temps.length
+            ? Math.round(temps.reduce((a,b)=>a+b,0) / temps.length)
+            : null;
+
+        // ── Laps por kilómetro (sólo tiempo en movimiento) ────────
+        const laps = [];
+        let lapNum = 1, lapStartDc = 0, lapMovSecs = 0;
+        let lapHrs = [], lapSpds = [], hrIdx = 0;
+        for (let i = 0; i < distSer.length; i++) {
+            const { t, d: dc, spd } = distSer[i];
+            const isMoving = spd > 0.3;
+            if (isMoving) {
+                lapMovSecs++;
+                lapSpds.push(spd);
+            }
+            while (hrIdx < hrSeries.length && hrSeries[hrIdx].t <= t) {
+                if (isMoving) lapHrs.push(hrSeries[hrIdx].v);
+                hrIdx++;
+            }
+            if (dc - lapStartDc >= 100000) {
+                const aHr  = lapHrs.length ? Math.round(lapHrs.reduce((a,b)=>a+b,0)/lapHrs.length) : 0;
+                const aSpd = lapSpds.length ? lapSpds.reduce((a,b)=>a+b,0)/lapSpds.length : 0;
+                const paceS = aSpd > 0 ? Math.round(1000/aSpd) : 0;
+                laps.push({ n: lapNum, durS: Math.max(1, lapMovSecs), distKm: 1.0, avgHr: aHr, paceS });
+                lapNum++;
+                lapStartDc += 100000;
+                lapMovSecs  = 0;
+                lapHrs = []; lapSpds = [];
+            }
+        }
+
+        return { records: gpsPoints, distKm, durationSec, avgHr, ascentM,
+                 maxHr: maxHr || null, laps, hrSeries, distSer, cadSeries, eleSeries, dateStr, avgTemp };
+    }
+
 
     // ── FIT PARSER (SUUNTO) ───────────────────────────────────────
     // Parser FIT estructurado (definition + data records) específico
@@ -14882,6 +15150,548 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  maxHr: maxHr || null, laps, hrSeries, distSer, dateStr };
     }
 
+    // ───────────────────────────────────────────────────────────────────────
+    // PARSER FIT GARMIN — Validado con archivo real de Garmin Vívoactive 3
+    // (running, 21.06 km, sin GPS por estar en cinta/GPS off, 1080 records).
+    //
+    // Mismo shape de salida congelado que parseFitSuunto. El parser es FIT
+    // estándar (definition + data records con scaling/offsets correctos),
+    // no usa heurísticas como parseFitCoros. Lee:
+    //   • Resumen de sesión: distancia, timer/elapsed, avg/max HR, ascent,
+    //     descent, calorías, avg/max cadencia (×2 para SPM totales),
+    //     potencia, training_effect, normalized power, TSS, temperatura.
+    //   • Records por timestamp (smart recording Garmin ~5s o per-second):
+    //     lat, lon, altitude (enhanced), HR, cadence, distance,
+    //     speed (enhanced), power, temperature.
+    //   • Laps con dist/timer/HR/cadencia/ascent/descent.
+    //   • Developer fields: estimated_vo2_max / recovery_time (si existen,
+    //     p.ej. Fenix con apps Connect IQ; el Vívoactive 3 no los emite).
+    //
+    // Quirks Garmin descubiertos durante implementación:
+    //   1. file_id.manufacturer = 1 (Garmin), garmin_product identifica
+    //      el modelo concreto (vivoactive3=1948, fenix7=3110, etc).
+    //   2. `enhanced_speed` (uint32) y `enhanced_altitude` (uint32) son los
+    //      campos modernos preferidos sobre `speed` (uint16) y `altitude`
+    //      (uint16) en Garmin desde 2016. Pueden coexistir con los legacy:
+    //      cuando ambos están, leemos enhanced_*. Cuando solo está el legacy
+    //      (modelos antiguos o cinta sin GPS), caemos al legacy.
+    //   3. `cadence` en record es uint8 con la cadencia de UN solo pie
+    //      (running cadence). Hay un `fractional_cadence` (uint8 escalado
+    //      por 128) que añade precisión decimal. Para SPM totales:
+    //      (cadence + fractional_cadence) * 2. Lo aplicamos a avg/max
+    //      session.cadence igual que Suunto.
+    //   4. Garmin marca como "inválido" cada tipo numérico con su valor
+    //      máximo (0xFF para uint8, 0xFFFF para uint16, 0xFFFFFFFF para
+    //      uint32, 0x7FFFFFFF para sint32). Hay que filtrar.
+    //   5. Sin restricción de bbox GPS: el parser acepta cualquier
+    //      lat/lon válida (-90..+90, -180..+180), no solo Europa.
+    //   6. La actividad puede no tener GPS (cinta/indoor) y eso es OK: el
+    //      parser deja gpsPoints vacío y la app no dibuja traza.
+    //   7. Vívoactive 3 no tiene barómetro → eleSeries vacío. Otros Garmin
+    //      (Fenix, Forerunner 9XX, Edge) sí. El parser está listo.
+    //   8. Vívoactive 3 no expone developer fields. Modelos modernos con
+    //      Connect IQ sí (Stryd power, recovery, VO2max, etc.).
+    // ───────────────────────────────────────────────────────────────────────
+    function parseFitGarmin(bytes) {
+        const dv = new DataView(bytes.buffer);
+
+        // --- Tipos base FIT ---
+        const BT = {
+            0x00:{n:'enum',   sz:1}, 0x01:{n:'sint8',  sz:1}, 0x02:{n:'uint8',  sz:1},
+            0x83:{n:'sint16', sz:2}, 0x84:{n:'uint16', sz:2}, 0x85:{n:'sint32', sz:4},
+            0x86:{n:'uint32', sz:4}, 0x07:{n:'string', sz:1}, 0x88:{n:'float32',sz:4},
+            0x89:{n:'float64',sz:8}, 0x0A:{n:'uint8z', sz:1}, 0x8B:{n:'uint16z',sz:2},
+            0x8C:{n:'uint32z',sz:4}, 0x0D:{n:'byte',   sz:1}, 0x8E:{n:'sint64', sz:8},
+            0x8F:{n:'uint64', sz:8}, 0x90:{n:'uint64z',sz:8}
+        };
+        function readField(o, size, bt, le) {
+            if (size === 0) return null;
+            const info = BT[bt];
+            if (!info) return null;
+            if (info.n === 'string') {
+                let s = '';
+                for (let i = 0; i < size; i++) {
+                    const c = bytes[o + i];
+                    if (c === 0) break;
+                    s += String.fromCharCode(c);
+                }
+                return s;
+            }
+            const count = Math.floor(size / info.sz);
+            if (count === 0) return null;
+            try {
+                switch (bt) {
+                    case 0x01: return dv.getInt8(o);
+                    case 0x02: case 0x0A: return dv.getUint8(o);
+                    case 0x83: return dv.getInt16(o, le);
+                    case 0x84: case 0x8B: return dv.getUint16(o, le);
+                    case 0x85: return dv.getInt32(o, le);
+                    case 0x86: case 0x8C: return dv.getUint32(o, le);
+                    case 0x00: case 0x0D: return dv.getUint8(o);
+                    case 0x88: return dv.getFloat32(o, le);
+                    case 0x89: return dv.getFloat64(o, le);
+                }
+            } catch (e) { return null; }
+            return null;
+        }
+
+        // --- Cabecera FIT ---
+        if (bytes.length < 14) throw new Error('FIT vacío o corrupto');
+        const hdrSize = bytes[0];
+        const dataSize = dv.getUint32(4, true);
+        const dataEnd = Math.min(bytes.length, hdrSize + dataSize);
+        if (bytes[8] !== 0x2E || bytes[9] !== 0x46 || bytes[10] !== 0x49 || bytes[11] !== 0x54) {
+            throw new Error('Firma FIT inválida');
+        }
+
+        // --- Estado del parser ---
+        const defs = {};                  // localMsgType -> definición
+        const sessionList = [];           // candidatos de session (Garmin puede emitir varias)
+        const laps = [];
+        const gpsPoints = [];
+        const hrSeries = [];
+        const distSer = [];
+        const cadSeries = [];
+        const eleSeries = [];
+        let maxHr = 0;
+        let firstRecTs = 0;
+        let lastRecTs = 0;
+        let activityDateUnix = 0;
+        let temperatures = [];
+        let devVO2 = null, devRecovery = null;
+        const devFieldMap = {};
+
+        // --- Constantes FIT ---
+        const FIT_INVALID_S32 = 0x7FFFFFFF;
+        const SC_TO_DEG = 180.0 / 2147483648.0;
+
+        // --- Recorrido secuencial de mensajes ---
+        let pos = hdrSize;
+        while (pos < dataEnd) {
+            const recHdr = bytes[pos]; pos++;
+            const isCompressed = (recHdr & 0x80) !== 0;
+            if (isCompressed) {
+                // Compressed timestamp header: usar defs vigentes y saltar payload.
+                const localMt = (recHdr >> 5) & 0x3;
+                const d = defs[localMt];
+                if (!d) break;
+                let sz = 0;
+                for (let i = 0; i < d.fields.length; i++) sz += d.fields[i].size;
+                pos += sz;
+                continue;
+            }
+            const isDef = (recHdr & 0x40) !== 0;
+            const hasDev = (recHdr & 0x20) !== 0;
+            const localMt = recHdr & 0x0F;
+
+            if (isDef) {
+                pos++; // reserved
+                const arch = bytes[pos]; pos++;
+                const le = arch === 0;
+                const globalNum = le ? dv.getUint16(pos, true) : dv.getUint16(pos, false);
+                pos += 2;
+                const numFields = bytes[pos]; pos++;
+                const fields = [];
+                for (let i = 0; i < numFields; i++) {
+                    fields.push({ fid: bytes[pos], size: bytes[pos+1], bt: bytes[pos+2] });
+                    pos += 3;
+                }
+                let devFields = [];
+                if (hasDev) {
+                    const numDev = bytes[pos]; pos++;
+                    for (let i = 0; i < numDev; i++) {
+                        devFields.push({ fid: bytes[pos], size: bytes[pos+1], devIdx: bytes[pos+2] });
+                        pos += 3;
+                    }
+                }
+                defs[localMt] = { global: globalNum, fields, devFields, le };
+            } else {
+                const d = defs[localMt];
+                if (!d) break;
+                const le = d.le;
+                let o = pos;
+                const row = {};
+                for (let i = 0; i < d.fields.length; i++) {
+                    const f = d.fields[i];
+                    row[f.fid] = readField(o, f.size, f.bt, le);
+                    o += f.size;
+                }
+                // Dev fields
+                if (d.devFields && d.devFields.length) {
+                    for (let i = 0; i < d.devFields.length; i++) {
+                        const f = d.devFields[i];
+                        const key = 'dev_' + f.fid + '_' + f.devIdx;
+                        const meta = devFieldMap[key];
+                        let v = null;
+                        try {
+                            if (meta && meta.baseType !== undefined && meta.baseType !== null) {
+                                const bt = meta.baseType;
+                                if (bt === 0x88)      v = dv.getFloat32(o, le);
+                                else if (bt === 0x89) v = dv.getFloat64(o, le);
+                                else if (bt === 0x86 || bt === 0x8C) v = dv.getUint32(o, le);
+                                else if (bt === 0x84 || bt === 0x8B) v = dv.getUint16(o, le);
+                                else if (bt === 0x02 || bt === 0x0A) v = dv.getUint8(o);
+                                else if (bt === 0x85) v = dv.getInt32(o, le);
+                                else if (bt === 0x83) v = dv.getInt16(o, le);
+                                else if (bt === 0x01) v = dv.getInt8(o);
+                                else if (bt === 0x00 || bt === 0x0D) v = dv.getUint8(o);
+                            } else {
+                                if (f.size === 1) v = dv.getUint8(o);
+                                else if (f.size === 2) v = dv.getUint16(o, le);
+                                else if (f.size === 4) v = dv.getUint32(o, le);
+                            }
+                        } catch (e) { v = null; }
+                        row[key] = v;
+                        o += f.size;
+                    }
+                }
+                pos = o;
+
+                // --- Procesar mensajes que nos interesan ---
+                if (d.global === 0) {
+                    // file_id: campo 4 = time_created (FIT epoch)
+                    if (row[4] !== null && row[4] !== undefined && row[4] < 0xFFFFFFFF) {
+                        activityDateUnix = row[4] + 631065600;
+                    }
+                } else if (d.global === 206) {
+                    // field_description: registra nombre + base_type de dev fields
+                    const di = row[0], fn = row[1], baseType = row[2], name = row[3];
+                    if (di !== null && fn !== null && name) {
+                        devFieldMap['dev_' + fn + '_' + di] = {
+                            name: String(name).toLowerCase(),
+                            baseType: baseType
+                        };
+                    }
+                } else if (d.global === 20) {
+                    // record (por timestamp; Garmin smart-recording ~5s o per-second)
+                    // Campos estándar:
+                    //   253: timestamp (uint32, FIT epoch)
+                    //   0:   position_lat (sint32, semicircles)  · null si sin GPS
+                    //   1:   position_long (sint32, semicircles) · null si sin GPS
+                    //   2:   altitude (uint16, m*5+500)          · legacy
+                    //   3:   heart_rate (uint8, bpm)
+                    //   4:   cadence (uint8, rpm de un pie)
+                    //   5:   distance (uint32, m*100)
+                    //   6:   speed (uint16, m/s*1000)            · legacy
+                    //   7:   power (uint16, W)
+                    //   13:  temperature (sint8, °C)
+                    //   53:  fractional_cadence (uint8, /128)
+                    //   73:  enhanced_speed (uint32, m/s*1000)    · preferido
+                    //   78:  enhanced_altitude (uint32, m*5+500)  · preferido
+                    const ts = row[253];
+                    if (ts !== null && ts !== undefined && ts < FIT_INVALID_S32 && ts > 0) {
+                        if (firstRecTs === 0) firstRecTs = ts;
+                        lastRecTs = ts;
+                        const t = ts - firstRecTs;
+                        const latS = row[0], lonS = row[1];
+                        const altLegacy = row[2], altEnh = row[78];
+                        const hr = row[3], cad = row[4], distCm = row[5];
+                        const spdLegacy = row[6], spdEnh = row[73];
+                        const power = row[7], temp = row[13];
+
+                        // HR
+                        if (hr !== null && hr > 30 && hr < 250) {
+                            if (hr > maxHr) maxHr = hr;
+                            hrSeries.push({ t, v: hr });
+                        }
+                        // Speed: preferir enhanced si está
+                        let spdMS = 0;
+                        if (spdEnh !== null && spdEnh !== undefined && spdEnh < 0xFFFFFFFF) {
+                            spdMS = spdEnh / 1000;
+                        } else if (spdLegacy !== null && spdLegacy !== undefined && spdLegacy < 0xFFFF) {
+                            spdMS = spdLegacy / 1000;
+                        }
+                        // Distancia (cm)
+                        const distCmAbs = (distCm !== null && distCm !== undefined && distCm < 0xFFFFFFFF)
+                                          ? Math.round(distCm) : 0;
+                        distSer.push({ t, d: distCmAbs, spd: spdMS });
+                        // Cadencia (1 pie en rpm → guardamos crudo; UI lo dobla igual que Suunto)
+                        if (cad !== null && cad > 0 && cad < 255) {
+                            cadSeries.push({ t, v: cad });
+                        }
+                        // Altitud: preferir enhanced si está
+                        let altM = null;
+                        if (altEnh !== null && altEnh !== undefined && altEnh < 0xFFFFFFFF) {
+                            altM = altEnh / 5 - 500;
+                        } else if (altLegacy !== null && altLegacy !== undefined && altLegacy < 0xFFFF) {
+                            altM = altLegacy / 5 - 500;
+                        }
+                        if (altM !== null && altM > -500 && altM < 9000) {
+                            eleSeries.push(altM);
+                        }
+                        // Temperatura: sint8 en Garmin estándar
+                        if (temp !== null && temp !== undefined) {
+                            const tC = temp > 127 ? temp - 256 : temp;
+                            if (tC > -40 && tC < 60) temperatures.push(tC);
+                        }
+                        // GPS (semicirculos → grados)
+                        if (latS !== null && latS !== undefined && latS !== FIT_INVALID_S32 &&
+                            lonS !== null && lonS !== undefined && lonS !== FIT_INVALID_S32) {
+                            const lat = latS * SC_TO_DEG;
+                            const lon = lonS * SC_TO_DEG;
+                            if (isFinite(lat) && isFinite(lon) &&
+                                lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                                gpsPoints.push({ lat, lon, hr: (hr !== null && hr > 30 && hr < 250) ? hr : null });
+                            }
+                        }
+                    }
+                } else if (d.global === 19) {
+                    // lap (Garmin emite un mensaje por vuelta automática/manual)
+                    //   8:  total_timer_time (uint32, s*1000)
+                    //   7:  total_elapsed_time (uint32, s*1000)
+                    //   9:  total_distance (uint32, m*100)
+                    //   15: avg_heart_rate (uint8)
+                    //   13: avg_speed (uint16, m/s*1000)
+                    //   17: avg_running_cadence (uint8) o avg_cadence
+                    //   21: total_ascent (uint16, m)
+                    //   22: total_descent (uint16, m)
+                    const tot_timer = row[8];
+                    const tot_elap  = row[7];
+                    const tot_dist  = row[9];
+                    const lap_avgHr = row[15];
+                    const lap_avgSpd = row[13];
+                    const lap_avgCad = row[17];
+                    const lap_ascent  = row[21];
+                    const lap_descent = row[22];
+
+                    const distKm  = (tot_dist !== null && tot_dist < 0xFFFFFFFF) ? tot_dist / 100000 : 0;
+                    const durMs   = (tot_timer !== null && tot_timer < 0xFFFFFFFF && tot_timer > 0)
+                                    ? tot_timer
+                                    : (tot_elap !== null && tot_elap < 0xFFFFFFFF ? tot_elap : 0);
+                    const durS    = Math.round(durMs / 1000);
+                    const spd     = (lap_avgSpd !== null && lap_avgSpd < 0xFFFF) ? lap_avgSpd / 1000 : 0;
+                    const paceS   = spd > 0 ? Math.round(1000 / spd) : 0;
+                    const avgHrL  = (lap_avgHr !== null && lap_avgHr > 30 && lap_avgHr < 250) ? lap_avgHr : 0;
+
+                    if (distKm > 0 && durS > 0) {
+                        laps.push({
+                            n: laps.length + 1,
+                            distKm: Math.round(distKm * 100) / 100,
+                            durS,
+                            avgHr: avgHrL,
+                            paceS,
+                            cadence: (lap_avgCad !== null && lap_avgCad > 0 && lap_avgCad < 255) ? lap_avgCad : 0,
+                            ascent: (lap_ascent !== null && lap_ascent < 0xFFFF) ? lap_ascent : 0,
+                            descent: (lap_descent !== null && lap_descent < 0xFFFF) ? lap_descent : 0
+                        });
+                    }
+                } else if (d.global === 18) {
+                    // session — Garmin normalmente emite UNA sesión válida. Validamos
+                    // sport=running(1) o generic(0) y rango razonable de fecha/dist.
+                    const sStart = row[2], sport = row[5], dist = row[9];
+                    const yr = sStart ? new Date((sStart + 631065600) * 1000).getFullYear() : 0;
+                    const looksValid = (sport === 1 || sport === 0)
+                                    && yr >= 2010 && yr <= 2099
+                                    && (dist !== null && dist < 0xFFFFFFFF && dist > 0 && dist < 1e9);
+                    if (looksValid) {
+                        sessionList.push(row);
+                        // Capturar dev fields a nivel session si los hay
+                        for (const k in row) {
+                            if (k.startsWith('dev_')) {
+                                const meta = devFieldMap[k];
+                                if (!meta) continue;
+                                const name = meta.name;
+                                const val = row[k];
+                                if (val === null || val === undefined) continue;
+                                if (name === 'estimated_vo2_max') {
+                                    if (typeof val === 'number' && val >= 10 && val <= 90) {
+                                        devVO2 = Math.round(val * 10) / 10;
+                                    }
+                                }
+                                if (name === 'recovery_time') {
+                                    if (typeof val === 'number' && val > 0) {
+                                        devRecovery = val > 1000 ? Math.round(val / 60) : Math.round(val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Elegir la mejor sesión (por distancia, igual que Suunto) ---
+        const sBest = sessionList.sort((a, b) => (b[9] || 0) - (a[9] || 0))[0] || {};
+        const sStart   = sBest[2];
+        const sTimer   = sBest[8];   // ms
+        const sElap    = sBest[7];   // ms
+        const sDist    = sBest[9];   // m*100
+        const sAvgHr   = sBest[16];
+        const sMaxHr   = sBest[17];
+        // Velocidad media: enhanced_avg_speed (124, uint32 mm/s, preferido en
+        // Garmin moderno) con fallback a avg_speed (14, uint16 mm/s).
+        const sAvgSpdEnh = sBest[124];
+        const sAvgSpd    = (sAvgSpdEnh !== null && sAvgSpdEnh !== undefined && sAvgSpdEnh < 0xFFFFFFFF)
+                           ? sAvgSpdEnh
+                           : sBest[14];
+        const sAscent  = sBest[22];
+        const sDescent = sBest[23];
+        const sCal     = sBest[11];
+        const sAvgCad  = sBest[18];
+        const sMaxCad  = sBest[19];
+        const sAvgPow  = sBest[20];
+        const sMaxPow  = sBest[21];
+        const sNormPow = sBest[34];
+        const sTSS     = sBest[35];
+        const sTE      = sBest[24];
+        // Fractional cadence de session: en el FIT estándar Garmin el campo
+        // canónico es fid=92 (uint8 /128). El parser inicial leía sBest[28]
+        // (heredado de parseFitSuunto, donde Suunto usa una variante propia);
+        // validado con Fenix 8 que el correcto en Garmin es 92.
+        const sAvgFrac = sBest[92];
+        // Temperatura media de session (fid=57, sint8 °C). Fuente canónica
+        // preferida sobre el promedio de records (más fiable en relojes con
+        // termómetro como Fenix/Forerunner). Vívoactive 3 no la emite.
+        const sAvgTemp = sBest[57];
+        // Step length medio de session (fid=134, uint16 mm). Si el reloj lo
+        // emite (Fenix con Running Dynamics nativo), es más preciso que el
+        // cálculo desde velocidad/cadencia.
+        const sAvgStep = sBest[134];
+        // Posición de inicio (fids 3/4, sint32 semicircles). Útil como
+        // fallback para gpsPoints si los records no traen GPS pero el reloj
+        // sí lo registró al arrancar la actividad.
+        const sStartLat = sBest[3];
+        const sStartLon = sBest[4];
+
+        // --- Derivar campos del shape congelado ---
+        let distKm = 0, durationSec = 0, elapsedSec = 0, avgHr = 0;
+        let ascentM = 0, descentM = 0, calories = 0;
+        let avgPower = 0, maxPower = 0, normPower = 0, tss = 0, trainingEffect = 0;
+        let dateUnix = 0;
+
+        if (sDist !== undefined && sDist < 0xFFFFFFFF && sDist > 0) {
+            distKm      = Math.round(sDist / 100) / 1000;
+            durationSec = (sTimer && sTimer < 0xFFFFFFFF) ? Math.round(sTimer / 1000)
+                          : (sElap && sElap < 0xFFFFFFFF ? Math.round(sElap / 1000) : 0);
+            elapsedSec  = (sElap && sElap < 0xFFFFFFFF) ? Math.round(sElap / 1000) : durationSec;
+            avgHr       = (sAvgHr && sAvgHr > 30 && sAvgHr < 250) ? sAvgHr : 0;
+            ascentM     = (sAscent !== null && sAscent < 0xFFFF) ? sAscent : 0;
+            descentM    = (sDescent !== null && sDescent < 0xFFFF) ? sDescent : 0;
+            calories    = (sCal !== null && sCal < 0xFFFF) ? sCal : 0;
+            avgPower    = (sAvgPow !== null && sAvgPow < 0xFFFF) ? sAvgPow : 0;
+            maxPower    = (sMaxPow !== null && sMaxPow < 0xFFFF) ? sMaxPow : 0;
+            normPower   = (sNormPow !== null && sNormPow < 0xFFFF) ? sNormPow : 0;
+            tss         = (sTSS !== null && sTSS < 0xFFFF) ? sTSS / 10 : 0;
+            trainingEffect = (sTE !== null && sTE < 0xFF) ? sTE / 10 : 0;
+            dateUnix    = (sStart && sStart < 0xFFFFFFFF) ? (sStart + 631065600) : 0;
+        }
+
+        // Fallbacks desde records si la session falta o está incompleta
+        if (distKm === 0 && distSer.length) {
+            const lastDc = distSer[distSer.length - 1].d;
+            distKm = Math.round(lastDc / 1000) / 100;
+        }
+        if (durationSec === 0 && firstRecTs && lastRecTs) {
+            durationSec = lastRecTs - firstRecTs;
+            if (elapsedSec === 0) elapsedSec = durationSec;
+        }
+        if (avgHr === 0 && hrSeries.length) {
+            const sum = hrSeries.reduce((a, b) => a + b.v, 0);
+            avgHr = Math.round(sum / hrSeries.length);
+        }
+        if (!dateUnix) {
+            dateUnix = (firstRecTs ? (firstRecTs + 631065600) : (activityDateUnix || Date.now()/1000));
+        }
+        const dObj = new Date(dateUnix * 1000);
+        const dateStr = dObj.getFullYear() + '-' + String(dObj.getMonth()+1).padStart(2,'0') + '-' + String(dObj.getDate()).padStart(2,'0');
+        const startDate = dObj.toISOString();
+
+        // Cadencia: running cadence es un pie, ×2 para SPM totales.
+        // Si avg_fractional_cadence está presente, suma decimal antes de doblar.
+        let avgCadenceSpm = 0;
+        if (sAvgCad && sAvgCad > 0 && sAvgCad < 255) {
+            const frac = (sAvgFrac !== null && sAvgFrac !== undefined && sAvgFrac < 255)
+                         ? sAvgFrac / 128 : 0;
+            avgCadenceSpm = Math.round((sAvgCad + frac) * 2);
+        }
+        const maxCadenceSpm = (sMaxCad && sMaxCad > 0 && sMaxCad < 255) ? sMaxCad * 2 : 0;
+
+        // Stride length (cm). Preferir el campo nativo session.avg_step_length
+        // (Fenix con Running Dynamics) si está; si no, calcular desde
+        // velocidad media y cadencia (igual que Suunto).
+        // El valor crudo de avg_step_length viene en 0.1 mm (scale=10 en FIT):
+        // raw 11163 → 1116.3 mm → 111.6 cm. Conversión: raw / 100 → cm.
+        let strideLen = 0;
+        if (sAvgStep !== null && sAvgStep !== undefined && sAvgStep > 0 && sAvgStep < 0xFFFF) {
+            strideLen = Math.round(sAvgStep / 100);                   // 0.1 mm → cm
+        } else if (sAvgSpd && sAvgSpd < 0xFFFFFFFF && avgCadenceSpm > 0) {
+            const v = sAvgSpd / 1000;
+            const m_per_step = v / (avgCadenceSpm / 60);
+            strideLen = Math.round(m_per_step * 100);
+        }
+
+        // Temperatura media. Preferir session.avg_temperature (fid=57, sint8)
+        // — fuente canónica del reloj. Fallback a promedio de records si la
+        // session no la trae (Vívoactive 3 sin termómetro, etc.).
+        let avgTemp = null;
+        if (sAvgTemp !== null && sAvgTemp !== undefined) {
+            const tC = sAvgTemp > 127 ? sAvgTemp - 256 : sAvgTemp;
+            if (tC > -40 && tC < 60) avgTemp = tC;
+        }
+        if (avgTemp === null && temperatures.length) {
+            avgTemp = Math.round(temperatures.reduce((a,b)=>a+b,0) / temperatures.length);
+        }
+
+        // Fallback: si los records no traían GPS pero el session sí tiene
+        // start_position válida, añadirla como punto único para que la UI
+        // sepa dónde ocurrió la actividad. No reconstruye traza completa.
+        if (gpsPoints.length === 0 &&
+            sStartLat !== null && sStartLat !== undefined && sStartLat !== FIT_INVALID_S32 &&
+            sStartLon !== null && sStartLon !== undefined && sStartLon !== FIT_INVALID_S32) {
+            const lat = sStartLat * SC_TO_DEG;
+            const lon = sStartLon * SC_TO_DEG;
+            if (isFinite(lat) && isFinite(lon) &&
+                lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                gpsPoints.push({ lat, lon, hr: null });
+            }
+        }
+
+        // Si no hay laps del FIT, derivarlos desde distSer por km (igual que Suunto)
+        let outLaps = laps;
+        if (!outLaps.length && distSer.length) {
+            let lapNum = 1, lapStartDc = 0, lapMovSecs = 0;
+            let lapHrs = [], lapSpds = [], hrIdx = 0;
+            for (let i = 0; i < distSer.length; i++) {
+                const { t, d: dc, spd } = distSer[i];
+                const isMoving = spd > 0.3;
+                if (isMoving) {
+                    lapMovSecs++;
+                    lapSpds.push(spd);
+                }
+                while (hrIdx < hrSeries.length && hrSeries[hrIdx].t <= t) {
+                    if (isMoving) lapHrs.push(hrSeries[hrIdx].v);
+                    hrIdx++;
+                }
+                if (dc - lapStartDc >= 100000) {
+                    const aHr  = lapHrs.length ? Math.round(lapHrs.reduce((a,b)=>a+b,0)/lapHrs.length) : 0;
+                    const aSpd = lapSpds.length ? lapSpds.reduce((a,b)=>a+b,0)/lapSpds.length : 0;
+                    const paceS = aSpd > 0 ? Math.round(1000/aSpd) : 0;
+                    outLaps.push({ n: lapNum, durS: Math.max(1, lapMovSecs), distKm: 1.0, avgHr: aHr, paceS });
+                    lapNum++;
+                    lapStartDc += 100000;
+                    lapMovSecs  = 0;
+                    lapHrs = []; lapSpds = [];
+                }
+            }
+        }
+
+        return {
+            records: gpsPoints,
+            distKm, durationSec, elapsedSec, avgHr, ascentM,
+            maxHr: maxHr || (sMaxHr && sMaxHr > 30 && sMaxHr < 250 ? sMaxHr : null),
+            laps: outLaps, hrSeries, distSer, cadSeries, eleSeries, dateStr, startDate,
+            calories, avgTemp, strideLen,
+            descentM,
+            avgCadence: avgCadenceSpm,
+            maxCadence: maxCadenceSpm,
+            avgPower, maxPower, normPower,
+            tss, trainingEffect,
+            vo2max: devVO2,
+            recoveryTimeMin: devRecovery,
+            deviceBrand: 'garmin'
+        };
+    }
+
     function haversine(lat1, lon1, lat2, lon2) {
         const R = 6371;
         const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -14992,7 +15802,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
               'Guarda los 2 archivos en tu dispositivo.',
               'Vuelve aquí y arrastra <strong>los 2 archivos a la vez</strong> a la zona de abajo.'
           ] },
-        { key:'garmin',  name:'Garmin',      enabled:false, accepts:[], instructions:[] },
+        { key:'garmin',  name:'Garmin',      enabled:true,  accepts:['fit','gpx','zip'],
+          instructions:[
+              'Abre <strong>Garmin Connect</strong> en el navegador y entra en la actividad que quieres importar.',
+              'Pulsa el icono <strong>⚙ Ajustes</strong> (arriba-derecha) y elige <strong>Exportar archivo original</strong>.',
+              'Garmin descargará un <strong>.zip</strong> con el archivo <strong>.fit</strong> de tu reloj dentro.',
+              'Opcional: si quieres la traza GPS, también <strong>Exportar a GPX</strong>.',
+              'Vuelve aquí y arrastra el <strong>.zip</strong> (y el <strong>.gpx</strong> si lo descargaste) a la zona de abajo.'
+          ] },
         { key:'polar',   name:'Polar',       enabled:false, accepts:[], instructions:[] },
         { key:'apple',   name:'Apple Watch', enabled:false, accepts:[], instructions:[] },
         { key:'amazfit', name:'Amazfit',     enabled:false, accepts:[], instructions:[] }
@@ -43635,13 +44452,46 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Garmin] Catálogo Garmin habilitado + parseFitGarmin/parseGPXGarmin
+    // disponibles. Verifica la activación del 4º branch del wizard sin
+    // ejecutar parsing real.
+    function _testGarminWizardReady() {
+        var checks = [];
+        try {
+            var entry = (typeof MR_BRAND_CATALOG !== 'undefined')
+                ? MR_BRAND_CATALOG.find(function(b){ return b && b.key === 'garmin'; })
+                : null;
+            if (!entry)               checks.push('MR_BRAND_CATALOG sin entrada garmin');
+            else {
+                if (!entry.enabled)                  checks.push('garmin enabled=false');
+                if (!Array.isArray(entry.accepts) || !entry.accepts.length)
+                                                     checks.push('garmin accepts vacío');
+                else if (entry.accepts.indexOf('fit') < 0)
+                                                     checks.push('garmin accepts sin .fit');
+                if (!Array.isArray(entry.instructions) || entry.instructions.length < 3)
+                                                     checks.push('garmin instructions <3');
+            }
+            if (typeof parseFitGarmin !== 'function') checks.push('parseFitGarmin no es función');
+            if (typeof parseGPXGarmin !== 'function') checks.push('parseGPXGarmin no es función');
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'garmin.wizard.ready',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'catálogo+parsers OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
         state:   [_testActivitiesArray, _testUserKeyScoped],
         css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
         renders: [_testRendersDontCrash],
-        s26b:    [_testS26BCatalog, _testS26BWizard],
+        s26b:    [_testS26BCatalog, _testS26BWizard, _testGarminWizardReady],
         s26c:    [_testS26CMausoleo],
         hitos:   [_testHitosCoherence]
     };
