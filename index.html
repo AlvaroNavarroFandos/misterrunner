@@ -8813,6 +8813,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 body.dark-mode #view-import-manual .vim-file-badge.is-ok .vim-file-state {
                     color: #4ade80;
                 }
+                /* Archivo opcional (no subido todavía): atenuado y con borde
+                   discontinuo para indicar "puedes saltarlo" sin gritar. */
+                #view-import-manual .vim-file-badge.is-optional {
+                    opacity: .65;
+                    border-style: dashed;
+                    background: transparent;
+                }
+                #view-import-manual .vim-file-badge.is-optional .vim-file-state {
+                    font-style: italic;
+                    color: var(--tm);
+                }
 
                 /* Warning */
                 #view-import-manual .vim-warn {
@@ -15441,15 +15452,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   7:  total_elapsed_time (uint32, s*1000)
                     //   9:  total_distance (uint32, m*100)
                     //   15: avg_heart_rate (uint8)
-                    //   13: avg_speed (uint16, m/s*1000)
+                    //   13: avg_speed (uint16, m/s*1000)         — legacy (Vívoactive 3)
+                    //   110: enhanced_avg_speed (uint32, m/s*1000) — moderno (Fenix 8)
                     //   17: avg_running_cadence (uint8) o avg_cadence
                     //   21: total_ascent (uint16, m)
                     //   22: total_descent (uint16, m)
+                    //
+                    // Nota Fix BUG-LAP-RITMO (sesión post-Garmin): el Fenix 8 NO emite
+                    // avg_speed (fid 13) en los laps — lo deja como uint16 INVALID
+                    // (0xFFFF). En su lugar emite enhanced_avg_speed en fid=110 (raw
+                    // m/s × 1000, mayor rango). Garmin Connect calcula el ritmo en
+                    // este caso con total_timer_time / (total_distance/1000). Para
+                    // máxima robustez aplicamos cascada: enhanced (110) → legacy (13)
+                    // → cálculo derivado. Vívoactive 3 sigue funcionando porque
+                    // emite ambos en mismo valor.
                     const tot_timer = row[8];
                     const tot_elap  = row[7];
                     const tot_dist  = row[9];
                     const lap_avgHr = row[15];
-                    const lap_avgSpd = row[13];
+                    const lap_avgSpdEnh = row[110];                 // enhanced_avg_speed (Fenix 8)
+                    const lap_avgSpdLeg = row[13];                  // avg_speed legacy (Vívoactive 3)
                     const lap_avgCad = row[17];
                     const lap_ascent  = row[21];
                     const lap_descent = row[22];
@@ -15459,8 +15481,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     ? tot_timer
                                     : (tot_elap !== null && tot_elap < 0xFFFFFFFF ? tot_elap : 0);
                     const durS    = Math.round(durMs / 1000);
-                    const spd     = (lap_avgSpd !== null && lap_avgSpd < 0xFFFF) ? lap_avgSpd / 1000 : 0;
-                    const paceS   = spd > 0 ? Math.round(1000 / spd) : 0;
+                    // Cascada de fuentes para velocidad media del lap:
+                    let spd = 0;
+                    if (lap_avgSpdEnh !== null && lap_avgSpdEnh !== undefined && lap_avgSpdEnh < 0xFFFFFFFF) {
+                        spd = lap_avgSpdEnh / 1000;
+                    } else if (lap_avgSpdLeg !== null && lap_avgSpdLeg !== undefined && lap_avgSpdLeg < 0xFFFF) {
+                        spd = lap_avgSpdLeg / 1000;
+                    }
+                    let paceS = spd > 0 ? Math.round(1000 / spd) : 0;
+                    // Fallback final: derivar ritmo desde distancia y tiempo del lap.
+                    // Imprescindible para FITs que no emiten avg_speed ni
+                    // enhanced_avg_speed (Fenix 8 corredor moderno). Mismo método que
+                    // usa Garmin Connect para mostrar el ritmo en su web.
+                    if (paceS === 0 && distKm > 0 && durS > 0) {
+                        paceS = Math.round(durS / distKm);
+                    }
                     const avgHrL  = (lap_avgHr !== null && lap_avgHr > 30 && lap_avgHr < 250) ? lap_avgHr : 0;
 
                     if (distKm > 0 && durS > 0) {
@@ -15802,13 +15837,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
               'Guarda los 2 archivos en tu dispositivo.',
               'Vuelve aquí y arrastra <strong>los 2 archivos a la vez</strong> a la zona de abajo.'
           ] },
-        { key:'garmin',  name:'Garmin',      enabled:true,  accepts:['fit','gpx','zip'],
+        { key:'garmin',  name:'Garmin',      enabled:true,  accepts:['zip','gpx'], optional:['gpx'],
           instructions:[
               'Abre <strong>Garmin Connect</strong> en el navegador y entra en la actividad que quieres importar.',
-              'Pulsa el icono <strong>⚙ Ajustes</strong> (arriba-derecha) y elige <strong>Exportar archivo original</strong>.',
-              'Garmin descargará un <strong>.zip</strong> con el archivo <strong>.fit</strong> de tu reloj dentro.',
-              'Opcional: si quieres la traza GPS, también <strong>Exportar a GPX</strong>.',
-              'Vuelve aquí y arrastra el <strong>.zip</strong> (y el <strong>.gpx</strong> si lo descargaste) a la zona de abajo.'
+              'Pulsa el icono <strong>⚙ Ajustes</strong> (arriba-derecha) y elige <strong>Exportar archivo original</strong>. Garmin descargará un <strong>.zip</strong> con el <strong>.fit</strong> dentro.',
+              '<strong>Opcional</strong>: si quieres ver la traza GPS en el mapa, en el mismo menú <strong>⚙ Ajustes</strong> elige también <strong>Exportar a GPX</strong>.',
+              'Vuelve aquí y arrastra el <strong>.zip</strong> (y el <strong>.gpx</strong> si lo tienes) a la zona de abajo. No hace falta descomprimir nada.'
           ] },
         { key:'polar',   name:'Polar',       enabled:false, accepts:[], instructions:[] },
         { key:'apple',   name:'Apple Watch', enabled:false, accepts:[], instructions:[] },
@@ -16015,10 +16049,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         if (heroTitleEl) heroTitleEl.textContent = brand.name;
         if (heroDescEl) {
-            // Descripción según los archivos que pide la marca
-            const exts = brand.accepts.map(e => '.' + e).join(' · ');
-            heroDescEl.innerHTML = 'Exporta los archivos <strong>' + exts + '</strong> y súbelos ' +
-                                   (brand.accepts.length > 2 ? 'los ' + brand.accepts.length + ' juntos.' : 'juntos.');
+            // Descripción según los archivos que pide la marca, distinguiendo
+            // requeridos de opcionales (si los hay).
+            const _optional = Array.isArray(brand.optional) ? brand.optional : [];
+            const _required = brand.accepts.filter(e => _optional.indexOf(e) < 0);
+            const reqStr = _required.map(e => '.' + e).join(' · ');
+            if (_optional.length === 0) {
+                heroDescEl.innerHTML = 'Exporta los archivos <strong>' + brand.accepts.map(e => '.' + e).join(' · ') + '</strong> y súbelos ' +
+                                       (brand.accepts.length > 2 ? 'los ' + brand.accepts.length + ' juntos.' : 'juntos.');
+            } else {
+                const optStr = _optional.map(e => '.' + e).join(' · ');
+                heroDescEl.innerHTML = 'Exporta el archivo <strong>' + reqStr + '</strong>' +
+                                       ' (opcionalmente también <strong>' + optStr + '</strong> para la traza GPS) ' +
+                                       'y arrástralos a la zona de abajo.';
+            }
         }
 
         // 2) Acordeón con instrucciones
@@ -16039,11 +16083,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const acc = document.getElementById('vim-acc');
         if (acc) acc.classList.add('is-open');
 
-        // 3) Drop zone — texto dinámico según marca
+        // 3) Drop zone — texto dinámico según marca. Si hay opcionales, los
+        //    mostramos en gris ("+ .gpx opcional") para no confundir al usuario.
         const dropTextEl = document.getElementById('vim-drop-text');
         if (dropTextEl) {
-            const exts = brand.accepts.map(e => '.' + e).join(' + ');
-            dropTextEl.textContent = 'Arrastra ' + exts;
+            const _optional2 = Array.isArray(brand.optional) ? brand.optional : [];
+            const _required2 = brand.accepts.filter(e => _optional2.indexOf(e) < 0);
+            const reqExts = _required2.map(e => '.' + e).join(' + ');
+            if (_optional2.length === 0) {
+                dropTextEl.textContent = 'Arrastra ' + brand.accepts.map(e => '.' + e).join(' + ');
+            } else {
+                const optExts = _optional2.map(e => '.' + e).join(' + ');
+                // textContent no admite spans con color → usamos innerHTML aquí.
+                dropTextEl.innerHTML = 'Arrastra ' + reqExts +
+                                       ' <span style="opacity:.5;font-weight:500;">+ ' + optExts + ' opcional</span>';
+            }
         }
 
         // 4) Badges archivos requeridos (vacíos al entrar)
@@ -16084,7 +16138,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window.vimOnFilesChange = vimOnFilesChange;
 
-    // Refrescar UI de archivos: badges + warning + estado botón
+    // Refrescar UI de archivos: badges + warning + estado botón.
+    // Soporta el concepto de archivos OPCIONALES (campo brand.optional[]).
+    // Un archivo opcional muestra badge atenuado con label "Opcional", se
+    // marca OK cuando el usuario lo sube pero NO bloquea el botón importar
+    // si falta. Sólo los REQUERIDOS (accepts \ optional) cuentan para allOK
+    // y para el warning de "Falta el archivo X".
     function _vimUpdateFilesUI() {
         const brand = MR_BRAND_CATALOG.find(b => b.key === _vimState.brand);
         if (!brand) return;
@@ -16096,11 +16155,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const submitEl = document.getElementById('vim-submit');
 
         const accepts  = brand.accepts;
-        const haveCount = accepts.filter(e => _vimState.files[e]).length;
-        const allOK = (haveCount === accepts.length);
+        const optional = Array.isArray(brand.optional) ? brand.optional : [];
+        const required = accepts.filter(e => optional.indexOf(e) < 0);
+        const haveReq  = required.filter(e => _vimState.files[e]).length;
+        const allOK    = (haveReq === required.length && required.length > 0);
 
         if (titleEl) {
-            titleEl.textContent = 'Archivos requeridos · ' + haveCount + ' de ' + accepts.length +
+            // Contador sobre REQUERIDOS, no sobre total. Sigue siendo claro y honesto.
+            titleEl.textContent = 'Archivos requeridos · ' + haveReq + ' de ' + required.length +
                                   (allOK ? ' ✓' : '');
         }
         if (rowEl) {
@@ -16108,33 +16170,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             accepts.forEach(function(ext) {
                 const f = _vimState.files[ext];
                 const ok = !!f;
-                html += '<div class="vim-file-badge' + (ok ? ' is-ok' : '') + '">'
+                const isOpt = optional.indexOf(ext) >= 0;
+                // Etiqueta de estado: "OK", "Pendiente" (requerido) u "Opcional" (no subido)
+                const stateLabel = ok
+                    ? (f.name || 'OK')
+                    : (isOpt ? 'Opcional' : 'Pendiente');
+                html += '<div class="vim-file-badge' + (ok ? ' is-ok' : '') + (isOpt && !ok ? ' is-optional' : '') + '">'
                       + '<div class="vim-file-check">'
                       + (ok ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
                       + '</div>'
                       + '<div class="vim-file-info">'
-                      + '<div class="vim-file-ext">.' + ext.toUpperCase() + '</div>'
-                      + '<div class="vim-file-state">' + (ok ? (f.name || 'OK') : 'Pendiente') + '</div>'
+                      + '<div class="vim-file-ext">.' + ext.toUpperCase() + (isOpt ? ' <span style="opacity:.5;font-weight:500;font-size:9px;">(opcional)</span>' : '') + '</div>'
+                      + '<div class="vim-file-state">' + stateLabel + '</div>'
                       + '</div>'
                       + '</div>';
             });
             rowEl.innerHTML = html;
         }
 
-        // Warning
+        // Warning: SOLO si faltan REQUERIDOS. Los opcionales nunca generan warning.
         if (warnEl && warnText) {
-            const missing = accepts.filter(e => !_vimState.files[e]);
-            if (missing.length === 0) {
+            const missingReq = required.filter(e => !_vimState.files[e]);
+            if (missingReq.length === 0) {
                 warnEl.style.display = 'none';
             } else {
                 warnEl.style.display = '';
-                const missList = missing.map(e => '<strong>.' + e + '</strong>').join(' y ');
-                warnText.innerHTML = 'Falta ' + (missing.length === 1 ? 'el archivo ' : 'los archivos ') + missList +
-                                     '. Selecciona ' + (accepts.length === 1 ? 'el archivo' : 'los ' + accepts.length + ' a la vez') + ' para importar.';
+                const missList = missingReq.map(e => '<strong>.' + e + '</strong>').join(' y ');
+                warnText.innerHTML = 'Falta ' + (missingReq.length === 1 ? 'el archivo ' : 'los archivos ') + missList +
+                                     '. Selecciona ' + (required.length === 1 ? 'el archivo' : 'los ' + required.length + ' a la vez') + ' para importar.';
             }
         }
 
-        // Botón importar
+        // Botón importar: habilitado cuando todos los REQUERIDOS están presentes.
         if (submitEl) submitEl.disabled = !allOK;
     }
 
@@ -16144,12 +16211,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function vimDoImport() {
         const brand = MR_BRAND_CATALOG.find(b => b.key === _vimState.brand);
         if (!brand) return;
-        const have = brand.accepts.filter(e => _vimState.files[e]);
-        if (have.length !== brand.accepts.length) return; // botón debería estar disabled
+        const accepts  = brand.accepts;
+        const optional = Array.isArray(brand.optional) ? brand.optional : [];
+        const required = accepts.filter(e => optional.indexOf(e) < 0);
+        const haveReq  = required.filter(e => _vimState.files[e]).length;
+        if (haveReq !== required.length || required.length === 0) return; // botón debería estar disabled
 
-        // Construir un DataTransfer con los archivos para asignar al input externo
+        // Construir un DataTransfer con los archivos disponibles (requeridos +
+        // opcionales que el usuario sí haya subido). Los opcionales NO subidos
+        // se omiten silenciosamente del DataTransfer.
         const dt = new DataTransfer();
-        brand.accepts.forEach(function(ext) {
+        accepts.forEach(function(ext) {
             const f = _vimState.files[ext];
             if (f) dt.items.add(f);
         });
@@ -44466,8 +44538,9 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!entry.enabled)                  checks.push('garmin enabled=false');
                 if (!Array.isArray(entry.accepts) || !entry.accepts.length)
                                                      checks.push('garmin accepts vacío');
-                else if (entry.accepts.indexOf('fit') < 0)
-                                                     checks.push('garmin accepts sin .fit');
+                else if (entry.accepts.indexOf('zip') < 0)
+                                                     checks.push('garmin accepts sin .zip');
+                if (!Array.isArray(entry.optional))  checks.push('garmin optional no array');
                 if (!Array.isArray(entry.instructions) || entry.instructions.length < 3)
                                                      checks.push('garmin instructions <3');
             }
