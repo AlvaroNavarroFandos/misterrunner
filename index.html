@@ -1589,7 +1589,7 @@
        de #activities-list y tiene altura predecible. */
     #activities-list > .act-swipe-wrap {
         content-visibility: auto;
-        contain-intrinsic-size: 0 158px;  /* 150 card + 8 gap = 158 */
+        contain-intrinsic-size: 0 134px;  /* 126 card + 8 gap = 134 [FASE 8 compact] */
     }
 
     /* [FASE 6 · Fix C] view-activities como contenedor relativo para el gate
@@ -11733,9 +11733,69 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
 
+        // ─────────────────────────────────────────────────────────────
+        // [FASE 8 · Polish] Modal de progreso durante el wipe
+        // El proceso tiene 3-4 pasos lentos (RPC + Edge Function + IDB + reload).
+        // Para que el usuario no se quede sin feedback durante 5-15 segundos,
+        // inyectamos un overlay bloqueante con barra animada y texto del paso.
+        // ─────────────────────────────────────────────────────────────
+        const _wipeOverlay = document.createElement('div');
+        _wipeOverlay.id = 'mr-wipe-overlay';
+        _wipeOverlay.style.cssText = [
+            'position:fixed','inset:0','z-index:999999',
+            'background:rgba(10,10,15,.85)',
+            'backdrop-filter:blur(8px)','-webkit-backdrop-filter:blur(8px)',
+            'display:flex','align-items:center','justify-content:center',
+            'opacity:0','transition:opacity .25s ease',
+            'font-family:var(--f, system-ui)'
+        ].join(';');
+        _wipeOverlay.innerHTML =
+            '<div style="background:linear-gradient(135deg,#1a1410 0%,#2a2018 100%);'
+                + 'border:1px solid rgba(201,168,76,.4);border-radius:18px;'
+                + 'padding:24px 24px 22px;min-width:280px;max-width:340px;'
+                + 'box-shadow:0 12px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(201,168,76,.18);">'
+            +    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+            +        '<div id="mr-wipe-spinner" style="width:18px;height:18px;border:2.5px solid rgba(201,168,76,.25);'
+            +            'border-top-color:#C9A84C;border-radius:50%;animation:mrWipeSpin 0.8s linear infinite;flex-shrink:0;"></div>'
+            +        '<div style="font-size:14px;font-weight:700;color:#f5e6c8;letter-spacing:.2px;">Borrando datos…</div>'
+            +    '</div>'
+            +    '<div id="mr-wipe-step" style="font-size:12px;color:rgba(245,230,200,.7);margin-bottom:14px;line-height:1.4;min-height:32px;">Preparando…</div>'
+            +    '<div style="background:rgba(201,168,76,.12);height:6px;border-radius:3px;overflow:hidden;">'
+            +        '<div id="mr-wipe-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#C9A84C 0%,#E8C76A 100%);'
+            +            'border-radius:3px;transition:width .35s ease;box-shadow:0 0 8px rgba(201,168,76,.45);"></div>'
+            +    '</div>'
+            +    '<div id="mr-wipe-pct" style="font-size:10px;color:rgba(245,230,200,.5);text-align:right;margin-top:6px;font-weight:600;letter-spacing:.3px;">0%</div>'
+            + '</div>';
+        // Inyectar keyframes del spinner si no existen
+        if (!document.getElementById('mr-wipe-anim-style')) {
+            const animSt = document.createElement('style');
+            animSt.id = 'mr-wipe-anim-style';
+            animSt.textContent = '@keyframes mrWipeSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}';
+            document.head.appendChild(animSt);
+        }
+        document.body.appendChild(_wipeOverlay);
+        requestAnimationFrame(() => { _wipeOverlay.style.opacity = '1'; });
+
+        // Helper para actualizar paso + porcentaje
+        function _wipeProgress(pct, stepText) {
+            const bar  = document.getElementById('mr-wipe-bar');
+            const lbl  = document.getElementById('mr-wipe-step');
+            const pctEl= document.getElementById('mr-wipe-pct');
+            if (bar)   bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+            if (lbl)   lbl.textContent = stepText || '';
+            if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+        }
+        function _wipeCloseOverlay() {
+            if (_wipeOverlay && _wipeOverlay.parentNode) {
+                _wipeOverlay.style.opacity = '0';
+                setTimeout(() => { try { _wipeOverlay.remove(); } catch(_){} }, 280);
+            }
+        }
+        _wipeProgress(5, 'Verificando sesión…');
+
         // ── Cliente Supabase disponible ───────────────────────────
         const sb = window._sbClient;
-        if (!sb) { alert('Cliente Supabase no disponible.'); return; }
+        if (!sb) { _wipeCloseOverlay(); alert('Cliente Supabase no disponible.'); return; }
 
         // ── Obtener UUID del usuario actual ───────────────────────
         let uid = null;
@@ -11743,9 +11803,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const { data: { session } } = await sb.auth.getSession();
             uid = session && session.user && session.user.id;
         } catch(e) {}
-        if (!uid) { alert('No hay sesión activa.'); return; }
+        if (!uid) { _wipeCloseOverlay(); alert('No hay sesión activa.'); return; }
 
         // ── 1. Ejecutar RPC: limpia BD ────────────────────────────
+        _wipeProgress(15, 'Eliminando actividades, posts y reacciones de la base de datos…');
         console.log('[WIPE] Iniciando wipe_user_activities para', uid);
         let dbSummary = null;
         try {
@@ -11754,6 +11815,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             });
             if (error) {
                 console.error('[WIPE] RPC error:', error);
+                _wipeCloseOverlay();
                 alert('Error al borrar en servidor: ' + (error.message || 'desconocido'));
                 return;
             }
@@ -11761,9 +11823,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             console.log('[WIPE] RPC OK:', dbSummary);
         } catch(e) {
             console.error('[WIPE] RPC exception:', e);
+            _wipeCloseOverlay();
             alert('Error de red. Inténtalo de nuevo.');
             return;
         }
+        _wipeProgress(50, 'BD limpia. Borrando fotos y streams del almacenamiento…');
 
         // ── 2. Edge Function: limpia Storage ──────────────────────
         // Si falla, NO abortamos: la BD ya está limpia, los binarios
@@ -11789,6 +11853,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             storageErrorMsg = e.message || 'excepción de red';
             console.warn('[WIPE] Edge Function exception:', e);
         }
+        _wipeProgress(75, 'Limpiando datos locales (cache, IndexedDB, medallero)…');
 
         // ── 3. Limpieza local (igual que FASE 0) ──────────────────
         // 3a. Memoria: array activities
@@ -11850,6 +11915,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         msg += '\nLocal: actividades y medallero limpios.\n';
         msg += '\nLa página se recargará para refrescar la UI.';
+
+        // [FASE 8 · Polish] Antes de mostrar el alert con resumen, completamos
+        // la barra al 100% y damos un instante para que el usuario vea el éxito
+        // visual. El alert sustituye al "modal de resumen final" — para evitar
+        // doblar UI se cierra el overlay justo antes.
+        _wipeProgress(100, '¡Listo! Recargando…');
+        await new Promise(r => setTimeout(r, 400)); // ver barra al 100%
+        _wipeCloseOverlay();
+        // Pequeña pausa más para que la animación de cierre se note antes del alert
+        await new Promise(r => setTimeout(r, 150));
 
         alert(msg);
 
@@ -15313,37 +15388,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         {name:'Azul marino',     hex:'#0D2B55'},
         {name:'Azul',            hex:'#0047FF'},
         {name:'Azul cielo',      hex:'#5BB8F5'},
+        {name:'Turquesa',        hex:'#1ABC9C'},
         {name:'Rojo',            hex:'#E82E2E'},
         {name:'Granate',         hex:'#800000'},
+        {name:'Coral',           hex:'#FF7F50'},
         {name:'Rosa',            hex:'#FF5C93'},
         {name:'Naranja',         hex:'#FF8A00'},
         {name:'Amarillo',        hex:'#FFD60A'},
         {name:'Amarillo fosforito', hex:'#CCFF00'},
         {name:'Verde claro',     hex:'#34C759'},
+        {name:'Verde oliva',     hex:'#6B7935'},
         {name:'Verde oscuro',    hex:'#235334'},
         {name:'Gris',            hex:'#8E8E93'},
         {name:'Morado',          hex:'#6E39BA'},
+        {name:'Lavanda',         hex:'#B59FE0'},
+        {name:'Marrón chocolate',hex:'#5A3A22'},
+        {name:'Beige arena',     hex:'#D7C8A5'},
     ];
-    // Shorts colors (3 options)
+    // Shorts colors (ampliado FASE 8: 7 → 11 colores)
     const SHORTS_COLORS = [
         {name:'Negro',       hex:'#1C1C1E'},
         {name:'Gris oscuro', hex:'#3A3A3C'},
         {name:'Azul marino', hex:'#0D2B55'},
         {name:'Azul cielo',  hex:'#5BB8F5'},
         {name:'Rojo',        hex:'#E82E2E'},
+        {name:'Naranja',     hex:'#FF8A00'},
         {name:'Verde',       hex:'#235334'},
+        {name:'Morado',      hex:'#6E39BA'},
+        {name:'Marrón',      hex:'#5A3A22'},
+        {name:'Beige',       hex:'#D7C8A5'},
         {name:'Blanco',      hex:'#F5F5F5'},
     ];
-    // Socks colors (3 options)
+    // Socks colors (ampliado FASE 8: 9 → 12 colores)
     const SOCKS_COLORS = [
         {name:'Blanco',  hex:'#F5F5F5'},
         {name:'Negro',   hex:'#1C1C1E'},
         {name:'Gris',    hex:'#8E8E93'},
+        {name:'Beige',   hex:'#D7C8A5'},
         {name:'Naranja', hex:'#E85500'},
         {name:'Rosa',    hex:'#FF2D78'},
         {name:'Amarillo',hex:'#FFD60A'},
         {name:'Verde',   hex:'#34C759'},
+        {name:'Turquesa',hex:'#1ABC9C'},
         {name:'Azul',    hex:'#5BB8F5'},
+        {name:'Morado',  hex:'#6E39BA'},
         {name:'Rojo',    hex:'#E82E2E'},
     ];
 
@@ -18214,20 +18302,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //  - Outfit completo sin marco
             //  - Icono cámara dorado si hay foto
             sliding.innerHTML = `
-                <div class="mr-lib-card-inner" style="display:flex;height:150px;border-radius:18px;overflow:hidden;">
+                <div class="mr-lib-card-inner" style="display:flex;height:126px;border-radius:18px;overflow:hidden;">
                     <!-- ░░░ COLUMNA IZQUIERDA: MAPA (fondo adaptativo claro/oscuro) ░░░ -->
-                    <div class="mr-lib-mapcol" style="position:relative;width:140px;flex-shrink:0;">
-                        <canvas id="${cId}" width="280" height="340" style="width:100%;height:100%;display:block;"></canvas>
+                    <div class="mr-lib-mapcol" style="position:relative;width:122px;flex-shrink:0;">
+                        <canvas id="${cId}" width="244" height="290" style="width:100%;height:100%;display:block;"></canvas>
                         ${_libPhotoBadgeHTML(act)}
                         ${_libIndoorBadgeHTML(act)}
-                        <div class="mr-lib-date" style="position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:9px;font-weight:600;letter-spacing:1.5px;text-shadow:0 1px 4px rgba(0,0,0,.85);font-family:var(--f);">${df.toUpperCase()}</div>
+                        <div class="mr-lib-date" style="position:absolute;bottom:6px;left:0;right:0;text-align:center;font-size:9px;font-weight:600;letter-spacing:1.5px;text-shadow:0 1px 4px rgba(0,0,0,.85);font-family:var(--f);">${df.toUpperCase()}</div>
                     </div>
                     <!-- ░░░ COLUMNA CENTRAL: DATOS ░░░ -->
-                    <div class="mr-lib-data" style="flex:1;padding:10px 8px 10px 12px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
-                        <!-- Fila 1: título (hasta 2 líneas) + nota -->
+                    <div class="mr-lib-data" style="flex:1;padding:8px 8px 8px 11px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
+                        <!-- Fila 1: título (1 línea con ellipsis) + nota -->
                         <div>
                             <div style="display:flex;align-items:flex-start;gap:6px;">
-                                <div class="mr-lib-title" style="font-size:13px;font-weight:700;line-height:1.2;flex:1;min-width:0;letter-spacing:-.2px;font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${act.name || '—'}${_libTypeIconHTML(act)}</div>
+                                <div class="mr-lib-title" style="font-size:13px;font-weight:700;line-height:1.2;flex:1;min-width:0;letter-spacing:-.2px;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${act.name || '—'}${_libTypeIconHTML(act)}</div>
                                 ${_libPRBadgeHTML(act)}
                                 ${act.nota!=null ? (() => {
                                     const n=act.nota;
@@ -18236,7 +18324,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 })() : ''}
                             </div>
                             <!-- Pill clara con km (idéntica claro/oscuro) -->
-                            <div style="display:inline-flex;align-items:baseline;background:#f5f5f0;border-radius:20px;padding:2px 10px;margin-top:6px;">
+                            <div style="display:inline-flex;align-items:baseline;background:#f5f5f0;border-radius:20px;padding:2px 10px;margin-top:4px;">
                                 <span style="font-size:15px;font-weight:800;color:#0d1520;line-height:1.2;letter-spacing:-.5px;font-family:var(--f);">${act.distKm > 0 ? act.distKm.toFixed(2) : '—'}</span>
                                 <span style="font-size:9px;color:#666;margin-left:2px;font-weight:600;font-family:var(--f);">km</span>
                             </div>
@@ -18248,12 +18336,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <div style="flex:1;"><div class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-family:var(--f);">${act.avgHr > 0 ? act.avgHr : '—'}</div><div class="mr-lib-stat-lbl" style="font-size:8px;letter-spacing:.5px;text-transform:uppercase;font-family:var(--f);">FC media</div></div>
                         </div>
                         <!-- Fila 3: SOLO nombre zapatillas -->
-                        <div style="padding-top:4px;">
+                        <div style="padding-top:2px;">
                             <span class="mr-lib-shoe" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-family:var(--f);">${act.shoeName || ''}</span>
                         </div>
                     </div>
                     <!-- ░░░ COLUMNA DERECHA: OUTFIT + RPE ░░░ -->
-                    <div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:4px 4px 4px 0;flex-shrink:0;">
+                    <div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:3px 4px 3px 0;flex-shrink:0;">
                         <div style="flex:1;display:flex;align-items:flex-start;width:100%;">${buildOutfitFull(act)}</div>
                         ${act.rpe ? '<div style="padding-bottom:2px;">' + buildRpeBadge(act.rpe) + '</div>' : ''}
                     </div>
