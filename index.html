@@ -34178,9 +34178,9 @@ async function _initClubSupabase() {
             }
             // Si la vista del Club no está visible, no hacemos nada con el feed global
             if (document.getElementById('club-view')?.style.display === 'none') return;
-            // Si la pestaña activa es Crews, no sobrescribir la lista
+            // Si la pestaña activa es Crews o Récords, no sobrescribir la lista
             var _tab = localStorage.getItem(_uk('mr_club_tab')) || 'all';
-            if (_tab !== 'crews') renderClubFeed();
+            if (_tab !== 'crews' && _tab !== 'records') renderClubFeed();
         })
         .subscribe();
 
@@ -35103,6 +35103,479 @@ function _refreshCrewsListIfVisible() {
     }
 }
 window._refreshCrewsListIfVisible = _refreshCrewsListIfVisible;
+
+// ══ [FASE 7] RANKING GLOBAL DE PRs DEL CLUB ═══════════════════════════
+// Cuando la pestaña "Récords" está activa, el contenedor #club-feed se
+// sustituye por un ranking de los 8 PRs de tiempo más populares
+// (5K / 10K / Media / Maratón / 3000m / 1K / 100m / Mejor pace medio).
+//
+// Datos:
+//   - Lee de la tabla `user_records` aprovechando la policy
+//     `records_public_read` (SELECT true) que ya está activa.
+//   - Para cada record_type hace UNA query con ORDER BY value ASC
+//     LIMIT 10 (tiempos: menor = mejor).
+//   - Hidrata los profiles (username + avatar) en una sola query
+//     extra in('id', [...]) tras juntar todos los user_ids únicos.
+//
+// Scope (sub-toggle Global / Siguiendo):
+//   - mr_club_records_scope = 'global' (default) | 'following'
+//   - 'following' filtra por los user_ids que sigo + yo mismo.
+//
+// Render:
+//   - Top 3 colapsado con medallas oro/plata/bronce SIN texto.
+//   - Botón "Ver Top 10 ▾" expande a top 10.
+//   - Si yo (el usuario actual) NO estoy en el top mostrado, aparece
+//     un separador "TU POSICIÓN" + mi fila con la posición numérica.
+//   - Si yo no tengo ese récord, empty state "Aún no tienes este récord".
+//   - Click en avatar → openUserProfile(uid, username, avatarUrl).
+//
+// El estado UI (qué secciones están expandidas) es VOLÁTIL: vive en
+// una variable de closure, NO se persiste. Coherente con S26.C-2.
+const RECORDS_RANKING_ORDER = [
+    { type: 'best_5k',       label: 'Mejor 5K',           medalText: '5K'  },
+    { type: 'best_10k',      label: 'Mejor 10K',          medalText: '10K' },
+    { type: 'best_half',     label: 'Media maratón',      medalText: '21K' },
+    { type: 'best_marathon', label: 'Maratón',            medalText: '42K' },
+    { type: 'best_3000m',    label: 'Mejor 3000m',        medalText: '3K'  },
+    { type: 'best_1k',       label: 'Mejor 1K',           medalText: '1K'  },
+    { type: 'best_100m',     label: 'Mejor 100m',         medalText: null  },
+    { type: 'best_pace',     label: 'Mejor pace medio',   medalText: 'PR'  }
+];
+
+// Estado UI volátil para "qué secciones están expandidas a top 10"
+var _clubRecordsExpanded = {};
+
+function _getClubRecordsScope() {
+    return localStorage.getItem(_uk('mr_club_records_scope')) || 'global';
+}
+function _setClubRecordsScope(scope) {
+    if (scope !== 'global' && scope !== 'following') scope = 'global';
+    localStorage.setItem(_uk('mr_club_records_scope'), scope);
+}
+
+// Medalla de posición pequeñita (sin texto) para top 3
+function _buildPositionMedalSVG(rank, size) {
+    if (typeof window._buildMedalSVG !== 'function') return '';
+    size = size || 28;
+    var tier;
+    if (rank === 1) tier = 'gold';
+    else if (rank === 2) tier = 'silver';
+    else if (rank === 3) tier = 'bronze';
+    else return '';
+    var svg = window._buildMedalSVG({ tier: tier, centerText: null });
+    // Sustituir size del SVG (default 56x64)
+    var h = Math.round(size * 64 / 56);
+    return svg.replace('width="56" height="64"', 'width="' + size + '" height="' + h + '"');
+}
+
+// Bonita fecha "YYYY-MM-DD" → "18 abr 2026". Reusa la del _openPRsSheet.
+function _clubRecordsPrettyDate(dateStr) {
+    if (typeof window._prsPrettyDate === 'function') return window._prsPrettyDate(dateStr);
+    try {
+        var parts = String(dateStr).split('-').map(Number);
+        var meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        return parts[2] + ' ' + meses[parts[1]-1] + ' ' + parts[0];
+    } catch(_) { return dateStr; }
+}
+
+// Construir el avatar circular (con foto o iniciales)
+function _buildClubRecordAvatar(prof, isMe) {
+    var av = document.createElement('div');
+    var isDark = document.body.classList.contains('dark-mode');
+    var initials = (prof.username || '?').slice(0, 2).toUpperCase();
+    var baseStyle = 'width:36px;height:36px;border-radius:50%;flex-shrink:0;cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'color:#3C2C08;font-size:14px;font-weight:900;font-family:var(--f);'
+        + 'background:linear-gradient(135deg, #C9A84C, #8A6E1F);'
+        + 'transition:transform .15s ease;'
+        + 'overflow:hidden;'
+        + (isMe ? 'border:2px solid var(--gold);' : 'border:2px solid transparent;');
+    av.style.cssText = baseStyle;
+    if (prof.avatar_url) {
+        var img = document.createElement('img');
+        img.src = prof.avatar_url;
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+        img.onerror = function() {
+            img.remove();
+            av.textContent = initials;
+        };
+        av.appendChild(img);
+    } else {
+        av.textContent = initials;
+    }
+    av.addEventListener('touchstart', function() { av.style.transform = 'scale(.95)'; }, { passive: true });
+    av.addEventListener('touchend',   function() { av.style.transform = ''; }, { passive: true });
+    return av;
+}
+
+// Construir UNA fila del ranking
+function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTop) {
+    var row = document.createElement('li');
+    var isDark = document.body.classList.contains('dark-mode');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;'
+        + 'border-bottom:1px solid var(--border);'
+        + 'list-style:none;'
+        + (isMe ? (isDark ? 'background:rgba(201,168,76,.10);' : 'background:rgba(201,168,76,.08);') : '');
+
+    // Posición: medalla para top 3, círculo gris numerado para el resto
+    var posWrap = document.createElement('div');
+    posWrap.style.cssText = 'width:32px;height:32px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+    if (rank <= 3 && !isMeOutOfTop) {
+        posWrap.innerHTML = _buildPositionMedalSVG(rank, 28);
+    } else {
+        var posNum = document.createElement('div');
+        posNum.style.cssText = 'width:32px;height:32px;border-radius:50%;background:var(--bg);'
+            + 'border:1px solid var(--border);color:var(--tm);font-size:13px;font-weight:800;font-family:var(--f);'
+            + 'display:flex;align-items:center;justify-content:center;';
+        posNum.textContent = rank;
+        posWrap.appendChild(posNum);
+    }
+    row.appendChild(posWrap);
+
+    // Avatar (clickable → openUserProfile)
+    var av = _buildClubRecordAvatar(prof, isMe);
+    if (!isMe && typeof window.openUserProfile === 'function') {
+        (function(_id, _un, _ua) {
+            av.onclick = function() { window.openUserProfile(_id, _un, _ua); };
+        })(prof.id, prof.username, prof.avatar_url);
+    }
+    row.appendChild(av);
+
+    // Info: nombre + fecha
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    var nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);'
+        + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;';
+    nameEl.textContent = prof.username || 'Runner';
+    if (isMe) {
+        var meBadge = document.createElement('span');
+        meBadge.style.cssText = 'font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.5px;margin-left:4px;';
+        meBadge.textContent = '· TÚ';
+        nameEl.appendChild(meBadge);
+    }
+    info.appendChild(nameEl);
+    if (dateStr) {
+        var dateEl = document.createElement('div');
+        dateEl.style.cssText = 'font-size:10px;font-weight:600;color:var(--tm);margin-top:2px;';
+        dateEl.textContent = _clubRecordsPrettyDate(dateStr);
+        info.appendChild(dateEl);
+    }
+    row.appendChild(info);
+
+    // Valor
+    var valEl = document.createElement('div');
+    valEl.style.cssText = 'font-size:15px;font-weight:900;color:var(--tw);letter-spacing:-.3px;'
+        + 'font-variant-numeric:tabular-nums;';
+    if (typeof window._formatRecordValue === 'function') {
+        valEl.textContent = window._formatRecordValue(type, value);
+    } else {
+        valEl.textContent = String(value);
+    }
+    row.appendChild(valEl);
+
+    // Click en toda la fila (excepto avatar) abre perfil
+    if (!isMe && typeof window.openUserProfile === 'function') {
+        (function(_id, _un, _ua) {
+            row.onclick = function(e) {
+                // Si clickaron el avatar, ya se maneja allí
+                if (e.target.closest('div[style*="border-radius:50%"]') && e.target.closest('div[style*="border-radius:50%"]') !== posWrap) {
+                    return;
+                }
+                window.openUserProfile(_id, _un, _ua);
+            };
+            row.style.cursor = 'pointer';
+        })(prof.id, prof.username, prof.avatar_url);
+    }
+
+    return row;
+}
+
+// Renderiza UNA sección (un PR con su top + posibles extras)
+function _renderClubRecordSection(container, def, rows, myId, profilesById) {
+    var isDark = document.body.classList.contains('dark-mode');
+    var section = document.createElement('div');
+    section.className = 'mr-club-record-section';
+    section.dataset.type = def.type;
+    section.style.cssText = 'background:var(--card);margin:0 15px 14px;'
+        + 'border:1px solid var(--border);border-radius:16px;'
+        + 'overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);';
+
+    // ── Header de la sección ──
+    var header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px 10px;border-bottom:1px solid var(--border);';
+
+    var medalWrap = document.createElement('div');
+    medalWrap.style.cssText = 'width:42px;height:48px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+    if (typeof window._getPRMeta === 'function' && typeof window._buildMedalSVG === 'function') {
+        var meta = window._getPRMeta(def.type) || { tier: 'gold', centerText: def.medalText };
+        var svg = window._buildMedalSVG(meta);
+        // Reducir el SVG de 56x64 a 42x48 para el header
+        medalWrap.innerHTML = svg.replace('width="56" height="64"', 'width="42" height="48"');
+    }
+    header.appendChild(medalWrap);
+
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    var lblEl = document.createElement('div');
+    lblEl.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);letter-spacing:-.2px;line-height:1.2;';
+    lblEl.textContent = def.label;
+    info.appendChild(lblEl);
+    var subEl = document.createElement('div');
+    subEl.style.cssText = 'font-size:10.5px;font-weight:700;color:var(--tm);margin-top:2px;letter-spacing:.3px;text-transform:uppercase;';
+    var participantes = rows.length;
+    subEl.textContent = participantes + (participantes === 1 ? ' participante' : ' participantes');
+    info.appendChild(subEl);
+    header.appendChild(info);
+
+    section.appendChild(header);
+
+    // ── Lista ──
+    var ul = document.createElement('ul');
+    ul.style.cssText = 'list-style:none;margin:0;padding:0;';
+
+    var isExpanded = !!_clubRecordsExpanded[def.type];
+    var maxVisible = isExpanded ? 10 : 3;
+
+    if (!rows.length) {
+        // Estado totalmente vacío (nadie tiene este récord en el scope)
+        var empty = document.createElement('li');
+        empty.style.cssText = 'padding:18px 14px;text-align:center;color:var(--tm);font-size:12px;font-weight:700;list-style:none;';
+        empty.innerHTML = '<div style="font-size:24px;margin-bottom:8px;opacity:.5;">🏃</div>Sin participantes aún en este récord';
+        ul.appendChild(empty);
+    } else {
+        // Pintar el top N
+        var myPosInList = -1;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].user_id === myId) { myPosInList = i + 1; break; }
+        }
+        var visibleRows = rows.slice(0, maxVisible);
+        visibleRows.forEach(function(r, idx) {
+            var rank = idx + 1;
+            var prof = profilesById[r.user_id] || { id: r.user_id, username: 'Runner', avatar_url: null };
+            var isMe = (r.user_id === myId);
+            ul.appendChild(_buildClubRecordRow(rank, prof, r.value, def.type, r.activity_datestr, isMe, false));
+        });
+
+        // Quitar borde a la última fila visible (estética)
+        var lastChild = ul.lastChild;
+        if (lastChild && lastChild.style) lastChild.style.borderBottom = 'none';
+
+        // ¿Estoy fuera del top mostrado pero TENGO este récord?
+        if (myPosInList > maxVisible) {
+            // Separador
+            var sep = document.createElement('li');
+            sep.style.cssText = 'padding:6px 14px;background:var(--bg);font-size:10px;font-weight:800;'
+                + 'color:var(--tm);letter-spacing:1.2px;text-transform:uppercase;'
+                + 'border-bottom:1px solid var(--border);border-top:1px solid var(--border);'
+                + 'list-style:none;';
+            sep.textContent = 'Tu posición';
+            ul.appendChild(sep);
+            // Restaurar borde inferior a la última fila del top (ahora hay continuación)
+            if (lastChild && lastChild.style) lastChild.style.borderBottom = '1px solid var(--border)';
+            // Mi fila con posición numérica
+            var myRow = rows[myPosInList - 1];
+            var myProf = profilesById[myRow.user_id] || { id: myRow.user_id, username: 'Tú', avatar_url: null };
+            var meRowEl = _buildClubRecordRow(myPosInList, myProf, myRow.value, def.type, myRow.activity_datestr, true, true);
+            meRowEl.style.borderBottom = 'none';
+            ul.appendChild(meRowEl);
+        } else if (myPosInList === -1) {
+            // No tengo este récord
+            var sep2 = document.createElement('li');
+            sep2.style.cssText = 'padding:6px 14px;background:var(--bg);font-size:10px;font-weight:800;'
+                + 'color:var(--tm);letter-spacing:1.2px;text-transform:uppercase;'
+                + 'border-bottom:1px solid var(--border);border-top:1px solid var(--border);'
+                + 'list-style:none;';
+            sep2.textContent = 'Tu posición';
+            ul.appendChild(sep2);
+            if (lastChild && lastChild.style) lastChild.style.borderBottom = '1px solid var(--border)';
+            var emptyMe = document.createElement('li');
+            emptyMe.style.cssText = 'padding:14px;text-align:center;color:var(--tm);font-size:12px;font-weight:700;list-style:none;';
+            emptyMe.textContent = 'Aún no tienes este récord';
+            ul.appendChild(emptyMe);
+        }
+    }
+
+    section.appendChild(ul);
+
+    // ── Botón "Ver Top 10 ▾" / "Ocultar ▴" ──
+    // Sólo si hay más de 3 filas O si está expandido
+    if (rows.length > 3) {
+        var moreBtn = document.createElement('button');
+        moreBtn.style.cssText = 'width:100%;background:transparent;border:none;'
+            + 'border-top:1px solid var(--border);padding:11px;'
+            + 'font-family:var(--f);font-size:12px;font-weight:700;color:var(--tm);'
+            + 'cursor:pointer;letter-spacing:.3px;'
+            + 'transition:color .2s ease, background .2s ease;';
+        if (isExpanded) {
+            moreBtn.textContent = 'Ocultar ▴';
+        } else {
+            moreBtn.textContent = 'Ver Top ' + Math.min(10, rows.length) + ' ▾';
+        }
+        (function(_t) {
+            moreBtn.onclick = function() {
+                _clubRecordsExpanded[_t] = !_clubRecordsExpanded[_t];
+                // Re-renderizar solo esta sección
+                if (typeof renderClubRecordsRanking === 'function') {
+                    renderClubRecordsRanking();
+                }
+            };
+        })(def.type);
+        section.appendChild(moreBtn);
+    }
+
+    container.appendChild(section);
+}
+
+// Render principal de la pestaña Récords
+async function renderClubRecordsRanking() {
+    var container = document.getElementById('club-feed');
+    if (!container) return;
+
+    var sb = window._sbClient;
+    if (!sb) {
+        container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--tm);font-size:13px;">Sin sesión activa.</div>';
+        return;
+    }
+
+    // Skeleton de carga
+    container.innerHTML = '';
+    var loadingWrap = document.createElement('div');
+    loadingWrap.style.cssText = 'padding:12px 0 20px;';
+    for (var k = 0; k < 3; k++) {
+        var skel = document.createElement('div');
+        skel.style.cssText = 'background:var(--card);margin:0 15px 14px;border:1px solid var(--border);'
+            + 'border-radius:16px;height:180px;'
+            + 'background:linear-gradient(90deg, var(--card) 0%, rgba(201,168,76,.12) 50%, var(--card) 100%);'
+            + 'background-size:200% 100%;animation:mrPrsShimmer 1.6s ease-in-out infinite;';
+        loadingWrap.appendChild(skel);
+    }
+    container.appendChild(loadingWrap);
+
+    // Inyectar keyframe shimmer si no existe (lo usa _openPRsSheet también)
+    if (!document.getElementById('mr-prs-anim-style')) {
+        var style = document.createElement('style');
+        style.id = 'mr-club-records-anim-style';
+        style.textContent = '@keyframes mrPrsShimmer { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }';
+        document.head.appendChild(style);
+    }
+
+    try {
+        // Sesión actual
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) {
+            container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--tm);font-size:13px;">Sin sesión activa.</div>';
+            return;
+        }
+        var myId = session.user.id;
+
+        // ── Resolver scope ──
+        var scope = _getClubRecordsScope();
+        var allowedUserIds = null; // null = sin filtro (global)
+        if (scope === 'following') {
+            // Mis seguidos + yo mismo
+            var followsRes = await sb.from('follows')
+                .select('following_id')
+                .eq('follower_id', myId);
+            var followingIds = ((followsRes && followsRes.data) || []).map(function(r) { return r.following_id; });
+            allowedUserIds = followingIds.concat([myId]);
+            // Dedup
+            allowedUserIds = Array.from(new Set(allowedUserIds));
+        }
+
+        // ── Una query por cada record_type ──
+        var types = RECORDS_RANKING_ORDER.map(function(d) { return d.type; });
+        var queries = types.map(function(t) {
+            var q = sb.from('user_records')
+                .select('user_id, value, activity_local_id, activity_datestr, achieved_at')
+                .eq('record_type', t)
+                .order('value', { ascending: true })  // tiempos: menor = mejor
+                .limit(30); // limit 30 para tener margen si Álvaro está en posiciones 11-30
+            if (allowedUserIds && allowedUserIds.length) {
+                q = q.in('user_id', allowedUserIds);
+            } else if (allowedUserIds && !allowedUserIds.length) {
+                // Sin seguidos + yo solo: forzar resultado vacío (no debería pasar porque siempre incluyo myId)
+                q = q.in('user_id', ['00000000-0000-0000-0000-000000000000']);
+            }
+            return q;
+        });
+        var resultsByType = await Promise.all(queries);
+
+        // ── Recolectar todos los user_ids únicos para hidratar profiles ──
+        var userIdsSet = {};
+        var rowsByType = {};
+        resultsByType.forEach(function(res, idx) {
+            var t = types[idx];
+            var data = (res && res.data) || [];
+            rowsByType[t] = data;
+            data.forEach(function(r) { userIdsSet[r.user_id] = true; });
+        });
+        var userIds = Object.keys(userIdsSet);
+
+        // Hidratar profiles en una sola query
+        var profilesById = {};
+        if (userIds.length) {
+            var profRes = await sb.from('profiles')
+                .select('id, username, avatar_url')
+                .in('id', userIds);
+            ((profRes && profRes.data) || []).forEach(function(p) {
+                profilesById[p.id] = p;
+            });
+        }
+
+        // ── Limpiar skeleton y pintar ──
+        container.innerHTML = '';
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'padding:0 0 80px;';
+
+        // Sub-toggle Global / Siguiendo
+        var scopeRow = document.createElement('div');
+        scopeRow.style.cssText = 'margin:10px 15px 12px;display:flex;background:var(--card);'
+            + 'border:1px solid var(--border);border-radius:10px;padding:3px;';
+        var btnGlobal = document.createElement('button');
+        var btnFollow = document.createElement('button');
+        var scopeBase = 'flex:1;height:30px;border:none;border-radius:8px;background:transparent;'
+            + 'font-family:var(--f);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;color:var(--tm);'
+            + 'transition:background .2s ease, color .2s ease;';
+        var scopeActive = 'background:var(--bg);color:var(--tw);box-shadow:0 1px 3px rgba(0,0,0,.08);';
+        btnGlobal.style.cssText = scopeBase + (scope === 'global' ? scopeActive : '');
+        btnFollow.style.cssText = scopeBase + (scope === 'following' ? scopeActive : '');
+        btnGlobal.textContent = 'Global';
+        btnFollow.textContent = 'Siguiendo';
+        btnGlobal.onclick = function() {
+            if (scope === 'global') return;
+            _setClubRecordsScope('global');
+            renderClubRecordsRanking();
+        };
+        btnFollow.onclick = function() {
+            if (scope === 'following') return;
+            _setClubRecordsScope('following');
+            renderClubRecordsRanking();
+        };
+        scopeRow.appendChild(btnGlobal);
+        scopeRow.appendChild(btnFollow);
+        wrap.appendChild(scopeRow);
+
+        // Render cada sección (incluso si vacía)
+        RECORDS_RANKING_ORDER.forEach(function(def) {
+            var rows = rowsByType[def.type] || [];
+            _renderClubRecordSection(wrap, def, rows, myId, profilesById);
+        });
+
+        container.appendChild(wrap);
+
+    } catch (err) {
+        console.error('[MR][FASE7] Error renderizando ranking:', err);
+        container.innerHTML = '<div style="text-align:center;padding:40px 30px;color:var(--tm);font-size:13px;">'
+            + '<div style="font-size:32px;margin-bottom:10px;">⚠️</div>'
+            + 'No se pudo cargar el ranking. Inténtalo más tarde.'
+            + '</div>';
+    }
+}
+window.renderClubRecordsRanking = renderClubRecordsRanking;
+window._buildPositionMedalSVG = _buildPositionMedalSVG;
 
 // ── MODAL CREAR / EDITAR CREW ─────────────────────────────────────
 // Si se llama sin parámetros: modo "crear". Si se le pasa un objeto
@@ -38838,12 +39311,14 @@ function openClub() {
     if (_bb) _bb.style.boxShadow = '';
     v.style.display = 'flex';
     requestAnimationFrame(function() { requestAnimationFrame(function() { v.style.transform = 'translateY(0)'; }); });
-    // Aplicar estilos de las pestañas (Para ti / Siguiendo / Crews) según estado guardado
+    // Aplicar estilos de las pestañas (Para ti / Siguiendo / Crews / Récords) según estado guardado
     if (typeof _refreshClubTabStyles === 'function') _refreshClubTabStyles();
-    // Renderizar según pestaña activa: feed normal o lista de crews
+    // Renderizar según pestaña activa: feed normal, lista de crews o ranking de récords
     var _tabMode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
     if (_tabMode === 'crews' && typeof renderClubCrewsList === 'function') {
         renderClubCrewsList();
+    } else if (_tabMode === 'records' && typeof renderClubRecordsRanking === 'function') {
+        renderClubRecordsRanking();
     } else {
         renderClubFeed();
     }
@@ -39167,14 +39642,15 @@ async function _buildClubBoardHTML(opts) {
 }
 window.toggleClubBoard = toggleClubBoard;
 
-// ══ FEED FILTER — Para ti / Siguiendo / Crews ════════════════════════
+// ══ FEED FILTER — Para ti / Siguiendo / Crews / Récords ══════════════
 // Las dos primeras pestañas son toggles del feed normal (filtro por
 // seguidos). La tercera ("Crews") sustituye el feed por la lista de
-// mis crews — al tocar un crew se abre su detalle.
+// mis crews — al tocar un crew se abre su detalle. La cuarta ("Récords",
+// FASE 7) sustituye el feed por el ranking global del Club.
 // Modo persistido en LocalStorage:
-//   mr_club_tab = 'all' (default) | 'following' | 'crews'
+//   mr_club_tab = 'all' (default) | 'following' | 'crews' | 'records'
 function setClubFeedFilter(mode) {
-    if (mode !== 'all' && mode !== 'following' && mode !== 'crews') mode = 'all';
+    if (mode !== 'all' && mode !== 'following' && mode !== 'crews' && mode !== 'records') mode = 'all';
     localStorage.setItem(_uk('mr_club_tab'), mode);
     // Compatibilidad: el toggle viejo solo conocía following sí/no
     if (mode === 'following') localStorage.setItem(_uk('mr_feed_only_following'), '1');
@@ -39182,6 +39658,8 @@ function setClubFeedFilter(mode) {
     _refreshClubTabStyles();
     if (mode === 'crews') {
         if (typeof renderClubCrewsList === 'function') renderClubCrewsList();
+    } else if (mode === 'records') {
+        if (typeof renderClubRecordsRanking === 'function') renderClubRecordsRanking();
     } else {
         if (typeof renderClubFeed === 'function') renderClubFeed();
     }
@@ -39191,14 +39669,16 @@ window.setClubFeedFilter = setClubFeedFilter;
 function _refreshClubTabStyles() {
     var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
     // Fallback: si el modo guardado no existe pero el toggle viejo está activado, usar following
-    if (mode !== 'crews' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
+    if (mode !== 'crews' && mode !== 'records' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
     var tAll   = document.getElementById('club-tab-all');
     var tFol   = document.getElementById('club-tab-following');
     var tCrews = document.getElementById('club-tab-crews');
+    var tRecs  = document.getElementById('club-tab-records');
     if (!tAll || !tFol || !tCrews) return;
     // [FASE 8 polish] Pill premium con fondo sólido cuando activo
     // - Para ti / Siguiendo → fondo crimson, texto blanco
     // - Crews → fondo silver, texto blanco (mantiene identidad plateada)
+    // - [FASE 7] Récords → fondo gold, texto cobre oscuro
     var base = 'flex:1;height:36px;border:none;border-radius:10px;background:transparent;'
              + 'font-family:var(--f);font-size:12px;letter-spacing:.3px;cursor:pointer;'
              + 'transition:background .22s ease, color .22s ease, box-shadow .22s ease, transform .15s ease;'
@@ -39210,9 +39690,13 @@ function _refreshClubTabStyles() {
     var activeSil = 'color:#fff;font-weight:900;'
                   + 'background:linear-gradient(135deg, #9aa3ad 0%, #7a838c 50%, #5d646c 100%);'
                   + 'box-shadow:0 2px 8px rgba(122,131,140,.45), inset 0 1px 0 rgba(255,255,255,.25);';
+    var activeGld = 'color:#3C2C08;font-weight:900;'
+                  + 'background:linear-gradient(135deg, #FFE9A5 0%, #C9A84C 50%, #8A6E1F 100%);'
+                  + 'box-shadow:0 2px 8px rgba(201,168,76,.45), inset 0 1px 0 rgba(255,255,255,.4);';
     tAll.style.cssText   = base + (mode === 'all'       ? activeRed : inactive);
     tFol.style.cssText   = base + (mode === 'following' ? activeRed : inactive);
     tCrews.style.cssText = base + (mode === 'crews'     ? activeSil : inactive);
+    if (tRecs) tRecs.style.cssText = base + (mode === 'records' ? activeGld : inactive);
     // Badge de invitaciones pendientes (si hay)
     _refreshCrewsTabBadge();
 }
@@ -39260,7 +39744,7 @@ window._refreshCrewsTabBadge = _refreshCrewsTabBadge;
 //   • Elementos con scroll horizontal interno (PR strips, mapas, etc.)
 //   • Tags interactivas (INPUT/CANVAS/TEXTAREA/SELECT)
 (function setupClubFeedSwipe(){
-    var TABS = ['all', 'following', 'crews'];
+    var TABS = ['all', 'following', 'crews', 'records'];
     var TH_DX_MIN = 70;
     var TH_RATIO  = 1.4;
     var TH_VX_MIN = 0.35;
@@ -39294,7 +39778,7 @@ window._refreshCrewsTabBadge = _refreshCrewsTabBadge;
 
         function currentTabIdx() {
             var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
-            if (mode !== 'crews' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
+            if (mode !== 'crews' && mode !== 'records' && localStorage.getItem(_uk('mr_feed_only_following')) === '1') mode = 'following';
             var i = TABS.indexOf(mode);
             return i < 0 ? 0 : i;
         }
@@ -44233,6 +44717,7 @@ function _initPTR() {
             triggered = false;
             var _tab = localStorage.getItem(_uk('mr_club_tab')) || 'all';
             if (_tab === 'crews' && typeof renderClubCrewsList === 'function') renderClubCrewsList();
+            else if (_tab === 'records' && typeof renderClubRecordsRanking === 'function') renderClubRecordsRanking();
             else renderClubFeed();
         }
     }, {passive: true});
@@ -44590,6 +45075,40 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [FASE 7] Ranking global de PRs del Club. Verifica que la función
+    // está disponible, el catálogo de 8 tipos está bien definido, y el
+    // botón del DOM existe. NO ejecuta la query real (Supabase).
+    function _testClubRecordsRanking() {
+        var checks = [];
+        try {
+            if (typeof renderClubRecordsRanking !== 'function')
+                checks.push('renderClubRecordsRanking no es función');
+            if (typeof RECORDS_RANKING_ORDER === 'undefined' || !Array.isArray(RECORDS_RANKING_ORDER))
+                checks.push('RECORDS_RANKING_ORDER no es array');
+            else if (RECORDS_RANKING_ORDER.length !== 8)
+                checks.push('RECORDS_RANKING_ORDER length != 8 (got ' + RECORDS_RANKING_ORDER.length + ')');
+            if (typeof _buildPositionMedalSVG !== 'function')
+                checks.push('_buildPositionMedalSVG no es función');
+            if (typeof _getClubRecordsScope !== 'function')
+                checks.push('_getClubRecordsScope no es función');
+            if (!document.getElementById('club-tab-records'))
+                checks.push('botón #club-tab-records no existe en DOM');
+            // Verificar que setClubFeedFilter acepta 'records' sin caer al fallback 'all'
+            var src = setClubFeedFilter.toString();
+            if (src.indexOf("'records'") < 0)
+                checks.push("setClubFeedFilter no menciona 'records'");
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'club.records.ranking',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? '8 tipos + DOM + scope OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -44598,7 +45117,8 @@ window.addEventListener('DOMContentLoaded', function() {
         renders: [_testRendersDontCrash],
         s26b:    [_testS26BCatalog, _testS26BWizard, _testGarminWizardReady],
         s26c:    [_testS26CMausoleo],
-        hitos:   [_testHitosCoherence]
+        hitos:   [_testHitosCoherence],
+        fase7:   [_testClubRecordsRanking]
     };
 
     window.__mrSmoke = function(group) {
@@ -44720,11 +45240,12 @@ window.addEventListener('DOMContentLoaded', function() {
                     </button>
                 </div>
             </div>
-            <!-- Tabs Para ti / Siguiendo / Crews (estilo pill premium FASE 8) -->
+            <!-- Tabs Para ti / Siguiendo / Crews / Récords (estilo pill premium FASE 8 + FASE 7) -->
             <div style="margin-top:12px;display:flex;gap:0;padding:3px 2px;">
                 <button id="club-tab-all" onclick="setClubFeedFilter('all')" style="flex:1;height:36px;border:none;border-radius:10px;background:linear-gradient(135deg, #a32130 0%, #8f1a28 50%, #6f0f1a 100%);color:#fff;font-family:var(--f);font-size:12px;font-weight:900;letter-spacing:.3px;cursor:pointer;margin:0 2px;box-shadow:0 2px 8px rgba(143,26,40,.35), inset 0 1px 0 rgba(255,255,255,.18);">Para ti</button>
                 <button id="club-tab-following" onclick="setClubFeedFilter('following')" style="flex:1;height:36px;border:none;border-radius:10px;background:transparent;color:var(--tm);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin:0 2px;">Siguiendo</button>
                 <button id="club-tab-crews" onclick="setClubFeedFilter('crews')" style="flex:1;height:36px;border:none;border-radius:10px;background:transparent;color:var(--tm);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin:0 2px;">Crews</button>
+                <button id="club-tab-records" onclick="setClubFeedFilter('records')" style="flex:1;height:36px;border:none;border-radius:10px;background:transparent;color:var(--tm);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;margin:0 2px;">Récords</button>
             </div>
         </div>
         <div id="club-feed" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 15px 80px;display:flex;flex-direction:column;">
