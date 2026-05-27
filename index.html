@@ -35210,7 +35210,7 @@ function _buildClubRecordAvatar(prof, isMe) {
 }
 
 // Construir UNA fila del ranking
-function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTop) {
+function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTop, showPrivateLock) {
     var row = document.createElement('li');
     var isDark = document.body.classList.contains('dark-mode');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;'
@@ -35254,6 +35254,14 @@ function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTo
         meBadge.style.cssText = 'font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.5px;margin-left:4px;';
         meBadge.textContent = '· TÚ';
         nameEl.appendChild(meBadge);
+        // [FASE 7.B] Candadito dorado si soy privado (sólo visible para mí)
+        if (showPrivateLock && typeof window._buildPrivateLockBadgeSVG === 'function') {
+            var lockSpan = document.createElement('span');
+            lockSpan.innerHTML = window._buildPrivateLockBadgeSVG();
+            // Insertar el contenido del span (no el wrapper) directamente
+            var lockEl = lockSpan.firstChild;
+            if (lockEl) nameEl.appendChild(lockEl);
+        }
     }
     info.appendChild(nameEl);
     if (dateStr) {
@@ -35293,7 +35301,7 @@ function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTo
 }
 
 // Renderiza UNA sección (un PR con su top + posibles extras)
-function _renderClubRecordSection(container, def, rows, myId, profilesById) {
+function _renderClubRecordSection(container, def, rows, myId, profilesById, myIsPublic) {
     var isDark = document.body.classList.contains('dark-mode');
     var section = document.createElement('div');
     section.className = 'mr-club-record-section';
@@ -35355,7 +35363,9 @@ function _renderClubRecordSection(container, def, rows, myId, profilesById) {
             var rank = idx + 1;
             var prof = profilesById[r.user_id] || { id: r.user_id, username: 'Runner', avatar_url: null };
             var isMe = (r.user_id === myId);
-            ul.appendChild(_buildClubRecordRow(rank, prof, r.value, def.type, r.activity_datestr, isMe, false));
+            // Si soy yo Y soy privado, mostrar candadito
+            var showLock = isMe && !myIsPublic;
+            ul.appendChild(_buildClubRecordRow(rank, prof, r.value, def.type, r.activity_datestr, isMe, false, showLock));
         });
 
         // Quitar borde a la última fila visible (estética)
@@ -35377,7 +35387,8 @@ function _renderClubRecordSection(container, def, rows, myId, profilesById) {
             // Mi fila con posición numérica
             var myRow = rows[myPosInList - 1];
             var myProf = profilesById[myRow.user_id] || { id: myRow.user_id, username: 'Tú', avatar_url: null };
-            var meRowEl = _buildClubRecordRow(myPosInList, myProf, myRow.value, def.type, myRow.activity_datestr, true, true);
+            var showLockOut = !myIsPublic;
+            var meRowEl = _buildClubRecordRow(myPosInList, myProf, myRow.value, def.type, myRow.activity_datestr, true, true, showLockOut);
             meRowEl.style.borderBottom = 'none';
             ul.appendChild(meRowEl);
         } else if (myPosInList === -1) {
@@ -35558,10 +35569,13 @@ async function renderClubRecordsRanking() {
         scopeRow.appendChild(btnFollow);
         wrap.appendChild(scopeRow);
 
+        // [FASE 7.B] ¿Soy público o privado? Para mostrar candado en mi fila.
+        var myIsPublic = await getMyPRsPublic();
+
         // Render cada sección (incluso si vacía)
         RECORDS_RANKING_ORDER.forEach(function(def) {
             var rows = rowsByType[def.type] || [];
-            _renderClubRecordSection(wrap, def, rows, myId, profilesById);
+            _renderClubRecordSection(wrap, def, rows, myId, profilesById, myIsPublic);
         });
 
         container.appendChild(wrap);
@@ -35576,6 +35590,187 @@ async function renderClubRecordsRanking() {
 }
 window.renderClubRecordsRanking = renderClubRecordsRanking;
 window._buildPositionMedalSVG = _buildPositionMedalSVG;
+
+// ══ [FASE 7.B] PRIVACIDAD DE PRs ══════════════════════════════════════
+// Toggle para que el usuario decida si sus PRs son visibles en el
+// ranking del Club o no. Persistencia en columna `profiles.prs_public`.
+// La policy RLS `records_public_read_gated` (creada en Supabase) blinda
+// esto a nivel BD: si prs_public=false, NADIE puede leer mis records
+// (excepto yo mismo).
+//
+// Defaults: false (privado). Hay que activarlo explícitamente.
+// Tu propia fila siempre aparece en el ranking (la policy permite
+// auth.uid()=user_id), pero con un mini candado dorado si eres privado.
+// ─────────────────────────────────────────────────────────────────────
+
+// Caché en memoria del estado actual (true/false/null si no cargado)
+var _myPRsPublic = null;
+
+// Lee el estado actual de prs_public del usuario logueado.
+// Devuelve true/false. Cachea en _myPRsPublic.
+async function getMyPRsPublic(forceRefresh) {
+    if (_myPRsPublic !== null && !forceRefresh) return _myPRsPublic;
+    try {
+        var sb = window._sbClient;
+        if (!sb) return false;
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) return false;
+        var profRes = await sb.from('profiles')
+            .select('prs_public')
+            .eq('id', session.user.id)
+            .single();
+        if (profRes && profRes.data) {
+            _myPRsPublic = !!profRes.data.prs_public;
+        } else {
+            _myPRsPublic = false;
+        }
+        return _myPRsPublic;
+    } catch (e) {
+        console.warn('[MR][FASE7.B] getMyPRsPublic falló:', e);
+        return false;
+    }
+}
+window.getMyPRsPublic = getMyPRsPublic;
+
+// Refresca el icono del botón candado según el estado actual.
+// - Privado (default): candado cerrado, color crimson (rojo Club)
+// - Público:           candado abierto, color gold (oro Club)
+async function _refreshPrivacyBtn() {
+    var btn = document.getElementById('club-privacy-btn');
+    if (!btn) return;
+    var isPublic = await getMyPRsPublic();
+    var color = isPublic ? '#c4881e' : '#a32130';
+    var bg = isPublic
+        ? 'background:linear-gradient(135deg,rgba(196,136,30,.10),rgba(196,136,30,.04));'
+        : 'background:var(--card);';
+    btn.style.cssText = 'width:44px;height:42px;border-radius:11px;border:1.5px solid '
+        + (isPublic ? 'var(--gold-bd)' : 'rgba(163,33,48,.35)')
+        + ';' + bg
+        + 'cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;'
+        + 'transition:background .2s ease, border-color .2s ease;';
+    if (isPublic) {
+        // Candado abierto (open lock)
+        btn.innerHTML = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+        btn.setAttribute('aria-label', 'Mis récords son públicos. Tap para hacerlos privados.');
+        btn.title = 'Récords públicos · tap para privatizar';
+    } else {
+        // Candado cerrado (closed lock)
+        btn.innerHTML = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+        btn.setAttribute('aria-label', 'Mis récords son privados. Tap para hacerlos públicos.');
+        btn.title = 'Récords privados · tap para publicar';
+    }
+}
+window._refreshPrivacyBtn = _refreshPrivacyBtn;
+
+// Handler del botón candado. Si actualmente privado → muestra modal de
+// confirmación antes de hacer público. Si público → privatiza directo.
+async function toggleMyPRsPublic() {
+    var isPublic = await getMyPRsPublic();
+    if (isPublic) {
+        // Público → privado: instantáneo, sin confirmación
+        await _setMyPRsPublic(false);
+        if (typeof showToast === 'function') {
+            showToast('Tus récords ya son privados', 3000);
+        }
+    } else {
+        // Privado → público: modal de confirmación obligatorio
+        _openPRsPublicConfirmModal();
+    }
+}
+window.toggleMyPRsPublic = toggleMyPRsPublic;
+
+// Hace el UPDATE en BD, refresca caché y repinta UI.
+async function _setMyPRsPublic(newValue) {
+    var sb = window._sbClient;
+    if (!sb) return;
+    try {
+        var sessionRes = await sb.auth.getSession();
+        var session = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (!session) return;
+        var upd = await sb.from('profiles')
+            .update({ prs_public: !!newValue })
+            .eq('id', session.user.id);
+        if (upd && upd.error) {
+            console.error('[MR][FASE7.B] UPDATE prs_public falló:', upd.error);
+            if (typeof showToast === 'function') {
+                showToast('No se pudo actualizar la privacidad. Reintenta.', 4000);
+            }
+            return;
+        }
+        _myPRsPublic = !!newValue;
+        await _refreshPrivacyBtn();
+        // Si la tab Récords está visible, repintarla
+        var mode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
+        if (mode === 'records' && typeof renderClubRecordsRanking === 'function') {
+            renderClubRecordsRanking();
+        }
+    } catch (e) {
+        console.error('[MR][FASE7.B] _setMyPRsPublic exception:', e);
+    }
+}
+
+// Modal de confirmación al activar público. Reusa el lenguaje visual
+// del modal "Compartir en el Club" (#club-share-confirm).
+function _openPRsPublicConfirmModal() {
+    if (document.getElementById('prs-public-confirm-modal')) return;
+    var modal = document.createElement('div');
+    modal.id = 'prs-public-confirm-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:25500;background:rgba(0,0,0,.6);'
+        + 'display:flex;align-items:flex-end;justify-content:center;'
+        + 'opacity:0;transition:opacity .25s ease;'
+        + '-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);';
+    modal.innerHTML = ''
+        + '<div id="prs-public-confirm-inner" style="background:var(--card);border-radius:28px 28px 20px 20px;padding:28px 22px 22px;width:100%;max-width:420px;box-shadow:0 -4px 40px rgba(0,0,0,.35);transform:translateY(30px);transition:transform .3s cubic-bezier(.32,.72,0,1);">'
+        +   '<div style="text-align:center;margin-bottom:22px;">'
+        +     '<div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,rgba(196,136,30,.18),rgba(196,136,30,.06));border:2px solid var(--gold-bd);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;box-shadow:0 4px 20px rgba(196,136,30,.2);">'
+        +       '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>'
+        +     '</div>'
+        +     '<div style="font-size:19px;font-weight:900;color:var(--tw);margin-bottom:8px;letter-spacing:-.3px;">Hacer públicos tus récords</div>'
+        +     '<div style="font-size:13px;color:var(--ts);line-height:1.6;">Tus PRs y marcas serán visibles para<br>todos los usuarios del Club.<br><br>Podrás revertirlo en cualquier momento.</div>'
+        +   '</div>'
+        +   '<div style="display:flex;flex-direction:column;gap:10px;">'
+        +     '<button id="prs-public-confirm-ok" style="width:100%;background:linear-gradient(135deg,var(--gold) 0%,#b87800 100%);border:none;border-radius:16px;padding:16px;font-family:var(--f);font-size:15px;font-weight:800;color:#fff;cursor:pointer;letter-spacing:.3px;box-shadow:0 4px 16px rgba(196,136,30,.4);">Hacer públicos ✓</button>'
+        +     '<button id="prs-public-confirm-cancel" style="width:100%;background:transparent;border:1.5px solid var(--border);border-radius:16px;padding:14px;font-family:var(--f);font-size:14px;font-weight:600;color:var(--ts);cursor:pointer;">Cancelar</button>'
+        +   '</div>'
+        + '</div>';
+    document.body.appendChild(modal);
+    requestAnimationFrame(function() { requestAnimationFrame(function() {
+        modal.style.opacity = '1';
+        var inner = document.getElementById('prs-public-confirm-inner');
+        if (inner) inner.style.transform = 'translateY(0)';
+    }); });
+
+    var closeModal = function() {
+        modal.style.opacity = '0';
+        var inner = document.getElementById('prs-public-confirm-inner');
+        if (inner) inner.style.transform = 'translateY(30px)';
+        setTimeout(function() { if (modal.parentNode) modal.remove(); }, 250);
+    };
+
+    document.getElementById('prs-public-confirm-ok').onclick = async function() {
+        closeModal();
+        await _setMyPRsPublic(true);
+        if (typeof showToast === 'function') {
+            showToast('Tus récords ya son públicos en el Club', 3000);
+        }
+    };
+    document.getElementById('prs-public-confirm-cancel').onclick = closeModal;
+    // Tap fuera para cerrar
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) closeModal();
+    });
+}
+
+// Mini candado dorado para mostrar en mi fila cuando soy privado.
+// SVG inline pequeño, dentro de un círculo gold sutil.
+function _buildPrivateLockBadgeSVG() {
+    return ''
+        + '<span aria-label="Sólo visible para ti" title="Sólo visible para ti" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:linear-gradient(135deg,rgba(196,136,30,.20),rgba(196,136,30,.08));border:1px solid var(--gold-bd);margin-left:5px;vertical-align:middle;flex-shrink:0;">'
+        +   '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="11" rx="2" ry="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
+        + '</span>';
+}
+window._buildPrivateLockBadgeSVG = _buildPrivateLockBadgeSVG;
 
 // ── MODAL CREAR / EDITAR CREW ─────────────────────────────────────
 // Si se llama sin parámetros: modo "crear". Si se le pasa un objeto
@@ -39313,6 +39508,8 @@ function openClub() {
     requestAnimationFrame(function() { requestAnimationFrame(function() { v.style.transform = 'translateY(0)'; }); });
     // Aplicar estilos de las pestañas (Para ti / Siguiendo / Crews / Récords) según estado guardado
     if (typeof _refreshClubTabStyles === 'function') _refreshClubTabStyles();
+    // [FASE 7.B] Refrescar icono del candado de privacidad de PRs
+    if (typeof _refreshPrivacyBtn === 'function') _refreshPrivacyBtn();
     // Renderizar según pestaña activa: feed normal, lista de crews o ranking de récords
     var _tabMode = localStorage.getItem(_uk('mr_club_tab')) || 'all';
     if (_tabMode === 'crews' && typeof renderClubCrewsList === 'function') {
@@ -45109,6 +45306,42 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [FASE 7.B] Privacidad de PRs. Verifica que las funciones del toggle
+    // están disponibles, el botón del DOM existe y el modal se sabe abrir.
+    // NO ejecuta queries reales a Supabase.
+    function _testClubRecordsPrivacy() {
+        var checks = [];
+        try {
+            if (typeof toggleMyPRsPublic !== 'function')
+                checks.push('toggleMyPRsPublic no es función');
+            if (typeof getMyPRsPublic !== 'function')
+                checks.push('getMyPRsPublic no es función');
+            if (typeof _refreshPrivacyBtn !== 'function')
+                checks.push('_refreshPrivacyBtn no es función');
+            if (typeof _setMyPRsPublic !== 'function')
+                checks.push('_setMyPRsPublic no es función');
+            if (typeof _openPRsPublicConfirmModal !== 'function')
+                checks.push('_openPRsPublicConfirmModal no es función');
+            if (typeof _buildPrivateLockBadgeSVG !== 'function')
+                checks.push('_buildPrivateLockBadgeSVG no es función');
+            if (!document.getElementById('club-privacy-btn'))
+                checks.push('botón #club-privacy-btn no existe en DOM');
+            // Verificar que _buildClubRecordRow acepta el 8º parámetro showPrivateLock
+            var src = (typeof _buildClubRecordRow === 'function') ? _buildClubRecordRow.toString() : '';
+            if (src.indexOf('showPrivateLock') < 0)
+                checks.push("_buildClubRecordRow no acepta showPrivateLock");
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'club.records.privacy',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'toggle + modal + DOM + propagación OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -45118,7 +45351,7 @@ window.addEventListener('DOMContentLoaded', function() {
         s26b:    [_testS26BCatalog, _testS26BWizard, _testGarminWizardReady],
         s26c:    [_testS26CMausoleo],
         hitos:   [_testHitosCoherence],
-        fase7:   [_testClubRecordsRanking]
+        fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy]
     };
 
     window.__mrSmoke = function(group) {
@@ -45157,10 +45390,14 @@ window.addEventListener('DOMContentLoaded', function() {
     <!-- ══ CLUB VIEW ════════════════════════════════════════════════════ -->
     <div id="club-view" style="display:none;position:fixed;inset:0;z-index:20000;background:var(--bg);flex-direction:column;overflow:hidden;transform:translateY(-100%);transition:transform .38s cubic-bezier(.32,.72,0,1);">
         <div style="flex-shrink:0;padding:calc(env(safe-area-inset-top,0px)+8px) 14px 0;background:var(--bg);position:relative;">
-            <!-- Top row — back · CLUB · 3 iconos -->
+            <!-- Top row — back · candado privacidad · CLUB · 3 iconos -->
             <div style="position:relative;display:flex;align-items:center;gap:8px;height:42px;margin-bottom:10px;">
                 <button onclick="closeClub()" style="width:44px;height:42px;border-radius:11px;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                </button>
+                <!-- [FASE 7.B] Botón candado: privacidad de PRs -->
+                <button id="club-privacy-btn" onclick="toggleMyPRsPublic()" title="Privacidad de mis récords" style="width:44px;height:42px;border-radius:11px;border:1.5px solid var(--gold-bd);background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <!-- El SVG se inyecta dinámicamente desde _refreshPrivacyBtn() -->
                 </button>
                 <!-- CLUB title absolutely centered -->
                 <div style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);font-size:25px;font-weight:900;color:var(--crimson);letter-spacing:4px;text-align:center;pointer-events:none;">CLUB</div>
