@@ -22725,25 +22725,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(rp) rp.style.display = 'none';
         const sel = document.getElementById('eval-act-select');
         if (!sel) return;
-        // [Retoque Míster] Solo se pueden evaluar actividades con `type` válido.
-        // El bulk de Strava importa con type null (Álvaro decidió no inferirlo),
-        // y el type es el criterio principal del motor de evaluación (define qué
-        // se puntúa y cómo). Sin type no hay evaluación posible, así que esas
-        // actividades NO deben aparecer en el desplegable. Filtramos por los 5
-        // types válidos de getTypeLabel: easy/recovery/series/long/race.
-        const EVAL_VALID_TYPES = ['easy','recovery','series','long','race'];
-        const unevaluated = activities.filter(a => a.nota == null && EVAL_VALID_TYPES.includes(a.type));
+        // [Retoque Míster] Solo se pueden evaluar actividades importadas
+        // MANUALMENTE. Las del bulk de Strava NO traen workout_type real: se les
+        // asigna un type inferido por distancia (long/easy/recovery), así que
+        // filtrar por type NO sirve (todas tienen uno). El discriminador fiable
+        // es `_source`: 'manual' (importación manual con tipo elegido por el
+        // usuario, criterio principal del motor de evaluación) vs 'bulk' (Strava).
+        const _isManual = a => a._source === 'manual' || a._source === 'manual-supabase';
+        const unevaluated = activities.filter(a => a.nota == null && _isManual(a));
         const noActsDiv = document.getElementById('eval-no-acts');
         const formDiv   = document.getElementById('eval-form');
         if (unevaluated.length === 0) {
             formDiv.style.display = 'none';
-            // [Retoque Míster] Mensaje contextual: si existen actividades sin nota
-            // pero ninguna es evaluable (todas del bulk sin type), lo explicamos
-            // en vez de decir "todas ya valoradas" (que sería engañoso).
-            var _pendingNoType = activities.some(a => a.nota == null && !EVAL_VALID_TYPES.includes(a.type));
+            // [Retoque Míster] Mensaje contextual: si hay actividades sin nota
+            // pero todas son del bulk (no manuales), lo explicamos en vez de
+            // decir "todas ya valoradas" (que sería engañoso).
+            var _pendingBulk = activities.some(a => a.nota == null && !_isManual(a));
             if (noActsDiv) {
-                noActsDiv.textContent = _pendingNoType
-                    ? 'Solo se pueden evaluar las actividades importadas manualmente (las de Strava no tienen tipo definido).'
+                noActsDiv.textContent = _pendingBulk
+                    ? 'Solo se pueden evaluar las actividades importadas manualmente (las de Strava no tienen tipo de entreno definido).'
                     : 'Todas las actividades ya tienen valoración.';
                 noActsDiv.style.display = '';
             }
