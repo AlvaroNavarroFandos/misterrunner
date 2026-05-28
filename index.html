@@ -277,6 +277,27 @@
         will-change: transform, filter;
     }
 
+    /* ────────────────────────────────────────────────────────────────
+       [NAV · transición premium entre pestañas vía SWIPE]
+       Solo para swipe horizontal en #nav (NO para tap simple, que conserva
+       el fade vertical mr-fx-view-in). Mecánica idéntica al toggle del Plan:
+       la vista actual sale (out) y la nueva entra (in) en dirección opuesta.
+       Magnitud ±60px (mismo lenguaje que el toggle Semana↔Mes ya validado).
+       Convención: avanzar a pestaña a la DERECHA del array (_swipeDir='l')
+       → out por izquierda, in desde derecha. Retroceder → invertido.
+       NO se aplica a #view-activities (biblioteca · regla férrea 291 cards):
+       esa conserva su entrada propia. NO reutiliza las clases del Club ni
+       las del Plan (clases independientes para no acoplar).
+       ──────────────────────────────────────────────────────────────── */
+    @keyframes _fxNavOutLeft  { 0%{opacity:1;transform:translateX(0)} 100%{opacity:0;transform:translateX(-60px)} }
+    @keyframes _fxNavOutRight { 0%{opacity:1;transform:translateX(0)} 100%{opacity:0;transform:translateX(60px)}  }
+    @keyframes _fxNavInRight  { 0%{opacity:0;transform:translateX(60px)}  100%{opacity:1;transform:translateX(0)} }
+    @keyframes _fxNavInLeft   { 0%{opacity:0;transform:translateX(-60px)} 100%{opacity:1;transform:translateX(0)} }
+    .mr-fx-nav-out-l { animation: _fxNavOutLeft  .18s cubic-bezier(.55,.06,.68,.19) both; }
+    .mr-fx-nav-out-r { animation: _fxNavOutRight .18s cubic-bezier(.55,.06,.68,.19) both; }
+    .mr-fx-nav-in-r  { animation: _fxNavInRight  .26s cubic-bezier(.22,.61,.36,1)  both; }
+    .mr-fx-nav-in-l  { animation: _fxNavInLeft   .26s cubic-bezier(.22,.61,.36,1)  both; }
+
 /* APP */
     #app {
         height: 100dvh;
@@ -12063,6 +12084,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } catch(_) {}
 
+            // [NAV · Pieza 1] Transición out+in SOLO para swipe (no tap).
+            // Capturamos la vista activa ACTUAL (origen) antes de cualquier toggle.
+            // Aplicamos el efecto out+in horizontal sólo si:
+            //   · venimos de un swipe (_swipeDir es 'l' o 'r'), y
+            //   · ni el ORIGEN ni el DESTINO son #view-activities (biblioteca,
+            //     regla férrea 291 cards — conserva su entrada propia).
+            // En cualquier otro caso → comportamiento actual (síncrono, fade/slide
+            // según _swipeDir igual que antes). Cero cambios para el tap.
+            var _tTarget = btn.dataset.target;
+            var _oldView = document.querySelector('.view.active');
+            var _newViewId = 'view-' + _tTarget;
+            var _originHeavy = _oldView && _oldView.id === 'view-activities';
+            var _destHeavy   = _newViewId === 'view-activities';
+            var _useNavFx = (_swipeDir === 'l' || _swipeDir === 'r') && !_originHeavy && !_destHeavy;
+
+            // Cuerpo del cambio de vista (idéntico al de siempre). Se ejecuta ya
+            // mismo (modo normal) o diferido 180ms (tras el out, modo nav-fx).
+            var _applyViewSwitch = function() {
             document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             const t = btn.dataset.target;
@@ -12078,11 +12117,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // a la vez sin tirones. El resto de vistas mantienen la
                     // animación direccional editorial.
                     try {
-                        v.classList.remove('mr-fx-view-in', 'mr-fx-view-slide-l', 'mr-fx-view-slide-r');
+                        v.classList.remove('mr-fx-view-in', 'mr-fx-view-slide-l', 'mr-fx-view-slide-r',
+                                           'mr-fx-nav-in-l', 'mr-fx-nav-in-r', 'mr-fx-nav-out-l', 'mr-fx-nav-out-r');
                         var _isHeavy = (v.id === 'view-activities');
                         // Forzar reflow para reiniciar la animación
                         void v.offsetWidth;
-                        if (_isHeavy)               v.classList.add('mr-fx-view-in');
+                        if (_useNavFx) {
+                            // [NAV · Pieza 1] Entrada premium horizontal (out+in).
+                            // _swipeDir='l' (avanzar) → in desde la derecha.
+                            // _swipeDir='r' (retroceder) → in desde la izquierda.
+                            if (_swipeDir === 'l') v.classList.add('mr-fx-nav-in-r');
+                            else                   v.classList.add('mr-fx-nav-in-l');
+                            // Cleanup de la clase in al terminar (evita artefactos)
+                            (function(_vv){
+                                setTimeout(function(){
+                                    try { _vv.classList.remove('mr-fx-nav-in-l','mr-fx-nav-in-r'); } catch(_){}
+                                }, 300);
+                            })(v);
+                        }
+                        else if (_isHeavy)          v.classList.add('mr-fx-view-in');
                         else if (_swipeDir === 'l') v.classList.add('mr-fx-view-slide-l');
                         else if (_swipeDir === 'r') v.classList.add('mr-fx-view-slide-r');
                         else                        v.classList.add('mr-fx-view-in');
@@ -12166,6 +12219,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 }
             });
+            }; // fin _applyViewSwitch
+
+            // [NAV · Pieza 1] Invocación. Si modo nav-fx: aplicar OUT a la vista
+            // origen, esperar 180ms (duración del out) y luego ejecutar el switch
+            // (que aplica el IN). Si no: ejecutar el switch ya mismo (igual que siempre).
+            if (_useNavFx && _oldView) {
+                _oldView.classList.remove('mr-fx-nav-out-l','mr-fx-nav-out-r','mr-fx-nav-in-l','mr-fx-nav-in-r');
+                void _oldView.offsetWidth;
+                // _swipeDir='l' (avanzar) → out por la izquierda. 'r' → out por la derecha.
+                _oldView.classList.add(_swipeDir === 'l' ? 'mr-fx-nav-out-l' : 'mr-fx-nav-out-r');
+                (function(_ov){
+                    setTimeout(function(){
+                        try { _ov.classList.remove('mr-fx-nav-out-l','mr-fx-nav-out-r'); } catch(_){}
+                        _applyViewSwitch();
+                    }, 180);
+                })(_oldView);
+            } else {
+                _applyViewSwitch();
+            }
         });
     });
 
