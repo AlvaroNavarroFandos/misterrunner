@@ -22726,13 +22726,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const sel = document.getElementById('eval-act-select');
         if (!sel) return;
         // [Retoque Míster] Solo se pueden evaluar actividades importadas
-        // MANUALMENTE. Las del bulk de Strava NO traen workout_type real: se les
-        // asigna un type inferido por distancia (long/easy/recovery), así que
-        // filtrar por type NO sirve (todas tienen uno). El discriminador fiable
-        // es `_source`: 'manual' (importación manual con tipo elegido por el
-        // usuario, criterio principal del motor de evaluación) vs 'bulk' (Strava).
-        const _isManual = a => a._source === 'manual' || a._source === 'manual-supabase';
-        const unevaluated = activities.filter(a => a.nota == null && _isManual(a));
+        // MANUALMENTE. Las del bulk de Strava NO traen workout_type real y la app
+        // les oculta el icono de type (_libTypeIconHTML devuelve '' si _source==='bulk').
+        // El criterio canónico de "es evaluable" en toda la app es `_source !== 'bulk'`
+        // (no una lista blanca 'manual'/'manual-supabase', que dejaba fuera las
+        // manuales recién subidas cuyo _source aún no es exactamente 'manual').
+        const _isEvaluable = a => a && a._source !== 'bulk';
+        const unevaluated = activities.filter(a => a.nota == null && _isEvaluable(a));
         const noActsDiv = document.getElementById('eval-no-acts');
         const formDiv   = document.getElementById('eval-form');
         if (unevaluated.length === 0) {
@@ -22740,7 +22740,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [Retoque Míster] Mensaje contextual: si hay actividades sin nota
             // pero todas son del bulk (no manuales), lo explicamos en vez de
             // decir "todas ya valoradas" (que sería engañoso).
-            var _pendingBulk = activities.some(a => a.nota == null && !_isManual(a));
+            var _pendingBulk = activities.some(a => a.nota == null && a._source === 'bulk');
             if (noActsDiv) {
                 noActsDiv.textContent = _pendingBulk
                     ? 'Solo se pueden evaluar las actividades importadas manualmente (las de Strava no tienen tipo de entreno definido).'
@@ -22771,7 +22771,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     });
 
     function onEvalActChange() {
-        const id = +document.getElementById('eval-act-select').value;
+        // [Retoque Míster] id leído como STRING (sin +). Las manuales sincronizadas
+        // con Supabase tienen id UUID; el +value las convertía en NaN y el find no
+        // las encontraba. El find ya compara String===String. !id cubre el vacío.
+        const id = document.getElementById('eval-act-select').value;
         evalCurrentAct = null; evalMode = null; evalPlanSess = null;
         ['eval-summary','eval-mode-row','eval-free-extra','eval-notes-row'].forEach(i=>{
             const el=document.getElementById(i);if(el)el.style.display='none';
