@@ -982,8 +982,9 @@
         transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
     }
 
-    /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS */
-    .sheet.dragging { transition: none; }
+    /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS.
+       Especificidad mayor para pisar la transition de .sheet-backdrop.show .sheet. */
+    .sheet-backdrop.show .sheet.dragging { transition: none; }
 
     .sheet-handle-wrap {
         padding: 10px 20px 8px;
@@ -12572,32 +12573,84 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!handle) return;
         sheet.dataset.mrSwipeBound = '1';
 
-        var startY = 0, dy = 0, t0 = 0, dragging = false;
-        function _origBg() { return ''; } // backdrop usa rgba via CSS; al limpiar inline-style vuelve
+        // [Sesión Sheets Premium · v3 swipe robusto] Tres mejoras sobre la
+        // versión anterior que vibraba/daba tirones al mover arriba y abajo:
+        //   1) Umbral mínimo de 8px antes de empezar a aplicar transform (evita
+        //      micro-tirones al tocar el handle sin querer arrastrar).
+        //   2) Si el usuario sube el dedo de vuelta sobre el origen, el sheet
+        //      vuelve a translateY(0) (efecto goma natural). Antes se quedaba
+        //      "pegado" en 0 acumulando dy negativo recortado a 0, lo que daba
+        //      la sensación de tirones al bajar/subir/bajar repetidamente.
+        //   3) Si va más allá del origen hacia arriba, resistencia logarítmica:
+        //      el sheet no se mueve hacia arriba más allá de unos pocos px,
+        //      transmitiendo solidez física. Antes se quedaba fijo y se sentía
+        //      como un "tope duro" desagradable.
+        //   4) rAF coalescente: una sola escritura de transform por frame, no
+        //      una por touchmove. Antes en dispositivos con touchmove a 120Hz
+        //      se acumulaban escrituras y daba tirones.
+        var startY = 0, dy = 0, displayDy = 0, t0 = 0, dragging = false, armed = false;
+        var rafPending = false, lastY = 0;
+        var DRAG_THRESHOLD = 8; // px que hay que bajar para "armar" el arrastre
+
+        function _flushFrame() {
+            rafPending = false;
+            if (!dragging || !armed) return;
+            sheet.style.transform = 'translateY(' + displayDy + 'px)';
+            var prog = Math.min(1, Math.max(0, displayDy) / 280);
+            backdrop.style.background = 'rgba(0,0,0,' + (.42 * (1 - prog * .7)) + ')';
+        }
+
+        function _schedule() {
+            if (rafPending) return;
+            rafPending = true;
+            requestAnimationFrame(_flushFrame);
+        }
 
         function onStart(e) {
             if (!backdrop.classList.contains('show')) return;
             var y = e.touches ? e.touches[0].clientY : e.clientY;
-            startY = y; dy = 0; t0 = performance.now(); dragging = true;
-            sheet.classList.add('dragging');
+            startY = lastY = y; dy = displayDy = 0; t0 = performance.now();
+            dragging = true; armed = false;
         }
         function onMove(e) {
             if (!dragging) return;
             var y = e.touches ? e.touches[0].clientY : e.clientY;
-            dy = Math.max(0, y - startY);
-            sheet.style.transform = 'translateY(' + dy + 'px)';
-            // El backdrop se desvanece proporcionalmente conforme bajas
-            var prog = Math.min(1, dy / 280);
-            backdrop.style.background = 'rgba(0,0,0,' + (.42 * (1 - prog * .7)) + ')';
+            lastY = y;
+            var raw = y - startY; // puede ser negativo (dedo subido)
+
+            // Aún no armamos hasta superar el umbral mínimo bajando.
+            // Mientras no estemos armados, NO tocamos el sheet y NO bloqueamos
+            // el evento (permite que el touch se cancele/scroll si el usuario
+            // hizo un gesto distinto).
+            if (!armed) {
+                if (raw < DRAG_THRESHOLD) return;
+                armed = true;
+                sheet.classList.add('dragging');
+                // Al armar, partimos del umbral para que no haya "salto" inicial.
+                startY += DRAG_THRESHOLD;
+                raw = y - startY;
+            }
+
+            // Ya armados, calculamos displayDy con resistencia goma si va arriba.
+            if (raw >= 0) {
+                displayDy = raw;
+            } else {
+                // Resistencia logarítmica al subir: muy poco movimiento, sólido
+                // y sin "pegado". Cap a -22px máximo de overscroll hacia arriba.
+                displayDy = -Math.min(22, Math.log1p(-raw) * 6);
+            }
+            dy = raw; // para cálculo de velocidad/cierre, usamos el raw real
+            _schedule();
             if (e.cancelable) e.preventDefault();
         }
         function onEnd() {
             if (!dragging) return;
             dragging = false;
             sheet.classList.remove('dragging');
+            backdrop.style.background = ''; // CSS rgba vuelve a aplicar
+            if (!armed) return; // No se llegó a arrastrar nada, fin silencioso
             var dt = performance.now() - t0;
             var velocity = dy / Math.max(dt, 1);
-            backdrop.style.background = _origBg();
             if (dy > 110 || velocity > 0.55) {
                 // Cerrar: limpiamos transform inline para que la transición CSS
                 // del .sheet-backdrop sin .show lleve el sheet de vuelta a
@@ -12605,7 +12658,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 sheet.style.transform = '';
                 closeSheet(backdrop.id);
             } else {
-                // Volver a su sitio (anula el transform inline → vuelve a 0)
+                // Volver a su sitio (anula el transform inline → vuelve a 0).
+                // La transition del .sheet ya está activa porque el backdrop
+                // aún tiene .show, así que se anima suave hasta translateY(0).
                 sheet.style.transform = '';
             }
         }
@@ -16357,17 +16412,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Render del Step 1 (grid de marcas) cada vez (por si cambia el catálogo)
         _vimRenderBrandGrid();
 
-        // Mostrar la view ocultando las demás
-        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        // [Sesión Sheets Premium · Fix wizard] Mismo patrón que vimBackNav:
+        // ENTRAR al wizard también causaba freeze por las 291 cards de
+        // biblioteca cuando .view-activities pasaba a display:none de golpe.
+        // Paso 1 (síncrono): activar la view del wizard YA (queda encima en
+        // el DOM, no requiere ocultar la biblioteca para verse).
         const view = document.getElementById('view-import-manual');
         if (view) { view.classList.add('active'); view.scrollTop = 0; }
-
         // Reset visual de los 3 steps
         _vimShowStepScreen('brand');
-
         // Mantener BIBLIOTECA marcada en la nav inferior (igual que strava import)
         document.querySelectorAll('.nb').forEach(function(b) {
             b.classList.toggle('active', b.dataset.target === 'activities');
+        });
+        // Paso 2 (aplazado): ocultar las OTRAS views (incluida biblioteca con
+        // sus 291 cards). El doble rAF garantiza que se ejecuta justo tras
+        // pintar el wizard, en ~32ms (determinista). requestIdleCallback con
+        // timeout:200 podía retrasarse hasta 200ms y contribuir al lag.
+        requestAnimationFrame(function(){
+            requestAnimationFrame(function(){
+                document.querySelectorAll('.view').forEach(function(v) {
+                    if (v.id !== 'view-import-manual') v.classList.remove('active');
+                });
+            });
         });
     }
     window.openImportManualWizard = openImportManualWizard;
@@ -16403,24 +16470,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        // Paso 2 (aplazado): activar view-activities + nav inferior.
-        // El defer da al browser tiempo para terminar de pintar la
-        // ocultación del wizard antes de empezar el layout pass de la
-        // biblioteca. Sin esto, ambos passes compiten en el mismo frame
-        // y Safari iOS muestra lag varios segundos.
-        var _vimBackToLib = function() {
-            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-            const target = document.getElementById('view-activities');
-            if (target) target.classList.add('active');
-            document.querySelectorAll('.nb').forEach(function(b) {
-                b.classList.toggle('active', b.dataset.target === 'activities');
+        // Marcar nav (esto es barato).
+        document.querySelectorAll('.nb').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.target === 'activities');
+        });
+        // Paso 2 (aplazado): activar view-activities (291 cards) — el cambio
+        // display:none→flex dispara un layout pass pesado en Safari iOS. Antes
+        // se usaba requestIdleCallback(timeout:200) pero podía tardar hasta
+        // 200ms en disparar, contribuyendo al lag percibido. Doble rAF es
+        // determinista (~32ms en 60Hz): se ejecuta justo tras el siguiente
+        // paint, dando al browser el frame intermedio para pintar el wizard
+        // oculto y EMPEZAR a digerir el layout pass sin bloquear la interacción.
+        requestAnimationFrame(function(){
+            requestAnimationFrame(function(){
+                document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+                const target = document.getElementById('view-activities');
+                if (target) target.classList.add('active');
             });
-        };
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(_vimBackToLib, { timeout: 200 });
-        } else {
-            setTimeout(_vimBackToLib, 50);
-        }
+        });
     }
     window.vimBackNav = vimBackNav;
 
