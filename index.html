@@ -21060,15 +21060,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }));
             }
             try { await Promise.all(tasks); } catch(_){}
-            // [Efectos UI] Reutilizamos el overlay (ya hizo el slide-up y cubre la
-            // pantalla, barra incluida). El slide-up YA está consolidado: forzamos
-            // su estado final (translateY(0)) por si el await resolvió antes de que
-            // la animación de .40s terminara — sin esto, interrumpir el slide a
-            // media subida dejaba la franja superior sin cubrir. Luego vaciamos el
-            // spinner y dejamos el interior listo para el fade del contenido real.
+            // [Efectos UI] Reutilizamos el overlay del spinner (ya negro, opaco,
+            // cubriendo la pantalla con la barra incluida). Quitamos la clase de
+            // slide-up para consolidar el estado: el overlay queda en su posición
+            // natural (inset:0 respecto al viewport). IMPORTANTE: NO ponemos un
+            // transform inline — un transform != none en un position:fixed cambia
+            // su containing block y lo recorta a la safe-area, dejando la franja
+            // de la status bar sin cubrir (era el bug de la barra crema en la 1ª
+            // apertura). Vaciamos el spinner; el contenido real entra con fade.
             if (loadOv && loadOv.parentNode) {
                 loadOv.classList.remove('mr-fx-hero-in');
-                loadOv.style.transform = 'translateY(0)';
                 loadOv.innerHTML = '';
             }
         }
@@ -21086,11 +21087,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         let ov = document.getElementById('act-detail-overlay');
         var _detReusedOverlay = false;
         if (ov) {
-            // [Efectos UI] El overlay del spinner ya cubre la pantalla en
-            // translateY(0) (consolidado arriba). Solo lo dejamos invisible
-            // (opacity 0) para que el contenido real entre con fade vía doble rAF
-            // y no haya parpadeo de "negro vacío → contenido de golpe".
-            ov.style.opacity = '0';
+            // [Efectos UI] Reutilizamos el overlay del spinner (ya negro, opaco y
+            // cubriendo la pantalla). NO tocamos su opacity: hacerlo lo volvía
+            // semitransparente durante el fade y se veía la biblioteca detrás.
+            // El overlay se mantiene negro sólido; el fade se aplica SOLO al
+            // contenido interior (header/cards), que aparece sobre el negro.
+            ov.innerHTML = '';
             _detReusedOverlay = true;
         } else {
             // Apertura directa (streams/fotos ya en memoria): slide-up completo.
@@ -21099,18 +21101,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ov.className = 'det-overlay mr-fx-hero-in';
             document.body.appendChild(ov);
         }
-        // [Efectos UI] Si reutilizamos el overlay del spinner, el fade-in del
-        // contenido se dispara tras pintar todo el render síncrono que viene a
-        // continuación (header/cards/dots). El doble rAF garantiza que para
-        // cuando se aplica la animación, el visor completo ya está en el DOM:
-        // así el fade va sobre el contenido real y no sobre un overlay vacío.
+        // [Efectos UI] Si reutilizamos el overlay del spinner, el fade-in se
+        // aplica a los HIJOS del overlay (header/cards/dots), no al overlay, que
+        // permanece negro opaco. El doble rAF garantiza que el contenido ya está
+        // todo en el DOM cuando aplicamos la animación, así aparece sobre negro
+        // sólido (no sobre la biblioteca) y sin parpadeo de "negro vacío".
         if (_detReusedOverlay) {
             requestAnimationFrame(function(){
                 requestAnimationFrame(function(){
                     var _ov = document.getElementById('act-detail-overlay');
                     if (_ov) {
-                        _ov.style.opacity = '';
-                        _ov.classList.add('mr-fx-det-content-in');
+                        for (var _i = 0; _i < _ov.children.length; _i++) {
+                            _ov.children[_i].classList.add('mr-fx-det-content-in');
+                        }
                     }
                 });
             });
