@@ -325,6 +325,35 @@
         opacity: 1 !important;
     }
 
+    /* [HOME · Próximos entrenamientos · navega al Plan] Press + flecha que se
+       desliza y se enciende en el crimson de la cabecera. */
+    .mr-next-card {
+        transition: transform .2s cubic-bezier(.22,.61,.36,1), background-color .2s ease, border-color .2s ease;
+        will-change: transform;
+    }
+    .mr-next-card:active,
+    .mr-next-card.mr-next-pressing {
+        transform: scale(.98);
+        background-color: rgba(143,26,40,.07) !important;
+        border-color: rgba(143,26,40,.30) !important;
+        transition: transform .09s ease-out, background-color .09s ease-out, border-color .09s ease-out;
+    }
+    .mr-next-arrow {
+        transition: transform .2s cubic-bezier(.22,.61,.36,1), color .2s ease, opacity .2s ease;
+        will-change: transform;
+    }
+    .mr-next-card:active .mr-next-arrow,
+    .mr-next-card.mr-next-pressing .mr-next-arrow {
+        transform: translateX(5px);
+        color: #8f1a28 !important;
+        opacity: 1 !important;
+    }
+
+    /* [HOME · Candidato 4] Barras de progreso que se RELLENAN al entrar a Home.
+       Arrancan a width:0 (clase) y un helper les pone el width real → la
+       transition:width que ya tienen las anima de 0 al valor. Visible y premium. */
+    .mr-fx-progressbar { width: 0 !important; }
+
     /* ────────────────────────────────────────────────────────────────
        [PLAN · efectos premium]
        A — Press feedback de la action row (4 botones)
@@ -12342,6 +12371,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 if (_wkIdx >= 0) {
                                     planCurrentWeek = _wkIdx;
                                 }
+                                // [Home · Candidato 3b] Si venimos de "Próximos entrenamientos"
+                                // con una semana objetivo (un entreno en semana distinta a la
+                                // actual), posicionar el Plan en ESA semana en vez de la actual.
+                                // Si el entreno cae en la semana actual, __mrPlanTargetWeek no se
+                                // setea (o coincide con _wkIdx) → comportamiento normal (3a).
+                                if (typeof window.__mrPlanTargetWeek === 'number' &&
+                                    window.__mrPlanTargetWeek >= 0 &&
+                                    window.__mrPlanTargetWeek < _plan.weeks.length) {
+                                    planCurrentWeek = window.__mrPlanTargetWeek;
+                                }
+                                window.__mrPlanTargetWeek = null; // consumir intención
                                 // Forzar modo semana (no mes) para que se vea el HOY
                                 if (typeof planViewMode !== 'undefined' && planViewMode === 'month') {
                                     planViewMode = 'week';
@@ -29388,7 +29428,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <span style="font-size:12px;font-weight:700;color:${_phaseColor};">${_doneDays} / ${_totalDays}</span>
                     </div>
                     <div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;">
-                        <div style="width:${_pct}%;height:100%;background:linear-gradient(90deg,#ef4444,${_phaseColor});border-radius:3px;transition:width .6s;"></div>
+                        <div class="mr-fx-progressbar" data-fill="${_pct}" style="width:${_pct}%;height:100%;background:linear-gradient(90deg,#ef4444,${_phaseColor});border-radius:3px;transition:width .6s;"></div>
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.05);border-radius:10px;padding:8px 12px;">
@@ -29607,7 +29647,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <span style="font-size:14px;font-weight:700;color:#b8bcc2;">${pct}%</span>
                     </div>
                     <div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;">
-                        <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#7d8389 0%,#b8bcc2 60%,#d4d7dc 100%);border-radius:3px;transition:width .6s;"></div>
+                        <div class="mr-fx-progressbar" data-fill="${pct}" style="width:${pct}%;height:100%;background:linear-gradient(90deg,#7d8389 0%,#b8bcc2 60%,#d4d7dc 100%);border-radius:3px;transition:width .6s;"></div>
                     </div>
                     <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:9px;color:rgba(255,255,255,.3);">
                         <span>${doneSess} hechas</span><span>${totalSess-doneSess} restantes</span>
@@ -29678,12 +29718,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             upcoming.sort((a,b)=>new Date(a.dateStr+'T00:00:00')-new Date(b.dateStr+'T00:00:00'));
             if (upcoming.length > 0) {
                 const nextCard = document.createElement('div');
-                nextCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;overflow:hidden;';
+                nextCard.className = 'mr-next-card';
+                nextCard.style.cssText = 'background:var(--card2);border-radius:16px;border:1px solid var(--border);padding:12px 14px;overflow:hidden;cursor:pointer;';
                 const _items = upcoming.slice(0,3);
                 // Detectar si la primera sesión es mañana
                 const _tomorrowMs = new Date(todayStr+'T00:00:00').getTime() + 86400000;
                 const _tomorrowStr = localDateStr(new Date(_tomorrowMs));
-                let nextHtml = `<div style="display:inline-block;font-size:11px;font-weight:700;color:#8f1a28;margin-bottom:8px;background:rgba(143,26,40,.08);border-left:3px solid #8f1a28;border-radius:6px;padding:3px 8px;">Próximos entrenamientos</div>`;
+                // [Candidato 3b] Índice de semana del PRIMER próximo entreno dentro
+                // de activePlan.weeks. Si cae en semana distinta a la actual, al
+                // navegar posicionamos el Plan ahí; si es la actual, comportamiento
+                // normal. Calculamos por rango de fechas de cada semana.
+                let _firstWkIdx = -1;
+                try {
+                    const _firstMs = new Date(upcoming[0].dateStr+'T00:00:00').getTime();
+                    for (let _wk=0; _wk<activePlan.weeks.length; _wk++) {
+                        const _wkStart = new Date(activePlan.weeks[_wk].weekStart+'T00:00:00').getTime();
+                        const _wkEnd   = _wkStart + 7*86400000;
+                        if (_firstMs >= _wkStart && _firstMs < _wkEnd) { _firstWkIdx = _wk; break; }
+                    }
+                } catch(_) {}
+                let nextHtml = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="display:inline-block;font-size:11px;font-weight:700;color:#8f1a28;background:rgba(143,26,40,.08);border-left:3px solid #8f1a28;border-radius:6px;padding:3px 8px;">Próximos entrenamientos</div>
+                    <div class="mr-next-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>
+                </div>`;
                 _items.forEach((s, _idx) => {
                     const sDate = new Date(s.dateStr+'T12:00:00');
                     const tc=TYPE_COLOR_HOME[s.type]||'var(--tw)';
@@ -29703,6 +29760,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>`;
                 });
                 nextCard.innerHTML = nextHtml;
+                // [Candidato 3] Navegar al Plan (en la semana del primer entreno si
+                // difiere de la actual) reutilizando el carrusel: pre-marcamos
+                // swipeDir='l' (avanzar hacia la derecha del array: Plan está a la
+                // derecha de Home) y clicamos el botón Plan. El bloque if(t==='cal')
+                // del handler de nav lee __mrPlanTargetWeek para posicionar la semana.
+                nextCard.addEventListener('click', function(){
+                    try {
+                        if (_firstWkIdx >= 0) window.__mrPlanTargetWeek = _firstWkIdx;
+                        var _appEl = document.getElementById('app');
+                        // Plan ('cal') está a la IZQUIERDA de Home en el array
+                        // [mister,cal,home,...] → para ir Home→Plan retrocedemos: dir='r'.
+                        if (_appEl) _appEl.dataset.swipeDir = 'r';
+                        if (navigator.vibrate) try { navigator.vibrate(12); } catch(_){}
+                        var _planBtn = document.querySelector('#nav .nb[data-target="cal"]');
+                        if (_planBtn) _planBtn.click();
+                    } catch(_) {}
+                });
+                // Press feedback (clase espejo touch, robusto iOS)
+                nextCard.addEventListener('touchstart', function(){ nextCard.classList.add('mr-next-pressing'); }, { passive:true });
+                var _nextRelease = function(){ nextCard.classList.remove('mr-next-pressing'); };
+                nextCard.addEventListener('touchend', _nextRelease, { passive:true });
+                nextCard.addEventListener('touchcancel', _nextRelease, { passive:true });
                 container.appendChild(nextCard);
             }
         }
@@ -29807,8 +29886,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="font-size:10px;color:var(--ts);">Km completados esta semana</div>
                     <div style="font-size:11px;font-weight:700;color:var(--tw);">${_totalKmW.toFixed(1)} / ${_plannedKmW.toFixed(0)} km</div>
                 </div>
-                <div style="height:6px;background:var(--bsoft);border-radius:999px;overflow:hidden;">
-                    <div style="height:100%;width:${_pctDoneW}%;background:${_barColorW};border-radius:999px;transition:width .4s ease;"></div>
+                    <div style="height:6px;background:var(--bsoft);border-radius:999px;overflow:hidden;">
+                    <div class="mr-fx-progressbar" data-fill="${_pctDoneW}" style="height:100%;width:${_pctDoneW}%;background:${_barColorW};border-radius:999px;transition:width .4s ease;"></div>
                 </div>
                 <div style="display:flex;justify-content:flex-end;margin-top:3px;">
                     <span style="font-size:9px;color:${_barColorW};font-weight:700;">${_pctDoneW}%${_pctDoneW>=100?' ✓ Semana completada':''}</span>
@@ -30049,20 +30128,92 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _resumenWeek = document.getElementById('home-resumen-week');
         const _resumenMonth= document.getElementById('home-resumen-month');
         if (_resumenTabs.length && _resumenWeek && _resumenMonth) {
-            _resumenTabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    const which = tab.getAttribute('data-tab');
-                    _resumenTabs.forEach(t => {
-                        const active = t === tab;
-                        t.style.background = active ? 'var(--card)' : 'transparent';
-                        t.style.boxShadow  = active ? '0 1px 3px rgba(0,0,0,.06)' : 'none';
-                        t.style.color      = active ? 'var(--tw)' : 'var(--ts)';
-                    });
-                    _resumenWeek.style.display  = which === 'week'  ? 'block' : 'none';
-                    _resumenMonth.style.display = which === 'month' ? 'block' : 'none';
+            // Estado actual de la vista visible ('week' | 'month')
+            var _resumenCur = 'week';
+
+            // [Candidato 2] Cambio de tab con transición horizontal direccional
+            // (slide sólido, sin opacity, mismo lenguaje que el carrusel de nav).
+            // 'week'→'month': el contenido sale a la izquierda y el nuevo entra
+            // desde la derecha. 'month'→'week': al revés. Si ya estás en ese tab,
+            // no hace nada.
+            function _switchResumen(which) {
+                if (which === _resumenCur) return;
+                var _outEl = _resumenCur === 'week' ? _resumenWeek : _resumenMonth;
+                var _inEl  = which === 'week' ? _resumenWeek : _resumenMonth;
+                var _goingRight = (which === 'month'); // month está a la derecha
+                // Actualizar pills
+                _resumenTabs.forEach(function(t){
+                    var active = t.getAttribute('data-tab') === which;
+                    t.style.background = active ? 'var(--card)' : 'transparent';
+                    t.style.boxShadow  = active ? '0 1px 3px rgba(0,0,0,.06)' : 'none';
+                    t.style.color      = active ? 'var(--tw)' : 'var(--ts)';
+                });
+                // Animación: salida del actual + entrada del nuevo, en paralelo.
+                try {
+                    _outEl.style.transition = 'transform .2s cubic-bezier(.55,.06,.68,.19)';
+                    _outEl.style.transform  = _goingRight ? 'translateX(-18px)' : 'translateX(18px)';
+                    setTimeout(function(){
+                        _outEl.style.display = 'none';
+                        _outEl.style.transform = '';
+                        _outEl.style.transition = '';
+                        // Montar el entrante fuera y deslizarlo a 0
+                        _inEl.style.display = 'block';
+                        _inEl.style.transition = 'none';
+                        _inEl.style.transform = _goingRight ? 'translateX(18px)' : 'translateX(-18px)';
+                        void _inEl.offsetWidth;
+                        _inEl.style.transition = 'transform .24s cubic-bezier(.22,.61,.36,1)';
+                        _inEl.style.transform = 'translateX(0)';
+                        setTimeout(function(){ _inEl.style.transition = ''; }, 260);
+                    }, 200);
+                } catch(_) {
+                    // Fallback duro (cambio seco) si algo falla
+                    _outEl.style.display = 'none';
+                    _inEl.style.display = 'block';
+                }
+                _resumenCur = which;
+            }
+
+            _resumenTabs.forEach(function(tab){
+                tab.addEventListener('click', function(){
+                    _switchResumen(tab.getAttribute('data-tab'));
                 });
             });
+
+            // [Candidato 2] Swipe horizontal sobre la card para cambiar de tab.
+            // Swipe a la izquierda → avanzar (week→month). A la derecha → (month→week).
+            (function(){
+                var _sx=0,_sy=0,_act=false;
+                recentCard.addEventListener('touchstart', function(e){
+                    if(!e.touches||e.touches.length!==1){_act=false;return;}
+                    _sx=e.touches[0].clientX;_sy=e.touches[0].clientY;_act=true;
+                },{passive:true});
+                recentCard.addEventListener('touchend', function(e){
+                    if(!_act)return;_act=false;
+                    var _t=(e.changedTouches&&e.changedTouches[0]);if(!_t)return;
+                    var _dx=_t.clientX-_sx, _dy=_t.clientY-_sy;
+                    if(Math.abs(_dx)<45 || Math.abs(_dx)<Math.abs(_dy)*1.4) return; // swipe horizontal claro
+                    if(_dx<0) _switchResumen('month'); else _switchResumen('week');
+                },{passive:true});
+            })();
         }
+
+        // [Candidato 4] Rellenar las barras de progreso: arrancan a width:0
+        // (clase mr-fx-progressbar) y les ponemos el width real en el siguiente
+        // frame → la transition:width que ya tienen las anima de 0 al valor.
+        try {
+            var _bars = document.querySelectorAll('#home-content .mr-fx-progressbar');
+            if (_bars.length) {
+                requestAnimationFrame(function(){ requestAnimationFrame(function(){
+                    _bars.forEach(function(bar){
+                        var _f = bar.getAttribute('data-fill');
+                        if (_f != null) {
+                            bar.classList.remove('mr-fx-progressbar');
+                            bar.style.width = _f + '%';
+                        }
+                    });
+                });});
+            }
+        } catch(_) {}
 
         // ── PDF BUTTON removed — use Plan tab share button instead ──
     }
