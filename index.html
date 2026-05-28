@@ -268,21 +268,36 @@
        donde estaba la tarjeta. Duración generosa pero no lenta (420 in / 300 out).
        transform-origin a 80px desde arriba aproxima la posición visual de la
        tarjeta en la biblioteca (header+dots ≈ 60-100px). */
+    /* [Sesión Efectos UI · Biblioteca] Visor de actividad: slide-up al abrir,
+       slide-down al cerrar (estilo hoja modal iOS). Sustituye al "zoom hero"
+       con fade que se desvanecía. NUNCA opacity en el recorrido (regla FX-2):
+       el visor entra/sale SÓLIDO. Solo un toque imperceptible de fade en el
+       último 15% del cierre para que el corte final no se vea seco.
+       Nombres de clase y keyframe conservados (_fxHeroIn/_fxHeroOut +
+       .mr-fx-hero-in/out) por el smoke test css. */
     @keyframes _fxHeroIn{
-        0%   { opacity: 0; transform: scale(0.88); }
-        50%  { opacity: 1; }
-        100% { opacity: 1; transform: scale(1); }
+        0%   { transform: translateY(100%); }
+        100% { transform: translateY(0); }
     }
     @keyframes _fxHeroOut{
-        0%   { opacity: 1; transform: scale(1); }
-        100% { opacity: 0; transform: scale(0.92); }
+        0%   { transform: translateY(0);    opacity: 1; }
+        85%  { opacity: 1; }
+        100% { transform: translateY(100%); opacity: .96; }
+    }
+    /* Swap de contenido dentro del MISMO overlay: cuando el spinner de carga
+       se sustituye por el visor real, el overlay ya está arriba (no re-animamos
+       el slide). Solo un fade-in suave del contenido entrante. */
+    @keyframes _fxDetContentIn{
+        0%   { opacity: 0; }
+        100% { opacity: 1; }
     }
     .mr-fx-skeleton{background:linear-gradient(90deg,var(--bsoft) 0%,var(--card) 50%,var(--bsoft) 100%);background-size:200% 100%;animation:_fxSkeletonShimmer 1.4s ease-in-out infinite;border-radius:8px;}
     .mr-fx-view-in{animation:_fxFadeViewIn .22s cubic-bezier(.32,.72,0,1) both;}
     .mr-fx-view-slide-l{animation:_fxViewSlideInLeft .28s cubic-bezier(.22,.61,.36,1) both;}
     .mr-fx-view-slide-r{animation:_fxViewSlideInRight .28s cubic-bezier(.22,.61,.36,1) both;}
-    .mr-fx-hero-in{animation:_fxHeroIn .42s cubic-bezier(.22,.61,.36,1) both;transform-origin:center 80px;will-change:transform,opacity;}
-    .mr-fx-hero-out{animation:_fxHeroOut .3s cubic-bezier(.55,.06,.68,.19) both;transform-origin:center 80px;will-change:transform,opacity;}
+    .mr-fx-hero-in{animation:_fxHeroIn .40s cubic-bezier(.32,.72,0,1) both;will-change:transform;}
+    .mr-fx-hero-out{animation:_fxHeroOut .34s cubic-bezier(.4,0,.2,1) both;will-change:transform,opacity;}
+    .mr-fx-det-content-in{animation:_fxDetContentIn .26s ease-out both;}
 
     /* ────────────────────────────────────────────────────────────────
        [HOME · Warm up · efecto premium al pulsar]
@@ -1807,57 +1822,14 @@
     #view-activities { position: relative; }
 
     /* ───────────────────────────────────────────────────────────────
-       [Sesión 24] Biblioteca loader premium · Progress bar + stagger
-       ───────────────────────────────────────────────────────────────
-       Sustituye el gate cream (sesión 15.1) por un efecto cinematográfico
-       en dos capas:
-         1. Barra dorada de 2px en la parte superior de la vista (0→100% en 1s)
-         2. Las cards entran de 1 en 1 con fade+slide (40ms entre cada, máximo
-            8 cards visibles en primer paint → resto entra normal)
-       Combinado con pre-render en idle time tras boot (ver bootApp), el
-       efecto es puramente decorativo: la biblioteca ya está dibujada cuando
-       el usuario salta, pero la animación da la "sensación premium" de
-       construcción.
+       [Biblioteca · entrada premium] El antiguo "loader" de barra dorada
+       (mr-lib-progress) fue sustituido por el SKELETON de cards fantasma
+       (overlay mr-skel-overlay, ver helper _mrLibMountSkeleton + Pieza 2).
+       Aquí queda solo el STAGGER REVEAL de las primeras cards, que sigue
+       vivo: al entrar a biblioteca las primeras cards entran de 1 en 1 con
+       fade+slide. Combinado con pre-render en idle tras boot, es cosmético
+       (la lista ya está dibujada) pero da la sensación premium de carga.
        ─────────────────────────────────────────────────────────────── */
-    .mr-lib-progress {
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 2px;
-        background: rgba(196,136,30,.06);
-        z-index: 9998;
-        overflow: hidden;
-        pointer-events: none;
-        opacity: 0;
-        animation: mr-lib-progress-show 1.0s ease forwards;
-    }
-    body.dark-mode .mr-lib-progress {
-        background: rgba(201,168,76,.06);
-    }
-    .mr-lib-progress::after {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; bottom: 0;
-        width: 0%;
-        background: linear-gradient(90deg, var(--gold), #e5b550);
-        border-radius: 999px;
-        box-shadow: 0 0 8px rgba(196,136,30,.4);
-        animation: mr-lib-progress-fill 1.0s cubic-bezier(.4,0,.2,1) forwards;
-    }
-    body.dark-mode .mr-lib-progress::after {
-        background: linear-gradient(90deg, #C9A84C, #e5b550);
-        box-shadow: 0 0 8px rgba(201,168,76,.4);
-    }
-    @keyframes mr-lib-progress-show {
-        0%   { opacity: 0; }
-        12%  { opacity: 1; }
-        88%  { opacity: 1; }
-        100% { opacity: 0; }
-    }
-    @keyframes mr-lib-progress-fill {
-        0%   { width: 0%; }
-        30%  { width: 60%; }
-        100% { width: 100%; }
-    }
 
     /* Stagger reveal de las primeras cards al entrar a biblioteca.
        Solo se aplica cuando el contenedor tiene la clase mr-lib-staggering.
@@ -21079,8 +21051,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }));
             }
             try { await Promise.all(tasks); } catch(_){}
-            // Eliminar el overlay loading antes de re-construir todo el visor
-            if (loadOv && loadOv.parentNode) loadOv.parentNode.removeChild(loadOv);
+            // [Efectos UI] NO eliminamos el overlay del spinner: ya subió con
+            // slide-up y queremos reutilizarlo para el visor real, así no hay
+            // doble animación (bajar y volver a subir) al sustituir contenido.
+            // Vaciamos su interior (quita el spinner); el visor real se montará
+            // dentro de este mismo overlay con un fade de contenido.
+            if (loadOv && loadOv.parentNode) loadOv.innerHTML = '';
         }
 
         const d    = new Date(act.dateStr + 'T12:00:00');
@@ -21094,11 +21070,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const typeColor = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#a78bfa',race:'#e879f9'}[act.type]||'#aaa';
 
         let ov = document.getElementById('act-detail-overlay');
-        if (ov) ov.remove();
-        ov = document.createElement('div');
-        ov.id = 'act-detail-overlay';
-        ov.className = 'det-overlay mr-fx-hero-in';
-        document.body.appendChild(ov);
+        if (ov) {
+            // [Efectos UI] El overlay ya está montado y arriba (venía del spinner
+            // de carga). NO re-animamos el slide-up: solo vaciamos restos y
+            // marcamos el contenido para que entre con un fade suave.
+            ov.innerHTML = '';
+            ov.classList.remove('mr-fx-hero-in');
+            ov.classList.add('mr-fx-det-content-in');
+            void ov.offsetWidth; // reflow: reinicia la animación de fade de contenido
+        } else {
+            // Apertura directa (streams/fotos ya en memoria): slide-up completo.
+            ov = document.createElement('div');
+            ov.id = 'act-detail-overlay';
+            ov.className = 'det-overlay mr-fx-hero-in';
+            document.body.appendChild(ov);
+        }
 
         // Header
         // [FASE 5.6.1] Para bulk, fallback del título es '—' (no getTypeLabel)
@@ -21129,11 +21115,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             + '<button id="det-share-btn" style="width:34px;height:34px;background:rgba(255,255,255,.1);border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>';
         ov.appendChild(hdr);
-        // [FASE 5.7.4-d] Cierre con animación inversa "Zoom hero" (300ms out)
+        // [Efectos UI] Cierre slide-down (340ms out). Quitamos cualquier clase
+        // de entrada (slide-up o fade de contenido) antes de aplicar la salida.
         function _detCloseAnimated() {
             ov.classList.remove('mr-fx-hero-in');
+            ov.classList.remove('mr-fx-det-content-in');
             ov.classList.add('mr-fx-hero-out');
-            setTimeout(function(){ if (ov.parentNode) ov.remove(); }, 300);
+            setTimeout(function(){ if (ov.parentNode) ov.remove(); }, 340);
         }
         document.getElementById('det-close').addEventListener('click', _detCloseAnimated);
         document.getElementById('det-share-btn').addEventListener('click', () => shareActivityCard(act));
