@@ -2844,7 +2844,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                     <div style="display:flex;gap:8px;">
                         <button onclick="editActivePlan()" style="flex:1;background:var(--silver-grad);color:#fff;border:none;border-radius:9px;padding:8px;font-family:var(--f);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;cursor:pointer;">Modificar</button>
-                        <button onclick="deleteActivePlan()" style="flex:1;background:var(--card);color:var(--danger);border:1px solid var(--crim-bd);border-radius:9px;padding:8px;font-family:var(--f);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;cursor:pointer;">✕ Eliminar</button>
+                        <button onclick="deleteActivePlan()" style="flex:1;background:var(--card);color:var(--danger);border:1px solid var(--crim-bd);border-radius:9px;padding:8px;font-family:var(--f);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;cursor:pointer;">Eliminar</button>
                     </div>
                     </div>
                 </div>
@@ -2996,7 +2996,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             </div>
                             <div style="display:flex;gap:6px;">
                                 <button onclick="event.stopPropagation();toggleStrengthCard()" style="background:#000;color:#facc15;border:none;border-radius:8px;padding:6px 10px;font-family:var(--f);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;cursor:pointer;">Editar</button>
-                                <button onclick="event.stopPropagation();deleteStrengthPlan()" style="background:rgba(0,0,0,.35);color:#f87171;border:1px solid rgba(143,26,40,.5);border-radius:8px;padding:6px 10px;font-family:var(--f);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;cursor:pointer;">✕ Quitar</button>
+                                <button onclick="event.stopPropagation();deleteStrengthPlan()" style="background:rgba(0,0,0,.35);color:#f87171;border:1px solid rgba(143,26,40,.5);border-radius:8px;padding:6px 10px;font-family:var(--f);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;cursor:pointer;">Quitar</button>
                             </div>
                         </div>
                     </div>
@@ -25395,6 +25395,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const wk=activePlan.weeks[weekIdx];
         if(!wk) { renderEmptyWeekCalendar(); return; }
 
+        // [Retoque Plan] Precarga idempotente de html2canvas en idle. Cuando el
+        // usuario pulse el botón share, la librería ya estará cargada y la
+        // captura empezará en frío. Sin esto, la primera vez se sumaba el coste
+        // de red al ya pesado html2canvas (~3-4s total). El flag _planH2cWarm
+        // evita relanzar la carga en cada navegación entre semanas.
+        if (typeof html2canvas === 'undefined' && !window._planH2cWarm) {
+            window._planH2cWarm = true;
+            var _warm = function(){
+                if (typeof html2canvas !== 'undefined') return;
+                var s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                s.async = true;
+                document.head.appendChild(s);
+            };
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(_warm, { timeout: 2000 });
+            } else {
+                setTimeout(_warm, 500);
+            }
+        }
+
         const PHASE_COLOR={base:'#60a5fa',build:'#fbbf24',peak:'#f87171',taper:'#a78bfa',descarga:'#4ade80'};
         const DAY_FULL=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
         const DAY_SHORT=['D','L','M','X','J','V','S'];
@@ -28278,13 +28299,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             document.body.appendChild(clone);
 
-            // Wait for rendering
-            setTimeout(() => {
+            // [Retoque Plan] Esperar al paint del clon con DOBLE rAF en lugar del
+            // setTimeout(400ms) arbitrario que había antes. El rAF se ejecuta tras
+            // el siguiente frame, así que en 2 frames (~32ms en pantallas a 60Hz)
+            // el clon está pintado. Ahorra ~370ms perceptibles antes de la captura.
+            requestAnimationFrame(function(){ requestAnimationFrame(function(){
                 html2canvas(clone, {
                     backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f0ebe0',
-                    scale: 2,
+                    // [Retoque Plan] scale dinámico = devicePixelRatio del dispositivo
+                    // (capped a 2). El antiguo scale:2 fijo renderizaba al doble
+                    // sin necesidad y duplicaba el coste de pintar; en móviles
+                    // modernos el DPR ya es 2-3 y la pantalla no muestra más
+                    // detalle. Bajar a min(DPR, 2) suele recortar 1-1.5s en móvil.
+                    scale: Math.min(window.devicePixelRatio || 1, 2),
                     useCORS: true,
-                    allowTaint: true,
+                    // [Retoque Plan] allowTaint:false — no hay imágenes cross-origin
+                    // en el clon (es DOM puro de la app), y allowTaint añadía un
+                    // paso de detección innecesario.
+                    allowTaint: false,
                     logging: false,
                     width: clone.offsetWidth,
                     height: clone.scrollHeight,
@@ -28316,7 +28348,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     console.error('Plan share error:', err);
                     showToast('Error al generar imagen. Inténtalo de nuevo.', 3000);
                 });
-            }, 400);
+            }); });
         }
 
         // Switch to plan tab first if not active, then capture
@@ -28324,7 +28356,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(typeof html2canvas === 'undefined') {
             const s = document.createElement('script');
             s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-            s.onload = () => setTimeout(doPlanCapture, 300);
+            // [Retoque Plan] Lanzar captura en cuanto el script esté listo, sin
+            // el setTimeout(300ms) intermedio (el onload ya garantiza parseo).
+            s.onload = doPlanCapture;
             s.onerror = () => showToast('Sin conexión para generar imagen', 2000);
             document.head.appendChild(s);
         } else {
@@ -30981,7 +31015,7 @@ function buildManualHTML() {
                 },
                 {
                     title: 'Modificar o eliminar el plan de running',
-                    text: 'Con plan activo, el bloque muestra el nombre, semanas restantes y objetivo, y dos botones:\n\n• ✏ Modificar — abre el formulario pre-relleno. Cambias lo que quieras y regeneras. El nuevo plan sustituye al anterior.\n• ✕ Eliminar — el plan desaparece. El bloque vuelve a su estado inicial con el botón +.\n\nSi también tenías plan de fuerza, este se mantiene intacto.'
+                    text: 'Con plan activo, el bloque muestra el nombre, semanas restantes y objetivo, y dos botones:\n\n• Modificar — abre el formulario pre-relleno. Cambias lo que quieras y regeneras. El nuevo plan sustituye al anterior.\n• Eliminar — el plan desaparece. El bloque vuelve a su estado inicial con el botón +.\n\nSi también tenías plan de fuerza, este se mantiene intacto.'
                 },
                 {
                     title: 'Plan de Fuerza / Pliometría',
