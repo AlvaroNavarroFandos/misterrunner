@@ -21010,7 +21010,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // los streams (mismo spinner, sin doble UX). Si solo hay fotos pendientes
     // (streams ya en cache pero photos no), también muestra spinner para no
     // pegar un parpadeo cuando las URLs llegan post-render.
-    async function openActivityDetail(act) {
+    async function openActivityDetail(act, initialCard) {
         var isBulkPendingStreams = act && act._source === 'bulk'
             && act._dbActivityId
             && (!act.hrSeries || act.hrSeries.length === 0)
@@ -22368,7 +22368,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 c.style.overflowY = i===curCard ? 'auto' : 'hidden';
             });
         }
-        goToCard(0); // init
+        // [Retoque Míster] Card inicial: por defecto 0, pero openActivityDetail
+        // puede recibir initialCard (ej. abrir directo en la card de Evaluación,
+        // idx 3, tras evaluar desde la pestaña Míster). Se valida al rango real
+        // de cards existentes (goToCard ya hace clamp, pero comprobamos que el
+        // índice sea un número válido por si llega undefined/NaN).
+        var _startCard = 0;
+        if (typeof initialCard === 'number' && initialCard >= 0 && initialCard < nCards) {
+            _startCard = initialCard;
+        }
+        if (_startCard > 0) {
+            // Posicionar directamente en la card pedida SIN animación de barrido:
+            // saltamos el transition para que no se vea deslizar desde la card 0.
+            curCard = _startCard;
+            track.style.transition = 'none';
+            track.style.transform  = 'translateX('+(-curCard*100)+'%)';
+            dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
+            allCards.forEach((c,i)=>{ c.style.overflowY = i===curCard ? 'auto' : 'hidden'; });
+            // Restaurar transición para los swipes posteriores del usuario.
+            requestAnimationFrame(function(){ track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)'; });
+        } else {
+            goToCard(0); // init normal
+        }
         let dtx=0,dty=0,ddx=0,ddy=0,drag=false,dragDir=null;
         wrap.addEventListener('touchstart',e=>{
             dtx=e.touches[0].clientX; dty=e.touches[0].clientY;
@@ -23320,8 +23341,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             `<div style="font-size:42px;font-weight:900;color:${fcol2};font-family:var(--f);line-height:1;">${finalScore}</div>`
             +`<div style="font-size:14px;font-weight:700;color:#fff;font-family:var(--f);">${notaLabel(finalScore)}</div>`
             +`<div style="font-size:10px;color:rgba(255,255,255,.5);text-align:center;font-family:var(--f);line-height:1.5;max-width:240px;">${(act.evalComment||'').split('.').slice(0,2).join('.')}.</div>`
-            +`<div style="font-size:9px;color:rgba(255,255,255,.35);font-family:var(--f);">Evaluación guardada · abre la actividad para ver el análisis completo</div>`
-            +`<button onclick="initEvalSelect()" style="background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:9px;padding:9px 16px;font-family:var(--f);font-size:11px;font-weight:600;cursor:pointer;margin-top:4px;">↩ Evaluar otra actividad</button>`;
+            +`<div style="font-size:9px;color:rgba(255,255,255,.35);font-family:var(--f);">Evaluación guardada ✓</div>`
+            // [Retoque Míster] Dos acciones: ver la evaluación en la actividad
+            // (abre el visor directo en la card 4 = Evaluación, idx 3) o evaluar
+            // otra. Botón principal destacado, secundario más discreto.
+            +`<div style="display:flex;flex-direction:column;gap:8px;width:100%;max-width:260px;margin-top:4px;">`
+            +  `<button id="eval-goto-act-btn" style="background:${fcol2};color:#fff;border:none;border-radius:9px;padding:11px 16px;font-family:var(--f);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;cursor:pointer;">👁 Ver evaluación en la actividad</button>`
+            +  `<button id="eval-again-btn" style="background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:9px;padding:9px 16px;font-family:var(--f);font-size:11px;font-weight:600;cursor:pointer;">↩ Evaluar otra actividad</button>`
+            +`</div>`;
+        // Listeners por JS (no onclick inline) para capturar el objeto act por closure.
+        var _gotoBtn = document.getElementById('eval-goto-act-btn');
+        if (_gotoBtn) _gotoBtn.addEventListener('click', function(){
+            // Card 3 = Evaluación (existe porque act.evalScores ya está seteado).
+            window.openActivityDetail(act, 3);
+        });
+        var _againBtn = document.getElementById('eval-again-btn');
+        if (_againBtn) _againBtn.addEventListener('click', initEvalSelect);
         showToast('✅ '+finalScore+'/100 — '+notaLabel(finalScore), 4000);
     }
 
