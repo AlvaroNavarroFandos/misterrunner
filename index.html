@@ -21020,12 +21020,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // (streams ya en cache pero photos no), también muestra spinner para no
     // pegar un parpadeo cuando las URLs llegan post-render.
     async function openActivityDetail(act) {
-        // [Efectos UI] Status bar negra mientras el visor está abierto. El visor
-        // nunca gestionaba su theme-color, así que en primera apertura (rama
-        // spinner) la barra de estado conservaba el color de la pantalla previa
-        // (dorado/crimson) y nunca cogía el negro. Lo fijamos aquí, al entrar,
-        // antes de cualquier rama. Se restaura en _detCloseAnimated.
-        try { _setThemeColor('#000000'); } catch(_){}
         var isBulkPendingStreams = act && act._source === 'bulk'
             && act._dbActivityId
             && (!act.hrSeries || act.hrSeries.length === 0)
@@ -21036,7 +21030,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             && (!Array.isArray(act._photoUrls) || act._photoUrls.length === 0);
 
         if (isBulkPendingStreams || isBulkPendingPhotos) {
-            // Mostrar overlay de loading inmediato
+            // Mostrar overlay de loading inmediato. El overlay negro (inset:0)
+            // hace el slide-up UNA vez; su interior es el spinner. Cuando lleguen
+            // los datos, el interior se sustituye por el visor real con un fade
+            // (sin re-animar el slide). Así: (a) la barra de estado es negra desde
+            // el primer frame del spinner — el fondo #000 del overlay se ve bajo
+            // la barra translúcida — y (b) no hay doble slide ni parpadeo.
             var loadOv = document.getElementById('act-detail-overlay');
             if (loadOv) loadOv.remove();
             loadOv = document.createElement('div');
@@ -21061,12 +21060,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }));
             }
             try { await Promise.all(tasks); } catch(_){}
-            // [Efectos UI] NO eliminamos el overlay del spinner: ya subió con
-            // slide-up y queremos reutilizarlo para el visor real, así no hay
-            // doble animación (bajar y volver a subir) al sustituir contenido.
-            // Vaciamos su interior (quita el spinner); el visor real se montará
-            // dentro de este mismo overlay con un fade de contenido.
-            if (loadOv && loadOv.parentNode) loadOv.innerHTML = '';
+            // [Efectos UI] Reutilizamos el overlay (ya hizo el slide-up y cubre la
+            // pantalla, barra incluida). El slide-up YA está consolidado: forzamos
+            // su estado final (translateY(0)) por si el await resolvió antes de que
+            // la animación de .40s terminara — sin esto, interrumpir el slide a
+            // media subida dejaba la franja superior sin cubrir. Luego vaciamos el
+            // spinner y dejamos el interior listo para el fade del contenido real.
+            if (loadOv && loadOv.parentNode) {
+                loadOv.classList.remove('mr-fx-hero-in');
+                loadOv.style.transform = 'translateY(0)';
+                loadOv.innerHTML = '';
+            }
         }
 
         const d    = new Date(act.dateStr + 'T12:00:00');
@@ -21080,20 +21084,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const typeColor = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#a78bfa',race:'#e879f9'}[act.type]||'#aaa';
 
         let ov = document.getElementById('act-detail-overlay');
+        var _detReusedOverlay = false;
         if (ov) {
-            // [Efectos UI] El overlay ya está montado y arriba (venía del spinner
-            // de carga). NO re-animamos el slide-up: solo vaciamos restos y
-            // marcamos el contenido para que entre con un fade suave.
-            ov.innerHTML = '';
-            ov.classList.remove('mr-fx-hero-in');
-            ov.classList.add('mr-fx-det-content-in');
-            void ov.offsetWidth; // reflow: reinicia la animación de fade de contenido
+            // [Efectos UI] El overlay del spinner ya cubre la pantalla en
+            // translateY(0) (consolidado arriba). Solo lo dejamos invisible
+            // (opacity 0) para que el contenido real entre con fade vía doble rAF
+            // y no haya parpadeo de "negro vacío → contenido de golpe".
+            ov.style.opacity = '0';
+            _detReusedOverlay = true;
         } else {
             // Apertura directa (streams/fotos ya en memoria): slide-up completo.
             ov = document.createElement('div');
             ov.id = 'act-detail-overlay';
             ov.className = 'det-overlay mr-fx-hero-in';
             document.body.appendChild(ov);
+        }
+        // [Efectos UI] Si reutilizamos el overlay del spinner, el fade-in del
+        // contenido se dispara tras pintar todo el render síncrono que viene a
+        // continuación (header/cards/dots). El doble rAF garantiza que para
+        // cuando se aplica la animación, el visor completo ya está en el DOM:
+        // así el fade va sobre el contenido real y no sobre un overlay vacío.
+        if (_detReusedOverlay) {
+            requestAnimationFrame(function(){
+                requestAnimationFrame(function(){
+                    var _ov = document.getElementById('act-detail-overlay');
+                    if (_ov) {
+                        _ov.style.opacity = '';
+                        _ov.classList.add('mr-fx-det-content-in');
+                    }
+                });
+            });
         }
 
         // Header
@@ -21125,14 +21145,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             + '<button id="det-share-btn" style="width:34px;height:34px;background:rgba(255,255,255,.1);border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>';
         ov.appendChild(hdr);
-        // [Efectos UI] Cierre slide-down (340ms out). Quitamos cualquier clase
-        // de entrada (slide-up o fade de contenido) antes de aplicar la salida.
-        // Restauramos el theme-color al default de la app (la biblioteca no fija
-        // uno propio; #c4881e es el reset usado en openClub/chat/etc).
+        // [Efectos UI] Cierre slide-down (340ms out). Limpiamos las clases y el
+        // transform inline de entrada (el caso reutilizado deja translateY(0)
+        // inline) para que la animación de salida arranque limpia.
         function _detCloseAnimated() {
-            try { _setThemeColor('#c4881e'); } catch(_){}
             ov.classList.remove('mr-fx-hero-in');
             ov.classList.remove('mr-fx-det-content-in');
+            ov.style.transform = '';
+            ov.style.opacity = '';
             ov.classList.add('mr-fx-hero-out');
             setTimeout(function(){ if (ov.parentNode) ov.remove(); }, 340);
         }
