@@ -917,15 +917,15 @@
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, .42);
-        backdrop-filter: blur(0px);
-        -webkit-backdrop-filter: blur(0px);
         z-index: 99990;
         align-items: flex-end;
         justify-content: center;
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        transition: opacity .32s ease-out, visibility .32s ease-out, backdrop-filter .42s ease-out, -webkit-backdrop-filter .42s ease-out;
+        /* transition mínima sólo en opacity/visibility — backdrop-filter no
+           se anima en el ocultado para no mantener el filtro activo. */
+        transition: opacity .32s ease-out, visibility .32s ease-out;
     }
 
     .sheet-backdrop.show {
@@ -934,6 +934,11 @@
         pointer-events: auto;
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
+        /* Solo en .show metemos la transición del filter — así el coste del
+           sistema de blur de Safari iOS solo está activo cuando el sheet
+           se está abriendo, no permanente en los 23 sheets ocultos. */
+        transition: opacity .32s ease-out, visibility .32s ease-out,
+                    backdrop-filter .42s ease-out, -webkit-backdrop-filter .42s ease-out;
     }
 
     /* Cuando hay un sheet abierto, bloqueamos el scroll de la vista activa
@@ -951,21 +956,30 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        /* Sombra premium hacia arriba + highlight interior 1px (capa elevada) */
-        box-shadow:
-            0 -12px 40px rgba(0,0,0,.35),
-            0 -1px 0 rgba(255,255,255,.06) inset;
         /* SPRING iOS: ligero sobrepaso al final para sensación física */
         transform: translateY(100%);
-        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
-        /* NOTA: will-change NO se aplica aquí (23 sheets en el DOM = 23 capas
-           GPU permanentes = app lenta). Se aplica solo mientras el sheet está
-           visible vía .sheet-backdrop.show .sheet más abajo. */
+        /* NOTA: ni box-shadow ni transition ni will-change se aplican aquí.
+           Con 23 sheets en el DOM, mantener box-shadow + transition activos
+           en todos (aunque estén ocultos) cargaba el compositor de Safari iOS
+           y se notaba como lentitud global al cambiar de view (back desde
+           importar entreno, navegación entre pestañas). Todo se aplica solo
+           mientras el sheet está visible vía .sheet-backdrop.show .sheet. */
     }
 
     .sheet-backdrop.show .sheet {
         transform: translateY(0);
         will-change: transform;
+        /* Sombra premium hacia arriba + highlight interior 1px (capa elevada) */
+        box-shadow:
+            0 -12px 40px rgba(0,0,0,.35),
+            0 -1px 0 rgba(255,255,255,.06) inset;
+        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
+    }
+    /* Animación de salida: cuando el backdrop pierde .show, el sheet debe
+       animarse de vuelta a translateY(100%). La transición la pone el estado
+       transitorio que mantenemos un instante via JS (clase .closing). */
+    .sheet-backdrop.closing .sheet {
+        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
     }
 
     /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS */
@@ -975,6 +989,11 @@
         padding: 10px 20px 8px;
         flex-shrink: 0;
         cursor: grab;
+    }
+    /* touch-action:none solo cuando el sheet está visible — antes estaba
+       permanente en los 23 handles y puede interferir con la heurística de
+       gestos de Safari iOS al navegar entre views. */
+    .sheet-backdrop.show .sheet-handle-wrap {
         touch-action: none;
     }
     .sheet-handle-wrap:active { cursor: grabbing; }
@@ -985,6 +1004,8 @@
         background: var(--border);
         border-radius: 999px;
         margin: 0 auto 10px;
+    }
+    .sheet-backdrop.show .sheet-handle {
         transition: background .2s, width .2s;
     }
     .sheet-handle-wrap:active .sheet-handle {
@@ -12525,7 +12546,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
     function closeSheet(id) {
-        document.getElementById(id).classList.remove('show');
+        var bd = document.getElementById(id);
+        if (!bd) return;
+        // [Sheets Premium] Añadimos .closing un instante para preservar la
+        // transition durante la salida. Al quitar .show de golpe, las
+        // propiedades aplicadas SOLO en .show (transition, box-shadow,
+        // will-change) desaparecerían y el sheet saltaría sin animar. La
+        // clase .closing mantiene la transition del transform los .55s
+        // necesarios para que la salida se anime con la curva spring.
+        bd.classList.add('closing');
+        bd.classList.remove('show');
+        setTimeout(function(){ bd.classList.remove('closing'); }, 560);
         // Solo quitamos el lock si no queda ningún otro sheet abierto
         if (!document.querySelector('.sheet-backdrop.show')) {
             document.body.classList.remove('sheet-open');
@@ -25502,27 +25533,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!activePlan) { renderEmptyWeekCalendar(); return; }
         const wk=activePlan.weeks[weekIdx];
         if(!wk) { renderEmptyWeekCalendar(); return; }
-
-        // [Retoque Plan] Precarga idempotente de html2canvas en idle. Cuando el
-        // usuario pulse el botón share, la librería ya estará cargada y la
-        // captura empezará en frío. Sin esto, la primera vez se sumaba el coste
-        // de red al ya pesado html2canvas (~3-4s total). El flag _planH2cWarm
-        // evita relanzar la carga en cada navegación entre semanas.
-        if (typeof html2canvas === 'undefined' && !window._planH2cWarm) {
-            window._planH2cWarm = true;
-            var _warm = function(){
-                if (typeof html2canvas !== 'undefined') return;
-                var s = document.createElement('script');
-                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-                s.async = true;
-                document.head.appendChild(s);
-            };
-            if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(_warm, { timeout: 2000 });
-            } else {
-                setTimeout(_warm, 500);
-            }
-        }
 
         const PHASE_COLOR={base:'#60a5fa',build:'#fbbf24',peak:'#f87171',taper:'#a78bfa',descarga:'#4ade80'};
         const DAY_FULL=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
