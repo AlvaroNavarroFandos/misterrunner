@@ -169,6 +169,63 @@
     @keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
     /* [v8 P.Lib retoques] Shimmer animation para skeleton de Biblioteca con muchas actividades */
     @keyframes mrLibSkelShimmer{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
+
+    /* ───────────────────────────────────────────────────────────────
+       [Pieza 2 · Cards fantasma premium] Skeleton con FORMA de card real
+       (columna track izquierda + título + pill km + 3 stats) y shimmer con
+       tinte DORADO sutil, coherente con el lenguaje visual de la app.
+       Se usa en DOS sitios con la misma pinta:
+         · Camino 1: dentro de renderActivities (render real: filtros/boot/import)
+         · Camino 2: overlay de entrada a biblioteca (handler de nav · ~500ms)
+       Cada "hueso" hereda el shimmer vía .mr-skel-bone. El barrido dorado va
+       en el contenedor para que todos los huesos compartan el mismo gradiente
+       en movimiento (efecto premium uniforme, no cada caja por su cuenta).
+       ─────────────────────────────────────────────────────────────── */
+    .mr-skel-card {
+        display: flex;
+        height: 128px;
+        border-radius: 18px;
+        overflow: hidden;
+        background: var(--card2);
+        border: 1px solid var(--border);
+    }
+    body.dark-mode .mr-skel-card { background: #0c1118; border-color: rgba(255,255,255,.05); }
+    .mr-skel-bone {
+        background: linear-gradient(110deg,
+            rgba(201,168,76,.04) 25%,
+            rgba(201,168,76,.16) 50%,
+            rgba(201,168,76,.04) 75%);
+        background-size: 200% 100%;
+        animation: mrLibSkelShimmer 1.4s linear infinite;
+        border-radius: 6px;
+    }
+    body:not(.dark-mode) .mr-skel-bone {
+        background: linear-gradient(110deg,
+            rgba(196,136,30,.06) 25%,
+            rgba(196,136,30,.20) 50%,
+            rgba(196,136,30,.06) 75%);
+        background-size: 200% 100%;
+    }
+    /* Columna track (izquierda) — bloque grande */
+    .mr-skel-track { width: 124px; flex-shrink: 0; border-radius: 0; }
+    /* Overlay de entrada (Camino 2): se superpone a las cards reales
+       mientras la vista "aterriza", y luego se desvanece. */
+    .mr-skel-overlay {
+        position: absolute;
+        left: 0; right: 0;
+        z-index: 9997;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 0 15px;
+        pointer-events: none;
+        background: var(--bg);
+    }
+    .mr-skel-overlay.mr-skel-fadeout {
+        animation: _fxSkelOverlayOut .28s ease forwards;
+    }
+    @keyframes _fxSkelOverlayOut { 0%{opacity:1;} 100%{opacity:0;} }
+
     /* FASE 5.4 — Overlay de carga para activity detail mientras se descargan streams */
     .det-loading-overlay {
         position: absolute;
@@ -12157,27 +12214,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // una con fade+slide muy sutil.
                         if (_isHeavy) {
                             try {
-                                // Quitar restos previos por si acaso (re-entradas)
+                                // [Pieza 2 · Camino 2] Overlay de cards fantasma sobre
+                                // la lista mientras la vista "aterriza". Reemplaza la
+                                // antigua barra dorada fina (mr-lib-progress) por algo
+                                // mucho más rico: 4 cards fantasma con shimmer dorado,
+                                // alineadas justo donde irán las cards reales. Tapan el
+                                // primer paint de las 291 cards (sin tirón percibido) y
+                                // se desvanecen a los ~500ms con fade. Cero toque a datos.
+                                var _prevOv = document.getElementById('mr-lib-skel-overlay');
+                                if (_prevOv) _prevOv.remove();
+                                // Limpiar también restos del loader antiguo si los hubiera
                                 var _prevProg = document.getElementById('mr-lib-progress');
                                 if (_prevProg) _prevProg.remove();
-                                // 1) Barra de progreso dorada
-                                var _prog = document.createElement('div');
-                                _prog.id = 'mr-lib-progress';
-                                _prog.className = 'mr-lib-progress';
-                                v.appendChild(_prog);
-                                // Cleanup tras 1100ms (1s anim + margen)
-                                setTimeout(function(){
-                                    if (_prog && _prog.parentNode) _prog.parentNode.removeChild(_prog);
-                                }, 1100);
-                                // 2) Stagger reveal de las primeras cards
+
                                 var _actList = document.getElementById('activities-list');
                                 if (_actList) {
+                                    var _ov = document.createElement('div');
+                                    _ov.id = 'mr-lib-skel-overlay';
+                                    _ov.className = 'mr-skel-overlay';
+                                    // Posicionar el overlay justo encima de la lista:
+                                    // top = distancia de la lista al techo del view.
+                                    var _top = _actList.offsetTop;
+                                    _ov.style.top = _top + 'px';
+                                    _ov.style.bottom = '0';
+                                    // 4 cards fantasma (suficientes para llenar el primer viewport)
+                                    var _skelHTML = '';
+                                    for (var _k = 0; _k < 4; _k++) _skelHTML += _mrSkelCardHTML();
+                                    _ov.innerHTML = _skelHTML;
+                                    v.appendChild(_ov);
+                                    // Fade out + cleanup a los 500ms
+                                    setTimeout(function(){
+                                        var _o = document.getElementById('mr-lib-skel-overlay');
+                                        if (_o) {
+                                            _o.classList.add('mr-skel-fadeout');
+                                            setTimeout(function(){
+                                                if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
+                                            }, 300);
+                                        }
+                                    }, 500);
+
+                                    // 2) Stagger reveal de las primeras cards reales (debajo)
                                     _actList.classList.add('mr-lib-staggering');
-                                    // Tras 400ms quitar la clase (suficiente para
-                                    // que las 8 primeras cards completen su entrada
-                                    // 0.28s delay + 0.35s anim = 0.63s, pero con
-                                    // 400ms ya están casi todas dentro y futuros
-                                    // re-renders por filtros/búsquedas no escalonan).
                                     setTimeout(function(){
                                         _actList.classList.remove('mr-lib-staggering');
                                     }, 700);
@@ -19145,6 +19222,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return `<span style="display:inline-block;width:${size}px;height:${size}px;background:${c};border-radius:2px;flex-shrink:0;margin-right:4px;"></span>`;
     }
 
+    // [Pieza 2 · helper único] Devuelve el HTML de UNA card fantasma con forma
+    // de card real: columna track + título + pill km + 3 stats + zapatilla.
+    // Reusado por renderActivities (Camino 1) y por el overlay de entrada a
+    // biblioteca (Camino 2). Sólo presentación; cero lógica/datos.
+    function _mrSkelCardHTML() {
+        return ''
+          + '<div class="mr-skel-card">'
+          +   '<div class="mr-skel-bone mr-skel-track"></div>'
+          +   '<div style="flex:1;padding:9px 10px 9px 12px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">'
+          +     '<div>'
+          +       '<div class="mr-skel-bone" style="height:13px;width:72%;"></div>'
+          +       '<div class="mr-skel-bone" style="height:18px;width:58px;border-radius:20px;margin-top:6px;"></div>'
+          +     '</div>'
+          +     '<div style="display:flex;gap:8px;">'
+          +       '<div style="flex:1;"><div class="mr-skel-bone" style="height:11px;width:80%;"></div><div class="mr-skel-bone" style="height:7px;width:60%;margin-top:4px;"></div></div>'
+          +       '<div style="flex:1;"><div class="mr-skel-bone" style="height:11px;width:80%;"></div><div class="mr-skel-bone" style="height:7px;width:60%;margin-top:4px;"></div></div>'
+          +       '<div style="flex:1;"><div class="mr-skel-bone" style="height:11px;width:80%;"></div><div class="mr-skel-bone" style="height:7px;width:60%;margin-top:4px;"></div></div>'
+          +     '</div>'
+          +     '<div class="mr-skel-bone" style="height:9px;width:45%;"></div>'
+          +   '</div>'
+          + '</div>';
+    }
+    window._mrSkelCardHTML = _mrSkelCardHTML;
+
         function renderActivities() {
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
@@ -19167,16 +19268,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _mrLibSorted = [...filtered].sort((a, b) => new Date(b.dateStr + "T12:00:00") - new Date(a.dateStr + "T12:00:00"));
         const _mrLibTotal  = _mrLibSorted.length;
 
-        // [v8 P.Lib retoques] Skeleton placeholders + chunked rendering para
-        // no bloquear main thread con muchas actividades. Si hay >15, mostramos
-        // 6 skeletons inmediatamente y renderizamos en chunks de 8 por frame.
+        // [v8 P.Lib retoques · Pieza 2] Skeleton placeholders + chunked rendering
+        // para no bloquear main thread con muchas actividades. Si hay >15, mostramos
+        // 6 cards fantasma ESTRUCTURADAS (forma de card real + shimmer dorado) y
+        // renderizamos en chunks de 8 por frame. La clase .mr-lib-skel se conserva
+        // como gancho de cleanup (se quitan antes del primer chunk real).
         if (_mrLibTotal > 15) {
             const _skelCount = Math.min(6, _mrLibTotal);
             const _skelFrag = document.createDocumentFragment();
             for (let _si = 0; _si < _skelCount; _si++) {
                 const _skel = document.createElement('div');
                 _skel.className = 'mr-lib-skel';
-                _skel.style.cssText = 'height:150px;border-radius:18px;background:linear-gradient(110deg,var(--card2) 25%,var(--bsoft) 50%,var(--card2) 75%);background-size:200% 100%;animation:mrLibSkelShimmer 1.4s linear infinite;';
+                _skel.innerHTML = _mrSkelCardHTML();
                 _skelFrag.appendChild(_skel);
             }
             list.appendChild(_skelFrag);
