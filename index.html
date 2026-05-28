@@ -226,7 +226,12 @@
     }
     @keyframes _fxSkelOverlayOut { 0%{opacity:1;} 100%{opacity:0;} }
 
-    /* FASE 5.4 — Overlay de carga para activity detail mientras se descargan streams */
+    /* FASE 5.4 — Overlay de carga para activity detail mientras se descargan streams.
+       [Efectos UI] Antes tenía animación _fxToastIn 0.18s, pero ese keyframe usa
+       translate(-50%) (pensado para toasts centrados con left:50%); aquí el overlay
+       es inset:0 (ancho completo), así que el -50% lo empujaba media pantalla a la
+       izquierda y se recolocaba al centro = deslizamiento lateral feo superpuesto al
+       slide-up del padre. Se elimina: el padre .det-overlay ya hace el slide-up. */
     .det-loading-overlay {
         position: absolute;
         inset: 0;
@@ -237,7 +242,6 @@
         justify-content: center;
         z-index: 100;
         backdrop-filter: blur(4px);
-        animation: _fxToastIn 0.18s ease-out;
     }
     .det-loading-overlay .det-loading-spinner {
         width: 36px;
@@ -21016,6 +21020,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // (streams ya en cache pero photos no), también muestra spinner para no
     // pegar un parpadeo cuando las URLs llegan post-render.
     async function openActivityDetail(act) {
+        // [Efectos UI] Status bar negra mientras el visor está abierto. El visor
+        // nunca gestionaba su theme-color, así que en primera apertura (rama
+        // spinner) la barra de estado conservaba el color de la pantalla previa
+        // (dorado/crimson) y nunca cogía el negro. Lo fijamos aquí, al entrar,
+        // antes de cualquier rama. Se restaura en _detCloseAnimated.
+        try { _setThemeColor('#000000'); } catch(_){}
         var isBulkPendingStreams = act && act._source === 'bulk'
             && act._dbActivityId
             && (!act.hrSeries || act.hrSeries.length === 0)
@@ -21117,7 +21127,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         ov.appendChild(hdr);
         // [Efectos UI] Cierre slide-down (340ms out). Quitamos cualquier clase
         // de entrada (slide-up o fade de contenido) antes de aplicar la salida.
+        // Restauramos el theme-color al default de la app (la biblioteca no fija
+        // uno propio; #c4881e es el reset usado en openClub/chat/etc).
         function _detCloseAnimated() {
+            try { _setThemeColor('#c4881e'); } catch(_){}
             ov.classList.remove('mr-fx-hero-in');
             ov.classList.remove('mr-fx-det-content-in');
             ov.classList.add('mr-fx-hero-out');
