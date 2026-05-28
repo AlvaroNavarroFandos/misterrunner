@@ -334,26 +334,32 @@
         will-change: transform, filter;
     }
 
-    /* ────────────────────────────────────────────────────────────────
-       [NAV · transición premium entre pestañas vía SWIPE]
-       Solo para swipe horizontal en #nav (NO para tap simple, que conserva
-       el fade vertical mr-fx-view-in). Mecánica idéntica al toggle del Plan:
-       la vista actual sale (out) y la nueva entra (in) en dirección opuesta.
-       Magnitud ±60px (mismo lenguaje que el toggle Semana↔Mes ya validado).
-       Convención: avanzar a pestaña a la DERECHA del array (_swipeDir='l')
-       → out por izquierda, in desde derecha. Retroceder → invertido.
-       NO se aplica a #view-activities (biblioteca · regla férrea 291 cards):
-       esa conserva su entrada propia. NO reutiliza las clases del Club ni
-       las del Plan (clases independientes para no acoplar).
-       ──────────────────────────────────────────────────────────────── */
-    @keyframes _fxNavOutLeft  { 0%{opacity:1;transform:translateX(0)} 100%{opacity:0;transform:translateX(-60px)} }
-    @keyframes _fxNavOutRight { 0%{opacity:1;transform:translateX(0)} 100%{opacity:0;transform:translateX(60px)}  }
-    @keyframes _fxNavInRight  { 0%{opacity:0;transform:translateX(60px)}  100%{opacity:1;transform:translateX(0)} }
-    @keyframes _fxNavInLeft   { 0%{opacity:0;transform:translateX(-60px)} 100%{opacity:1;transform:translateX(0)} }
-    .mr-fx-nav-out-l { animation: _fxNavOutLeft  .18s cubic-bezier(.55,.06,.68,.19) both; }
-    .mr-fx-nav-out-r { animation: _fxNavOutRight .18s cubic-bezier(.55,.06,.68,.19) both; }
-    .mr-fx-nav-in-r  { animation: _fxNavInRight  .26s cubic-bezier(.22,.61,.36,1)  both; }
-    .mr-fx-nav-in-l  { animation: _fxNavInLeft   .26s cubic-bezier(.22,.61,.36,1)  both; }
+    /* ───────────────────────────────────────────────────────────────
+       [NAV · Pieza 1 · CARRUSEL REAL] Transición entre pestañas vía SWIPE.
+       Las dos vistas (saliente + entrante) coexisten posicionadas absolute
+       dentro de #app y se deslizan JUNTAS como una cinta, SÓLIDAS (sin tocar
+       opacity → nada de difuminado/aparición). Recorrido completo 100%.
+       Solo swipe (no tap). NO se aplica a #view-activities (regla 291 cards).
+       Mecánica: el JS posiciona ambas vistas, fuerza reflow y añade la clase
+       de destino; la transición CSS las anima a la vez. Fondo sólido por view
+       para que no se transparente la de detrás durante el deslizamiento.
+       ─────────────────────────────────────────────────────────────── */
+    .mr-nav-carousel {
+        position: absolute !important;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex !important;
+        background: var(--bg);
+        will-change: transform;
+        transition: transform .32s cubic-bezier(.32,.72,0,1);
+    }
+    /* Estado inicial (antes de animar) según rol y dirección */
+    .mr-nav-old        { transform: translateX(0); z-index: 5; }
+    .mr-nav-new-fromR  { transform: translateX(100%);  z-index: 6; } /* entra desde la derecha */
+    .mr-nav-new-fromL  { transform: translateX(-100%); z-index: 6; } /* entra desde la izquierda */
+    /* Estado final (clase que dispara la animación) */
+    .mr-nav-toLeft  { transform: translateX(-100%) !important; } /* saliente se va a la izquierda */
+    .mr-nav-toRight { transform: translateX(100%)  !important; } /* saliente se va a la derecha */
+    .mr-nav-settle  { transform: translateX(0)     !important; } /* entrante se asienta en 0 */
 
 /* APP */
     #app {
@@ -12174,23 +12180,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // a la vez sin tirones. El resto de vistas mantienen la
                     // animación direccional editorial.
                     try {
-                        v.classList.remove('mr-fx-view-in', 'mr-fx-view-slide-l', 'mr-fx-view-slide-r',
-                                           'mr-fx-nav-in-l', 'mr-fx-nav-in-r', 'mr-fx-nav-out-l', 'mr-fx-nav-out-r');
+                        v.classList.remove('mr-fx-view-in', 'mr-fx-view-slide-l', 'mr-fx-view-slide-r');
                         var _isHeavy = (v.id === 'view-activities');
                         // Forzar reflow para reiniciar la animación
                         void v.offsetWidth;
                         if (_useNavFx) {
-                            // [NAV · Pieza 1] Entrada premium horizontal (out+in).
-                            // _swipeDir='l' (avanzar) → in desde la derecha.
-                            // _swipeDir='r' (retroceder) → in desde la izquierda.
-                            if (_swipeDir === 'l') v.classList.add('mr-fx-nav-in-r');
-                            else                   v.classList.add('mr-fx-nav-in-l');
-                            // Cleanup de la clase in al terminar (evita artefactos)
-                            (function(_vv){
-                                setTimeout(function(){
-                                    try { _vv.classList.remove('mr-fx-nav-in-l','mr-fx-nav-in-r'); } catch(_){}
-                                }, 300);
-                            })(v);
+                            // [NAV · Pieza 1 · CARRUSEL] No aplicamos animación aquí:
+                            // el deslizamiento lo gestiona el bloque carrusel (abajo),
+                            // que ya posicionó y animó ambas vistas. Esta rama solo
+                            // garantiza que la vista entrante quede limpia de clases
+                            // de entrada antiguas (fade/slide) para no superponer FX.
                         }
                         else if (_isHeavy)          v.classList.add('mr-fx-view-in');
                         else if (_swipeDir === 'l') v.classList.add('mr-fx-view-slide-l');
@@ -12237,9 +12236,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     var _top = _actList.offsetTop;
                                     _ov.style.top = _top + 'px';
                                     _ov.style.bottom = '0';
-                                    // 4 cards fantasma (suficientes para llenar el primer viewport)
+                                    // 3 cards fantasma (altura exacta de card real)
                                     var _skelHTML = '';
-                                    for (var _k = 0; _k < 4; _k++) _skelHTML += _mrSkelCardHTML();
+                                    for (var _k = 0; _k < 3; _k++) _skelHTML += _mrSkelCardHTML();
                                     _ov.innerHTML = _skelHTML;
                                     v.appendChild(_ov);
                                     // Fade out + cleanup a los 500ms
@@ -12298,20 +12297,68 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             });
             }; // fin _applyViewSwitch
 
-            // [NAV · Pieza 1] Invocación. Si modo nav-fx: aplicar OUT a la vista
-            // origen, esperar 180ms (duración del out) y luego ejecutar el switch
-            // (que aplica el IN). Si no: ejecutar el switch ya mismo (igual que siempre).
-            if (_useNavFx && _oldView) {
-                _oldView.classList.remove('mr-fx-nav-out-l','mr-fx-nav-out-r','mr-fx-nav-in-l','mr-fx-nav-in-r');
-                void _oldView.offsetWidth;
-                // _swipeDir='l' (avanzar) → out por la izquierda. 'r' → out por la derecha.
-                _oldView.classList.add(_swipeDir === 'l' ? 'mr-fx-nav-out-l' : 'mr-fx-nav-out-r');
-                (function(_ov){
-                    setTimeout(function(){
-                        try { _ov.classList.remove('mr-fx-nav-out-l','mr-fx-nav-out-r'); } catch(_){}
-                        _applyViewSwitch();
-                    }, 180);
-                })(_oldView);
+            // [NAV · Pieza 1 · CARRUSEL REAL] Si modo nav-fx: las dos vistas se
+            // deslizan JUNTAS como una cinta, sólidas, sin tocar opacity (nada de
+            // difuminado). La saliente se va por un lado y la entrante llega por el
+            // otro a la vez, recorrido completo. Al terminar se restaura el sistema
+            // normal (.active en la nueva). Si no es nav-fx: switch directo de siempre.
+            var _newView = document.getElementById(_newViewId);
+            if (_useNavFx && _oldView && _newView && _oldView !== _newView) {
+                // Guard anti-doble-animación: si ya hay un carrusel en curso, lo
+                // resolvemos instantáneo antes de empezar otro (tap/swipe rápidos).
+                if (window.__mrNavCarouselBusy) {
+                    try { _mrNavCarouselCleanup(); } catch(_){}
+                }
+                window.__mrNavCarouselBusy = true;
+
+                // Dirección: 'l' (avanzar) → saliente se va a la IZQUIERDA, entrante
+                // llega desde la DERECHA. 'r' (retroceder) → al revés.
+                var _toClass   = (_swipeDir === 'l') ? 'mr-nav-toLeft'  : 'mr-nav-toRight';
+                var _fromClass = (_swipeDir === 'l') ? 'mr-nav-new-fromR' : 'mr-nav-new-fromL';
+
+                // 1) Montar ambas como capas absolute dentro de #app.
+                //    La entrante se hace visible (display:flex) y se posiciona fuera.
+                _newView.classList.add('mr-nav-carousel', _fromClass);
+                _newView.style.display = 'flex';
+                _newView.scrollTop = 0;
+                _oldView.classList.add('mr-nav-carousel', 'mr-nav-old');
+
+                // Función de limpieza: quita clases de carrusel, restaura estilos y
+                // aplica el switch lógico real (active/inactive) al sistema normal.
+                var _carouselDone = false;
+                window._mrNavCarouselCleanup = function _mrNavCarouselCleanup() {
+                    if (_carouselDone) return;
+                    _carouselDone = true;
+                    try {
+                        _oldView.classList.remove('mr-nav-carousel','mr-nav-old','mr-nav-toLeft','mr-nav-toRight');
+                        _newView.classList.remove('mr-nav-carousel','mr-nav-new-fromR','mr-nav-new-fromL','mr-nav-settle');
+                        _oldView.style.transform = '';
+                        _newView.style.transform = '';
+                        _newView.style.display = '';
+                    } catch(_){}
+                    // Switch lógico real (sin animación; las vistas ya están en su sitio)
+                    try { _applyViewSwitch(); } catch(_){}
+                    window.__mrNavCarouselBusy = false;
+                };
+
+                // 2) Forzar reflow para fijar el estado inicial y luego disparar la
+                //    transición añadiendo las clases de destino en el siguiente frame.
+                void _newView.offsetWidth;
+                requestAnimationFrame(function(){
+                    _oldView.classList.add(_toClass);      // saliente → fuera
+                    _newView.classList.remove(_fromClass);
+                    _newView.classList.add('mr-nav-settle'); // entrante → 0
+                });
+
+                // 3) Al acabar la transición de la entrante, limpiar. transitionend
+                //    + fallback por timeout (por si el evento no dispara en algún caso).
+                var _onEnd = function(ev){
+                    if (ev && ev.propertyName && ev.propertyName !== 'transform') return;
+                    _newView.removeEventListener('transitionend', _onEnd);
+                    _mrNavCarouselCleanup();
+                };
+                _newView.addEventListener('transitionend', _onEnd);
+                setTimeout(function(){ try { _mrNavCarouselCleanup(); } catch(_){} }, 420);
             } else {
                 _applyViewSwitch();
             }
