@@ -894,47 +894,23 @@
          frenando). Sustituye al translateY(40px) + scale(.96) + opacity que se
          sentía plano y "fade-in" en vez de "subida desde abajo".
        - Sombra premium hacia arriba + highlight interior de 1px para marcar capa.
-       - El contenido del fondo (.view.active) escala a .93 + se oscurece, dando
-         sensación tipo iOS Notas / Apple Music. Aplicado vía body.sheet-open
-         (ya existía como lock de scroll, ahora también triggea la escala).
        - Handle: zona ampliada (touch-action:none) preparada para swipe-to-dismiss
          desde JS. Se ensancha y oscurece al tocarse para pista visual.
        Nombres de clases CONSERVADOS (.sheet, .sheet-backdrop, .sheet-handle,
        .sheet-handle-wrap, .sheet-body, .sheet-title) para no romper los muchos
-       sitios que las usan ni la API openSheet/closeSheet. */
+       sitios que las usan ni la API openSheet/closeSheet.
+       NOTA: la escala del fondo (.view.active) se eliminó por causar bugs
+       visuales (Home en blanco al volver) — ver bloque siguiente. */
 
-    /* Escala del fondo cuando hay sheet abierto: las pestañas ya estaban con
-       overflow:hidden por body.sheet-open; aquí añadimos la transformación.
-       Se aplica a .view.active porque .view (no activa) tiene display:none y
-       la nav (#nav) es hermana de .view y queda intacta (no se escala).
-
-       IMPORTANTE: transition y will-change SOLO se aplican cuando hay un sheet
-       activo (body.sheet-open). Antes estaban en .view.active "siempre",
-       y dejaban una capa GPU dedicada y el sistema de filtros activo
-       permanentemente sobre la pestaña visible → toda la app se sentía lenta
-       (swipes entre pestañas, scroll, etc.) después de usar un sheet, porque
-       el navegador mantenía esa carga aunque no hiciera falta. */
-    body.sheet-open .view.active {
-        transform: scale(.93) translateY(8px);
-        border-radius: 14px;
-        filter: brightness(.78);
-        transform-origin: 50% 0%;
-        transition: transform .42s cubic-bezier(.32,.72,0,1),
-                    border-radius .42s cubic-bezier(.32,.72,0,1),
-                    filter .3s ease-out;
-        will-change: transform, filter;
-    }
-    /* Cuando se cierra el sheet, body.sheet-open desaparece y la vista debe
-       volver a su estado SIN transición instantánea (no queremos un "salto"
-       al cerrar). Para que la vuelta sí se anime usamos una transición
-       específica activada por la clase ".mr-sheet-closing" que ponemos un
-       instante (ver JS closeSheet). Una vez termina, todo queda limpio. */
-    body.mr-sheet-closing .view.active {
-        transform-origin: 50% 0%;
-        transition: transform .42s cubic-bezier(.32,.72,0,1),
-                    border-radius .42s cubic-bezier(.32,.72,0,1),
-                    filter .3s ease-out;
-    }
+    /* [Sesión Sheets Premium · Rollback v2] La escala del fondo (.view.active
+       a scale 0.93 + filter brightness) se ELIMINA porque dejaba estados
+       transitorios/residuales en la pestaña activa que causaban bugs visuales
+       (Home en blanco al volver de un sheet) y sensación de lentitud incluso
+       tras volver. Por seguridad, NO tocamos para nada las .view: la nav y el
+       carrusel entre pestañas vuelven a ser zona intocada por los sheets.
+       El efecto premium se mantiene en el SHEET en sí (spring iOS, sombra,
+       handle, swipe-to-dismiss), que sigue dando sensación de capa elevada
+       sin riesgos en las pestañas. */
 
     .sheet-backdrop {
         display: flex;
@@ -12522,13 +12498,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             wasReattached = true;
         }
         document.body.classList.add('sheet-open');
-        // Cancelar cualquier transición de cierre pendiente (apertura inmediata
-        // tras un cierre o cuando se encadenan sheets).
-        if (_mrSheetClosingTimer) {
-            clearTimeout(_mrSheetClosingTimer);
-            _mrSheetClosingTimer = null;
-            document.body.classList.remove('mr-sheet-closing');
-        }
         // [Sesión Sheets Premium] Asegurar bind del swipe-to-dismiss por si el
         // sheet se creó/reattachó después del DOMContentLoaded inicial. Es
         // idempotente (guard dataset.mrSwipeBound), así que llamar de más no
@@ -12555,26 +12524,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             applyShow();
         }
     }
-    var _mrSheetClosingTimer = null;
     function closeSheet(id) {
         document.getElementById(id).classList.remove('show');
         // Solo quitamos el lock si no queda ningún otro sheet abierto
         if (!document.querySelector('.sheet-backdrop.show')) {
-            // [Sesión Sheets Premium] Al cerrar, body.sheet-open desaparece y la
-            // pestaña pierde su transform/filter inmediatamente. Para que la
-            // vuelta se ANIME (no salte), añadimos mr-sheet-closing un instante
-            // — solo aplica la transición, sin transform ni will-change residual.
-            // Tras la duración de la animación quitamos todo: la pestaña vuelve
-            // a su estado limpio SIN will-change permanente. Esto evita la
-            // lentitud que se notaba después de usar un sheet (capa GPU + filtro
-            // mantenidos por el navegador en .view.active aunque no hicieran falta).
             document.body.classList.remove('sheet-open');
-            document.body.classList.add('mr-sheet-closing');
-            if (_mrSheetClosingTimer) clearTimeout(_mrSheetClosingTimer);
-            _mrSheetClosingTimer = setTimeout(function(){
-                document.body.classList.remove('mr-sheet-closing');
-                _mrSheetClosingTimer = null;
-            }, 450);
         }
     }
     // [Sesión Sheets Premium] Cerrar tocando el backdrop ahora pasa por closeSheet
