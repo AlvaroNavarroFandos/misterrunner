@@ -12136,6 +12136,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window.applyDebugVisibility = applyDebugVisibility;
 
     /* ── NAV ── */
+    // [Pieza 2 · helper] Monta el overlay de cards fantasma (skeleton) sobre la
+    // vista de biblioteca pasada como argumento. Posiciona el overlay justo donde
+    // empieza la lista de actividades y lo retira a los ~500ms con fade. Reutilizado
+    // en dos contextos: entrada normal/tap (desde _applyViewSwitch) y entrada por
+    // carrusel-swipe (montado ANTES de deslizar, para tapar las 291 cards durante
+    // todo el movimiento). Idempotente: limpia cualquier overlay previo.
+    function _mrLibMountSkeleton(viewEl) {
+        if (!viewEl) return;
+        try {
+            var _prevOv = document.getElementById('mr-lib-skel-overlay');
+            if (_prevOv) _prevOv.remove();
+            var _prevProg = document.getElementById('mr-lib-progress');
+            if (_prevProg) _prevProg.remove();
+
+            var _actList = viewEl.querySelector('#activities-list') || document.getElementById('activities-list');
+            var _ov = document.createElement('div');
+            _ov.id = 'mr-lib-skel-overlay';
+            _ov.className = 'mr-skel-overlay';
+            // top = distancia de la lista al techo del view (si existe); fallback 132px
+            // (cabecera + filtros + cuadro de stats) si la lista aún no tiene layout.
+            var _top = (_actList && _actList.offsetTop) ? _actList.offsetTop : 132;
+            _ov.style.top = _top + 'px';
+            _ov.style.bottom = '0';
+            var _skelHTML = '';
+            for (var _k = 0; _k < 3; _k++) _skelHTML += _mrSkelCardHTML();
+            _ov.innerHTML = _skelHTML;
+            viewEl.appendChild(_ov);
+            // Fade out + cleanup a los 500ms
+            setTimeout(function(){
+                var _o = document.getElementById('mr-lib-skel-overlay');
+                if (_o) {
+                    _o.classList.add('mr-skel-fadeout');
+                    setTimeout(function(){
+                        if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
+                    }, 300);
+                }
+            }, 500);
+        } catch(_) {}
+    }
+    window._mrLibMountSkeleton = _mrLibMountSkeleton;
+
     document.querySelectorAll('.nb').forEach(btn => {
         btn.addEventListener('click', () => {
             // [FASE 6 · Fix A] Leer swipeDir ANTES de cualquier mutación DOM, dentro
@@ -12164,9 +12205,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _tTarget = btn.dataset.target;
             var _oldView = document.querySelector('.view.active');
             var _newViewId = 'view-' + _tTarget;
-            var _originHeavy = _oldView && _oldView.id === 'view-activities';
             var _destHeavy   = _newViewId === 'view-activities';
-            var _useNavFx = (_swipeDir === 'l' || _swipeDir === 'r') && !_originHeavy && !_destHeavy;
+            // [Pieza 1 · biblioteca incluida · Opción Segura] El carrusel ya NO
+            // excluye biblioteca. Para evitar tirones al mover 291 cards durante el
+            // deslizamiento, cuando biblioteca es la ENTRANTE montamos el skeleton
+            // overlay ANTES de deslizar (tapa las cards todo el trayecto). El
+            // transform va en GPU (compositor), así que mover la capa ya pintada es
+            // barato; el skeleton cubre el riesgo de repaints del IntersectionObserver.
+            var _useNavFx = (_swipeDir === 'l' || _swipeDir === 'r');
 
             // Cuerpo del cambio de vista (idéntico al de siempre). Se ejecuta ya
             // mismo (modo normal) o diferido 180ms (tras el out, modo nav-fx).
@@ -12218,50 +12264,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // VEN las cards desde el primer frame, entrando una a
                         // una con fade+slide muy sutil.
                         if (_isHeavy) {
+                            // [Pieza 2 · Camino 2] Si NO venimos por carrusel, montar
+                            // aquí el skeleton (caso tap o entrada normal). En modo
+                            // carrusel el skeleton ya se montó ANTES de deslizar (ver
+                            // bloque carrusel), así que no lo duplicamos.
+                            if (!_useNavFx) {
+                                try { _mrLibMountSkeleton(v); } catch(_) {}
+                            }
+                            // Stagger reveal de las primeras cards reales (debajo)
                             try {
-                                // [Pieza 2 · Camino 2] Overlay de cards fantasma sobre
-                                // la lista mientras la vista "aterriza". Reemplaza la
-                                // antigua barra dorada fina (mr-lib-progress) por algo
-                                // mucho más rico: 4 cards fantasma con shimmer dorado,
-                                // alineadas justo donde irán las cards reales. Tapan el
-                                // primer paint de las 291 cards (sin tirón percibido) y
-                                // se desvanecen a los ~500ms con fade. Cero toque a datos.
-                                var _prevOv = document.getElementById('mr-lib-skel-overlay');
-                                if (_prevOv) _prevOv.remove();
-                                // Limpiar también restos del loader antiguo si los hubiera
-                                var _prevProg = document.getElementById('mr-lib-progress');
-                                if (_prevProg) _prevProg.remove();
-
-                                var _actList = document.getElementById('activities-list');
-                                if (_actList) {
-                                    var _ov = document.createElement('div');
-                                    _ov.id = 'mr-lib-skel-overlay';
-                                    _ov.className = 'mr-skel-overlay';
-                                    // Posicionar el overlay justo encima de la lista:
-                                    // top = distancia de la lista al techo del view.
-                                    var _top = _actList.offsetTop;
-                                    _ov.style.top = _top + 'px';
-                                    _ov.style.bottom = '0';
-                                    // 3 cards fantasma (altura exacta de card real)
-                                    var _skelHTML = '';
-                                    for (var _k = 0; _k < 3; _k++) _skelHTML += _mrSkelCardHTML();
-                                    _ov.innerHTML = _skelHTML;
-                                    v.appendChild(_ov);
-                                    // Fade out + cleanup a los 500ms
+                                var _actListS = document.getElementById('activities-list');
+                                if (_actListS) {
+                                    _actListS.classList.add('mr-lib-staggering');
                                     setTimeout(function(){
-                                        var _o = document.getElementById('mr-lib-skel-overlay');
-                                        if (_o) {
-                                            _o.classList.add('mr-skel-fadeout');
-                                            setTimeout(function(){
-                                                if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
-                                            }, 300);
-                                        }
-                                    }, 500);
-
-                                    // 2) Stagger reveal de las primeras cards reales (debajo)
-                                    _actList.classList.add('mr-lib-staggering');
-                                    setTimeout(function(){
-                                        _actList.classList.remove('mr-lib-staggering');
+                                        _actListS.classList.remove('mr-lib-staggering');
                                     }, 700);
                                 }
                             } catch(_) {}
@@ -12328,6 +12344,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 _newView.style.display = 'flex';
                 _newView.scrollTop = 0;
                 _oldView.classList.add('mr-nav-carousel', 'mr-nav-old');
+
+                // [Opción Segura] Si la ENTRANTE es biblioteca, montar el skeleton
+                // overlay AHORA (antes de deslizar) sobre _newView. Como _newView ya
+                // es position:absolute (mr-nav-carousel), el overlay viaja con ella y
+                // tapa las 291 cards durante TODO el deslizamiento → cero tirón visible.
+                // El propio helper lo retira con fade a los ~500ms (tras asentarse).
+                if (_destHeavy) {
+                    try { _mrLibMountSkeleton(_newView); } catch(_) {}
+                }
 
                 // Función de limpieza: quita clases de carrusel, restaura estilos y
                 // aplica el switch lógico real (active/inactive) al sistema normal.
