@@ -887,12 +887,44 @@
          (400ms cubic-bezier estilo iOS espring)
        El uso de visibility + pointer-events permite transiciones reales
        (display:none rompe transitions) sin romper el comportamiento de
-       openSheet/closeSheet existentes. */
+    /* [Sesión Sheets Premium] Sistema de sheets renovado:
+       - Backdrop: opacity 0→1 + blur 0→16px (.32s ease-out)
+       - Sheet: translateY(100%) → 0 con SPRING iOS .55s cubic-bezier(.22,.94,.32,1.04)
+         que sobrepasa muy ligeramente al final para sensación física (no llega
+         frenando). Sustituye al translateY(40px) + scale(.96) + opacity que se
+         sentía plano y "fade-in" en vez de "subida desde abajo".
+       - Sombra premium hacia arriba + highlight interior de 1px para marcar capa.
+       - El contenido del fondo (.view.active) escala a .93 + se oscurece, dando
+         sensación tipo iOS Notas / Apple Music. Aplicado vía body.sheet-open
+         (ya existía como lock de scroll, ahora también triggea la escala).
+       - Handle: zona ampliada (touch-action:none) preparada para swipe-to-dismiss
+         desde JS. Se ensancha y oscurece al tocarse para pista visual.
+       Nombres de clases CONSERVADOS (.sheet, .sheet-backdrop, .sheet-handle,
+       .sheet-handle-wrap, .sheet-body, .sheet-title) para no romper los muchos
+       sitios que las usan ni la API openSheet/closeSheet. */
+
+    /* Escala del fondo cuando hay sheet abierto: las pestañas ya estaban con
+       overflow:hidden por body.sheet-open; aquí añadimos la transformación.
+       Se aplica a .view.active porque .view (no activa) tiene display:none y
+       la nav (#nav) es hermana de .view y queda intacta (no se escala). */
+    .view.active {
+        transform-origin: 50% 0%;
+        transition: transform .42s cubic-bezier(.32,.72,0,1),
+                    border-radius .42s cubic-bezier(.32,.72,0,1),
+                    filter .3s ease-out;
+        will-change: transform, filter;
+    }
+    body.sheet-open .view.active {
+        transform: scale(.93) translateY(8px);
+        border-radius: 14px;
+        filter: brightness(.78);
+    }
+
     .sheet-backdrop {
         display: flex;
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, .35);
+        background: rgba(0, 0, 0, .42);
         backdrop-filter: blur(0px);
         -webkit-backdrop-filter: blur(0px);
         z-index: 99990;
@@ -901,15 +933,15 @@
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        transition: opacity .3s ease-out, visibility .3s ease-out, backdrop-filter .4s ease-out, -webkit-backdrop-filter .4s ease-out;
+        transition: opacity .32s ease-out, visibility .32s ease-out, backdrop-filter .42s ease-out, -webkit-backdrop-filter .42s ease-out;
     }
 
     .sheet-backdrop.show {
         opacity: 1;
         visibility: visible;
         pointer-events: auto;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
     }
 
     /* Cuando hay un sheet abierto, bloqueamos el scroll de la vista activa
@@ -923,31 +955,46 @@
         max-width: 500px;
         min-height: auto;
         max-height: min(94dvh, 820px);
-        border-radius: 20px 20px 0 0;
+        border-radius: 22px 22px 0 0;
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        transform: translateY(40px) scale(.96);
-        opacity: 0;
-        transition: transform .4s cubic-bezier(.16, 1, .3, 1), opacity .3s ease-out
+        /* Sombra premium hacia arriba + highlight interior 1px (capa elevada) */
+        box-shadow:
+            0 -12px 40px rgba(0,0,0,.35),
+            0 -1px 0 rgba(255,255,255,.06) inset;
+        /* SPRING iOS: ligero sobrepaso al final para sensación física */
+        transform: translateY(100%);
+        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
+        will-change: transform;
     }
 
     .sheet-backdrop.show .sheet {
-        transform: translateY(0) scale(1);
-        opacity: 1;
+        transform: translateY(0);
     }
+
+    /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS */
+    .sheet.dragging { transition: none; }
 
     .sheet-handle-wrap {
-        padding: 12px 20px 8px;
-        flex-shrink: 0
+        padding: 10px 20px 8px;
+        flex-shrink: 0;
+        cursor: grab;
+        touch-action: none;
     }
+    .sheet-handle-wrap:active { cursor: grabbing; }
 
     .sheet-handle {
-        width: 36px;
-        height: 4px;
+        width: 42px;
+        height: 5px;
         background: var(--border);
         border-radius: 999px;
-        margin: 0 auto 12px
+        margin: 0 auto 10px;
+        transition: background .2s, width .2s;
+    }
+    .sheet-handle-wrap:active .sheet-handle {
+        background: var(--tm);
+        width: 54px;
     }
 
     .sheet-title {
@@ -12456,6 +12503,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             wasReattached = true;
         }
         document.body.classList.add('sheet-open');
+        // [Sesión Sheets Premium] Asegurar bind del swipe-to-dismiss por si el
+        // sheet se creó/reattachó después del DOMContentLoaded inicial. Es
+        // idempotente (guard dataset.mrSwipeBound), así que llamar de más no
+        // duplica listeners.
+        try { _mrSheetSwipeBind(el); } catch(_){}
         // [v8 P.Anim] Doble RAF para garantizar que el estado inicial (opacity 0,
         // transform translateY+scale) se pinta ANTES de añadir .show. Sin esto,
         // el navegador podría colapsar ambos cambios y omitir la transición.
@@ -12484,11 +12536,72 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             document.body.classList.remove('sheet-open');
         }
     }
+    // [Sesión Sheets Premium] Cerrar tocando el backdrop ahora pasa por closeSheet
+    // (antes hacía classList.remove('show') directo y dejaba body.sheet-open colgada
+    // si el sheet era el único). Y registramos swipe-to-dismiss desde el handle.
+    function _mrSheetSwipeBind(backdrop) {
+        var sheet = backdrop.querySelector('.sheet');
+        if (!sheet || sheet.dataset.mrSwipeBound) return;
+        var handle = sheet.querySelector('.sheet-handle-wrap');
+        if (!handle) return;
+        sheet.dataset.mrSwipeBound = '1';
+
+        var startY = 0, dy = 0, t0 = 0, dragging = false;
+        function _origBg() { return ''; } // backdrop usa rgba via CSS; al limpiar inline-style vuelve
+
+        function onStart(e) {
+            if (!backdrop.classList.contains('show')) return;
+            var y = e.touches ? e.touches[0].clientY : e.clientY;
+            startY = y; dy = 0; t0 = performance.now(); dragging = true;
+            sheet.classList.add('dragging');
+        }
+        function onMove(e) {
+            if (!dragging) return;
+            var y = e.touches ? e.touches[0].clientY : e.clientY;
+            dy = Math.max(0, y - startY);
+            sheet.style.transform = 'translateY(' + dy + 'px)';
+            // El backdrop se desvanece proporcionalmente conforme bajas
+            var prog = Math.min(1, dy / 280);
+            backdrop.style.background = 'rgba(0,0,0,' + (.42 * (1 - prog * .7)) + ')';
+            if (e.cancelable) e.preventDefault();
+        }
+        function onEnd() {
+            if (!dragging) return;
+            dragging = false;
+            sheet.classList.remove('dragging');
+            var dt = performance.now() - t0;
+            var velocity = dy / Math.max(dt, 1);
+            backdrop.style.background = _origBg();
+            if (dy > 110 || velocity > 0.55) {
+                // Cerrar: limpiamos transform inline para que la transición CSS
+                // del .sheet-backdrop sin .show lleve el sheet de vuelta a
+                // translateY(100%) con la curva spring.
+                sheet.style.transform = '';
+                closeSheet(backdrop.id);
+            } else {
+                // Volver a su sitio (anula el transform inline → vuelve a 0)
+                sheet.style.transform = '';
+            }
+        }
+
+        handle.addEventListener('touchstart', onStart, { passive: true });
+        handle.addEventListener('touchmove',  onMove,  { passive: false });
+        handle.addEventListener('touchend',   onEnd);
+        handle.addEventListener('touchcancel', onEnd);
+        handle.addEventListener('mousedown', function(e){
+            onStart(e);
+            function mm(ev){ onMove(ev); }
+            function mu(ev){ onEnd(ev); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); }
+            document.addEventListener('mousemove', mm);
+            document.addEventListener('mouseup', mu);
+        });
+    }
+
     document.querySelectorAll('.sheet-backdrop').forEach(b => {
         b.addEventListener('click', e => {
-            if (e.target === b)
-                b.classList.remove('show');
+            if (e.target === b) closeSheet(b.id);
         });
+        _mrSheetSwipeBind(b);
     });
 
     /* ── MARCAS ── eliminado en sesión 6.5: el bloque visual se sustituyó por
