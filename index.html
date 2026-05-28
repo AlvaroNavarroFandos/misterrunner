@@ -22725,12 +22725,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(rp) rp.style.display = 'none';
         const sel = document.getElementById('eval-act-select');
         if (!sel) return;
-        const unevaluated = activities.filter(a => a.nota == null);
+        // [Retoque Míster] Solo se pueden evaluar actividades con `type` válido.
+        // El bulk de Strava importa con type null (Álvaro decidió no inferirlo),
+        // y el type es el criterio principal del motor de evaluación (define qué
+        // se puntúa y cómo). Sin type no hay evaluación posible, así que esas
+        // actividades NO deben aparecer en el desplegable. Filtramos por los 5
+        // types válidos de getTypeLabel: easy/recovery/series/long/race.
+        const EVAL_VALID_TYPES = ['easy','recovery','series','long','race'];
+        const unevaluated = activities.filter(a => a.nota == null && EVAL_VALID_TYPES.includes(a.type));
         const noActsDiv = document.getElementById('eval-no-acts');
         const formDiv   = document.getElementById('eval-form');
         if (unevaluated.length === 0) {
             formDiv.style.display = 'none';
-            noActsDiv.style.display = '';
+            // [Retoque Míster] Mensaje contextual: si existen actividades sin nota
+            // pero ninguna es evaluable (todas del bulk sin type), lo explicamos
+            // en vez de decir "todas ya valoradas" (que sería engañoso).
+            var _pendingNoType = activities.some(a => a.nota == null && !EVAL_VALID_TYPES.includes(a.type));
+            if (noActsDiv) {
+                noActsDiv.textContent = _pendingNoType
+                    ? 'Solo se pueden evaluar las actividades importadas manualmente (las de Strava no tienen tipo definido).'
+                    : 'Todas las actividades ya tienen valoración.';
+                noActsDiv.style.display = '';
+            }
             return;
         }
         formDiv.style.display = 'flex';
@@ -22755,15 +22771,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     });
 
     function onEvalActChange() {
-        // [Retoque Míster] El value se lee como STRING, NO con +. Las actividades
-        // importadas manualmente tienen id numérico, pero las del bulk de Strava
-        // tienen id UUID de Supabase (string). El antiguo `+value` convertía el
-        // UUID en NaN → el find no encontraba la actividad → el bloque de
-        // evaluación no se abría (solo funcionaba con manuales). El find de abajo
-        // ya hace comparación tolerante String===String, así que basta con no
-        // romper el id aquí. La guarda `if(!id)` sigue cubriendo el string vacío
-        // del placeholder "— Selecciona —".
-        const id = document.getElementById('eval-act-select').value;
+        const id = +document.getElementById('eval-act-select').value;
         evalCurrentAct = null; evalMode = null; evalPlanSess = null;
         ['eval-summary','eval-mode-row','eval-free-extra','eval-notes-row'].forEach(i=>{
             const el=document.getElementById(i);if(el)el.style.display='none';
