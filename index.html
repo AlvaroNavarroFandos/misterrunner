@@ -16412,29 +16412,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Render del Step 1 (grid de marcas) cada vez (por si cambia el catálogo)
         _vimRenderBrandGrid();
 
-        // [Sesión Sheets Premium · Fix wizard] Mismo patrón que vimBackNav:
-        // ENTRAR al wizard también causaba freeze por las 291 cards de
-        // biblioteca cuando .view-activities pasaba a display:none de golpe.
-        // Paso 1 (síncrono): activar la view del wizard YA (queda encima en
-        // el DOM, no requiere ocultar la biblioteca para verse).
+        // Mostrar la view ocultando las demás
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
         const view = document.getElementById('view-import-manual');
         if (view) { view.classList.add('active'); view.scrollTop = 0; }
+
         // Reset visual de los 3 steps
         _vimShowStepScreen('brand');
+
         // Mantener BIBLIOTECA marcada en la nav inferior (igual que strava import)
         document.querySelectorAll('.nb').forEach(function(b) {
             b.classList.toggle('active', b.dataset.target === 'activities');
-        });
-        // Paso 2 (aplazado): ocultar las OTRAS views (incluida biblioteca con
-        // sus 291 cards). El doble rAF garantiza que se ejecuta justo tras
-        // pintar el wizard, en ~32ms (determinista). requestIdleCallback con
-        // timeout:200 podía retrasarse hasta 200ms y contribuir al lag.
-        requestAnimationFrame(function(){
-            requestAnimationFrame(function(){
-                document.querySelectorAll('.view').forEach(function(v) {
-                    if (v.id !== 'view-import-manual') v.classList.remove('active');
-                });
-            });
         });
     }
     window.openImportManualWizard = openImportManualWizard;
@@ -16470,24 +16458,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        // Marcar nav (esto es barato).
-        document.querySelectorAll('.nb').forEach(function(b) {
-            b.classList.toggle('active', b.dataset.target === 'activities');
-        });
-        // Paso 2 (aplazado): activar view-activities (291 cards) — el cambio
-        // display:none→flex dispara un layout pass pesado en Safari iOS. Antes
-        // se usaba requestIdleCallback(timeout:200) pero podía tardar hasta
-        // 200ms en disparar, contribuyendo al lag percibido. Doble rAF es
-        // determinista (~32ms en 60Hz): se ejecuta justo tras el siguiente
-        // paint, dando al browser el frame intermedio para pintar el wizard
-        // oculto y EMPEZAR a digerir el layout pass sin bloquear la interacción.
-        requestAnimationFrame(function(){
-            requestAnimationFrame(function(){
-                document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-                const target = document.getElementById('view-activities');
-                if (target) target.classList.add('active');
+        // Paso 2 (aplazado): activar view-activities + nav inferior.
+        // El defer da al browser tiempo para terminar de pintar la
+        // ocultación del wizard antes de empezar el layout pass de la
+        // biblioteca. Sin esto, ambos passes compiten en el mismo frame
+        // y Safari iOS muestra lag varios segundos.
+        var _vimBackToLib = function() {
+            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+            const target = document.getElementById('view-activities');
+            if (target) target.classList.add('active');
+            document.querySelectorAll('.nb').forEach(function(b) {
+                b.classList.toggle('active', b.dataset.target === 'activities');
             });
-        });
+        };
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(_vimBackToLib, { timeout: 200 });
+        } else {
+            setTimeout(_vimBackToLib, 50);
+        }
     }
     window.vimBackNav = vimBackNav;
 
