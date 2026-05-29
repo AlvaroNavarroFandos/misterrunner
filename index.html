@@ -46524,6 +46524,62 @@ window.addEventListener('DOMContentLoaded', function() {
        jank de compositor/GPU (otra causa, otro arreglo). Tócalo para cerrarlo. */
     (function(){
         var _events = [], _lastMark = '', _lastMarkT = 0;
+        /* [BugWizard · DIAG] Trazador de timers y rAF — envuelve callbacks
+           para medir cuánto tardan. Cuando salte un PARON/BLOQUEO, el HUD
+           mostrará los 3 callbacks más caros de los últimos 3s. Coste:
+           microsegundos por timer (insignificante). Si en producción quita
+           este medidor entero, todo vuelve al estado original. */
+        var _trace = [];
+        function _lbl(fn){
+            try {
+                if (typeof fn !== 'function') return 'str';
+                if (fn.name && fn.name !== '') return fn.name;
+                return String(fn).replace(/^function[^(]*\([^)]*\)\s*\{?/,'').replace(/\s+/g,' ').slice(0,55);
+            } catch(_){ return '?'; }
+        }
+        function _wrap(label, fn){
+            return function(){
+                var t0 = performance.now();
+                try { return fn.apply(this, arguments); }
+                finally {
+                    var d = performance.now() - t0;
+                    if (d >= 50) {
+                        _trace.push({l:label, t:t0, d:d});
+                        if (_trace.length > 300) _trace.shift();
+                    }
+                }
+            };
+        }
+        try {
+            var _oST = window.setTimeout, _oSI = window.setInterval, _oRAF = window.requestAnimationFrame;
+            window.setTimeout = function(fn, ms){
+                return _oST.call(window, (typeof fn==='function') ? _wrap('sT:'+_lbl(fn), fn) : fn, ms);
+            };
+            window.setInterval = function(fn, ms){
+                return _oSI.call(window, (typeof fn==='function') ? _wrap('sI@'+(ms||0)+':'+_lbl(fn), fn) : fn, ms);
+            };
+            window.requestAnimationFrame = function(fn){
+                return _oRAF.call(window, (typeof fn==='function') ? _wrap('rAF:'+_lbl(fn), fn) : fn);
+            };
+        } catch(_){}
+        function _hot(){
+            try {
+                var now = performance.now();
+                var recent = _trace.filter(function(t){ return now - t.t < 3000; });
+                if (!recent.length) return '';
+                var by = {};
+                recent.forEach(function(t){
+                    if (!by[t.l]) by[t.l] = {n:0, max:0, tot:0};
+                    by[t.l].n++;
+                    by[t.l].tot += t.d;
+                    if (t.d > by[t.l].max) by[t.l].max = t.d;
+                });
+                var arr = Object.keys(by).map(function(k){ return {l:k, n:by[k].n, max:by[k].max, tot:by[k].tot}; });
+                arr.sort(function(a,b){ return b.tot - a.tot; });
+                var top = arr.slice(0,3).map(function(x){ return x.l+' ×'+x.n+' max='+Math.round(x.max)+'ms'; });
+                return '\n  hot: '+top.join(' | ');
+            } catch(_){ return ''; }
+        }
         window._mrPerfMark = function(label){ _lastMark = label; _lastMarkT = performance.now(); };
         function _ctx(){ return (_lastMark && (performance.now()-_lastMarkT) < 30000) ? ' tras «'+_lastMark+'»' : ''; }
         function _anims(){
@@ -46547,7 +46603,7 @@ window.addEventListener('DOMContentLoaded', function() {
             if(!el){
                 el = document.createElement('div');
                 el.id = '_mrPerfHUD';
-                el.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:2000000;background:#140000;color:#ffd2d2;font:600 10.5px/1.35 monospace;padding:7px 9px;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:pre-wrap;max-height:42vh;overflow:hidden;border:1px solid #5c1a1a;';
+                el.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:2000000;background:#140000;color:#ffd2d2;font:600 10.5px/1.35 monospace;padding:7px 9px;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:pre-wrap;max-height:60vh;overflow:hidden;border:1px solid #5c1a1a;';
                 el.addEventListener('click', function(){ el.remove(); });
                 document.body.appendChild(el);
             }
@@ -46557,7 +46613,7 @@ window.addEventListener('DOMContentLoaded', function() {
             if (typeof PerformanceObserver === 'function') {
                 var po = new PerformanceObserver(function(list){
                     list.getEntries().forEach(function(e){
-                        if (e.duration >= 200) _push('BLOQUEO '+Math.round(e.duration)+'ms (hilo principal)'+_ctx()+_anims());
+                        if (e.duration >= 200) _push('BLOQUEO '+Math.round(e.duration)+'ms (hilo principal)'+_ctx()+_anims()+_hot());
                     });
                 });
                 po.observe({ entryTypes: ['longtask'] });
@@ -46566,7 +46622,7 @@ window.addEventListener('DOMContentLoaded', function() {
         var _lastFrame = performance.now();
         (function _tick(){
             var now = performance.now(), gap = now - _lastFrame;
-            if (gap >= 350) _push('PARON '+Math.round(gap)+'ms (frames)'+_ctx()+_anims());
+            if (gap >= 350) _push('PARON '+Math.round(gap)+'ms (frames)'+_ctx()+_anims()+_hot());
             _lastFrame = now;
             requestAnimationFrame(_tick);
         })();
