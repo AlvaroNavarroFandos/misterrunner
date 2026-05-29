@@ -504,41 +504,6 @@
         display: flex
     }
 
-    /* ───────────────────────────────────────────────────────────────
-       [BugWizard · Fix 3 · OVERLAY FIJO ESTILO MODAL] Los wizards de import
-       (manual + Strava) se muestran como CAPA FIJA encima de la biblioteca
-       SIN desactivarla ni ocultarla.
-
-       Historia: con position:absolute DENTRO de #app (Fix 1) el back era
-       rápido pero la biblioteca quedaba muerta en Safari PWA; aparcarla con
-       content-visibility:hidden (Fix 2) la revivía, pero restaurar 291 cards
-       desde oculto costaba ~6s de bloqueo. Causa real: un absolute con
-       z-index dentro de #app RE-CAPA el scroll acelerado de #view-activities
-       (-webkit-overflow-scrolling:touch) y lo corrompe.
-
-       Fix definitivo: position:FIXED, igual que los modales (act-actions,
-       sheets, etc.) que se abren ENCIMA de la biblioteca a diario y NUNCA la
-       matan. Un fixed se iza a la capa superior del viewport y NO participa
-       en el layering interno de #app → la capa de scroll de la biblioteca
-       queda intacta, viva debajo. Al cerrar el overlay la biblioteca
-       reaparece al instante, sin re-render ni 6s, porque nunca se ocultó
-       (exactamente como cuando cierras un modal). Sin parking, sin revive.
-
-       Geometría idéntica a la zona de contenido: top = safe-area-top,
-       bottom = nav-h + safe-area-bottom + 4px (relativo al viewport, ya que
-       ni #app ni body tienen transform/filter/contain). Stacking: nav (9999)
-       y sheets/modales (≥9999) quedan ENCIMA igual que antes; z-index 9500. */
-    #view-import-manual.active,
-    #view-import-strava.active {
-        position: fixed;
-        top: env(safe-area-inset-top, 0px);
-        left: 0;
-        right: 0;
-        bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 4px);
-        z-index: 9500;
-        background: var(--bg);
-    }
-
     .top-bar {
         display: flex;
         align-items: flex-start;
@@ -2655,7 +2620,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="ptitle" id="home-ptitle">Inicio</div>
                     <div class="psub" id="home-psub">Bienvenido de vuelta</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+                <!-- [BugWizard · relocación] Entrada diaria al wizard "Importar entreno"
+                     movida aquí (Home) desde Biblioteca: al abrir/cerrar desde una vista
+                     ligera, la biblioteca (291 cards) no se togglea → sin freeze. -->
+                <button type="button" id="open-import-manual-btn" aria-label="Importar entreno"
+                    onclick="openImportManualWizard()"
+                    style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:12px;padding:0 14px;height:48px;cursor:pointer;font-family:var(--f);flex-shrink:0;box-shadow:0 2px 8px rgba(34,197,94,.35);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <span style="font-size:11px;font-weight:800;color:#fff;letter-spacing:.8px;">ENTRENO</span>
+                </button>
                 <div style="position:relative;flex-shrink:0;">
                 <button onclick="openClub()" id="club-btn" style="display:flex;align-items:center;gap:7px;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;border-radius:12px;padding:0 14px;cursor:pointer;font-family:var(--f);height:48px;box-shadow:0 2px 8px rgba(196,136,30,.35);flex-shrink:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="font-size:11px;font-weight:800;color:#000;letter-spacing:.8px;">CLUB</span></button>
                 <div id="home-club-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:50%;background:#ef4444;border:2px solid #f0ebe0;box-shadow:0 1px 3px rgba(239,68,68,.5);pointer-events:none;"></div>
@@ -2746,31 +2722,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="psub">Tus actividades</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:7px;">
-                    <!-- Sesión 17: el botón verde ahora abre el wizard import manual.
-                         El input file de abajo se mantiene como mecanismo de upload
-                         interno (lo reutiliza openImportManualWizard via vimDoImport). -->
-                    <button type="button" id="open-import-manual-btn" aria-label="Importar entreno (asistente)"
-                        onclick="openImportManualWizard()"
-                        style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:10px;padding:0 9px;height:38px;cursor:pointer;font-family:var(--f);flex-shrink:0;box-shadow:0 2px 8px rgba(34,197,94,.35);">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                        <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">ENTRENO</span>
-                    </button>
+                    <!-- [BugWizard · relocación] Los botones ENTRENO (verde) y STRAVA
+                         (naranja) se MOVIERON fuera de Biblioteca (a Home y a
+                         Configuración respectivamente) para que abrir/cerrar el wizard
+                         no togglee la vista pesada de 291 cards. El input file de abajo
+                         se conserva: lo reutiliza el wizard manual vía vimDoImport. -->
                     <button type="button" id="upload-ios-button" style="display:none">Subir archivos</button>
                     <input type="file" id="activity-files-input" accept=".csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream" multiple style="display:none">
-                    <!-- Bloque L · FASE 2.2: pill de entrada al importador Strava -->
-                    <button type="button" id="open-strava-import-btn" aria-label="Importar actividades desde Strava"
-                        style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#FC4C02 0%,#e84400 100%);border:none;border-radius:10px;padding:0 9px;height:38px;cursor:pointer;font-family:var(--f);flex-shrink:0;box-shadow:0 2px 8px rgba(252,76,2,.35);">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                        <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;">STRAVA</span>
-                    </button>
                     <div class="mr-logo"><img src="" data-mr-logo="1" alt="MR" style="width:100%;height:100%;object-fit:cover;object-position:center 10%;display:block;"></div>
                 </div>
             </div>
@@ -3611,6 +3569,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <div>
                                 <div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:6px;padding:0 2px;">Datos</div>
                                 <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow:hidden;">
+                                    <!-- [BugWizard · relocación] Entrada (poco frecuente) al importador de Strava
+                                         movida aquí desde Biblioteca. -->
+                                    <div id="row-import-strava" onclick="if(window.openStravaImportWizard)window.openStravaImportWizard()" style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border);cursor:pointer;">
+                                        <div style="width:30px;height:30px;border-radius:8px;background:rgba(252,76,2,.14);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FC4C02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <div style="font-size:13px;font-weight:600;color:var(--tw);">Importar desde Strava</div>
+                                            <div style="font-size:10px;color:var(--tm);margin-top:1px;">Carga masiva de tu histórico</div>
+                                        </div>
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                    </div>
                                     <div style="padding:11px 14px;border-bottom:1px solid var(--border);">
                                         <div style="font-size:10px;color:var(--ts);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:6px;">Almacenamiento</div>
                                         <div id="storage-info">
@@ -5344,17 +5314,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             window._MR_StravaImport
                             && window._MR_StravaImport.currentState === 'summary'
                         );
-                        // [BugWizard · Estrategia A] Cerrar = quitar el .active del
-                        // overlay del wizard. La biblioteca (#view-activities) seguía
-                        // .active debajo intacta → reaparece al instante, sin layout
-                        // pass de las 291 cards. Ya no desactivamos/reactivamos views.
-                        var importView = document.getElementById('view-import-strava');
-                        if (importView) importView.classList.remove('active');
-                        // [BugWizard · Fix 2] Desaparcar/revivir biblioteca.
-                        if (window._mrLibUnpark) window._mrLibUnpark();
-                        /* Marcar el botón nav inferior de Biblioteca como activo (defensivo) */
+                        document.querySelectorAll('.view').forEach(function(v) {
+                            v.classList.remove('active');
+                        });
+                        // [BugWizard · relocación] Solo vamos a Biblioteca (pesada, 1 freeze
+                        // asumido) si REALMENTE se importó algo (cameFromSummary) — ahí el
+                        // usuario quiere ver el resultado. Si solo cancela, volvemos a Runner
+                        // (vista ligera) → sin toggle de las 291 cards, sin freeze.
+                        var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
+                        var _navT = cameFromSummary ? 'activities' : 'runner';
+                        var destView = document.getElementById(_dest);
+                        if (destView) destView.classList.add('active');
+                        /* Marcar el botón nav inferior correspondiente como activo */
                         document.querySelectorAll('.nb').forEach(function(b) {
-                            b.classList.toggle('active', b.dataset.target === 'activities');
+                            b.classList.toggle('active', b.dataset.target === _navT);
                         });
                         /* FASE 5.4.2: refrescar tras transición de view, fire-and-forget.
                            No bloqueamos el cambio visual. La función es idempotente:
@@ -5380,32 +5353,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 })();
 
-                /* Handler del botón pill "STRAVA" en cabecera de Activities
-                   (Bloque L · FASE 2.2). Abre la view import.
-                   Mantenemos BIBLIOTECA marcada abajo como "tab padre" lógica:
-                   no hay .nb para import-strava, y el patrón natural en mobile
-                   es que la cabecera Activities siga representando el contexto. */
-                (function() {
-                    var openBtn = document.getElementById('open-strava-import-btn');
-                    if (!openBtn) return;
-                    openBtn.addEventListener('click', function() {
-                        // [BugWizard · Estrategia A] Overlay absoluto encima de
-                        // la biblioteca, SIN desactivar #view-activities (sus 291
-                        // cards no se ocultan → sin layout pass → sin freeze).
-                        var importView = document.getElementById('view-import-strava');
-                        if (importView) {
-                            importView.classList.add('active');
-                            importView.scrollTop = 0;
-                        }
-                        // [BugWizard · Fix 2] Aparcar biblioteca bajo el overlay.
-                        if (window._mrLibPark) window._mrLibPark();
-                        if (window.setImportState) window.setImportState('entry');
-                        /* Mantener BIBLIOTECA marcada en la nav inferior */
-                        document.querySelectorAll('.nb').forEach(function(b) {
-                            b.classList.toggle('active', b.dataset.target === 'activities');
-                        });
+                /* [BugWizard · relocación] Apertura del importador de Strava como
+                   FUNCIÓN GLOBAL, invocada desde la fila "Importar desde Strava" del
+                   sheet de Configuración (antes era un botón en Biblioteca). Al abrirse
+                   desde una vista ligera (Runner/Config), abrir/cerrar el wizard NO
+                   togglea las 291 cards de Biblioteca → sin freeze. */
+                window.openStravaImportWizard = function openStravaImportWizard() {
+                    try { if (typeof closeSheet === 'function') closeSheet('config-sheet'); } catch(_) {}
+                    document.querySelectorAll('.view').forEach(function(v) {
+                        v.classList.remove('active');
                     });
-                })();
+                    var importView = document.getElementById('view-import-strava');
+                    if (importView) {
+                        importView.classList.add('active');
+                        importView.scrollTop = 0;
+                    }
+                    /* Reset al estado inicial (por si veníamos de otro) */
+                    if (window.setImportState) window.setImportState('entry');
+                    /* Mantener BIBLIOTECA marcada en la nav inferior (destino tras importar) */
+                    document.querySelectorAll('.nb').forEach(function(b) {
+                        b.classList.toggle('active', b.dataset.target === 'activities');
+                    });
+                };
 
                 /* ═══════════════════════════════════════════════════════════
                    SUB-TAREA 2.3 · Pantalla "entry":
@@ -16441,71 +16410,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return _vimFileInput;
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // [BugWizard · Fix 3] Hooks de OPEN/CLOSE de los wizards (manual + Strava).
-    // Ya NO aparcan la biblioteca (el overlay fixed la deja viva debajo); solo
-    // sirven de punto de medición (diag) + nudge de scroll suave al cerrar.
-    // _mrLibPark se llama al ABRIR un wizard; _mrLibUnpark al CERRAR.
-    // ──────────────────────────────────────────────────────────────────
-    var _mrLibParkScroll = 0;   // scrollTop recordado al abrir (defensivo)
-
-    // [BugWizard · Fix 3] Con el overlay en position:fixed (estilo modal) la
-    // biblioteca NO se oculta ni se aparca: queda viva debajo. Estos hooks se
-    // mantienen SOLO como punto de medición (diag) y para un nudge de scroll
-    // suave y barato al cerrar — por si Safari necesita un empujón para
-    // re-disparar el content-visibility:auto de las cards. NADA de ocultar ni
-    // de reflows síncronos (eso era lo que costaba los 6s).
-    function _mrLibPark() {
-        var lib = document.getElementById('view-activities');
-        if (!lib) return;
-        _mrLibParkScroll = lib.scrollTop || 0;
-        if (window.__MR_WIZ_DIAG) { try { _mrWizDiagToast('OPEN · scroll=' + _mrLibParkScroll); } catch(_){} }
-    }
-
-    function _mrLibUnpark() {
-        var lib = document.getElementById('view-activities');
-        if (!lib) return;
-        var _t0 = (window.performance && performance.now) ? performance.now() : 0;
-        requestAnimationFrame(function() {
-            try {
-                // Nudge de scroll mínimo (barato): re-dispara la "relevance" de
-                // content-visibility:auto de las cards visibles si hiciera falta.
-                var prev = lib.scrollTop || 0;
-                lib.scrollTop = prev + 1;
-                lib.scrollTop = prev;
-            } catch(_) {}
-            if (window.__MR_WIZ_DIAG) {
-                try {
-                    var dt = (_t0 ? (performance.now() - _t0).toFixed(0) : '?');
-                    var wraps = lib.querySelectorAll('#activities-list > .act-swipe-wrap');
-                    var painted = 0;
-                    wraps.forEach(function(w){ if (w.offsetHeight > 0) painted++; });
-                    _mrWizDiagToast('CLOSE ' + dt + 'ms · cards=' + wraps.length + ' · conAlto=' + painted + ' · scroll=' + lib.scrollTop + '/' + lib.scrollHeight);
-                } catch(_){}
-            }
-        });
-    }
-    window._mrLibPark = _mrLibPark;
-    window._mrLibUnpark = _mrLibUnpark;
-
-    // Diagnóstico on-device opcional (OFF por defecto). Para activarlo desde la
-    // PWA sin consola: tocar 5 veces seguidas el título "Importar entreno" del
-    // wizard (ver _vimShowStepScreen) pone window.__MR_WIZ_DIAG=true y a partir
-    // de ahí cada open/close muestra un toast con métricas (tiempo, nº cards,
-    // cuántas tienen alto>0, scroll). Así Álvaro puede MEDIR en Safari sin Mac.
-    function _mrWizDiagToast(msg) {
-        var el = document.getElementById('_mrWizDiag');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = '_mrWizDiag';
-            el.style.cssText = 'position:fixed;left:8px;right:8px;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 14px);z-index:1000000;background:#0a0a0a;color:#4ade80;font:600 11px/1.4 monospace;padding:8px 10px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:pre-wrap;max-height:40vh;overflow:hidden;';
-            document.body.appendChild(el);
-        }
-        var stamp = new Date().toLocaleTimeString();
-        el.textContent = '[' + stamp + '] ' + msg + '\n' + (el.textContent || '').split('\n').slice(0, 5).join('\n');
-    }
-    window._mrWizDiagToast = _mrWizDiagToast;
-
     // Entrada principal del wizard — disparada desde el botón "ENTRENO" de biblioteca
     function openImportManualWizard() {
         // Reset estado
@@ -16516,16 +16420,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Render del Step 1 (grid de marcas) cada vez (por si cambia el catálogo)
         _vimRenderBrandGrid();
 
-        // [BugWizard · Fix 3] Mostrar el wizard como OVERLAY FIJO (estilo modal)
-        // ENCIMA de la biblioteca, SIN desactivar #view-activities. La regla CSS
-        // #view-import-manual.active lo posiciona position:fixed. Al no tocar el
-        // .active de biblioteca (ni ocultarla), sus 291 cards no se ocultan ni
-        // se recalculan → ni freeze al entrar ni biblioteca muerta al salir.
+        // Mostrar la view ocultando las demás
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
         const view = document.getElementById('view-import-manual');
         if (view) { view.classList.add('active'); view.scrollTop = 0; }
-        // [BugWizard · Fix 3] Hook de apertura (diag + recordar scroll). La
-        // biblioteca queda viva debajo del overlay fijo, no se aparca.
-        _mrLibPark();
 
         // Reset visual de los 3 steps
         _vimShowStepScreen('brand');
@@ -16537,16 +16435,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window.openImportManualWizard = openImportManualWizard;
 
-    // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale a biblioteca.
+    // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale del wizard.
     //
-    // [BugWizard · Estrategia A] Con el wizard como OVERLAY ABSOLUTO encima de
-    // la biblioteca (#view-activities conserva su .active todo el rato), salir
-    // es simplemente quitar el .active del wizard: la biblioteca, que estaba
-    // debajo intacta, vuelve a verse al instante. CERO layout pass de las 291
-    // cards → adiós freeze. Ya no hace falta el defer (requestIdleCallback /
-    // rAF) que solo aplazaba el coste sin eliminarlo, ni reactivar
-    // view-activities (nunca se desactivó). Limpiamos _vimState.files para
-    // liberar referencias a File objects.
+    // [BugWizard · relocación] El wizard ahora se abre desde HOME (vista ligera),
+    // no desde Biblioteca. Al CANCELAR (back sin importar) volvemos a Home: como
+    // Home no tiene las 291 cards, el toggle .active es instantáneo → SIN freeze.
+    // (Antes se volvía a view-activities, lo que disparaba el layout pass pesado
+    // de Safari iOS.) Tras importar de verdad sí se va a Biblioteca, pero eso lo
+    // gestiona el reset post-import, no este back.
     function vimBackNav() {
         if (_vimState.step === 'upload') {
             // Back desde paso 2 → volvemos al paso 1 del wizard. Limpiamos los
@@ -16561,22 +16457,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // No permitir back durante loading (lo bloqueamos visualmente también)
             return;
         }
-        // step === 'brand' → salir del wizard a biblioteca.
-        // Quitar el .active del overlay del wizard (la biblioteca reaparece
-        // instantánea desde debajo) + limpiar estado. Síncrono, sin defer.
+        // step === 'brand' → salir del wizard a HOME (síncrono, instantáneo).
         const wizView = document.getElementById('view-import-manual');
         if (wizView) wizView.classList.remove('active');
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        // [BugWizard · Fix 2] Desaparcar la biblioteca + revivir su capa de
-        // scroll/render de Safari iOS.
-        _mrLibUnpark();
-        // Asegurar que la nav inferior queda marcada en Biblioteca (defensivo;
-        // openImportManualWizard ya la dejó así y nada la cambia mientras el
-        // overlay está abierto).
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        const target = document.getElementById('view-home');
+        if (target) { target.classList.add('active'); target.scrollTop = 0; }
         document.querySelectorAll('.nb').forEach(function(b) {
-            b.classList.toggle('active', b.dataset.target === 'activities');
+            b.classList.toggle('active', b.dataset.target === 'home');
         });
     }
     window.vimBackNav = vimBackNav;
@@ -16584,26 +16475,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Cambia qué step-screen es visible y actualiza topbar
     function _vimShowStepScreen(step) {
         _vimState.step = step;
-        // [BugWizard · Fix 2 · diag] Cablear (una sola vez) el activador oculto
-        // del diagnóstico on-device: 5 toques seguidos en el título del wizard
-        // ponen window.__MR_WIZ_DIAG=true (toasts con métricas en cada
-        // park/unpark). Para medir en la PWA de Safari sin necesidad de Mac.
-        (function(){
-            var t = document.getElementById('vim-title');
-            if (!t || t.dataset.diagWired) return;
-            t.dataset.diagWired = '1';
-            var _taps = 0, _last = 0;
-            t.addEventListener('click', function(){
-                var now = Date.now();
-                _taps = (now - _last < 600) ? _taps + 1 : 1;
-                _last = now;
-                if (_taps >= 5) {
-                    _taps = 0;
-                    window.__MR_WIZ_DIAG = !window.__MR_WIZ_DIAG;
-                    try { _mrWizDiagToast('DIAG ' + (window.__MR_WIZ_DIAG ? 'ON' : 'OFF')); } catch(_){}
-                }
-            });
-        })();
         document.querySelectorAll('#view-import-manual .vim-step-screen').forEach(function(el) {
             el.classList.remove('is-active');
         });
@@ -16930,16 +16801,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // (queda detrás). Reseteamos el wizard a brand para la próxima apertura.
         // Esperamos 1.2s para que el parser tenga tiempo (es asíncrono).
         setTimeout(function() {
-            // [BugWizard · Estrategia A] El wizard es overlay: basta con quitarle
-            // el .active. La biblioteca seguía activa debajo → no la toggleamos
-            // (evita un relayout redundante de las 291 cards tras importar).
-            var wizView = document.getElementById('view-import-manual');
-            if (wizView) wizView.classList.remove('active');
+            // Si el modal está abierto, ocultar la view del wizard volviendo a biblioteca
+            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
             const targetView = document.getElementById('view-activities');
-            if (targetView) targetView.classList.add('active'); // idempotente (defensivo)
-            // [BugWizard · Fix 2] Desaparcar/revivir la biblioteca (el import
-            // refrescará luego las cards; aquí garantizamos scroll/render vivos).
-            _mrLibUnpark();
+            if (targetView) targetView.classList.add('active');
             // Reset interno
             _vimState.step  = 'brand';
             _vimState.brand = null;
