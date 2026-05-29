@@ -504,6 +504,35 @@
         display: flex
     }
 
+    /* ───────────────────────────────────────────────────────────────
+       [BugWizard · Estrategia A · OVERLAY ABSOLUTO] Los wizards de import
+       (manual + Strava) se muestran como CAPA ABSOLUTA encima de la
+       biblioteca SIN desactivarla. Así #view-activities (291 cards) NUNCA
+       hace el toggle display:none↔flex → cero layout pass pesado en
+       Safari iOS al entrar/salir del wizard (causa raíz del freeze de
+       varios segundos). #view-activities conserva su .active todo el rato
+       y queda tapado por el overlay opaco (background var(--bg)).
+       Geometría: top = safe-area-top (igual que el padding-top de #app,
+       para que el topbar del wizard no quede bajo la status bar) y
+       bottom = nav-h + safe-area-bottom + 4px (igual que el padding-bottom
+       de #app, misma fórmula que .mr-nav-carousel ya probado), así el
+       overlay ocupa EXACTAMENTE la misma zona que ocuparía como flex-child.
+       Stacking: nav (9999) y fade #app::after (9998) quedan ENCIMA igual
+       que antes; sheets/modales (≥9999) también → el summary post-import
+       aparece sobre el wizard sin cambios. z-index 9500 lo deja por encima
+       de las views en flujo normal (sin z-index) y de las capas del
+       carrusel (z 5/6). NO se toca la nav ni el carrusel. */
+    #view-import-manual.active,
+    #view-import-strava.active {
+        position: absolute;
+        top: env(safe-area-inset-top, 0px);
+        left: 0;
+        right: 0;
+        bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 4px);
+        z-index: 9500;
+        background: var(--bg);
+    }
+
     .top-bar {
         display: flex;
         align-items: flex-start;
@@ -5309,12 +5338,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             window._MR_StravaImport
                             && window._MR_StravaImport.currentState === 'summary'
                         );
-                        document.querySelectorAll('.view').forEach(function(v) {
-                            v.classList.remove('active');
-                        });
-                        var libView = document.getElementById('view-activities');
-                        if (libView) libView.classList.add('active');
-                        /* Marcar el botón nav inferior de Biblioteca como activo */
+                        // [BugWizard · Estrategia A] Cerrar = quitar el .active del
+                        // overlay del wizard. La biblioteca (#view-activities) seguía
+                        // .active debajo intacta → reaparece al instante, sin layout
+                        // pass de las 291 cards. Ya no desactivamos/reactivamos views.
+                        var importView = document.getElementById('view-import-strava');
+                        if (importView) importView.classList.remove('active');
+                        /* Marcar el botón nav inferior de Biblioteca como activo (defensivo) */
                         document.querySelectorAll('.nb').forEach(function(b) {
                             b.classList.toggle('active', b.dataset.target === 'activities');
                         });
@@ -5351,9 +5381,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var openBtn = document.getElementById('open-strava-import-btn');
                     if (!openBtn) return;
                     openBtn.addEventListener('click', function() {
-                        document.querySelectorAll('.view').forEach(function(v) {
-                            v.classList.remove('active');
-                        });
+                        // [BugWizard · Estrategia A] Overlay absoluto encima de
+                        // la biblioteca, SIN desactivar #view-activities (sus 291
+                        // cards no se ocultan → sin layout pass → sin freeze).
                         var importView = document.getElementById('view-import-strava');
                         if (importView) {
                             importView.classList.add('active');
@@ -16412,8 +16442,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Render del Step 1 (grid de marcas) cada vez (por si cambia el catálogo)
         _vimRenderBrandGrid();
 
-        // Mostrar la view ocultando las demás
-        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        // [BugWizard · Estrategia A] Mostrar el wizard como OVERLAY ABSOLUTO
+        // ENCIMA de la biblioteca, SIN desactivar #view-activities. La regla
+        // CSS #view-import-manual.active lo posiciona absolute/inset. Al no
+        // tocar el .active de biblioteca, sus 291 cards no se ocultan ni se
+        // recalculan → desaparece el freeze de varios segundos. (Antes aquí
+        // se hacía querySelectorAll('.view').forEach(remove active), que es
+        // justo lo que disparaba el layout pass de las 291 cards.)
         const view = document.getElementById('view-import-manual');
         if (view) { view.classList.add('active'); view.scrollTop = 0; }
 
@@ -16429,14 +16464,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // Botón "atrás" del topbar: si estamos en upload, vuelve a brand; si estamos en brand, sale a biblioteca.
     //
-    // [Bug 3 sesión post-Garmin] Cuando vuelves a biblioteca tras haber estado
-    // en el wizard, el cambio de classList .active dispara un layout pass
-    // pesado en Safari iOS (290+ cards de biblioteca quedaron con display:none
-    // mientras estabas en el wizard). Aplicamos el patrón canónico P2-Fix:
-    // cerrar PRIMERO la view del wizard + limpiar estado, y aplazar el "switch"
-    // a view-activities con requestIdleCallback + fallback setTimeout.
-    // Además limpiamos _vimState.files para liberar referencias a File objects
-    // (no causa lag, pero evita retención innecesaria).
+    // [BugWizard · Estrategia A] Con el wizard como OVERLAY ABSOLUTO encima de
+    // la biblioteca (#view-activities conserva su .active todo el rato), salir
+    // es simplemente quitar el .active del wizard: la biblioteca, que estaba
+    // debajo intacta, vuelve a verse al instante. CERO layout pass de las 291
+    // cards → adiós freeze. Ya no hace falta el defer (requestIdleCallback /
+    // rAF) que solo aplazaba el coste sin eliminarlo, ni reactivar
+    // view-activities (nunca se desactivó). Limpiamos _vimState.files para
+    // liberar referencias a File objects.
     function vimBackNav() {
         if (_vimState.step === 'upload') {
             // Back desde paso 2 → volvemos al paso 1 del wizard. Limpiamos los
@@ -16452,30 +16487,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
         // step === 'brand' → salir del wizard a biblioteca.
-        // Paso 1 (síncrono): ocultar la view del wizard y limpiar estado.
+        // Quitar el .active del overlay del wizard (la biblioteca reaparece
+        // instantánea desde debajo) + limpiar estado. Síncrono, sin defer.
         const wizView = document.getElementById('view-import-manual');
         if (wizView) wizView.classList.remove('active');
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        // Paso 2 (aplazado): activar view-activities + nav inferior.
-        // El defer da al browser tiempo para terminar de pintar la
-        // ocultación del wizard antes de empezar el layout pass de la
-        // biblioteca. Sin esto, ambos passes compiten en el mismo frame
-        // y Safari iOS muestra lag varios segundos.
-        var _vimBackToLib = function() {
-            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-            const target = document.getElementById('view-activities');
-            if (target) target.classList.add('active');
-            document.querySelectorAll('.nb').forEach(function(b) {
-                b.classList.toggle('active', b.dataset.target === 'activities');
-            });
-        };
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(_vimBackToLib, { timeout: 200 });
-        } else {
-            setTimeout(_vimBackToLib, 50);
-        }
+        // Asegurar que la nav inferior queda marcada en Biblioteca (defensivo;
+        // openImportManualWizard ya la dejó así y nada la cambia mientras el
+        // overlay está abierto).
+        document.querySelectorAll('.nb').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.target === 'activities');
+        });
     }
     window.vimBackNav = vimBackNav;
 
@@ -16808,10 +16832,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // (queda detrás). Reseteamos el wizard a brand para la próxima apertura.
         // Esperamos 1.2s para que el parser tenga tiempo (es asíncrono).
         setTimeout(function() {
-            // Si el modal está abierto, ocultar la view del wizard volviendo a biblioteca
-            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+            // [BugWizard · Estrategia A] El wizard es overlay: basta con quitarle
+            // el .active. La biblioteca seguía activa debajo → no la toggleamos
+            // (evita un relayout redundante de las 291 cards tras importar).
+            var wizView = document.getElementById('view-import-manual');
+            if (wizView) wizView.classList.remove('active');
             const targetView = document.getElementById('view-activities');
-            if (targetView) targetView.classList.add('active');
+            if (targetView) targetView.classList.add('active'); // idempotente (defensivo)
             // Reset interno
             _vimState.step  = 'brand';
             _vimState.brand = null;
