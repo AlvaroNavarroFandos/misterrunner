@@ -533,6 +533,28 @@
         background: var(--bg);
     }
 
+    /* ───────────────────────────────────────────────────────────────
+       [BugWizard · Fix 2 · APARCAR biblioteca bajo el overlay]
+       Síntoma tras Estrategia A: el back era rápido, pero la biblioteca
+       quedaba MUERTA (solo 3 cards, scroll congelado) SOLO en la PWA de
+       Safari (en Chrome no). Causa: dejar #view-activities VIVO pero TAPADO
+       por el overlay corrompe en Safari iOS la capa de scroll acelerada
+       (-webkit-overflow-scrolling:touch) y/o deja las cards
+       content-visibility:auto en estado "skipped" colgado y/o purga el
+       backing store de los <canvas> de los tracks. El antiguo display:none
+       lo enmascaraba dándole a Safari un ciclo limpio ocultar/mostrar.
+       Solución: mientras el wizard está abierto APARCAMOS la biblioteca con
+       content-visibility:hidden → estado OCULTO CACHEADO (NO destruido como
+       display:none, así que restaurar es barato y SIN el layout pass de las
+       291 cards) y, sobre todo, un estado LIMPIO que Safari sabe restaurar,
+       en vez del estado "vivo-pero-tapado" que corrompe sus capas.
+       contain-intrinsic-size preserva la altura de scroll mientras está
+       aparcada. La quitamos al cerrar (+ revive de scroll en JS). */
+    #view-activities.mr-wiz-parked {
+        content-visibility: hidden;
+        contain-intrinsic-size: auto 800px;
+    }
+
     .top-bar {
         display: flex;
         align-items: flex-start;
@@ -5344,6 +5366,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // pass de las 291 cards. Ya no desactivamos/reactivamos views.
                         var importView = document.getElementById('view-import-strava');
                         if (importView) importView.classList.remove('active');
+                        // [BugWizard · Fix 2] Desaparcar/revivir biblioteca.
+                        if (window._mrLibUnpark) window._mrLibUnpark();
                         /* Marcar el botón nav inferior de Biblioteca como activo (defensivo) */
                         document.querySelectorAll('.nb').forEach(function(b) {
                             b.classList.toggle('active', b.dataset.target === 'activities');
@@ -5389,7 +5413,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             importView.classList.add('active');
                             importView.scrollTop = 0;
                         }
-                        /* Reset al estado inicial (por si veníamos de otro) */
+                        // [BugWizard · Fix 2] Aparcar biblioteca bajo el overlay.
+                        if (window._mrLibPark) window._mrLibPark();
                         if (window.setImportState) window.setImportState('entry');
                         /* Mantener BIBLIOTECA marcada en la nav inferior */
                         document.querySelectorAll('.nb').forEach(function(b) {
@@ -16432,6 +16457,83 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return _vimFileInput;
     }
 
+    // ──────────────────────────────────────────────────────────────────
+    // [BugWizard · Fix 2] APARCAR / DESAPARCAR la biblioteca bajo el wizard
+    // overlay. Compartido por AMBOS wizards (manual + Strava). Ver el
+    // comentario de la regla CSS #view-activities.mr-wiz-parked para el
+    // porqué. _mrLibPark se llama al ABRIR un wizard; _mrLibUnpark al CERRAR.
+    // ──────────────────────────────────────────────────────────────────
+    var _mrLibParkScroll = 0;   // guardamos scrollTop para restaurarlo exacto
+
+    function _mrLibPark() {
+        var lib = document.getElementById('view-activities');
+        if (!lib) return;
+        // Recordar posición de scroll antes de aparcar (defensivo: content-
+        // visibility:hidden debería preservarla, pero no nos fiamos de Safari).
+        _mrLibParkScroll = lib.scrollTop || 0;
+        lib.classList.add('mr-wiz-parked');
+        if (window.__MR_WIZ_DIAG) { try { _mrWizDiagToast('PARK · scroll=' + _mrLibParkScroll); } catch(_){} }
+    }
+
+    function _mrLibUnpark() {
+        var lib = document.getElementById('view-activities');
+        if (!lib) return;
+        var _t0 = (window.performance && performance.now) ? performance.now() : 0;
+        // 1) Quitar el aparcado → la biblioteca se restaura desde la caché de
+        //    render (barato, sin layout pass de las 291 cards).
+        lib.classList.remove('mr-wiz-parked');
+        // 2) Revivir la capa de scroll de iOS Safari + re-evaluar content-
+        //    visibility de las cards, en el siguiente frame (tras commit del
+        //    cambio de clase). Todo barato: solo toca props del CONTENEDOR,
+        //    no relayout de las cards.
+        requestAnimationFrame(function() {
+            try {
+                var prev = (typeof _mrLibParkScroll === 'number') ? _mrLibParkScroll : (lib.scrollTop || 0);
+                // (a) Reconstruir la capa acelerada de scroll (fix canónico del
+                //     bug "scroll congelado" en iOS): togglear overflow +
+                //     -webkit-overflow-scrolling fuerza a Safari a recrearla.
+                lib.style.webkitOverflowScrolling = 'auto';
+                lib.style.overflow = 'hidden';
+                void lib.offsetHeight;                 // reflow del contenedor
+                lib.style.overflow = '';               // vuelve a overflow-y:auto del CSS
+                lib.style.webkitOverflowScrolling = '';// vuelve a touch del CSS
+                // (b) Nudge de scroll → re-dispara la "relevance" de content-
+                //     visibility:auto y restaura la posición.
+                lib.scrollTop = prev + 1;
+                lib.scrollTop = prev;
+            } catch(_) {}
+            if (window.__MR_WIZ_DIAG) {
+                try {
+                    var dt = (_t0 ? (performance.now() - _t0).toFixed(0) : '?');
+                    var wraps = lib.querySelectorAll('#activities-list > .act-swipe-wrap');
+                    var painted = 0;
+                    wraps.forEach(function(w){ if (w.offsetHeight > 0) painted++; });
+                    _mrWizDiagToast('UNPARK ' + dt + 'ms · cards=' + wraps.length + ' · conAlto=' + painted + ' · scroll=' + lib.scrollTop + '/' + lib.scrollHeight);
+                } catch(_){}
+            }
+        });
+    }
+    window._mrLibPark = _mrLibPark;
+    window._mrLibUnpark = _mrLibUnpark;
+
+    // Diagnóstico on-device opcional (OFF por defecto). Para activarlo desde la
+    // PWA sin consola: tocar 5 veces seguidas el título "Importar entreno" del
+    // wizard (ver _vimShowStepScreen) pone window.__MR_WIZ_DIAG=true y a partir
+    // de ahí cada park/unpark muestra un toast con métricas (tiempo, nº cards,
+    // cuántas tienen alto>0, scroll). Así Álvaro puede MEDIR en Safari sin Mac.
+    function _mrWizDiagToast(msg) {
+        var el = document.getElementById('_mrWizDiag');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = '_mrWizDiag';
+            el.style.cssText = 'position:fixed;left:8px;right:8px;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 14px);z-index:1000000;background:#0a0a0a;color:#4ade80;font:600 11px/1.4 monospace;padding:8px 10px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.5);pointer-events:none;white-space:pre-wrap;max-height:40vh;overflow:hidden;';
+            document.body.appendChild(el);
+        }
+        var stamp = new Date().toLocaleTimeString();
+        el.textContent = '[' + stamp + '] ' + msg + '\n' + (el.textContent || '').split('\n').slice(0, 5).join('\n');
+    }
+    window._mrWizDiagToast = _mrWizDiagToast;
+
     // Entrada principal del wizard — disparada desde el botón "ENTRENO" de biblioteca
     function openImportManualWizard() {
         // Reset estado
@@ -16451,6 +16553,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // justo lo que disparaba el layout pass de las 291 cards.)
         const view = document.getElementById('view-import-manual');
         if (view) { view.classList.add('active'); view.scrollTop = 0; }
+        // [BugWizard · Fix 2] Aparcar la biblioteca (content-visibility:hidden)
+        // mientras el overlay está arriba → estado limpio cacheado, evita que
+        // Safari iOS corrompa su capa de scroll/canvas al tenerla viva-tapada.
+        _mrLibPark();
 
         // Reset visual de los 3 steps
         _vimShowStepScreen('brand');
@@ -16494,6 +16600,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
+        // [BugWizard · Fix 2] Desaparcar la biblioteca + revivir su capa de
+        // scroll/render de Safari iOS.
+        _mrLibUnpark();
         // Asegurar que la nav inferior queda marcada en Biblioteca (defensivo;
         // openImportManualWizard ya la dejó así y nada la cambia mientras el
         // overlay está abierto).
@@ -16506,6 +16615,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Cambia qué step-screen es visible y actualiza topbar
     function _vimShowStepScreen(step) {
         _vimState.step = step;
+        // [BugWizard · Fix 2 · diag] Cablear (una sola vez) el activador oculto
+        // del diagnóstico on-device: 5 toques seguidos en el título del wizard
+        // ponen window.__MR_WIZ_DIAG=true (toasts con métricas en cada
+        // park/unpark). Para medir en la PWA de Safari sin necesidad de Mac.
+        (function(){
+            var t = document.getElementById('vim-title');
+            if (!t || t.dataset.diagWired) return;
+            t.dataset.diagWired = '1';
+            var _taps = 0, _last = 0;
+            t.addEventListener('click', function(){
+                var now = Date.now();
+                _taps = (now - _last < 600) ? _taps + 1 : 1;
+                _last = now;
+                if (_taps >= 5) {
+                    _taps = 0;
+                    window.__MR_WIZ_DIAG = !window.__MR_WIZ_DIAG;
+                    try { _mrWizDiagToast('DIAG ' + (window.__MR_WIZ_DIAG ? 'ON' : 'OFF')); } catch(_){}
+                }
+            });
+        })();
         document.querySelectorAll('#view-import-manual .vim-step-screen').forEach(function(el) {
             el.classList.remove('is-active');
         });
@@ -16839,6 +16968,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (wizView) wizView.classList.remove('active');
             const targetView = document.getElementById('view-activities');
             if (targetView) targetView.classList.add('active'); // idempotente (defensivo)
+            // [BugWizard · Fix 2] Desaparcar/revivir la biblioteca (el import
+            // refrescará luego las cards; aquí garantizamos scroll/render vivos).
+            _mrLibUnpark();
             // Reset interno
             _vimState.step  = 'brand';
             _vimState.brand = null;
