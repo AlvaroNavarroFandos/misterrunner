@@ -508,16 +508,9 @@
        animaciones CSS infinitas aunque el elemento padre esté en display:none,
        provocando bloqueos de layout periódicos tras cerrar un wizard. Cancelamos
        explícitamente cualquier animación dentro de los wizards cuando NO están
-       activos. Al reactivarse, las animaciones se reinician con normalidad.
-       [BugWizard · extensión] Ampliado a #view-activities porque con 291 cards
-       el coste acumulado es enorme. El usuario reportó que tras back de wizards
-       el bug solo se dispara al activar la biblioteca (scroll horizontal a ella
-       tras Strava, o auto-render tras ENTRENO). Hipótesis: las animaciones de
-       las cards (shimmer, skel, decorativas) seguían procesándose con la view
-       display:none, invalidando layout cíclicamente. */
+       activos. Al reactivarse, las animaciones se reinician con normalidad. */
     #view-import-manual:not(.active) *,
-    #view-import-strava:not(.active) *,
-    #view-activities:not(.active) * {
+    #view-import-strava:not(.active) * {
         animation: none !important;
     }
 
@@ -12467,7 +12460,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // otro a la vez, recorrido completo. Al terminar se restaura el sistema
             // normal (.active en la nueva). Si no es nav-fx: switch directo de siempre.
             var _newView = document.getElementById(_newViewId);
-            if (_useNavFx && _oldView && _newView && _oldView !== _newView) {
+            /* [BugWizard · DIAG TEMPORAL] Bypaseamos el carrusel cuando la
+               entrante es BIBLIOTECA. El usuario reportó que el bug se dispara
+               EXCLUSIVAMENTE con scroll horizontal a biblioteca tras back de
+               wizard (tap funciona, esperar funciona, otras pestañas también).
+               Hipótesis: el bloque carrusel pone ambas views position:absolute
+               con display:flex simultáneo, y aunque el skeleton overlay tapa
+               las 291 cards visualmente, el browser sigue procesando layout/
+               paint de todas durante el slide → bloqueo masivo. Si tras este
+               bypass el bug se va, esa es la causa. Si persiste, se revierte. */
+            var _libDestBypass = (_newViewId === 'view-activities');
+            if (_useNavFx && _oldView && _newView && _oldView !== _newView && !_libDestBypass) {
                 // Guard anti-doble-animación: si ya hay un carrusel en curso, lo
                 // resolvemos instantáneo antes de empezar otro (tap/swipe rápidos).
                 if (window.__mrNavCarouselBusy) {
