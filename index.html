@@ -504,6 +504,16 @@
         display: flex
     }
 
+    /* [BugWizard · defensa animaciones] Safari iOS PWA puede seguir procesando
+       animaciones CSS infinitas aunque el elemento padre esté en display:none,
+       provocando bloqueos de layout periódicos tras cerrar un wizard. Cancelamos
+       explícitamente cualquier animación dentro de los wizards cuando NO están
+       activos. Al reactivarse, las animaciones se reinician con normalidad. */
+    #view-import-manual:not(.active) *,
+    #view-import-strava:not(.active) * {
+        animation: none !important;
+    }
+
     .top-bar {
         display: flex;
         align-items: flex-start;
@@ -4364,7 +4374,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     position: relative;
                     overflow: hidden;
                 }
-                /* Sutil brillo deslizante sobre la barra mientras hay progreso < 100% */
+                /* Sutil brillo deslizante sobre la barra mientras hay progreso < 100%
+                   [BugWizard · fix animación] Antes animaba `left` (invalida layout cada
+                   frame, costoso en Safari iOS — sobre todo con DOMs grandes). Ahora
+                   anima `transform: translateX` que se ejecuta solo en el compositor. */
                 #view-import-strava .vis-imp-progress-fill::after {
                     content: '';
                     position: absolute;
@@ -4377,11 +4390,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         rgba(255,255,255,.35) 50%,
                         rgba(255,255,255,0) 100%);
                     animation: vis-imp-shine 1.6s linear infinite;
+                    will-change: transform;
                 }
                 #view-import-strava .vis-imp-progress-fill.is-done::after { display: none; }
                 @keyframes vis-imp-shine {
-                    0%   { left: -40%; }
-                    100% { left: 100%; }
+                    0%   { transform: translateX(0); }
+                    100% { transform: translateX(350%); }
                 }
                 #view-import-strava .vis-imp-batch-text {
                     margin-top: 9px;
@@ -46511,7 +46525,21 @@ window.addEventListener('DOMContentLoaded', function() {
     (function(){
         var _events = [], _lastMark = '', _lastMarkT = 0;
         window._mrPerfMark = function(label){ _lastMark = label; _lastMarkT = performance.now(); };
-        function _ctx(){ return (_lastMark && (performance.now()-_lastMarkT) < 6000) ? ' tras «'+_lastMark+'»' : ''; }
+        function _ctx(){ return (_lastMark && (performance.now()-_lastMarkT) < 30000) ? ' tras «'+_lastMark+'»' : ''; }
+        function _anims(){
+            try {
+                if (typeof document.getAnimations !== 'function') return '';
+                var all = document.getAnimations().filter(function(a){ return a.playState === 'running'; });
+                if (!all.length) return ' · sin anims';
+                var names = {};
+                all.forEach(function(a){
+                    var n = (a && a.animationName) || (a && a.constructor && a.constructor.name) || 'anim';
+                    names[n] = (names[n]||0)+1;
+                });
+                var arr = Object.keys(names).map(function(k){ return k+'×'+names[k]; });
+                return ' · '+all.length+' anims: '+arr.slice(0,5).join(', ')+(arr.length>5?' …':'');
+            } catch(_){ return ''; }
+        }
         function _push(txt){
             _events.unshift('['+new Date().toLocaleTimeString()+'] '+txt);
             _events = _events.slice(0,6);
@@ -46529,7 +46557,7 @@ window.addEventListener('DOMContentLoaded', function() {
             if (typeof PerformanceObserver === 'function') {
                 var po = new PerformanceObserver(function(list){
                     list.getEntries().forEach(function(e){
-                        if (e.duration >= 200) _push('BLOQUEO '+Math.round(e.duration)+'ms (hilo principal)'+_ctx());
+                        if (e.duration >= 200) _push('BLOQUEO '+Math.round(e.duration)+'ms (hilo principal)'+_ctx()+_anims());
                     });
                 });
                 po.observe({ entryTypes: ['longtask'] });
@@ -46538,7 +46566,7 @@ window.addEventListener('DOMContentLoaded', function() {
         var _lastFrame = performance.now();
         (function _tick(){
             var now = performance.now(), gap = now - _lastFrame;
-            if (gap >= 350) _push('PARON '+Math.round(gap)+'ms (frames)'+_ctx());
+            if (gap >= 350) _push('PARON '+Math.round(gap)+'ms (frames)'+_ctx()+_anims());
             _lastFrame = now;
             requestAnimationFrame(_tick);
         })();
