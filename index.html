@@ -1881,9 +1881,17 @@
        que el scrollbar y el scroll-restore funcionen correctamente.
        Aplicado al wrapper (.act-swipe-wrap) porque es el bloque hijo directo
        de #activities-list y tiene altura predecible. */
+    /* [BugWizard · DIAG TEMPORAL] content-visibility:auto desactivado para
+       confirmar/descartar como causa de los PARONs periódicos de 1.6s. Si
+       tras esto desaparecen, este es el culpable (bug conocido de Safari iOS
+       PWA con listas grandes y CV:auto cuando cambia el contexto de layout
+       — scroll horizontal entre pestañas, view re-activation). Si persisten,
+       se reactiva y sigo. NOTA: con esto desactivado puede haber un pequeño
+       tirón al entrar por primera vez a Biblioteca con 291 cards (el bug que
+       CV:auto originalmente resolvía), pero solo durante el diagnóstico. */
     #activities-list > .act-swipe-wrap {
-        content-visibility: auto;
-        contain-intrinsic-size: 0 136px;  /* 128 card + 8 gap = 136 [FASE 8 compact + 2 líneas] */
+        /* content-visibility: auto; */
+        /* contain-intrinsic-size: 0 136px; */
     }
 
     /* [FASE 6 · Fix C] view-activities como contenedor relativo para el gate
@@ -2521,11 +2529,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }, 5);
   }
   // Capturar imágenes añadidas dinámicamente (cambios de pestaña, render dinámico)
-  /* [BugWizard · DIAG TEMPORAL] MutationObserver desactivado para descartar
-     como causa de los PARONs de 1.6s. Los logos que se cargan al inicio siguen
-     funcionando (applyAll() ya corrió en ready()). Si tras esto los PARONs
-     desaparecen, este MO era el culpable y aplico fix real (acotar el target).
-     Si persisten, se reactiva y sigo. */
   try {
     var mo = new MutationObserver(function(muts){
       for (var i=0; i<muts.length; i++) {
@@ -2537,8 +2540,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
       }
     });
-    if (false /* DIAG: observe desactivado */) {
+    if (document.documentElement) {
       mo.observe(document.documentElement, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', function(){
+        mo.observe(document.documentElement, { childList: true, subtree: true });
+      });
     }
   } catch(e){ /* no-op */ }
 })();
