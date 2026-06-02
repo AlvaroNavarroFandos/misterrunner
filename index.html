@@ -196,14 +196,7 @@
             rgba(201,168,76,.16) 50%,
             rgba(201,168,76,.04) 75%);
         background-size: 200% 100%;
-        /* [BugWizard · DIAG TEMPORAL] animation comentada. Cada _mrSkelCardHTML
-           crea 10 .mr-skel-bone y se montan 3 cards en overlay = 30 elementos
-           animándose simultáneamente con bg-position infinite. El medidor lo
-           confirmó: "31 anims: _fxSkelOverlayOut×1, mrLibSkelShimmer×30" en
-           PARONs de 1.6s durante swipe a biblioteca tras Strava back. Si tras
-           esto el bug desaparece, aplico fix real (un solo shimmer global vía
-           transform en lugar de 30 animaciones independientes). */
-        /* animation: mrLibSkelShimmer 1.4s linear infinite; */
+        animation: mrLibSkelShimmer 1.4s linear infinite;
         border-radius: 6px;
     }
     body:not(.dark-mode) .mr-skel-bone {
@@ -46442,13 +46435,23 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (appEl && dir) {
                     appEl.dataset.swipeDir = dir;  // 'l' siguiente / 'r' anterior
                 }
-                btn.click();
-                // Safety net: limpiar el flag si no se consumió
-                if (appEl) {
-                    requestAnimationFrame(function(){
-                        if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
-                    });
-                }
+                /* [BugWizard · DIAG TEMPORAL] Aplazamos btn.click() a un rAF
+                   para que el touchend termine completamente antes de iniciar
+                   el switch de vista. Hipótesis: en Safari iOS PWA tras pasar
+                   por wizard de Strava, hacer .click() síncrono dentro del
+                   touchend crea conflicto entre compositor (finalizando touch)
+                   y main thread (haciendo switch de vista pesado) → bloqueo.
+                   Si esto arregla el bug, fix real será aplicar este patrón
+                   limpio en goToView. */
+                requestAnimationFrame(function(){
+                    btn.click();
+                    // Safety net: limpiar el flag si no se consumió
+                    if (appEl) {
+                        requestAnimationFrame(function(){
+                            if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
+                        });
+                    }
+                });
             }
 
             function onTouchStart(e) {
