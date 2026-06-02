@@ -12460,17 +12460,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // otro a la vez, recorrido completo. Al terminar se restaura el sistema
             // normal (.active en la nueva). Si no es nav-fx: switch directo de siempre.
             var _newView = document.getElementById(_newViewId);
-            /* [BugWizard · DIAG TEMPORAL] Bypaseamos el carrusel cuando la
-               entrante es BIBLIOTECA. El usuario reportó que el bug se dispara
-               EXCLUSIVAMENTE con scroll horizontal a biblioteca tras back de
-               wizard (tap funciona, esperar funciona, otras pestañas también).
-               Hipótesis: el bloque carrusel pone ambas views position:absolute
-               con display:flex simultáneo, y aunque el skeleton overlay tapa
-               las 291 cards visualmente, el browser sigue procesando layout/
-               paint de todas durante el slide → bloqueo masivo. Si tras este
-               bypass el bug se va, esa es la causa. Si persiste, se revierte. */
-            var _libDestBypass = (_newViewId === 'view-activities');
-            if (_useNavFx && _oldView && _newView && _oldView !== _newView && !_libDestBypass) {
+            if (_useNavFx && _oldView && _newView && _oldView !== _newView) {
                 // Guard anti-doble-animación: si ya hay un carrusel en curso, lo
                 // resolvemos instantáneo antes de empezar otro (tap/swipe rápidos).
                 if (window.__mrNavCarouselBusy) {
@@ -46596,6 +46586,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         } catch(_){}
         /* [BugWizard · DIAG] Parche IntersectionObserver. */
+        /* [BugWizard · DIAG] Parche IntersectionObserver. */
         try {
             if (window.IntersectionObserver) {
                 var _oIO = window.IntersectionObserver;
@@ -46604,6 +46595,45 @@ window.addEventListener('DOMContentLoaded', function() {
                 };
                 window.IntersectionObserver.prototype = _oIO.prototype;
             }
+        } catch(_){}
+        /* [BugWizard · DIAG] Parche addEventListener — cuenta cuántos
+           listeners hay activos por tipo de evento, para detectar listeners
+           zombies que dejan abiertos handlers tras cerrar wizards. */
+        try {
+            var _listenerCount = {};
+            var _oAEL_et = EventTarget.prototype.addEventListener;
+            var _oREL_et = EventTarget.prototype.removeEventListener;
+            EventTarget.prototype.addEventListener = function(type, listener, opts){
+                if (typeof type === 'string') {
+                    _listenerCount[type] = (_listenerCount[type] || 0) + 1;
+                }
+                return _oAEL_et.apply(this, arguments);
+            };
+            EventTarget.prototype.removeEventListener = function(type, listener, opts){
+                if (typeof type === 'string' && _listenerCount[type]) {
+                    _listenerCount[type]--;
+                }
+                return _oREL_et.apply(this, arguments);
+            };
+            window._mrListenerStats = function(){
+                var keys = Object.keys(_listenerCount).sort(function(a,b){
+                    return _listenerCount[b] - _listenerCount[a];
+                });
+                var lines = keys.filter(function(k){ return _listenerCount[k] > 0; })
+                                .slice(0, 20)
+                                .map(function(k){ return k + ': ' + _listenerCount[k]; });
+                _push('LISTENERS:\n  ' + lines.join('\n  '));
+            };
+            /* Botón en el HUD: doble-tap muestra stats */
+            setTimeout(function(){
+                var hud = document.getElementById('_mrPerfHUD');
+                if (hud) {
+                    hud.addEventListener('dblclick', function(e){
+                        e.stopPropagation();
+                        window._mrListenerStats();
+                    });
+                }
+            }, 2000);
         } catch(_){}
         function _hot(){
             try {
