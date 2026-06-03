@@ -513,6 +513,18 @@
     #view-import-strava:not(.active) * {
         animation: none !important;
     }
+    /* [BugWizard · DIAG TEMPORAL] contain:strict en wizards inactivos.
+       Hipótesis: el wizard de Strava (5000+ líneas HTML, 3 animations defs,
+       muchísimos hijos) en display:none sigue pesando en el documento. Tras
+       cerrarlo, al activar biblioteca, Safari iOS PWA hace repaints cíclicos
+       del documento entero incluyendo el wizard oculto → PARONs de ~1.6s cada
+       2s. contain:strict aísla el subárbol totalmente para layout/paint.
+       Si esto arregla el bug, es el fix real (y se puede dejar permanente con
+       cero pérdida funcional: el wizard activo no tiene la regla aplicada). */
+    #view-import-manual:not(.active),
+    #view-import-strava:not(.active) {
+        contain: strict !important;
+    }
 
     .top-bar {
         display: flex;
@@ -46435,23 +46447,13 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (appEl && dir) {
                     appEl.dataset.swipeDir = dir;  // 'l' siguiente / 'r' anterior
                 }
-                /* [BugWizard · DIAG TEMPORAL] Aplazamos btn.click() a un rAF
-                   para que el touchend termine completamente antes de iniciar
-                   el switch de vista. Hipótesis: en Safari iOS PWA tras pasar
-                   por wizard de Strava, hacer .click() síncrono dentro del
-                   touchend crea conflicto entre compositor (finalizando touch)
-                   y main thread (haciendo switch de vista pesado) → bloqueo.
-                   Si esto arregla el bug, fix real será aplicar este patrón
-                   limpio en goToView. */
-                requestAnimationFrame(function(){
-                    btn.click();
-                    // Safety net: limpiar el flag si no se consumió
-                    if (appEl) {
-                        requestAnimationFrame(function(){
-                            if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
-                        });
-                    }
-                });
+                btn.click();
+                // Safety net: limpiar el flag si no se consumió
+                if (appEl) {
+                    requestAnimationFrame(function(){
+                        if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir;
+                    });
+                }
             }
 
             function onTouchStart(e) {
