@@ -513,18 +513,6 @@
     #view-import-strava:not(.active) * {
         animation: none !important;
     }
-    /* [BugWizard · DIAG TEMPORAL] contain:strict en wizards inactivos.
-       Hipótesis: el wizard de Strava (5000+ líneas HTML, 3 animations defs,
-       muchísimos hijos) en display:none sigue pesando en el documento. Tras
-       cerrarlo, al activar biblioteca, Safari iOS PWA hace repaints cíclicos
-       del documento entero incluyendo el wizard oculto → PARONs de ~1.6s cada
-       2s. contain:strict aísla el subárbol totalmente para layout/paint.
-       Si esto arregla el bug, es el fix real (y se puede dejar permanente con
-       cero pérdida funcional: el wizard activo no tiene la regla aplicada). */
-    #view-import-manual:not(.active),
-    #view-import-strava:not(.active) {
-        contain: strict !important;
-    }
 
     .top-bar {
         display: flex;
@@ -5328,7 +5316,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    Desactiva esta view, reactiva view-activities y marca el
                    botón nav inferior de Biblioteca como activo.
                    FASE 5.4.2: si veníamos de summary (post-import exitoso),
-                   refrescar activities[] desde BD para evitar Cmd+Shift+R. */
+                   refrescar activities[] desde BD para evitar Cmd+Shift+R.
+                   [BugWizard · DIAG TEMPORAL] Tras el cambio de view, detach
+                   del wizard del DOM (mantiene listeners, los nodos persisten
+                   en _wizStravaCache). Re-attach en openStravaImportWizard.
+                   Esto prueba la hipótesis de que el peso del wizard en DOM
+                   (5000+ líneas HTML) en display:none arrastra repaints
+                   cíclicos del documento entero en Safari iOS PWA. */
+                var _wizStravaCache = null;
+                var _wizStravaParent = null;
+                var _wizStravaNextSibling = null;
                 (function() {
                     var backBtn = document.getElementById('vis-back-btn');
                     if (!backBtn) return;
@@ -5376,6 +5373,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 setTimeout(_deferStravaRefresh, 50);
                             }
                         }
+                        /* [BugWizard · DIAG TEMPORAL] Detach del wizard del DOM
+                           tras el cambio de view. Aplazado 100ms para que el
+                           switch de view ya haya pintado. Los listeners del
+                           wizard se mantienen porque el nodo persiste en memoria
+                           (_wizStravaCache); se reinserta en openStravaImportWizard. */
+                        setTimeout(function(){
+                            var wiz = document.getElementById('view-import-strava');
+                            if (wiz && wiz.parentNode && !wiz.classList.contains('active')) {
+                                _wizStravaCache = wiz;
+                                _wizStravaParent = wiz.parentNode;
+                                _wizStravaNextSibling = wiz.nextSibling;
+                                _wizStravaParent.removeChild(wiz);
+                            }
+                        }, 100);
                     });
                 })();
 
@@ -5386,6 +5397,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    togglea las 291 cards de Biblioteca → sin freeze. */
                 window.openStravaImportWizard = function openStravaImportWizard() {
                     try { if (window._mrPerfMark) window._mrPerfMark('abrir wizard STRAVA'); } catch(_){}
+                    /* [BugWizard · DIAG TEMPORAL] Re-attach del wizard si fue
+                       detacheado tras un back previo. Reinserta en su posición
+                       original del DOM (parent + nextSibling guardados). */
+                    if (_wizStravaCache && _wizStravaParent && !document.getElementById('view-import-strava')) {
+                        if (_wizStravaNextSibling && _wizStravaNextSibling.parentNode === _wizStravaParent) {
+                            _wizStravaParent.insertBefore(_wizStravaCache, _wizStravaNextSibling);
+                        } else {
+                            _wizStravaParent.appendChild(_wizStravaCache);
+                        }
+                        _wizStravaCache = null;
+                    }
                     try { if (typeof closeSheet === 'function') closeSheet('config-sheet'); } catch(_) {}
                     document.querySelectorAll('.view').forEach(function(v) {
                         v.classList.remove('active');
