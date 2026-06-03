@@ -5316,16 +5316,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    Desactiva esta view, reactiva view-activities y marca el
                    botón nav inferior de Biblioteca como activo.
                    FASE 5.4.2: si veníamos de summary (post-import exitoso),
-                   refrescar activities[] desde BD para evitar Cmd+Shift+R.
-                   [BugWizard · DIAG TEMPORAL] Tras el cambio de view, detach
-                   del wizard del DOM (mantiene listeners, los nodos persisten
-                   en _wizStravaCache). Re-attach en openStravaImportWizard.
-                   Esto prueba la hipótesis de que el peso del wizard en DOM
-                   (5000+ líneas HTML) en display:none arrastra repaints
-                   cíclicos del documento entero en Safari iOS PWA. */
-                var _wizStravaCache = null;
-                var _wizStravaParent = null;
-                var _wizStravaNextSibling = null;
+                   refrescar activities[] desde BD para evitar Cmd+Shift+R. */
                 (function() {
                     var backBtn = document.getElementById('vis-back-btn');
                     if (!backBtn) return;
@@ -5337,21 +5328,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             window._MR_StravaImport
                             && window._MR_StravaImport.currentState === 'summary'
                         );
-                        document.querySelectorAll('.view').forEach(function(v) {
-                            v.classList.remove('active');
-                        });
-                        // [BugWizard · relocación] Solo vamos a Biblioteca (pesada, 1 freeze
-                        // asumido) si REALMENTE se importó algo (cameFromSummary) — ahí el
-                        // usuario quiere ver el resultado. Si solo cancela, volvemos a Runner
-                        // (vista ligera) → sin toggle de las 291 cards, sin freeze.
-                        var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
+                        /* [BugWizard · DIAG TEMPORAL] En lugar de toggle manual
+                           de .view/.nb classes (que deja estado intermedio sin
+                           pasar por _applyViewSwitch), simulamos un click en el
+                           .nb del destino. Eso hace que el back use EXACTAMENTE
+                           el mismo camino que un tap normal en la nav inferior.
+                           Hipótesis: el toggle manual deja el sistema de views
+                           en estado parcial que rompe el siguiente swipe. */
                         var _navT = cameFromSummary ? 'activities' : 'runner';
-                        var destView = document.getElementById(_dest);
-                        if (destView) destView.classList.add('active');
-                        /* Marcar el botón nav inferior correspondiente como activo */
-                        document.querySelectorAll('.nb').forEach(function(b) {
-                            b.classList.toggle('active', b.dataset.target === _navT);
-                        });
+                        var _destNbBtn = document.querySelector('#nav .nb[data-target="' + _navT + '"]');
+                        if (_destNbBtn) {
+                            _destNbBtn.click();
+                        } else {
+                            /* Fallback al toggle manual si no se encuentra el botón */
+                            document.querySelectorAll('.view').forEach(function(v) {
+                                v.classList.remove('active');
+                            });
+                            var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
+                            var destView = document.getElementById(_dest);
+                            if (destView) destView.classList.add('active');
+                            document.querySelectorAll('.nb').forEach(function(b) {
+                                b.classList.toggle('active', b.dataset.target === _navT);
+                            });
+                        }
                         /* FASE 5.4.2: refrescar tras transición de view, fire-and-forget.
                            No bloqueamos el cambio visual. La función es idempotente:
                            si llaman 2 veces seguidas, segundo intento añade 0.
@@ -5373,20 +5372,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 setTimeout(_deferStravaRefresh, 50);
                             }
                         }
-                        /* [BugWizard · DIAG TEMPORAL] Detach del wizard del DOM
-                           tras el cambio de view. Aplazado 100ms para que el
-                           switch de view ya haya pintado. Los listeners del
-                           wizard se mantienen porque el nodo persiste en memoria
-                           (_wizStravaCache); se reinserta en openStravaImportWizard. */
-                        setTimeout(function(){
-                            var wiz = document.getElementById('view-import-strava');
-                            if (wiz && wiz.parentNode && !wiz.classList.contains('active')) {
-                                _wizStravaCache = wiz;
-                                _wizStravaParent = wiz.parentNode;
-                                _wizStravaNextSibling = wiz.nextSibling;
-                                _wizStravaParent.removeChild(wiz);
-                            }
-                        }, 100);
                     });
                 })();
 
@@ -5397,17 +5382,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                    togglea las 291 cards de Biblioteca → sin freeze. */
                 window.openStravaImportWizard = function openStravaImportWizard() {
                     try { if (window._mrPerfMark) window._mrPerfMark('abrir wizard STRAVA'); } catch(_){}
-                    /* [BugWizard · DIAG TEMPORAL] Re-attach del wizard si fue
-                       detacheado tras un back previo. Reinserta en su posición
-                       original del DOM (parent + nextSibling guardados). */
-                    if (_wizStravaCache && _wizStravaParent && !document.getElementById('view-import-strava')) {
-                        if (_wizStravaNextSibling && _wizStravaNextSibling.parentNode === _wizStravaParent) {
-                            _wizStravaParent.insertBefore(_wizStravaCache, _wizStravaNextSibling);
-                        } else {
-                            _wizStravaParent.appendChild(_wizStravaCache);
-                        }
-                        _wizStravaCache = null;
-                    }
                     try { if (typeof closeSheet === 'function') closeSheet('config-sheet'); } catch(_) {}
                     document.querySelectorAll('.view').forEach(function(v) {
                         v.classList.remove('active');
@@ -16514,12 +16488,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-        const target = document.getElementById('view-home');
-        if (target) { target.classList.add('active'); target.scrollTop = 0; }
-        document.querySelectorAll('.nb').forEach(function(b) {
-            b.classList.toggle('active', b.dataset.target === 'home');
-        });
+        /* [BugWizard · DIAG TEMPORAL] En lugar de toggle manual de .view/.nb
+           classes, simulamos un click en el .nb del destino para usar el mismo
+           camino que un tap normal en la nav inferior. */
+        var _homeNbBtn = document.querySelector('#nav .nb[data-target="home"]');
+        if (_homeNbBtn) {
+            _homeNbBtn.click();
+        } else {
+            /* Fallback al toggle manual */
+            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+            const target = document.getElementById('view-home');
+            if (target) { target.classList.add('active'); target.scrollTop = 0; }
+            document.querySelectorAll('.nb').forEach(function(b) {
+                b.classList.toggle('active', b.dataset.target === 'home');
+            });
+        }
     }
     window.vimBackNav = vimBackNav;
 
