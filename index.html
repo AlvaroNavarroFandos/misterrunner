@@ -12405,22 +12405,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     }, 700);
                                 }
                             } catch(_) {}
-                            /* [BugWizard · FIX] Flush del render diferido. Si
-                               algún flujo (p.ej. wizard Strava) llamó a
-                               renderActivities mientras biblioteca estaba
-                               oculta, ahora ejecutamos el render (una sola
-                               vez, no se acumula). Aplazado 320ms para que
-                               la transición visual del swipe termine fluida
-                               ANTES de que arranque el render pesado de 290
-                               cards. El skeleton overlay tapa la espera. */
-                            if (window._mrLibRenderDirty) {
-                                window._mrLibRenderDirty = false;
-                                setTimeout(function(){
-                                    window._mrSkipLazyRender = true;
-                                    try { renderActivities(); } catch(_){}
-                                    window._mrSkipLazyRender = false;
-                                }, 320);
-                            }
                         }
                     } catch(_) {}
                     // [v6 P.Plan] Al entrar a Plan, saltar a la semana actual
@@ -19606,25 +19590,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
                 if (window._mrRenderLog.length > 20) window._mrRenderLog.shift();
             } catch(_){}
-            /* [BugWizard · FIX RADICAL] Lazy render: si la biblioteca NO está
-               visible (sin .active), NO renderizar las 290 cards. Solo marcar
-               como "pendiente". Cuando el usuario vaya a biblioteca, se
-               renderiza una sola vez. Esto elimina cualquier render
-               innecesario disparado desde otros flujos (p.ej. wizard Strava
-               que dispara 2 renderActivities en su flujo open+back).
-               Excepción: si window._mrSkipLazyRender está seteado, ejecuta
-               el render forzadamente (para _applyViewSwitch al activar bib). */
-            try {
-                var libView = document.getElementById('view-activities');
-                if (libView && !libView.classList.contains('active') && !window._mrSkipLazyRender) {
-                    window._mrLibRenderDirty = true;
-                    if (window._mrPerfMark) window._mrPerfMark('renderActivities DEFERRED');
-                    return;
-                }
-            } catch(_){}
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
         list.innerHTML = '';
+        // [BugWizard · FIX] Mutex anti-reset: si ya hay un chunked render en
+        // curso, esta llamada se descarta. Antes el sistema de token hacía
+        // que la SEGUNDA llamada ganara, abortando la primera y reseteando
+        // todo (síntoma post-wizard: cards renderizadas a medias, vacías al
+        // hacer scroll). Con el mutex, la primera completa íntegra el render
+        // y las llamadas concurrentes se ignoran (la lista ya estará actualizada
+        // cuando termine; si los datos cambiaron, el siguiente render normal
+        // los recogerá).
+        if (window._mrLibChunkInProgress) {
+            if (window._mrPerfMark) window._mrPerfMark('renderActivities IGNORED (chunk in progress)');
+            return;
+        }
         // [FASE 6 · Fix render concurrente]
         // Cada llamada a renderActivities genera un token único. Los chunks
         // por rAF verifican este token antes de seguir. Si un segundo render
@@ -19708,7 +19688,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         function _mrLibRenderChunk() {
             // [FASE 6 · Fix render concurrente] Abortar si llegó un render nuevo
-            if (window.__mrLibRenderToken !== _myToken) return;
+            if (window.__mrLibRenderToken !== _myToken) {
+                window._mrLibChunkInProgress = false;
+                return;
+            }
+            window._mrLibChunkInProgress = true;
             if (_mrLibIdx === 0) {
                 // Quitar skeletons antes del primer chunk real
                 list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
@@ -19721,6 +19705,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (_mrLibIdx < _mrLibTotal) {
                 requestAnimationFrame(_mrLibRenderChunk);
             } else {
+                window._mrLibChunkInProgress = false;
                 // Fin del render: si quedó vacío con filtros, mensaje
                 if (filtered.length === 0 && activities.length > 0) {
                     const msg = document.createElement('div');
