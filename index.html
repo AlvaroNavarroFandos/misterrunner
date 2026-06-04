@@ -19577,6 +19577,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window._mrSkelCardHTML = _mrSkelCardHTML;
 
         function renderActivities() {
+            try {
+                if (window._mrRenderCallCount === undefined) window._mrRenderCallCount = 0;
+                window._mrRenderCallCount++;
+                var n = window._mrRenderCallCount;
+                if (window._mrPerfMark) window._mrPerfMark('renderActivities #' + n);
+                /* También logueamos en un buffer accesible */
+                if (!window._mrRenderLog) window._mrRenderLog = [];
+                window._mrRenderLog.push({
+                    t: new Date().toLocaleTimeString(),
+                    n: n,
+                    stack: (new Error()).stack ? (new Error()).stack.split('\n').slice(2,5).join('\n').slice(0,250) : '?'
+                });
+                if (window._mrRenderLog.length > 20) window._mrRenderLog.shift();
+            } catch(_){}
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
         list.innerHTML = '';
@@ -46655,7 +46669,16 @@ window.addEventListener('DOMContentLoaded', function() {
                                     }
                                     return line;
                                 });
-                _push('LISTENERS:\n  ' + lines.join('\n  '));
+                /* También mostrar render stats */
+                var renderStats = 'renderActivities calls: ' + (window._mrRenderCallCount || 0);
+                if (window._mrRenderLog && window._mrRenderLog.length) {
+                    var last3 = window._mrRenderLog.slice(-3);
+                    renderStats += '\n  ÚLTIMAS:';
+                    last3.forEach(function(r){
+                        renderStats += '\n  #' + r.n + ' [' + r.t + '] ' + r.stack.split('\n')[0].slice(0,80);
+                    });
+                }
+                _push('LISTENERS:\n  ' + lines.join('\n  ') + '\n' + renderStats);
             };
         } catch(_){}
         function _hot(){
