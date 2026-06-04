@@ -5328,42 +5328,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             window._MR_StravaImport
                             && window._MR_StravaImport.currentState === 'summary'
                         );
-                        document.querySelectorAll('.view').forEach(function(v) {
-                            v.classList.remove('active');
-                        });
-                        // [BugWizard · relocación] Solo vamos a Biblioteca (pesada, 1 freeze
-                        // asumido) si REALMENTE se importó algo (cameFromSummary) — ahí el
-                        // usuario quiere ver el resultado. Si solo cancela, volvemos a Runner
-                        // (vista ligera) → sin toggle de las 291 cards, sin freeze.
-                        var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
+                        /* [BugWizard · Plan B] Reload controlado al cerrar el wizard.
+                           Tras 24 iteraciones de diagnóstico sin éxito identificando
+                           la causa raíz, optamos por la solución más drástica pero
+                           garantizada: recargar la app. El service worker tiene todo
+                           cacheado, así que la "recarga" es de ~300-500ms (pantalla
+                           blanca mínima) y la app vuelve a un estado fresco sin
+                           contaminación del wizard. Guardamos el destino esperado
+                           en sessionStorage para que bootApp navegue allí al cargar
+                           y la UX sea fluida. */
                         var _navT = cameFromSummary ? 'activities' : 'runner';
-                        var destView = document.getElementById(_dest);
-                        if (destView) destView.classList.add('active');
-                        /* Marcar el botón nav inferior correspondiente como activo */
-                        document.querySelectorAll('.nb').forEach(function(b) {
-                            b.classList.toggle('active', b.dataset.target === _navT);
-                        });
-                        /* FASE 5.4.2: refrescar tras transición de view, fire-and-forget.
-                           No bloqueamos el cambio visual. La función es idempotente:
-                           si llaman 2 veces seguidas, segundo intento añade 0.
-                           [S26.C+ P2-Fix] Aplazado adicional con requestIdleCallback
-                           para que la animación del cambio de view termine ANTES
-                           de que arranque el refresh (que internamente re-renderiza
-                           290+ items). Fallback setTimeout(50) para Safari/iOS PWA. */
-                        if (cameFromSummary
-                            && window._MR_StravaImport
-                            && typeof window._MR_StravaImport.refreshActivities === 'function') {
-                            var _deferStravaRefresh = function() {
-                                window._MR_StravaImport.refreshActivities().catch(function(err){
-                                    console.warn('[MR][FASE 5.4.2] refresh post-import falló:', err);
-                                });
-                            };
-                            if (typeof requestIdleCallback === 'function') {
-                                requestIdleCallback(_deferStravaRefresh, { timeout: 800 });
-                            } else {
-                                setTimeout(_deferStravaRefresh, 50);
-                            }
-                        }
+                        try {
+                            sessionStorage.setItem('_mrPostWizardDest', _navT);
+                        } catch(_){}
+                        location.reload();
                     });
                 })();
 
@@ -16475,17 +16453,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // step === 'brand' → salir del wizard a HOME (síncrono, instantáneo).
         try { if (window._mrPerfMark) window._mrPerfMark('cerrar wizard ENTRENO'); } catch(_){}
-        const wizView = document.getElementById('view-import-manual');
-        if (wizView) wizView.classList.remove('active');
-        _vimState.brand = null;
-        _vimState.files = {};
-        _vimState.step  = 'brand';
-        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-        const target = document.getElementById('view-home');
-        if (target) { target.classList.add('active'); target.scrollTop = 0; }
-        document.querySelectorAll('.nb').forEach(function(b) {
-            b.classList.toggle('active', b.dataset.target === 'home');
-        });
+        /* [BugWizard · Plan B] Reload controlado al cerrar el wizard.
+           Misma lógica que Strava back: la app se recarga fresca y bootApp
+           navega al destino guardado (home) para que la UX sea natural. */
+        try {
+            sessionStorage.setItem('_mrPostWizardDest', 'home');
+        } catch(_){}
+        location.reload();
+        return;
     }
     window.vimBackNav = vimBackNav;
 
@@ -19592,17 +19567,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_){}
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
-        // [BugWizard · FIX] Si CUALQUIER wizard está activo en este momento,
-        // ignorar la llamada a renderActivities. Hipótesis: las 2 llamadas
-        // observadas en el flujo Strava ocurren MIENTRAS el wizard está
-        // .active (al abrirse). Bloquearlas evita el doble render.
-        // Cuando el wizard se cierre y otras llamadas lleguen (boot inicial,
-        // refresh post-import, etc.), el wizard ya no tendrá .active y el
-        // render se ejecuta normalmente. Cero pérdida funcional.
-        if (document.querySelector('#view-import-manual.active, #view-import-strava.active')) {
-            if (window._mrPerfMark) window._mrPerfMark('renderActivities BLOQUEADO (wizard activo)');
-            return;
-        }
         list.innerHTML = '';
         // [FASE 6 · Fix render concurrente]
         // Cada llamada a renderActivities genera un token único. Los chunks
@@ -46771,10 +46735,38 @@ window.addEventListener('DOMContentLoaded', function() {
                 txtEl.textContent = 'MEDIDOR ACTIVO\n· tap aquí = ver LISTENERS\n· X arriba derecha = cerrar';
             }
         }
+        /* [BugWizard · Plan B] Restauración de destino post-reload del wizard.
+           Si sessionStorage tiene _mrPostWizardDest, la app se acaba de
+           recargar tras el back de un wizard. Esperamos un poco a que la app
+           termine bootApp (incluyendo loadActivitiesFromIDB y similares) y
+           luego navegamos al destino guardado simulando un click en el .nb. */
+        function _restorePostWizardDest(){
+            try {
+                var dest = sessionStorage.getItem('_mrPostWizardDest');
+                if (!dest) return;
+                sessionStorage.removeItem('_mrPostWizardDest');
+                /* Esperar a que la app esté lista y el nav button exista */
+                var _attempt = 0;
+                var _tryNav = function(){
+                    _attempt++;
+                    var btn = document.querySelector('#nav .nb[data-target="' + dest + '"]');
+                    if (btn) {
+                        btn.click();
+                    } else if (_attempt < 30) {
+                        setTimeout(_tryNav, 100);
+                    }
+                };
+                setTimeout(_tryNav, 300);
+            } catch(_){}
+        }
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', _initHUDtext);
+            document.addEventListener('DOMContentLoaded', function(){
+                _initHUDtext();
+                _restorePostWizardDest();
+            });
         } else {
             _initHUDtext();
+            _restorePostWizardDest();
         }
         try {
             if (typeof PerformanceObserver === 'function') {
