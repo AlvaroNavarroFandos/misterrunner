@@ -46665,12 +46665,24 @@ window.addEventListener('DOMContentLoaded', function() {
                 el = document.createElement('div');
                 el.id = '_mrPerfHUD';
                 el.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:2000000;background:#140000;color:#ffd2d2;font:600 10.5px/1.35 monospace;padding:7px 9px;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:pre-wrap;max-height:60vh;overflow:hidden;border:1px solid #5c1a1a;';
-                el.addEventListener('click', function(){ el.remove(); });
-                el.addEventListener('dblclick', function(e){
+                // Texto del medidor (clic en este área = stats)
+                var txt = document.createElement('div');
+                txt.id = '_mrPerfHUDtxt';
+                txt.style.cssText = 'padding-right:28px;cursor:pointer;';
+                txt.addEventListener('click', function(e){
                     e.stopPropagation();
                     if (typeof window._mrListenerStats === 'function') window._mrListenerStats();
                 });
-                el.textContent = 'MEDIDOR ACTIVO · doble-tap para LISTENERS · tap simple para cerrar';
+                el.appendChild(txt);
+                // Botón cerrar (X) en la esquina superior derecha
+                var btn = document.createElement('div');
+                btn.textContent = '×';
+                btn.style.cssText = 'position:absolute;top:2px;right:6px;font:700 22px/1 system-ui;color:#ff8a8a;cursor:pointer;padding:4px 10px;';
+                btn.addEventListener('click', function(e){
+                    e.stopPropagation();
+                    el.remove();
+                });
+                el.appendChild(btn);
                 if (document.body) document.body.appendChild(el);
                 else document.addEventListener('DOMContentLoaded', function(){ document.body.appendChild(el); });
             }
@@ -46680,13 +46692,23 @@ window.addEventListener('DOMContentLoaded', function() {
             _events.unshift('['+new Date().toLocaleTimeString()+'] '+txt);
             _events = _events.slice(0,6);
             var el = _ensureHUD();
-            el.textContent = 'MEDIDOR (toca para cerrar · 2tap=listeners)\n' + _events.join('\n');
+            var txtEl = el.querySelector('#_mrPerfHUDtxt');
+            if (txtEl) {
+                txtEl.textContent = 'MEDIDOR (tap=listeners · X=cerrar)\n' + _events.join('\n');
+            }
         }
-        /* Inicializar HUD inmediatamente */
+        /* Inicializar HUD inmediatamente con mensaje inicial */
+        function _initHUDtext(){
+            var el = _ensureHUD();
+            var txtEl = el.querySelector('#_mrPerfHUDtxt');
+            if (txtEl && !_events.length) {
+                txtEl.textContent = 'MEDIDOR ACTIVO\n· tap aquí = ver LISTENERS\n· X arriba derecha = cerrar';
+            }
+        }
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', _ensureHUD);
+            document.addEventListener('DOMContentLoaded', _initHUDtext);
         } else {
-            _ensureHUD();
+            _initHUDtext();
         }
         try {
             if (typeof PerformanceObserver === 'function') {
