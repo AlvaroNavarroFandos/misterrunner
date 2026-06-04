@@ -513,6 +513,24 @@
     #view-import-strava:not(.active) * {
         animation: none !important;
     }
+    /* [BugWizard · FIX REAL] Las 290 cards de biblioteca tienen ~10 listeners
+       de touch/mouse cada una (~2900 listeners totales). Cuando view-activities
+       está display:none o en transición (sin .active), las cards SIGUEN siendo
+       evaluadas por Safari iOS PWA en cada touchmove del documento. Durante
+       un swipe horizontal entre pestañas (decenas de touchmove/s) con la
+       biblioteca renderizada en background, Safari evalúa 2900 listeners ×
+       cada touchmove = bloqueos periódicos de ~1.6s.
+       Diagnóstico confirmado: el bug solo aparece cuando renderActivities ya
+       ha rellenado la biblioteca (p.ej. tras flujo abrir+cerrar Strava que
+       dispara render). Sin renderActivities previo, biblioteca vacía = swipe
+       fluido. Fix: bloquear pointer-events en las cards cuando la view no
+       está activa, así no participan en el dispatch de touch events. Cuando
+       el usuario llega a biblioteca y se añade .active, recuperan interactividad
+       normalmente. Cero pérdida funcional. */
+    #view-activities:not(.active),
+    #view-activities:not(.active) * {
+        pointer-events: none !important;
+    }
 
     .top-bar {
         display: flex;
@@ -19582,7 +19600,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 window._mrRenderCallCount++;
                 var n = window._mrRenderCallCount;
                 if (window._mrPerfMark) window._mrPerfMark('renderActivities #' + n);
-                /* También logueamos en un buffer accesible */
                 if (!window._mrRenderLog) window._mrRenderLog = [];
                 window._mrRenderLog.push({
                     t: new Date().toLocaleTimeString(),
@@ -19591,17 +19608,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
                 if (window._mrRenderLog.length > 20) window._mrRenderLog.shift();
             } catch(_){}
-            /* [BugWizard · DIAG TEMPORAL] Leading-debounce: si renderActivities
-               se llamó hace menos de 500ms, omitir esta llamada. El medidor
-               confirmó que abrir+cerrar wizard Strava dispara DOS llamadas a
-               renderActivities (en el mismo segundo) → re-render duplicado de
-               290 cards = 2900 listeners acumulados → bloqueo brutal en swipe. */
-            var _now = Date.now();
-            if (window._mrLastRenderActT && (_now - window._mrLastRenderActT) < 500) {
-                if (window._mrPerfMark) window._mrPerfMark('renderActivities SKIPPED (debounce)');
-                return;
-            }
-            window._mrLastRenderActT = _now;
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
         list.innerHTML = '';
