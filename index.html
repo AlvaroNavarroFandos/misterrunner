@@ -46598,14 +46598,34 @@ window.addEventListener('DOMContentLoaded', function() {
         } catch(_){}
         /* [BugWizard · DIAG] Parche addEventListener — cuenta cuántos
            listeners hay activos por tipo de evento, para detectar listeners
-           zombies que dejan abiertos handlers tras cerrar wizards. */
+           zombies que dejan abiertos handlers tras cerrar wizards.
+           También guarda muestra de targets recientes para identificar qué
+           elementos reciben los listeners. */
         try {
             var _listenerCount = {};
+            var _listenerTargets = {};
             var _oAEL_et = EventTarget.prototype.addEventListener;
             var _oREL_et = EventTarget.prototype.removeEventListener;
+            function _tgtDesc(t) {
+                if (!t) return '?';
+                if (t === document) return 'document';
+                if (t === window) return 'window';
+                if (t === document.body) return 'body';
+                if (t.nodeType !== 1) return t.constructor && t.constructor.name || 'node';
+                var s = t.tagName.toLowerCase();
+                if (t.id) s += '#' + t.id;
+                if (t.className && typeof t.className === 'string') {
+                    var c = t.className.trim().split(/\s+/).slice(0,2).join('.');
+                    if (c) s += '.' + c;
+                }
+                return s;
+            }
             EventTarget.prototype.addEventListener = function(type, listener, opts){
                 if (typeof type === 'string') {
                     _listenerCount[type] = (_listenerCount[type] || 0) + 1;
+                    if (!_listenerTargets[type]) _listenerTargets[type] = {};
+                    var desc = _tgtDesc(this);
+                    _listenerTargets[type][desc] = (_listenerTargets[type][desc] || 0) + 1;
                 }
                 return _oAEL_et.apply(this, arguments);
             };
@@ -46620,8 +46640,21 @@ window.addEventListener('DOMContentLoaded', function() {
                     return _listenerCount[b] - _listenerCount[a];
                 });
                 var lines = keys.filter(function(k){ return _listenerCount[k] > 0; })
-                                .slice(0, 20)
-                                .map(function(k){ return k + ': ' + _listenerCount[k]; });
+                                .slice(0, 8)
+                                .map(function(k){
+                                    var line = k + ': ' + _listenerCount[k];
+                                    /* Mostrar top 3 targets de este tipo */
+                                    var tgts = _listenerTargets[k] || {};
+                                    var tkeys = Object.keys(tgts).sort(function(a,b){
+                                        return tgts[b] - tgts[a];
+                                    }).slice(0,3);
+                                    if (tkeys.length) {
+                                        line += '\n      ' + tkeys.map(function(t){
+                                            return t + '×' + tgts[t];
+                                        }).join(', ');
+                                    }
+                                    return line;
+                                });
                 _push('LISTENERS:\n  ' + lines.join('\n  '));
             };
         } catch(_){}
