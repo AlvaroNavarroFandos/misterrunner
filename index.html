@@ -19591,6 +19591,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
                 if (window._mrRenderLog.length > 20) window._mrRenderLog.shift();
             } catch(_){}
+            /* [BugWizard · DIAG TEMPORAL] Leading-debounce: si renderActivities
+               se llamó hace menos de 500ms, omitir esta llamada. El medidor
+               confirmó que abrir+cerrar wizard Strava dispara DOS llamadas a
+               renderActivities (en el mismo segundo) → re-render duplicado de
+               290 cards = 2900 listeners acumulados → bloqueo brutal en swipe. */
+            var _now = Date.now();
+            if (window._mrLastRenderActT && (_now - window._mrLastRenderActT) < 500) {
+                if (window._mrPerfMark) window._mrPerfMark('renderActivities SKIPPED (debounce)');
+                return;
+            }
+            window._mrLastRenderActT = _now;
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
         list.innerHTML = '';
