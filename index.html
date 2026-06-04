@@ -46230,6 +46230,63 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [BULK STRAVA · pipeline guardián · FASE 9 testing] Verifica que la
+    // cadena del import bulk Strava está intacta. Read-only sobre window:
+    //   1) openStravaImportWizard expuesto en window (entry point UI)
+    //   2) Módulo window._MR_StravaImport con los 3 parsers reales
+    //      (parseStravaCSV, parseFitStrava, parseGPXStrava) + runImport +
+    //      refreshActivities
+    //   3) Dependencias globales del post-bulk (la IIFE _bulkPRRebuild
+    //      vive dentro de visImpFinish, función local NO expuesta; por
+    //      eso verificamos sus 2 deps globales en lugar del body):
+    //      window._rebuildAllPRsAndMilestones + window._showBulkImportPRToast
+    // Nota: la dedupe real (onConflict 'user_id,source,external_id') la
+    // garantiza el UNIQUE constraint del schema Supabase, no el código JS,
+    // por eso no se chequea aquí (un check sintáctico sería frágil y la
+    // string vive en processRow + _saveManualActivityToSupabase, ninguna
+    // expuesta). NO ejecuta import real: 100% read-only.
+    function _testBulkStravaPipeline() {
+        var checks = [];
+        try {
+            // 1. Entry point del wizard
+            if (typeof window.openStravaImportWizard !== 'function')
+                checks.push('openStravaImportWizard no expuesto');
+
+            // 2. Módulo _MR_StravaImport con parsers + runImport + refresh
+            var imp = window._MR_StravaImport;
+            if (!imp || typeof imp !== 'object') {
+                checks.push('_MR_StravaImport no existe');
+            } else {
+                if (typeof imp.parseStravaCSV !== 'function')
+                    checks.push('parseStravaCSV no expuesto');
+                if (typeof imp.parseFitStrava !== 'function')
+                    checks.push('parseFitStrava no expuesto');
+                if (typeof imp.parseGPXStrava !== 'function')
+                    checks.push('parseGPXStrava no expuesto');
+                if (typeof imp.runImport !== 'function')
+                    checks.push('runImport no expuesto');
+                if (typeof imp.refreshActivities !== 'function')
+                    checks.push('refreshActivities no expuesto');
+            }
+
+            // 3. Dependencias globales del post-bulk (visImpFinish es local)
+            if (typeof window._rebuildAllPRsAndMilestones !== 'function')
+                checks.push('window._rebuildAllPRsAndMilestones no expuesto');
+            if (typeof window._showBulkImportPRToast !== 'function')
+                checks.push('window._showBulkImportPRToast no expuesto');
+
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'bulkstrava.pipeline',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'wizard + 3 parsers + runImport + refresh + rebuild + toast OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -46240,7 +46297,8 @@ window.addEventListener('DOMContentLoaded', function() {
         s26c:    [_testS26CMausoleo],
         hitos:   [_testHitosCoherence],
         fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy],
-        backup:  [_testBackupSnapshot]
+        backup:  [_testBackupSnapshot],
+        fase9:   [_testBulkStravaPipeline]
     };
 
     window.__mrSmoke = function(group) {
