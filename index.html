@@ -19592,17 +19592,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_){}
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
-        // [BugWizard · FIX] Mutex anti-reset SÍNCRONO. Si ya hay un chunked
-        // render en curso (o sea, otro renderActivities corriendo desde antes),
-        // esta llamada se descarta SIN tocar nada. El mutex se setea aquí
-        // mismo (no dentro del rAF) para que llamadas casi simultáneas no
-        // pasen ambas: la primera setea el flag, la segunda lo ve y sale.
-        // Se libera dentro de _mrLibRenderChunk cuando termina.
-        if (window._mrLibChunkInProgress) {
-            if (window._mrPerfMark) window._mrPerfMark('renderActivities IGNORED (chunk in progress)');
+        // [BugWizard · FIX] Si CUALQUIER wizard está activo en este momento,
+        // ignorar la llamada a renderActivities. Hipótesis: las 2 llamadas
+        // observadas en el flujo Strava ocurren MIENTRAS el wizard está
+        // .active (al abrirse). Bloquearlas evita el doble render.
+        // Cuando el wizard se cierre y otras llamadas lleguen (boot inicial,
+        // refresh post-import, etc.), el wizard ya no tendrá .active y el
+        // render se ejecuta normalmente. Cero pérdida funcional.
+        if (document.querySelector('#view-import-manual.active, #view-import-strava.active')) {
+            if (window._mrPerfMark) window._mrPerfMark('renderActivities BLOQUEADO (wizard activo)');
             return;
         }
-        window._mrLibChunkInProgress = true;
         list.innerHTML = '';
         // [FASE 6 · Fix render concurrente]
         // Cada llamada a renderActivities genera un token único. Los chunks
@@ -19616,7 +19616,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _myToken = window.__mrLibRenderToken;
         const filtered = getFilteredActivities();
         updateSummary(filtered);
-        if (!activities.length) { window._mrLibChunkInProgress = false; empty.style.display = ''; return; }
+        if (!activities.length) { empty.style.display = ''; return; }
         empty.style.display = 'none';
 
         const _mrLibSorted = [...filtered].sort((a, b) => new Date(b.dateStr + "T12:00:00") - new Date(a.dateStr + "T12:00:00"));
@@ -19687,10 +19687,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         function _mrLibRenderChunk() {
             // [FASE 6 · Fix render concurrente] Abortar si llegó un render nuevo
-            if (window.__mrLibRenderToken !== _myToken) {
-                window._mrLibChunkInProgress = false;
-                return;
-            }
+            if (window.__mrLibRenderToken !== _myToken) return;
             if (_mrLibIdx === 0) {
                 // Quitar skeletons antes del primer chunk real
                 list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
@@ -19703,7 +19700,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (_mrLibIdx < _mrLibTotal) {
                 requestAnimationFrame(_mrLibRenderChunk);
             } else {
-                window._mrLibChunkInProgress = false;
                 // Fin del render: si quedó vacío con filtros, mensaje
                 if (filtered.length === 0 && activities.length > 0) {
                     const msg = document.createElement('div');
