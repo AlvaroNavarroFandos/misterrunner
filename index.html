@@ -2468,11 +2468,83 @@
         50%      { transform: scale(1.15); opacity: 1; }
     }
     #plan-sync-icon { animation: plan-sync-pulse 1.6s ease-in-out infinite; }
+
+    /* [BugWizard · Plan B] Overlay de carga durante el reload post-wizard.
+       Por defecto oculto. Cuando <html> tiene la clase .mr-reloading
+       (activada por el script inline del head si hay flag en sessionStorage),
+       el overlay se muestra inmediatamente, ANTES del primer paint, sin
+       flash blanco. Tras bootApp se quita la clase con fadeout y desaparece. */
+    #mr-reload-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        background: #f0ebe0;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        opacity: 1;
+        transition: opacity .35s ease-out;
+        pointer-events: none;
+    }
+    body.dark-mode #mr-reload-overlay,
+    html.mr-reload-dark #mr-reload-overlay {
+        background: #0a0e14;
+    }
+    html.mr-reloading #mr-reload-overlay { display: flex; }
+    html.mr-reload-fading #mr-reload-overlay { opacity: 0; }
+    #mr-reload-overlay .mr-reload-spinner {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        border: 3px solid rgba(196,136,30,.15);
+        border-top-color: #c4881e;
+        animation: mr-reload-spin .8s linear infinite;
+    }
+    body.dark-mode #mr-reload-overlay .mr-reload-spinner,
+    html.mr-reload-dark #mr-reload-overlay .mr-reload-spinner {
+        border-color: rgba(232,168,37,.18);
+        border-top-color: #e8a825;
+    }
+    @keyframes mr-reload-spin {
+        to { transform: rotate(360deg); }
+    }
 </style>
 
     <meta name="color-scheme" content="light">
+    <script>
+    /* [BugWizard · Plan B] Si la app está siendo recargada tras un wizard back,
+       activamos la clase .mr-reloading en <html> ANTES del primer paint.
+       El CSS muestra el overlay inmediatamente sin flash blanco.
+       También detectamos el modo dark del localStorage para aplicar el color
+       correcto al overlay desde el primer frame (initDarkMode corre más tarde). */
+    (function(){
+        try {
+            if (sessionStorage.getItem('_mrPostWizardDest')) {
+                document.documentElement.classList.add('mr-reloading');
+                /* Detectar dark mode del usuario actual (mr_dark_mode con sufijo de userId).
+                   No conocemos el userId aquí, así que buscamos cualquier clave que
+                   contenga "mr_dark_mode" con valor "1". */
+                var isDark = false;
+                for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf('mr_dark_mode') !== -1 && localStorage.getItem(k) === '1') {
+                        isDark = true;
+                        break;
+                    }
+                }
+                if (isDark) {
+                    document.documentElement.classList.add('mr-reload-dark');
+                }
+            }
+        } catch(_){}
+    })();
+    </script>
 </head>
 <body>
+<div id="mr-reload-overlay" aria-hidden="true">
+    <div class="mr-reload-spinner"></div>
+</div>
 <script>
 // Logo MR embebido como data URI (consolidado: antes había 6 copias en el HTML).
 // Se aplica vía data-mr-logo="1" para que el HTML pese menos sin perder funcionalidad.
@@ -2633,10 +2705,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <div class="mr-logo"><img src="" data-mr-logo="1" alt="MR" style="width:100%;height:100%;object-fit:cover;object-position:center 10%;display:block;"></div>
             </div>
             <!-- [BugWizard · relocación] Fila de acciones DEBAJO de la cabecera:
-                 CLUB + ENTRENO (entrada diaria al wizard import). -->
+                 ACCESO CLUB + ENTRENO (entrada diaria al wizard import).
+                 Ambos botones tienen exactamente flex:1, min-width:0, height:44px
+                 y mismo padding/SVG-size para garantizar el mismo ancho. -->
             <div style="display:flex;gap:8px;padding:8px 15px 2px;flex-shrink:0;">
-                <div style="position:relative;flex:1;min-width:0;">
-                    <button onclick="openClub()" id="club-btn" style="width:100%;display:flex;align-items:center;justify-content:center;gap:7px;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;border-radius:12px;padding:0 14px;cursor:pointer;font-family:var(--f);height:44px;box-shadow:0 2px 8px rgba(196,136,30,.35);"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="font-size:11px;font-weight:800;color:#000;letter-spacing:.8px;">CLUB</span></button>
+                <div style="position:relative;flex:1;min-width:0;display:flex;">
+                    <button onclick="openClub()" id="club-btn" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:7px;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;border-radius:12px;padding:0 14px;cursor:pointer;font-family:var(--f);height:44px;box-shadow:0 2px 8px rgba(196,136,30,.35);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="font-size:11px;font-weight:800;color:#000;letter-spacing:.8px;">ACCESO CLUB</span></button>
                     <div id="home-club-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:50%;background:#ef4444;border:2px solid #f0ebe0;box-shadow:0 1px 3px rgba(239,68,68,.5);pointer-events:none;"></div>
                 </div>
                 <button type="button" id="open-import-manual-btn" aria-label="Importar entreno"
@@ -5322,24 +5396,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (!backBtn) return;
                     backBtn.addEventListener('click', function() {
                         try { if (window._mrPerfMark) window._mrPerfMark('cerrar wizard STRAVA'); } catch(_){}
-                        /* FASE 5.4.2: snapshot del estado ANTES del cambio de view.
-                           Si veníamos de summary, hay datos nuevos en BD bulk. */
-                        var cameFromSummary = (
-                            window._MR_StravaImport
-                            && window._MR_StravaImport.currentState === 'summary'
-                        );
                         /* [BugWizard · Plan B] Reload controlado al cerrar el wizard.
-                           Tras 24 iteraciones de diagnóstico sin éxito identificando
-                           la causa raíz, optamos por la solución más drástica pero
-                           garantizada: recargar la app. El service worker tiene todo
-                           cacheado, así que la "recarga" es de ~300-500ms (pantalla
-                           blanca mínima) y la app vuelve a un estado fresco sin
-                           contaminación del wizard. Guardamos el destino esperado
-                           en sessionStorage para que bootApp navegue allí al cargar
-                           y la UX sea fluida. */
-                        var _navT = cameFromSummary ? 'activities' : 'runner';
+                           Solución drástica pero garantizada tras 24+ iteraciones de
+                           diagnóstico sin éxito identificando la causa raíz del bug
+                           en Safari iOS PWA. El service worker tiene todo cacheado,
+                           así que la "recarga" es de ~300-500ms. El overlay HTML
+                           "mr-reload-overlay" tapa el flash blanco (activado por
+                           sessionStorage en el script inline del head). */
                         try {
-                            sessionStorage.setItem('_mrPostWizardDest', _navT);
+                            sessionStorage.setItem('_mrPostWizardDest', 'home');
                         } catch(_){}
                         location.reload();
                     });
@@ -46739,7 +46804,8 @@ window.addEventListener('DOMContentLoaded', function() {
            Si sessionStorage tiene _mrPostWizardDest, la app se acaba de
            recargar tras el back de un wizard. Esperamos un poco a que la app
            termine bootApp (incluyendo loadActivitiesFromIDB y similares) y
-           luego navegamos al destino guardado simulando un click en el .nb. */
+           luego navegamos al destino guardado simulando un click en el .nb.
+           Tras navegar, ocultamos el overlay con fadeout suave. */
         function _restorePostWizardDest(){
             try {
                 var dest = sessionStorage.getItem('_mrPostWizardDest');
@@ -46752,8 +46818,23 @@ window.addEventListener('DOMContentLoaded', function() {
                     var btn = document.querySelector('#nav .nb[data-target="' + dest + '"]');
                     if (btn) {
                         btn.click();
+                        /* Tras navegar, ocultar overlay con fade suave.
+                           Damos un margen para que la view se asiente y luego
+                           iniciamos el fadeout (.35s, ver CSS). */
+                        setTimeout(function(){
+                            document.documentElement.classList.add('mr-reload-fading');
+                            setTimeout(function(){
+                                document.documentElement.classList.remove('mr-reloading');
+                                document.documentElement.classList.remove('mr-reload-fading');
+                                document.documentElement.classList.remove('mr-reload-dark');
+                            }, 400);
+                        }, 80);
                     } else if (_attempt < 30) {
                         setTimeout(_tryNav, 100);
+                    } else {
+                        /* Fallback: ocultar overlay aunque el nav no haya aparecido */
+                        document.documentElement.classList.remove('mr-reloading');
+                        document.documentElement.classList.remove('mr-reload-dark');
                     }
                 };
                 setTimeout(_tryNav, 300);
