@@ -5328,29 +5328,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             window._MR_StravaImport
                             && window._MR_StravaImport.currentState === 'summary'
                         );
-                        /* [BugWizard · DIAG TEMPORAL] En lugar de toggle manual
-                           de .view/.nb classes (que deja estado intermedio sin
-                           pasar por _applyViewSwitch), simulamos un click en el
-                           .nb del destino. Eso hace que el back use EXACTAMENTE
-                           el mismo camino que un tap normal en la nav inferior.
-                           Hipótesis: el toggle manual deja el sistema de views
-                           en estado parcial que rompe el siguiente swipe. */
+                        document.querySelectorAll('.view').forEach(function(v) {
+                            v.classList.remove('active');
+                        });
+                        // [BugWizard · relocación] Solo vamos a Biblioteca (pesada, 1 freeze
+                        // asumido) si REALMENTE se importó algo (cameFromSummary) — ahí el
+                        // usuario quiere ver el resultado. Si solo cancela, volvemos a Runner
+                        // (vista ligera) → sin toggle de las 291 cards, sin freeze.
+                        var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
                         var _navT = cameFromSummary ? 'activities' : 'runner';
-                        var _destNbBtn = document.querySelector('#nav .nb[data-target="' + _navT + '"]');
-                        if (_destNbBtn) {
-                            _destNbBtn.click();
-                        } else {
-                            /* Fallback al toggle manual si no se encuentra el botón */
-                            document.querySelectorAll('.view').forEach(function(v) {
-                                v.classList.remove('active');
-                            });
-                            var _dest = cameFromSummary ? 'view-activities' : 'view-runner';
-                            var destView = document.getElementById(_dest);
-                            if (destView) destView.classList.add('active');
-                            document.querySelectorAll('.nb').forEach(function(b) {
-                                b.classList.toggle('active', b.dataset.target === _navT);
-                            });
-                        }
+                        var destView = document.getElementById(_dest);
+                        if (destView) destView.classList.add('active');
+                        /* Marcar el botón nav inferior correspondiente como activo */
+                        document.querySelectorAll('.nb').forEach(function(b) {
+                            b.classList.toggle('active', b.dataset.target === _navT);
+                        });
                         /* FASE 5.4.2: refrescar tras transición de view, fire-and-forget.
                            No bloqueamos el cambio visual. La función es idempotente:
                            si llaman 2 veces seguidas, segundo intento añade 0.
@@ -16488,21 +16480,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _vimState.brand = null;
         _vimState.files = {};
         _vimState.step  = 'brand';
-        /* [BugWizard · DIAG TEMPORAL] En lugar de toggle manual de .view/.nb
-           classes, simulamos un click en el .nb del destino para usar el mismo
-           camino que un tap normal en la nav inferior. */
-        var _homeNbBtn = document.querySelector('#nav .nb[data-target="home"]');
-        if (_homeNbBtn) {
-            _homeNbBtn.click();
-        } else {
-            /* Fallback al toggle manual */
-            document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
-            const target = document.getElementById('view-home');
-            if (target) { target.classList.add('active'); target.scrollTop = 0; }
-            document.querySelectorAll('.nb').forEach(function(b) {
-                b.classList.toggle('active', b.dataset.target === 'home');
-            });
-        }
+        document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+        const target = document.getElementById('view-home');
+        if (target) { target.classList.add('active'); target.scrollTop = 0; }
+        document.querySelectorAll('.nb').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.target === 'home');
+        });
     }
     window.vimBackNav = vimBackNav;
 
@@ -46641,16 +46624,6 @@ window.addEventListener('DOMContentLoaded', function() {
                                 .map(function(k){ return k + ': ' + _listenerCount[k]; });
                 _push('LISTENERS:\n  ' + lines.join('\n  '));
             };
-            /* Botón en el HUD: doble-tap muestra stats */
-            setTimeout(function(){
-                var hud = document.getElementById('_mrPerfHUD');
-                if (hud) {
-                    hud.addEventListener('dblclick', function(e){
-                        e.stopPropagation();
-                        window._mrListenerStats();
-                    });
-                }
-            }, 2000);
         } catch(_){}
         function _hot(){
             try {
@@ -46686,18 +46659,34 @@ window.addEventListener('DOMContentLoaded', function() {
                 return ' · '+all.length+' anims: '+arr.slice(0,5).join(', ')+(arr.length>5?' …':'');
             } catch(_){ return ''; }
         }
-        function _push(txt){
-            _events.unshift('['+new Date().toLocaleTimeString()+'] '+txt);
-            _events = _events.slice(0,6);
+        function _ensureHUD(){
             var el = document.getElementById('_mrPerfHUD');
-            if(!el){
+            if (!el) {
                 el = document.createElement('div');
                 el.id = '_mrPerfHUD';
                 el.style.cssText = 'position:fixed;left:6px;right:6px;bottom:6px;z-index:2000000;background:#140000;color:#ffd2d2;font:600 10.5px/1.35 monospace;padding:7px 9px;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.6);white-space:pre-wrap;max-height:60vh;overflow:hidden;border:1px solid #5c1a1a;';
                 el.addEventListener('click', function(){ el.remove(); });
-                document.body.appendChild(el);
+                el.addEventListener('dblclick', function(e){
+                    e.stopPropagation();
+                    if (typeof window._mrListenerStats === 'function') window._mrListenerStats();
+                });
+                el.textContent = 'MEDIDOR ACTIVO · doble-tap para LISTENERS · tap simple para cerrar';
+                if (document.body) document.body.appendChild(el);
+                else document.addEventListener('DOMContentLoaded', function(){ document.body.appendChild(el); });
             }
-            el.textContent = 'MEDIDOR (toca para cerrar)\n' + _events.join('\n');
+            return el;
+        }
+        function _push(txt){
+            _events.unshift('['+new Date().toLocaleTimeString()+'] '+txt);
+            _events = _events.slice(0,6);
+            var el = _ensureHUD();
+            el.textContent = 'MEDIDOR (toca para cerrar · 2tap=listeners)\n' + _events.join('\n');
+        }
+        /* Inicializar HUD inmediatamente */
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _ensureHUD);
+        } else {
+            _ensureHUD();
         }
         try {
             if (typeof PerformanceObserver === 'function') {
