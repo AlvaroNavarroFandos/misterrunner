@@ -19592,19 +19592,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_){}
         const list  = document.getElementById('activities-list');
         const empty = document.getElementById('activities-empty');
-        list.innerHTML = '';
-        // [BugWizard · FIX] Mutex anti-reset: si ya hay un chunked render en
-        // curso, esta llamada se descarta. Antes el sistema de token hacía
-        // que la SEGUNDA llamada ganara, abortando la primera y reseteando
-        // todo (síntoma post-wizard: cards renderizadas a medias, vacías al
-        // hacer scroll). Con el mutex, la primera completa íntegra el render
-        // y las llamadas concurrentes se ignoran (la lista ya estará actualizada
-        // cuando termine; si los datos cambiaron, el siguiente render normal
-        // los recogerá).
+        // [BugWizard · FIX] Mutex anti-reset SÍNCRONO. Si ya hay un chunked
+        // render en curso (o sea, otro renderActivities corriendo desde antes),
+        // esta llamada se descarta SIN tocar nada. El mutex se setea aquí
+        // mismo (no dentro del rAF) para que llamadas casi simultáneas no
+        // pasen ambas: la primera setea el flag, la segunda lo ve y sale.
+        // Se libera dentro de _mrLibRenderChunk cuando termina.
         if (window._mrLibChunkInProgress) {
             if (window._mrPerfMark) window._mrPerfMark('renderActivities IGNORED (chunk in progress)');
             return;
         }
+        window._mrLibChunkInProgress = true;
+        list.innerHTML = '';
         // [FASE 6 · Fix render concurrente]
         // Cada llamada a renderActivities genera un token único. Los chunks
         // por rAF verifican este token antes de seguir. Si un segundo render
@@ -19617,7 +19616,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _myToken = window.__mrLibRenderToken;
         const filtered = getFilteredActivities();
         updateSummary(filtered);
-        if (!activities.length) { empty.style.display = ''; return; }
+        if (!activities.length) { window._mrLibChunkInProgress = false; empty.style.display = ''; return; }
         empty.style.display = 'none';
 
         const _mrLibSorted = [...filtered].sort((a, b) => new Date(b.dateStr + "T12:00:00") - new Date(a.dateStr + "T12:00:00"));
@@ -19692,7 +19691,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 window._mrLibChunkInProgress = false;
                 return;
             }
-            window._mrLibChunkInProgress = true;
             if (_mrLibIdx === 0) {
                 // Quitar skeletons antes del primer chunk real
                 list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
