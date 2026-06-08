@@ -12152,7 +12152,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             const { data: { session } } = await sb.auth.getSession();
             uid = session && session.user && session.user.id;
-        } catch(e) {}
+        } catch(e) { console.warn('[WIPE] getSession exception:', e); }
         if (!uid) { _wipeCloseOverlay(); alert('No hay sesión activa.'); return; }
 
         // ── 1. Ejecutar RPC: limpia BD ────────────────────────────
@@ -12856,11 +12856,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (!upE) {
                             var { data:ud } = sb.storage.from('media').getPublicUrl(path);
                             updateData.avatar_url = ud.publicUrl;
+                        } else {
+                            console.warn('[Profile][Supabase] avatar upload fail:', upE);
                         }
-                    } catch(e) {}
+                    } catch(e) { console.warn('[Profile][Supabase] avatar upload exception:', e); }
                 }
-                await sb.from('profiles').update(updateData).eq('id', session.user.id);
-            } catch(e) {}
+                var { error:updE } = await sb.from('profiles').update(updateData).eq('id', session.user.id);
+                if (updE) console.warn('[Profile][Supabase] profile update fail:', updE);
+            } catch(e) { console.warn('[Profile][Supabase] sync exception:', e); }
         })();
     }
 
@@ -34386,6 +34389,18 @@ async function exportBackup() {
     // tarda (291+ activities + IDB lento) el usuario sabe que se está
     // generando. Si la función crashea silenciosamente al menos verá éste.
     try { if (typeof showToast === 'function') showToast('💾 Generando backup…', 8000); } catch(_) {}
+    // [BUGFIX SWEEP · B2] Forzar paint del toast ANTES del trabajo pesado.
+    // En Safari iOS PWA el JSON.stringify del megablob (~84 MB) es síncrono
+    // y bloquea el primer paint, así que el toast nunca llega a verse sin
+    // este "yield" controlado. Doble rAF + setTimeout(50) garantiza un
+    // paint completo en todos los navegadores antes de seguir.
+    await new Promise(function(resolve){
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(function(){
+                requestAnimationFrame(function(){ setTimeout(resolve, 50); });
+            });
+        } else { setTimeout(resolve, 50); }
+    });
     try {
         // Recopilar TODO el localStorage sin filtro — incluye:
         //   mr_data_<hash>       → estado completo (perfil, zapatillas, plan, marcas, ritmos, etc.)
@@ -34514,10 +34529,13 @@ async function exportBackup() {
         const date = new Date().toISOString().slice(0,10);
         a.href = url;
         a.download = 'misterrunner-backup-' + date + '.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+
+        // [BUGFIX SWEEP · B2] Calcular mensaje ANTES del a.click().
+        // En Safari iOS PWA el a.click() dispara el save dialog que suspende
+        // la página de inmediato. Todo el código posterior (showToast incluido)
+        // no se ejecuta hasta que el usuario cierra el dialog, y para entonces
+        // el paint del toast ya se ha perdido. Calcular arriba y disparar el
+        // toast vía visibilitychange / fallback timer garantiza visibilidad.
         const parts = [];
         if (hasPlan)     parts.push('plan running');
         if (hasStrength) parts.push('fuerza');
@@ -34535,9 +34553,38 @@ async function exportBackup() {
         if (_nCloud > 0) _msg += ' + ' + _nCloud + ' en la nube (atadas a tu cuenta)';
         if (_nPRs > 0)   _msg += ' · ' + _nPRs + ' PRs';
         if (parts.length) _msg += ' · ' + parts.join(' · ');
-        showToast(_msg, 5000);
+
+        // [BUGFIX SWEEP · B2] Preparar toast final persistente.
+        // Guardamos en sessionStorage por si el navegador descarta listeners
+        // durante el dialog (defensive). Dual trigger: visibilitychange para
+        // mobile (cuando la pestaña vuelve tras cerrar save dialog) + fallback
+        // setTimeout 700ms para desktop (donde el dialog NO oculta la pestaña).
+        try { sessionStorage.setItem('mr_backup_export_toast', _msg); } catch(_) {}
+        var _exportToastShown = false;
+        function _showExportDoneToast() {
+            if (_exportToastShown) return;
+            _exportToastShown = true;
+            try { sessionStorage.removeItem('mr_backup_export_toast'); } catch(_) {}
+            try { if (typeof showToast === 'function') showToast(_msg, 5000); } catch(_) {}
+            try { document.removeEventListener('visibilitychange', _onExportVis); } catch(_) {}
+        }
+        function _onExportVis() {
+            if (document.visibilityState === 'visible') {
+                // Tiny delay para que la pestaña termine de repintar al volver
+                setTimeout(_showExportDoneToast, 200);
+            }
+        }
+        try { document.addEventListener('visibilitychange', _onExportVis); } catch(_) {}
+        // Fallback desktop: el save dialog no siempre oculta la pestaña
+        setTimeout(_showExportDoneToast, 700);
+
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     } catch(e) {
         showToast('❌ Error al exportar: ' + e.message, 4000);
+        console.warn('[Backup] exportBackup error:', e);
     }
 }
 
@@ -34662,7 +34709,7 @@ async function importBackup(input) {
                     const newKey = base + '_' + currentSuffix;
                     const val = backup.localStorage[oldKey]
                              || backup.localStorage[base]; // compatibilidad con backups v2 (clave fija)
-                    if (val) { try { localStorage.setItem(newKey, val); } catch(e) {} }
+                    if (val) { try { localStorage.setItem(newKey, val); } catch(e) { console.warn('[Backup] restore user-scoped setItem fail:', newKey, e); } }
                 });
 
                 // [FASE 6 · Backup audit] Claves con ID dinámico:
@@ -34676,7 +34723,7 @@ async function importBackup(input) {
                     if (k.slice(-_bakSfx.length) !== _bakSfx) return;
                     const newK = k.slice(0, -_bakSfx.length) + '_' + currentSuffix;
                     const val  = backup.localStorage[k];
-                    if (val) { try { localStorage.setItem(newK, val); } catch(e) {} }
+                    if (val) { try { localStorage.setItem(newK, val); } catch(e) { console.warn('[Backup] restore challenge celebrated setItem fail:', newK, e); } }
                 });
             } else {
                 // Mismo usuario — pero puede ser un backup v2 (claves fijas sin sufijo)
@@ -34684,7 +34731,7 @@ async function importBackup(input) {
                 userScopedBases.forEach(base => {
                     const scopedKey = base + '_' + currentSuffix;
                     if (!backup.localStorage[scopedKey] && backup.localStorage[base]) {
-                        try { localStorage.setItem(scopedKey, backup.localStorage[base]); } catch(e) {}
+                        try { localStorage.setItem(scopedKey, backup.localStorage[base]); } catch(e) { console.warn('[Backup] restore v2→scoped migration setItem fail:', scopedKey, e); }
                     }
                 });
             }
