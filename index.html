@@ -12838,13 +12838,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         saveAppState();
         renderHome();
         // Sync name and avatar to Supabase profiles table
+        // [BUGFIX B3] El payload anterior `{ username: profileData.name }` violaba
+        // el CHECK constraint `^[a-zA-Z0-9_]+$` cuando el nombre tenía espacios o
+        // acentos (p.ej. "Álvaro Navarro"). El esquema correcto tiene `display_name`
+        // para el nombre humano y `username` reservado a handle único (a-zA-Z0-9_).
         (async function() {
             try {
                 var sb = window._sbClient;
                 if (!sb) return;
                 var { data:{ session } } = await sb.auth.getSession();
                 if (!session) return;
-                var updateData = { username: profileData.name };
+                var updateData = { display_name: profileData.name };
                 // Upload avatar to Supabase Storage if it's a local base64
                 if (profileData.avatar && profileData.avatar.startsWith('data:')) {
                     try {
@@ -12863,8 +12867,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 var { error:updE } = await sb.from('profiles').update(updateData).eq('id', session.user.id);
                 if (updE) console.warn('[Profile][Supabase] profile update fail:', updE);
+
+                // [BUGFIX B3 · FIX C] Si el `username` sigue siendo el default que pone
+                // el trigger `handle_new_user()` ('Runner' o null), aprovechamos para
+                // generar uno legible vía slug del nombre. No-bloqueante: si falla por
+                // unique constraint o cualquier otra cosa, el display_name ya está OK.
+                try {
+                    var { data: profCheck } = await sb.from('profiles')
+                        .select('username').eq('id', session.user.id).single();
+                    if (profCheck && (profCheck.username === 'Runner' || !profCheck.username)) {
+                        var slug = _slugifyUsername(profileData.name);
+                        if (slug && slug !== profCheck.username) {
+                            var { error: slugE } = await sb.from('profiles')
+                                .update({ username: slug }).eq('id', session.user.id);
+                            if (slugE) console.warn('[Profile][Supabase] username slug update fail:', slugE);
+                        }
+                    }
+                } catch(e) { console.warn('[Profile][Supabase] username slug check exception:', e); }
             } catch(e) { console.warn('[Profile][Supabase] sync exception:', e); }
         })();
+    }
+
+    // [BUGFIX B3 · FIX C] Slugifica un nombre humano para que cumpla
+    // `^[a-zA-Z0-9_]+$` (constraint de profiles.username). "Álvaro Navarro" →
+    // "alvaro_navarro". Quita acentos, lowercase, reemplaza no-alfanum por _,
+    // colapsa _ consecutivos y recorta a 30 chars. Fallback 'runner' si vacío.
+    function _slugifyUsername(s) {
+        if (!s || typeof s !== 'string') return 'runner';
+        try {
+            var slug = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            slug = slug.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+            slug = slug.replace(/^_+|_+$/g, '');
+            if (!slug) return 'runner';
+            return slug.slice(0, 30);
+        } catch(_) { return 'runner'; }
     }
 
     /* ── AVATAR ── */
@@ -35100,9 +35136,9 @@ async function _initClubSupabase() {
                     if (!fromId || fromId === myId) return;
                     // Don't notify if chat with sender is open
                     if (typeof _activeChatUserId !== 'undefined' && _activeChatUserId === fromId) return;
-                    var { data: prof } = await sb.from('profiles').select('username').eq('id', fromId).single();
-                    var sender = prof?.username || 'Alguien';
-                    _fireNotif('MisterRunner', '@' + sender + ': ' + (payload.new?.content || 'Mensaje nuevo').substring(0, 80));
+                    var { data: prof } = await sb.from('profiles').select('username, display_name').eq('id', fromId).single();
+                    var sender = prof?.display_name || prof?.username || 'Alguien';
+                    _fireNotif('MisterRunner', sender + ': ' + (payload.new?.content || 'Mensaje nuevo').substring(0, 80));
                     _refreshUnreadBadge && _refreshUnreadBadge();
                 })
                 .subscribe();
@@ -35118,10 +35154,10 @@ async function _initClubSupabase() {
                     var postId = payload.new?.post_id;
                     var { data: post } = await sb.from('club_posts').select('user_id').eq('id', postId).single();
                     if (!post || post.user_id !== myId) return;
-                    var { data: prof } = await sb.from('profiles').select('username').eq('id', reactorId).single();
-                    var who = prof?.username || 'Alguien';
+                    var { data: prof } = await sb.from('profiles').select('username, display_name').eq('id', reactorId).single();
+                    var who = prof?.display_name || prof?.username || 'Alguien';
                     var emoji = payload.new?.emoji || '❤️';
-                    _fireNotif('MisterRunner', '@' + who + ' ha reaccionado a tu post ' + emoji);
+                    _fireNotif('MisterRunner', who + ' ha reaccionado a tu post ' + emoji);
                 })
                 .subscribe();
 
@@ -35158,12 +35194,12 @@ async function _initClubSupabase() {
                     // Si soy ambos (respondiendo a mi propio comentario en mi propio post),
                     // disparar solo una notif (priorizamos la de respuesta directa)
 
-                    var { data: prof } = await sb.from('profiles').select('username').eq('id', commenterId).single();
-                    var who = prof?.username || 'Alguien';
+                    var { data: prof } = await sb.from('profiles').select('username, display_name').eq('id', commenterId).single();
+                    var who = prof?.display_name || prof?.username || 'Alguien';
                     var preview = (payload.new?.content || '').substring(0, 60);
                     var msg = iAmParentAuthor
-                        ? '@' + who + ' respondió a tu comentario: ' + preview
-                        : '@' + who + ' comentó: ' + preview;
+                        ? who + ' respondió a tu comentario: ' + preview
+                        : who + ' comentó: ' + preview;
                     _fireNotif('MisterRunner', msg);
                     // Trigger the bell dot
                     var dot = document.getElementById('club-notif-dot');
@@ -35179,9 +35215,9 @@ async function _initClubSupabase() {
                 }, async function(payload) {
                     var followerId = payload.new?.follower_id;
                     if (!followerId || followerId === myId) return;
-                    var { data: prof } = await sb.from('profiles').select('username').eq('id', followerId).single();
-                    var who = prof?.username || 'Alguien';
-                    _fireNotif('MisterRunner', '@' + who + ' ha empezado a seguirte');
+                    var { data: prof } = await sb.from('profiles').select('username, display_name').eq('id', followerId).single();
+                    var who = prof?.display_name || prof?.username || 'Alguien';
+                    _fireNotif('MisterRunner', who + ' ha empezado a seguirte');
                 })
                 .subscribe();
 
@@ -35194,9 +35230,9 @@ async function _initClubSupabase() {
                     if (!authorId || authorId === myId) return;
                     var tagged = payload.new?.tagged_user_ids;
                     if (!Array.isArray(tagged) || tagged.indexOf(myId) < 0) return;
-                    var { data: prof } = await sb.from('profiles').select('username').eq('id', authorId).single();
-                    var who = prof?.username || 'Alguien';
-                    _fireNotif('MisterRunner', '@' + who + ' te ha etiquetado en su entreno');
+                    var { data: prof } = await sb.from('profiles').select('username, display_name').eq('id', authorId).single();
+                    var who = prof?.display_name || prof?.username || 'Alguien';
+                    _fireNotif('MisterRunner', who + ' te ha etiquetado en su entreno');
                     var dot = document.getElementById('club-notif-dot');
                     if (dot) dot.style.display = 'block';
                 })
@@ -35215,12 +35251,12 @@ async function _initClubSupabase() {
                         var crewId = payload.new?.crew_id;
                         // Sacar nombres para la notif
                         var [ { data: inviter }, { data: crew } ] = await Promise.all([
-                            sb.from('profiles').select('username').eq('id', inviterId).single(),
+                            sb.from('profiles').select('username, display_name').eq('id', inviterId).single(),
                             sb.from('crews').select('name').eq('id', crewId).single()
                         ]);
-                        var who   = (inviter && inviter.username) || 'Alguien';
+                        var who   = (inviter && (inviter.display_name || inviter.username)) || 'Alguien';
                         var crewN = (crew    && crew.name)        || 'un crew';
-                        _fireNotif('MisterRunner', '@' + who + ' te ha invitado a ' + crewN);
+                        _fireNotif('MisterRunner', who + ' te ha invitado a ' + crewN);
                         // Refrescar memoria + pestaña Crews si está visible
                         if (typeof _refreshMyCrewInvites === 'function') await _refreshMyCrewInvites();
                         if (typeof _checkHomeCrewDot === 'function') _checkHomeCrewDot();
@@ -35247,13 +35283,13 @@ async function _initClubSupabase() {
                         if (n.created_by === myId) return;
                         // Sacar nombres
                         var [ { data: who }, { data: crew } ] = await Promise.all([
-                            sb.from('profiles').select('username').eq('id', n.created_by).single(),
+                            sb.from('profiles').select('username, display_name').eq('id', n.created_by).single(),
                             sb.from('crews').select('name').eq('id', n.crew_id).single()
                         ]);
-                        var owner = (who  && who.username)  || 'Alguien';
+                        var owner = (who  && (who.display_name || who.username))  || 'Alguien';
                         var crewN = (crew && crew.name)     || 'tu crew';
                         var title = n.title || 'un reto';
-                        _fireNotif('🏆 Nuevo reto', '@' + owner + ' ha lanzado «' + title + '» en ' + crewN);
+                        _fireNotif('🏆 Nuevo reto', owner + ' ha lanzado «' + title + '» en ' + crewN);
                         if (typeof _checkHomeCrewDot === 'function') _checkHomeCrewDot();
                         // Si la tab Retos del crew correspondiente está abierta, repintar
                         var ov = document.getElementById('crew-detail-view');
@@ -35455,7 +35491,7 @@ async function _refreshMyCrewInvites() {
         var inviterIds = [...new Set(invs.map(function(i) { return i.invited_by; }))];
         var [{ data: crewsData }, { data: inviters }] = await Promise.all([
             sb.from('crews').select('id, name, avatar_url').in('id', crewIds),
-            sb.from('profiles').select('id, username, avatar_url').in('id', inviterIds)
+            sb.from('profiles').select('id, username, display_name, avatar_url').in('id', inviterIds)
         ]);
         var crewMap    = {}; (crewsData || []).forEach(function(c) { crewMap[c.id] = c; });
         var inviterMap = {}; (inviters || []).forEach(function(p) { inviterMap[p.id] = p; });
@@ -35739,7 +35775,8 @@ function _buildCrewInviteRow(inv) {
     crewName.textContent = (inv.crew && inv.crew.name) || 'Crew';
     var byLine = document.createElement('div');
     byLine.style.cssText = 'font-size:10.5px;color:var(--tm);margin-top:2px;';
-    byLine.textContent = 'Invitado por @' + (inv.inviter && inv.inviter.username || '?');
+    var _invName = (inv.inviter && (inv.inviter.display_name || inv.inviter.username)) || '?';
+    byLine.textContent = 'Invitado por ' + _invName;
     info.appendChild(crewName);
     info.appendChild(byLine);
 
@@ -36069,7 +36106,7 @@ function _clubRecordsPrettyDate(dateStr) {
 function _buildClubRecordAvatar(prof, isMe) {
     var av = document.createElement('div');
     var isDark = document.body.classList.contains('dark-mode');
-    var initials = (prof.username || '?').slice(0, 2).toUpperCase();
+    var initials = (prof.display_name || prof.username || '?').slice(0, 2).toUpperCase();
     var baseStyle = 'width:36px;height:36px;border-radius:50%;flex-shrink:0;cursor:pointer;'
         + 'display:flex;align-items:center;justify-content:center;'
         + 'color:#3C2C08;font-size:14px;font-weight:900;font-family:var(--f);'
@@ -36125,7 +36162,7 @@ function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTo
     if (!isMe && typeof window.openUserProfile === 'function') {
         (function(_id, _un, _ua) {
             av.onclick = function() { window.openUserProfile(_id, _un, _ua); };
-        })(prof.id, prof.username, prof.avatar_url);
+        })(prof.id, prof.display_name || prof.username, prof.avatar_url);
     }
     row.appendChild(av);
 
@@ -36135,7 +36172,7 @@ function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTo
     var nameEl = document.createElement('div');
     nameEl.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);'
         + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;';
-    nameEl.textContent = prof.username || 'Runner';
+    nameEl.textContent = prof.display_name || prof.username || 'Runner';
     if (isMe) {
         var meBadge = document.createElement('span');
         meBadge.style.cssText = 'font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.5px;margin-left:4px;';
@@ -36181,7 +36218,7 @@ function _buildClubRecordRow(rank, prof, value, type, dateStr, isMe, isMeOutOfTo
                 window.openUserProfile(_id, _un, _ua);
             };
             row.style.cursor = 'pointer';
-        })(prof.id, prof.username, prof.avatar_url);
+        })(prof.id, prof.display_name || prof.username, prof.avatar_url);
     }
 
     return row;
@@ -36248,7 +36285,7 @@ function _renderClubRecordSection(container, def, rows, myId, profilesById, myIs
         var visibleRows = rows.slice(0, maxVisible);
         visibleRows.forEach(function(r, idx) {
             var rank = idx + 1;
-            var prof = profilesById[r.user_id] || { id: r.user_id, username: 'Runner', avatar_url: null };
+            var prof = profilesById[r.user_id] || { id: r.user_id, username: null, display_name: 'Runner', avatar_url: null };
             var isMe = (r.user_id === myId);
             // Si soy yo Y soy privado, mostrar candadito
             var showLock = isMe && !myIsPublic;
@@ -36273,7 +36310,7 @@ function _renderClubRecordSection(container, def, rows, myId, profilesById, myIs
             if (lastChild && lastChild.style) lastChild.style.borderBottom = '1px solid var(--border)';
             // Mi fila con posición numérica
             var myRow = rows[myPosInList - 1];
-            var myProf = profilesById[myRow.user_id] || { id: myRow.user_id, username: 'Tú', avatar_url: null };
+            var myProf = profilesById[myRow.user_id] || { id: myRow.user_id, username: null, display_name: 'Tú', avatar_url: null };
             var showLockOut = !myIsPublic;
             var meRowEl = _buildClubRecordRow(myPosInList, myProf, myRow.value, def.type, myRow.activity_datestr, true, true, showLockOut);
             meRowEl.style.borderBottom = 'none';
@@ -36416,7 +36453,7 @@ async function renderClubRecordsRanking() {
         var profilesById = {};
         if (userIds.length) {
             var profRes = await sb.from('profiles')
-                .select('id, username, avatar_url')
+                .select('id, username, display_name, avatar_url')
                 .in('id', userIds);
             ((profRes && profRes.data) || []).forEach(function(p) {
                 profilesById[p.id] = p;
@@ -37418,7 +37455,7 @@ async function openCrewDetail(crew) {
             var profilesById = {};
             if (memberIds.length) {
                 var { data: profs, error: pErr } = await sb.from('profiles')
-                    .select('id, username, avatar_url')
+                    .select('id, username, display_name, avatar_url')
                     .in('id', memberIds);
                 if (pErr) throw pErr;
                 (profs || []).forEach(function(p) { profilesById[p.id] = p; });
@@ -37487,7 +37524,7 @@ async function openCrewDetail(crew) {
                     img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
                     av.appendChild(img);
                 } else {
-                    av.textContent = (p.username || '?')[0].toUpperCase();
+                    av.textContent = (p.display_name || p.username || '?')[0].toUpperCase();
                 }
                 // Tap en avatar → abrir perfil del runner (si existe la función)
                 av.onclick = function() {
@@ -37504,7 +37541,7 @@ async function openCrewDetail(crew) {
                 var nameEl = document.createElement('span');
                 nameEl.style.cssText = 'font-size:14px;font-weight:800;color:var(--tw);'
                     + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-                nameEl.textContent = p.username || '?';
+                nameEl.textContent = p.display_name || p.username || '?';
                 nameLine.appendChild(nameEl);
                 if (isMe) {
                     var meTag = document.createElement('span');
@@ -37890,7 +37927,7 @@ async function openCrewDetail(crew) {
             var memberIds = (membersRes.data || []).map(function(m) { return m.user_id; });
             if (memberIds.length) {
                 var { data: profs, error: pErr } = await sb.from('profiles')
-                    .select('id, username, avatar_url')
+                    .select('id, username, display_name, avatar_url')
                     .in('id', memberIds);
                 if (pErr) throw pErr;
                 members = profs || [];
@@ -38092,12 +38129,12 @@ async function openCrewDetail(crew) {
                     im.style.cssText = 'width:100%;height:100%;object-fit:cover;';
                     av.appendChild(im);
                 } else {
-                    av.textContent = ((prof.username || '?')[0] || '?').toUpperCase();
+                    av.textContent = ((prof.display_name || prof.username || '?')[0] || '?').toUpperCase();
                 }
                 var nameEl = document.createElement('div');
                 nameEl.style.cssText = 'flex:1;font-size:12px;font-weight:700;color:var(--tw);'
                     + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;';
-                nameEl.textContent = '@' + (prof.username || '—');
+                nameEl.textContent = prof.display_name || prof.username || '—';
                 var valEl = document.createElement('div');
                 valEl.style.cssText = 'font-size:12px;font-weight:900;color:var(--tw);flex-shrink:0;';
                 // Mostrar km o sesiones según tipo
@@ -39121,7 +39158,7 @@ async function openCrewChallengeDetail(challenge, crew) {
         var memberIds = (membersRes.data || []).map(function(m) { return m.user_id; });
         if (memberIds.length) {
             var { data: profs, error: pErr } = await sb.from('profiles')
-                .select('id, username, avatar_url')
+                .select('id, username, display_name, avatar_url')
                 .in('id', memberIds);
             if (pErr) throw pErr;
             members = profs || [];
@@ -39257,7 +39294,9 @@ async function openCrewChallengeDetail(challenge, crew) {
             return b.km - a.km;
         }
         // Ambos sin aportar
-        return (a.profile.username || '').localeCompare(b.profile.username || '');
+        var an = (a.profile.display_name || a.profile.username || '');
+        var bn = (b.profile.display_name || b.profile.username || '');
+        return an.localeCompare(bn);
     });
 
     var medalColors = ['#c4881e', '#a8adb5', '#9b6a3a']; // oro, plata, bronce
@@ -39292,7 +39331,7 @@ async function openCrewChallengeDetail(challenge, crew) {
             im.style.cssText = 'width:100%;height:100%;object-fit:cover;';
             av.appendChild(im);
         } else {
-            av.textContent = ((row.profile.username || '?')[0] || '?').toUpperCase();
+            av.textContent = ((row.profile.display_name || row.profile.username || '?')[0] || '?').toUpperCase();
         }
 
         // Nombre + estado
@@ -39301,7 +39340,7 @@ async function openCrewChallengeDetail(challenge, crew) {
         var nameEl = document.createElement('div');
         nameEl.style.cssText = 'font-size:13px;font-weight:800;color:var(--tw);'
             + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-        nameEl.textContent = '@' + (row.profile.username || '—') + (isMe ? ' · tú' : '');
+        nameEl.textContent = (row.profile.display_name || row.profile.username || '—') + (isMe ? ' · tú' : '');
         nameCol.appendChild(nameEl);
 
         var subEl = document.createElement('div');
@@ -39460,7 +39499,7 @@ window.openCrewChallengeDetail = openCrewChallengeDetail;
 // ── Expulsar miembro del crew (sólo owner) ───────────────────────
 async function _kickCrewMember(crew, profile) {
     var sb = window._sbClient;
-    var ok = confirm('¿Expulsar a @' + (profile.username || 'este runner') + ' de "' + crew.name + '"?');
+    var ok = confirm('¿Expulsar a ' + (profile.display_name || profile.username || 'este runner') + ' de "' + crew.name + '"?');
     if (!ok) return;
     try {
         var { error } = await sb.from('crew_members')
@@ -39618,14 +39657,14 @@ async function openCrewInviteModal(crew) {
             img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
             av.appendChild(img);
         } else {
-            av.textContent = (user.username || '?')[0].toUpperCase();
+            av.textContent = (user.display_name || user.username || '?')[0].toUpperCase();
         }
         var info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
         var nm = document.createElement('div');
         nm.style.cssText = 'font-size:13.5px;font-weight:800;color:var(--tw);'
             + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-        nm.textContent = '@' + (user.username || '?');
+        nm.textContent = user.display_name || user.username || '?';
         info.appendChild(nm);
 
         var btn = document.createElement('button');
@@ -39658,7 +39697,7 @@ async function openCrewInviteModal(crew) {
                 btn.style.opacity = '.7';
                 btn.style.cursor = 'default';
                 if (typeof showToast === 'function') {
-                    showToast('Invitación enviada a @' + user.username, 2000);
+                    showToast('Invitación enviada a ' + (user.display_name || user.username), 2000);
                 }
             } catch (e) {
                 console.error('[MR] invite failed:', e);
@@ -39745,12 +39784,14 @@ async function openCrewInviteModal(crew) {
             }
             // Cargar profiles en bloque
             var { data: profs, error: pErr } = await sb.from('profiles')
-                .select('id, username, avatar_url')
+                .select('id, username, display_name, avatar_url')
                 .in('id', elegibles);
             if (pErr) throw pErr;
             results.innerHTML = '';
             (profs || []).sort(function(a, b) {
-                return (a.username || '').localeCompare(b.username || '');
+                var an = (a.display_name || a.username || '');
+                var bn = (b.display_name || b.username || '');
+                return an.localeCompare(bn);
             }).forEach(function(u) { results.appendChild(buildRow(u)); });
         } catch (e) {
             console.error('[MR] follows load failed:', e);
@@ -40042,7 +40083,7 @@ function pickPublishDestinations(opts) {
                         if (p.avatar_url) {
                             stack += '<div style="width:30px;height:30px;border-radius:50%;border:2px solid var(--bg);overflow:hidden;margin-left:'+(idx===0?0:off)+'px;flex-shrink:0;"><img src="'+p.avatar_url+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;"></div>';
                         } else {
-                            stack += '<div style="width:30px;height:30px;border-radius:50%;background:var(--crimson);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg);margin-left:'+(idx===0?0:off)+'px;flex-shrink:0;">'+(p.username||'?')[0].toUpperCase()+'</div>';
+                            stack += '<div style="width:30px;height:30px;border-radius:50%;background:var(--crimson);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg);margin-left:'+(idx===0?0:off)+'px;flex-shrink:0;">'+(p.display_name||p.username||'?')[0].toUpperCase()+'</div>';
                         }
                     });
                     if (taggedProfiles.length > maxShown) {
@@ -40050,7 +40091,7 @@ function pickPublishDestinations(opts) {
                     }
                     stack += '</div>';
                     var summary = taggedProfiles.length === 1
-                        ? '@' + taggedProfiles[0].username
+                        ? (taggedProfiles[0].display_name || taggedProfiles[0].username || '?')
                         : taggedProfiles.length + ' etiquetados';
                     tagBtn.innerHTML = stack
                         + '<div style="flex:1;min-width:0;">'
@@ -40208,17 +40249,24 @@ function _openTagRunnersModal(initialSelected) {
         // Cargar seguidos (con su perfil)
         try {
             var { data: rows } = await sb.from('follows')
-                .select('following_id, profiles!follows_following_id_fkey(id, username, avatar_url)')
+                .select('following_id, profiles!follows_following_id_fkey(id, username, display_name, avatar_url)')
                 .eq('follower_id', myId);
             allProfiles = (rows || [])
                 .map(function(r){ return r.profiles; })
                 .filter(function(p){ return p && p.id; })
-                .sort(function(a,b){ return (a.username||'').localeCompare(b.username||''); });
+                .sort(function(a,b){
+                    var an = (a.display_name || a.username || '');
+                    var bn = (b.display_name || b.username || '');
+                    return an.localeCompare(bn);
+                });
         } catch(e) { allProfiles = []; }
 
         function renderList(filterText) {
             var ft = (filterText || '').trim().toLowerCase();
-            var filtered = ft ? allProfiles.filter(function(p){ return (p.username||'').toLowerCase().indexOf(ft) >= 0; }) : allProfiles;
+            var filtered = ft ? allProfiles.filter(function(p){
+                var hay = ((p.display_name || '') + ' ' + (p.username || '')).toLowerCase();
+                return hay.indexOf(ft) >= 0;
+            }) : allProfiles;
             list.innerHTML = '';
             if (!filtered.length) {
                 list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--tm);font-size:12px;line-height:1.5;">'
@@ -40236,10 +40284,10 @@ function _openTagRunnersModal(initialSelected) {
                 var av = document.createElement('div');
                 av.style.cssText = 'width:36px;height:36px;border-radius:50%;background:var(--crimson);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800;';
                 if (p.avatar_url) { var i = document.createElement('img'); i.src = p.avatar_url; i.loading='lazy'; i.style.cssText='width:100%;height:100%;object-fit:cover;'; av.appendChild(i); }
-                else av.textContent = (p.username||'?')[0].toUpperCase();
+                else av.textContent = (p.display_name||p.username||'?')[0].toUpperCase();
                 var name = document.createElement('div');
                 name.style.cssText = 'flex:1;min-width:0;font-size:14px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-                name.textContent = '@' + (p.username||'?');
+                name.textContent = p.display_name || p.username || '?';
                 var cb = document.createElement('div');
                 cb.style.cssText = 'width:24px;height:24px;border-radius:7px;border:2px solid ' + (isSel?'#a855f7':'var(--border)') + ';background:' + (isSel?'#a855f7':'transparent') + ';flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s ease;';
                 cb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="opacity:' + (isSel?'1':'0') + ';transition:opacity .15s ease;"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -40548,7 +40596,7 @@ async function _buildClubBoardHTML(opts) {
     // el feed global, para coherencia (no mezclar privados en stats globales).
     var q = sb
         .from('club_posts')
-        .select('id, act_data, created_at, profiles!club_posts_user_id_fkey(id, username, avatar_url), reactions(id)')
+        .select('id, act_data, created_at, profiles!club_posts_user_id_fkey(id, username, display_name, avatar_url), reactions(id)')
         .gte('created_at', weekStart)
         .order('created_at', { ascending: false });
     if (crewId) q = q.eq('crew_id', crewId);
@@ -40626,7 +40674,7 @@ async function _buildClubBoardHTML(opts) {
 
         var prof = p.profiles || {};
         var uid = prof.id || 'anon';
-        if (!byUser[uid]) byUser[uid] = { id: uid, name: prof.username || 'Runner', avatar: prof.avatar_url || null, km: 0, sessions: 0 };
+        if (!byUser[uid]) byUser[uid] = { id: uid, name: prof.display_name || prof.username || 'Runner', avatar: prof.avatar_url || null, km: 0, sessions: 0 };
         byUser[uid].km += km;
         byUser[uid].sessions += 1;
 
@@ -40682,7 +40730,7 @@ async function _buildClubBoardHTML(opts) {
     if (longest) {
         var lAct = longest.act_data || {};
         var lProf = longest.profiles || {};
-        var lUser = { name: lProf.username || 'Runner', avatar: lProf.avatar_url || null };
+        var lUser = { name: lProf.display_name || lProf.username || 'Runner', avatar: lProf.avatar_url || null };
         var lKm = Number(lAct.distKm || 0);
         var lDur = Number(lAct.durationSec || 0);
         var lDurStr = '';
@@ -40708,7 +40756,7 @@ async function _buildClubBoardHTML(opts) {
     // Post con más reacciones (solo si tiene al menos 1)
     if (topPost && (topPost.reactions || []).length > 0) {
         var tProf = topPost.profiles || {};
-        var tUser = { name: tProf.username || 'Runner', avatar: tProf.avatar_url || null };
+        var tUser = { name: tProf.display_name || tProf.username || 'Runner', avatar: tProf.avatar_url || null };
         var tAct = topPost.act_data || {};
         var rxCount = topPost.reactions.length;
         h += '<div style="' + noteStyle() + 'margin:0 14px 14px;display:flex;align-items:center;gap:10px;">'
@@ -42170,19 +42218,19 @@ async function openClubActivity() {
     var items = [];
     if (myPostIds.length) {
         var { data: reactions } = await sb.from('reactions')
-            .select('emoji,user_id,post_id,created_at,profiles!reactions_user_id_fkey(username,avatar_url)')
+            .select('emoji,user_id,post_id,created_at,profiles!reactions_user_id_fkey(username,display_name,avatar_url)')
             .in('post_id',myPostIds).neq('user_id',myId).order('created_at',{ascending:false}).limit(50);
         (reactions||[]).forEach(function(r) {
-            items.push({type:'reaction',ts:r.created_at,username:r.profiles?.username||'?',avatar:r.profiles?.avatar_url,emoji:r.emoji,text:'reaccionó a tu post',userId:r.user_id});
+            items.push({type:'reaction',ts:r.created_at,username:r.profiles?.display_name||r.profiles?.username||'?',avatar:r.profiles?.avatar_url,emoji:r.emoji,text:'reaccionó a tu post',userId:r.user_id});
         });
         try {
             var { data: comments } = await sb.from('post_comments')
-                .select('content,user_id,post_id,created_at,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .select('content,user_id,post_id,created_at,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)')
                 .in('post_id',myPostIds).neq('user_id',myId).order('created_at',{ascending:false}).limit(50);
             (comments||[]).forEach(function(c) {
                 var preview = (c.content || '').substring(0, 60);
                 if (c.content && c.content.length > 60) preview += '…';
-                items.push({type:'comment',ts:c.created_at,username:c.profiles?.username||'?',avatar:c.profiles?.avatar_url,text:'comentó: '+preview,userId:c.user_id});
+                items.push({type:'comment',ts:c.created_at,username:c.profiles?.display_name||c.profiles?.username||'?',avatar:c.profiles?.avatar_url,text:'comentó: '+preview,userId:c.user_id});
             });
         } catch(e) {}
     }
@@ -42192,22 +42240,22 @@ async function openClubActivity() {
         var myCommentIds = (myComments || []).map(function(c){ return c.id; });
         if (myCommentIds.length) {
             var { data: replies } = await sb.from('post_comments')
-                .select('content,user_id,parent_comment_id,created_at,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .select('content,user_id,parent_comment_id,created_at,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)')
                 .in('parent_comment_id', myCommentIds)
                 .neq('user_id', myId)
                 .order('created_at', {ascending:false}).limit(50);
             (replies||[]).forEach(function(r) {
                 var preview = (r.content || '').substring(0, 60);
                 if (r.content && r.content.length > 60) preview += '…';
-                items.push({type:'reply',ts:r.created_at,username:r.profiles?.username||'?',avatar:r.profiles?.avatar_url,text:'respondió a tu comentario: '+preview,userId:r.user_id});
+                items.push({type:'reply',ts:r.created_at,username:r.profiles?.display_name||r.profiles?.username||'?',avatar:r.profiles?.avatar_url,text:'respondió a tu comentario: '+preview,userId:r.user_id});
             });
         }
     } catch(e) { /* parent_comment_id columna ausente — ignorar */ }
     var { data: newFollows } = await sb.from('follows')
-        .select('follower_id,created_at,profiles!follows_follower_id_fkey(username,avatar_url)')
+        .select('follower_id,created_at,profiles!follows_follower_id_fkey(username,display_name,avatar_url)')
         .eq('following_id',myId).order('created_at',{ascending:false}).limit(30);
     (newFollows||[]).forEach(function(f) {
-        items.push({type:'follow',ts:f.created_at,username:f.profiles?.username||'?',avatar:f.profiles?.avatar_url,text:'empezó a seguirte',userId:f.follower_id});
+        items.push({type:'follow',ts:f.created_at,username:f.profiles?.display_name||f.profiles?.username||'?',avatar:f.profiles?.avatar_url,text:'empezó a seguirte',userId:f.follower_id});
     });
     items.sort(function(a,b){ return new Date(b.ts)-new Date(a.ts); });
 
@@ -42297,7 +42345,7 @@ function _buildActivityRow(item, ov) {
     body.style.cssText = 'flex:1;min-width:0;line-height:1.35;';
     var line1 = document.createElement('div');
     line1.style.cssText = 'font-size:13.5px;color:var(--tw);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
-    line1.innerHTML = '<strong style="font-weight:700;">@'+item.username+'</strong> <span style="color:var(--ts);">'+item.text+'</span>';
+    line1.innerHTML = '<strong style="font-weight:700;">'+item.username+'</strong> <span style="color:var(--ts);">'+item.text+'</span>';
     body.appendChild(line1);
 
     // ── Tiempo relativo ───────────────────────────────────────────
@@ -42610,7 +42658,7 @@ async function openUserProfile(userId, username, avatarUrl) {
     }
 
     var {data:posts} = await sb.from('club_posts')
-        .select('*, profiles!club_posts_user_id_fkey(id,username,avatar_url), reactions(id,user_id,emoji)')
+        .select('*, profiles!club_posts_user_id_fkey(id,username,display_name,avatar_url), reactions(id,user_id,emoji)')
         .eq('user_id',userId).order('created_at',{ascending:false}).limit(30);
 
     // Cargar perfiles de etiquetados (igual que renderClubFeed)
@@ -42623,7 +42671,7 @@ async function openUserProfile(userId, username, avatarUrl) {
             }
         });
         if (allTaggedIds.size > 0) {
-            var { data: tagProfs } = await sb.from('profiles').select('id, username, avatar_url').in('id', Array.from(allTaggedIds));
+            var { data: tagProfs } = await sb.from('profiles').select('id, username, display_name, avatar_url').in('id', Array.from(allTaggedIds));
             (tagProfs || []).forEach(function(p){ taggedProfilesMap[p.id] = p; });
         }
     } catch(e) {}
@@ -42982,8 +43030,8 @@ async function openClubFollowersList(type) {
     var myId = session.user.id;
     var title = type === 'followers' ? 'Seguidores' : 'Seguidos';
     var query = type === 'followers'
-        ? sb.from('follows').select('follower_id, profiles!follows_follower_id_fkey(id,username,avatar_url)').eq('following_id', myId)
-        : sb.from('follows').select('following_id, profiles!follows_following_id_fkey(id,username,avatar_url)').eq('follower_id', myId);
+        ? sb.from('follows').select('follower_id, profiles!follows_follower_id_fkey(id,username,display_name,avatar_url)').eq('following_id', myId)
+        : sb.from('follows').select('following_id, profiles!follows_following_id_fkey(id,username,display_name,avatar_url)').eq('follower_id', myId);
     var { data } = await query;
     var users = (data||[]).map(function(r) { return type==='followers' ? r.profiles : r.profiles; }).filter(Boolean);
     var ov = document.createElement('div');
@@ -43010,10 +43058,10 @@ async function openClubFollowersList(type) {
             var av = document.createElement('div');
             av.style.cssText = 'width:42px;height:42px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;';
             if (u.avatar_url) { var i=document.createElement('img');i.src=u.avatar_url;i.loading='lazy';i.style.cssText='width:100%;height:100%;object-fit:cover;';av.appendChild(i); }
-            else av.textContent = (u.username||'?')[0].toUpperCase();
+            else av.textContent = (u.display_name||u.username||'?')[0].toUpperCase();
             var name = document.createElement('div');
             name.style.cssText = 'font-size:14px;font-weight:700;color:var(--tw);flex:1;';
-            name.textContent = u.username || '?';
+            name.textContent = u.display_name || u.username || '?';
             row.appendChild(av); row.appendChild(name);
             list.appendChild(row);
         });
@@ -43125,7 +43173,7 @@ async function renderClubFeed(opts) {
         // Query base: con filtro por crew o solo posts públicos
         var q = window._sbClient
             .from('club_posts')
-            .select('*, profiles!club_posts_user_id_fkey(id, username, avatar_url), reactions(id, user_id, emoji)')
+            .select('*, profiles!club_posts_user_id_fkey(id, username, display_name, avatar_url), reactions(id, user_id, emoji)')
             .order('created_at', { ascending: false })
             .limit(50);
         if (crewId) {
@@ -43161,7 +43209,7 @@ async function renderClubFeed(opts) {
             });
             if (allTaggedIds.size > 0) {
                 var { data: tagProfs } = await window._sbClient
-                    .from('profiles').select('id, username, avatar_url')
+                    .from('profiles').select('id, username, display_name, avatar_url')
                     .in('id', Array.from(allTaggedIds));
                 (tagProfs || []).forEach(function(p){ taggedProfilesMap[p.id] = p; });
             }
@@ -43448,7 +43496,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     taggedProfilesMap = taggedProfilesMap || {};
     var act = post.act_data || {};
     var profile = post.profiles || {};
-    var user = profile.username || '?';
+    var user = profile.display_name || profile.username || '?';
     var avatarUrl = profile.avatar_url || '';
     var userId = profile.id;
     var isOwn = userId === myId;
@@ -43643,10 +43691,12 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             if (!prof) return; // perfil borrado o no cargado
             var span = document.createElement('span');
             span.style.cssText = 'color:#a855f7;font-weight:800;cursor:pointer;';
-            span.textContent = '@' + (prof.username || '?');
+            // [BUGFIX B3 · FIX B] Si hay display_name (nombre humano) lo mostramos sin @;
+            // si solo hay username (handle), mantenemos el @ como en una mención.
+            span.textContent = prof.display_name || ('@' + (prof.username || '?'));
             (function(_uid, _un, _ua) {
                 span.onclick = function(e){ e.stopPropagation(); if (typeof openUserProfile === 'function') openUserProfile(_uid, _un, _ua); };
-            })(prof.id, prof.username, prof.avatar_url);
+            })(prof.id, prof.display_name || prof.username, prof.avatar_url);
             tagText.appendChild(span);
             if (idx < post.tagged_user_ids.length - 1) {
                 var sep = document.createElement('span');
@@ -43965,13 +44015,13 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         try {
             var sb = window._sbClient;
             var { data, error } = await sb.from('post_comments')
-                .select('id,content,created_at,user_id,parent_comment_id,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .select('id,content,created_at,user_id,parent_comment_id,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)')
                 .eq('post_id', postId).order('created_at', { ascending: true });
             if (error) {
                 // Fallback sin parent_comment_id (si la columna aún no existe)
                 try {
                     var { data: data2, error: err2 } = await sb.from('post_comments')
-                        .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                        .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)')
                         .eq('post_id', postId).order('created_at', { ascending: true });
                     if (!err2) {
                         (data2 || []).forEach(function(c){ c.parent_comment_id = null; });
@@ -44078,7 +44128,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
 
     function buildCommentRow(c, isReply) {
         var prof = c.profiles || {};
-        var un = prof.username || '?';
+        var un = prof.display_name || prof.username || '?';
         var avUrl = prof.avatar_url || '';
         var isMine = c.user_id === myId;
 
@@ -44253,14 +44303,14 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
             if (replyState.parentId) payload.parent_comment_id = replyState.parentId;
             var { data, error } = await sb.from('post_comments')
                 .insert(payload)
-                .select('id,content,created_at,user_id,parent_comment_id,profiles!post_comments_user_id_fkey(username,avatar_url)')
+                .select('id,content,created_at,user_id,parent_comment_id,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)')
                 .single();
             if (error) {
                 // Si falla por parent_comment_id (columna ausente), reintentar sin ella
                 if (replyState.parentId && (error.message || '').toLowerCase().indexOf('parent_comment_id') >= 0) {
                     delete payload.parent_comment_id;
                     var retry = await sb.from('post_comments').insert(payload)
-                        .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,avatar_url)').single();
+                        .select('id,content,created_at,user_id,profiles!post_comments_user_id_fkey(username,display_name,avatar_url)').single();
                     if (!retry.error) {
                         retry.data.parent_comment_id = null;
                         data = retry.data;
@@ -45181,8 +45231,8 @@ async function clubSearch(q) {
         const myId = session?.user?.id;
 
         const { data: users, error } = await window._sbClient.from('profiles')
-            .select('id, username, avatar_url, city')
-            .ilike('username', '%' + q + '%')
+            .select('id, username, display_name, avatar_url, city')
+            .or('username.ilike.%' + q + '%,display_name.ilike.%' + q + '%')
             .neq('id', myId || '00000000-0000-0000-0000-000000000000')
             .limit(20);
 
@@ -45196,14 +45246,34 @@ async function clubSearch(q) {
                 .select('id').eq('follower_id', myId || '').eq('following_id', u.id).maybeSingle();
             var isF = !!followData;
 
+            // [BUGFIX B3 · FIX B] Nombre humano preferido. Si el user tiene
+            // display_name ("Álvaro Navarro"), lo mostramos como nombre principal
+            // y dejamos el @username como subtítulo (handle). Si no, fallback al
+            // username puro. Avatar fallback usa la inicial del nombre mostrado.
+            var _displayName = u.display_name || u.username || '';
+            var _hasDisplay  = !!u.display_name;
+
             var el = document.createElement('div');
             el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card);border-radius:12px;border:1px solid var(--border);margin-bottom:6px;';
             var av = document.createElement('div');
             av.style.cssText = 'width:40px;height:40px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;font-weight:700;flex-shrink:0;overflow:hidden;cursor:pointer;';
             if (u.avatar_url) { var iav = document.createElement('img'); iav.src = u.avatar_url; iav.loading = 'lazy'; iav.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(iav); }
-            else av.textContent = (u.username || '?')[0].toUpperCase();
+            else av.textContent = (_displayName || '?').charAt(0).toUpperCase();
             var info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;cursor:pointer;';
-            info.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--tw);">@' + u.username + '</div>' + (u.city ? '<div style="font-size:10px;color:var(--tm);">' + u.city + '</div>' : '');
+            // Render seguro con textContent (display_name puede contener cualquier carácter)
+            var _nameDiv = document.createElement('div');
+            _nameDiv.style.cssText = 'font-size:13px;font-weight:700;color:var(--tw);';
+            _nameDiv.textContent = _displayName;
+            info.appendChild(_nameDiv);
+            var _subParts = [];
+            if (_hasDisplay) _subParts.push('@' + u.username);
+            if (u.city) _subParts.push(u.city);
+            if (_subParts.length) {
+                var _subDiv = document.createElement('div');
+                _subDiv.style.cssText = 'font-size:10px;color:var(--tm);';
+                _subDiv.textContent = _subParts.join(' · ');
+                info.appendChild(_subDiv);
+            }
             // Avatar y nombre/info abren el perfil del runner (imprescindible para
             // poder des-silenciar o desbloquear desde la lupa, ya que sus posts
             // están filtrados del feed).
@@ -45211,12 +45281,12 @@ async function clubSearch(q) {
                 var openIt = function() { closeClubSearch(); openUserProfile(_id, _un, _ua); };
                 av.onclick = openIt;
                 info.onclick = openIt;
-            })(u.id, u.username, u.avatar_url);
+            })(u.id, _displayName, u.avatar_url);
 
             var dmBtn2 = document.createElement('button');
             dmBtn2.style.cssText = 'padding:7px 10px;border-radius:20px;border:1.5px solid var(--border);background:var(--card2);color:var(--ts);font-family:var(--f);font-size:13px;cursor:pointer;margin-right:6px;';
             dmBtn2.textContent = '💬'; dmBtn2.title = 'Mensaje';
-            (function(_id, _un, _ua) { dmBtn2.onclick = function() { closeClubSearch(); openChat(_id, _un, _ua); }; })(u.id, u.username, u.avatar_url);
+            (function(_id, _un, _ua) { dmBtn2.onclick = function() { closeClubSearch(); openChat(_id, _un, _ua); }; })(u.id, _displayName, u.avatar_url);
 
             var fBtn = document.createElement('button');
             fBtn.dataset.uid = u.id; fBtn.dataset.following = isF ? '1' : '0';
