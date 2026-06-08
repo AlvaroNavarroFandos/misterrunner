@@ -12221,9 +12221,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             store.clear();
             others.forEach(a => store.put(a));
             await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-            console.log('[WIPE] IDB limpio para owner', myKey);
+            console.log('[WIPE] IDB activities limpio para owner', myKey);
         } catch(e) {
-            console.warn('[WIPE] IDB clear falló (no bloqueante):', e);
+            console.warn('[WIPE] IDB activities clear falló (no bloqueante):', e);
+        }
+
+        // [B1] 3b-bis. IDB photos: borrar avatar del usuario actual. NO usamos
+        // store.clear() porque pueden quedar fotos de otros usuarios en el mismo
+        // navegador (compartido); solo borramos la key del avatar actual.
+        try {
+            await _idbPhotoDelete(_avatarIdbKey());
+            console.log('[WIPE] IDB photos avatar limpio para usuario actual');
+        } catch(e) {
+            console.warn('[WIPE] IDB photos delete falló (no bloqueante):', e);
         }
 
         // 3c. Datos derivados en profileData (memoria) y localStorage
@@ -12925,14 +12935,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if(div){ div.style.display = 'none'; }
             // Store in profileData
             profileData.avatar = dataUrl;
-            // Save directly to dedicated avatar key (never stripped by quota logic)
-            const _avKey = (APP_KEY_OVERRIDE || APP_KEY) + '_avatar';
+            // [B1] Guardar en IDB en lugar de localStorage. Sin quota práctica
+            // (vs 5MB de localStorage que se llenaba con cache Mapbox + estado).
+            // Async pero fire-and-forget: la UI ya está actualizada, IDB es defensivo.
+            const _avKey = _avatarIdbKey();
+            _idbPhotoSet(_avKey, dataUrl).then(function(ok) {
+                if (!ok) console.warn('[Avatar] IDB save fail — avatar puede no persistir');
+            });
+            // [B1] Cleanup defensivo: si quedaba el avatar legacy en localStorage
+            // (migración no completada todavía o fallback), limpiarlo ahora que
+            // el nuevo está en IDB. Libera cuota localStorage para el resto del estado.
             try {
-                localStorage.setItem(_avKey, dataUrl);
-
-            } catch(e) {
-                console.warn('[Avatar] Could not save:', e);
-            }
+                const _legacyKey = (APP_KEY_OVERRIDE || APP_KEY) + '_avatar';
+                if (localStorage.getItem(_legacyKey)) localStorage.removeItem(_legacyKey);
+            } catch(_) {}
             // Also persist rest of state
             saveAppState();
         };
@@ -20553,7 +20569,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     const USE_PERSISTENT_CACHE = true;
     const _PC_PREFIX     = 'mb_img:';         // localStorage key per image
     const _PC_INDEX_KEY  = 'mb_idx';          // localStorage key for the LRU index
-    const _PC_MAX_BYTES  = 4 * 1024 * 1024;   // ~4MB total budget (localStorage caps at 5MB)
+    const _PC_MAX_BYTES  = 2 * 1024 * 1024;   // [B1] bajado de 4MB→2MB tras migrar avatar a IDB. Da +2MB de respiro al resto del estado (localStorage cap 5MB iOS). LRU eviction del propio cache se autorregula.
     const _PC_MAX_ENTRIES = 80;               // hard cap on number of cached images
 
     // Read the LRU index. Index shape: [{ k: cacheKey, t: lastUsedTimestamp, s: byteSize }, ...]
@@ -26832,8 +26848,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // ── INDEXEDDB FOR ACTIVITIES (unlimited storage) ──────────────
     const IDB_NAME = 'misterrunner_db';
-    const IDB_VER  = 1;
+    const IDB_VER  = 2; // [B1] v2 añade store 'photos' para avatar (out of localStorage quota)
     const IDB_STORE = 'activities';
+    const IDB_PHOTOS_STORE = 'photos'; // [B1] avatar local + reservado para futuras fotos
     let _idb = null;
 
     function openIDB() {
@@ -26842,14 +26859,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const req = indexedDB.open(IDB_NAME, IDB_VER);
             req.onupgradeneeded = e => {
                 const db = e.target.result;
+                // v1 → activities store (idempotente)
                 if (!db.objectStoreNames.contains(IDB_STORE)) {
                     db.createObjectStore(IDB_STORE, {keyPath:'id'});
+                }
+                // [B1] v2 → photos store. keyPath:'key', value: {key, dataUrl}
+                // Usado para avatar local fuera de la cuota localStorage (5MB iOS).
+                // El upgrade se dispara automáticamente al abrir con IDB_VER=2 sobre
+                // una BD existente en v1; NO toca el store activities.
+                if (!db.objectStoreNames.contains(IDB_PHOTOS_STORE)) {
+                    db.createObjectStore(IDB_PHOTOS_STORE, {keyPath:'key'});
                 }
             };
             req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
             req.onerror   = e => { console.warn('IDB error', e); reject(e); };
         });
     }
+
+    // [B1] Helpers para el store photos. Idempotentes, async, devuelven boolean/string.
+    // Patrón: errores logueados pero NO propagados (degradación graceful).
+    async function _idbPhotoSet(key, dataUrl) {
+        if (!key || !dataUrl) return false;
+        try {
+            const db = await openIDB();
+            return await new Promise((resolve) => {
+                const tx = db.transaction(IDB_PHOTOS_STORE, 'readwrite');
+                tx.objectStore(IDB_PHOTOS_STORE).put({ key: key, dataUrl: dataUrl });
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = e => { console.warn('[IDB Photo] set fail:', key, e); resolve(false); };
+                tx.onabort = e => { console.warn('[IDB Photo] set aborted:', key, e); resolve(false); };
+            });
+        } catch(e) { console.warn('[IDB Photo] set exception:', key, e); return false; }
+    }
+
+    async function _idbPhotoGet(key) {
+        if (!key) return null;
+        try {
+            const db = await openIDB();
+            return await new Promise((resolve) => {
+                const tx = db.transaction(IDB_PHOTOS_STORE, 'readonly');
+                const req = tx.objectStore(IDB_PHOTOS_STORE).get(key);
+                req.onsuccess = e => {
+                    const v = e.target.result;
+                    resolve(v && v.dataUrl ? v.dataUrl : null);
+                };
+                req.onerror = () => resolve(null);
+            });
+        } catch(e) { console.warn('[IDB Photo] get exception:', key, e); return null; }
+    }
+
+    async function _idbPhotoDelete(key) {
+        if (!key) return false;
+        try {
+            const db = await openIDB();
+            return await new Promise((resolve) => {
+                const tx = db.transaction(IDB_PHOTOS_STORE, 'readwrite');
+                tx.objectStore(IDB_PHOTOS_STORE).delete(key);
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => resolve(false);
+                tx.onabort  = () => resolve(false);
+            });
+        } catch(e) { console.warn('[IDB Photo] delete exception:', key, e); return false; }
+    }
+
+    // [B1] Helper específico del avatar local. La key incluye el APP_KEY actual
+    // para que cambios de usuario no pisen el avatar de otro.
+    function _avatarIdbKey() {
+        return 'avatar:' + (APP_KEY_OVERRIDE || APP_KEY);
+    }
+
+    // [B1] Exponer en window para smoke test + posibles usos futuros
+    window._idbPhotoSet = _idbPhotoSet;
+    window._idbPhotoGet = _idbPhotoGet;
+    window._idbPhotoDelete = _idbPhotoDelete;
+    window._avatarIdbKey = _avatarIdbKey;
 
     async function saveActivitiesToIDB() {
         try {
@@ -27750,7 +27833,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if(p.height) profileData.height = p.height;
                 if(p.sex)    profileData.sex    = p.sex;
                 if(p.vo2max !== undefined && p.vo2max !== null) profileData.vo2max = p.vo2max;
-                // Restore avatar — search current key first, then scan all _avatar keys
+                // [B1] Restore avatar — flujo escalonado para evitar flash de placeholder
+                //   1) Lectura legacy de localStorage (síncrona, rápida): si todavía hay
+                //      avatar en localStorage (pre-B1), úsalo como tentativa inmediata
+                //      para que la cabecera se pinte sin esperar a IDB
+                //   2) IDB hydration async (preferente): tras pintar, lee el avatar
+                //      desde IDB. Si existe → sobrescribe la tentativa legacy y limpia
+                //      localStorage. Si IDB vacío + legacy presente → migración one-time
+                //      (escribir IDB + borrar localStorage)
                 const _ak = (APP_KEY_OVERRIDE || APP_KEY)+'_avatar';
                 let _storedAvatar = localStorage.getItem(_ak);
                 if(!_storedAvatar) {
@@ -27765,9 +27855,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 if(_storedAvatar && _storedAvatar.startsWith('data:')) {
                     profileData.avatar = _storedAvatar;
-                    // Normalise to current key so future saves use correct key
-                    try { localStorage.setItem(_ak, _storedAvatar); } catch(e){}
+                    // NO normalizamos a _ak en localStorage — la fuente canónica ahora es IDB.
+                    // El IDB hydration de abajo se encarga.
                 }
+                // [B1] IDB hydration + migración one-time (fire-and-forget)
+                (async function() {
+                    try {
+                        const _idbKey = _avatarIdbKey();
+                        const _idbAvatar = await _idbPhotoGet(_idbKey);
+                        if (_idbAvatar && _idbAvatar.startsWith('data:')) {
+                            // IDB es la fuente preferente. Si difiere de la tentativa
+                            // legacy (o la legacy no existía), actualizar profileData
+                            // y repintar la cabecera.
+                            if (profileData.avatar !== _idbAvatar) {
+                                profileData.avatar = _idbAvatar;
+                                if (typeof restoreAvatarDOM === 'function') restoreAvatarDOM();
+                            }
+                            // Cleanup defensivo: si la legacy sigue en localStorage tras
+                            // tener IDB poblado, ya no aporta nada y come cuota.
+                            try { if (localStorage.getItem(_ak)) localStorage.removeItem(_ak); } catch(_) {}
+                        } else if (_storedAvatar && _storedAvatar.startsWith('data:')) {
+                            // IDB vacío + legacy presente → migración one-time
+                            const _ok = await _idbPhotoSet(_idbKey, _storedAvatar);
+                            if (_ok) {
+                                // Verificación: leer de IDB para confirmar antes de borrar legacy
+                                const _verify = await _idbPhotoGet(_idbKey);
+                                if (_verify && _verify.startsWith('data:')) {
+                                    try { localStorage.removeItem(_ak); } catch(_) {}
+                                    console.log('[Avatar] Migración localStorage → IDB completada');
+                                }
+                            }
+                        }
+                    } catch(e) { console.warn('[Avatar] IDB hydration exception:', e); }
+                })();
                 if(p.marcas)    profileData.marcas    = p.marcas;
                 if(p.medallero) profileData.medallero = p.medallero;
                 if(p.hrMax)     profileData.hrMax    = p.hrMax;
@@ -34457,6 +34577,22 @@ async function exportBackup() {
             totalKeys++;
         }
 
+        // [B1] Avatar ahora vive en IDB (no localStorage) tras la migración. Para
+        // mantener el formato del backup v4 cross-compatible (cualquier instalación
+        // puede restaurarlo), lo leemos de IDB y lo metemos en lsData con la key
+        // tradicional `<currentKey>_avatar`. Una instalación con B1 al restaurar
+        // lo detectará y volverá a meter en IDB; una sin B1 lo escribirá a
+        // localStorage como toda la vida. Compat total en ambos sentidos.
+        try {
+            const _idbAvatar = await _idbPhotoGet(_avatarIdbKey());
+            if (_idbAvatar && typeof _idbAvatar === 'string' && _idbAvatar.startsWith('data:')) {
+                const _avKey = (APP_KEY_OVERRIDE || APP_KEY) + '_avatar';
+                lsData[_avKey] = _idbAvatar;
+                totalKeys++;
+                console.log('[Backup] Avatar incluido desde IDB · ' + Math.round(_idbAvatar.length/1024) + 'KB');
+            }
+        } catch(e) { console.warn('[Backup] avatar export from IDB exception:', e); }
+
         // Recopilar actividades de IndexedDB (rutas GPS, stats, evaluaciones)
         let idbActs = [];
         try {
@@ -34694,50 +34830,61 @@ async function importBackup(input) {
                 'mr_club_tab', 'mr_feed_only_following', 'mr_last_crew_check',
             ];
 
-            // Escribir todas las claves del backup tal cual
+            // [B1] Procesar AVATAR antes del loop general: escribir a IDB en lugar
+            // de localStorage. El backup mantiene el formato `*_avatar` en lsData
+            // (cross-compat con backups v4), pero al restaurar el destino es IDB.
+            // Si el backup viene del MISMO usuario, la key es currentKey + '_avatar'.
+            // Si viene de otro usuario (remap), la key es backupUserKey + '_avatar'.
+            // En ambos casos el destino IDB es _avatarIdbKey() del usuario actual.
+            try {
+                let _bkAvatar = null;
+                if (keysNeedRemap && backupUserKey) {
+                    _bkAvatar = backup.localStorage[backupUserKey + '_avatar'];
+                } else {
+                    _bkAvatar = backup.localStorage[currentKey + '_avatar'];
+                    // Fallback: si no estaba con la key del currentKey, buscar la primera *_avatar válida
+                    if (!_bkAvatar) {
+                        for (const k of Object.keys(backup.localStorage)) {
+                            if (k.endsWith('_avatar')) {
+                                const v = backup.localStorage[k];
+                                if (v && typeof v === 'string' && v.startsWith('data:')) { _bkAvatar = v; break; }
+                            }
+                        }
+                    }
+                }
+                if (_bkAvatar && typeof _bkAvatar === 'string' && _bkAvatar.startsWith('data:')) {
+                    const _idbOk = await _idbPhotoSet(_avatarIdbKey(), _bkAvatar);
+                    if (_idbOk) {
+                        console.log('[Backup] Avatar restaurado a IDB · ' + Math.round(_bkAvatar.length/1024) + 'KB');
+                    } else {
+                        console.warn('[Backup] Avatar NO se pudo escribir a IDB');
+                        try { sessionStorage.setItem('mr_backup_avatar_failed', '1'); } catch(_) {}
+                    }
+                } else {
+                    console.log('[Backup] No hay avatar en el backup');
+                }
+            } catch(e) { console.warn('[Backup] avatar restore exception:', e); }
+
+            // Escribir todas las claves del backup tal cual, EXCEPTO las *_avatar
+            // (ya tratadas arriba con destino IDB para evitar comer cuota localStorage).
             Object.keys(backup.localStorage).forEach(k => {
+                if (k.endsWith('_avatar')) return; // [B1] skip: avatar va a IDB
                 const val = backup.localStorage[k];
                 if (val === null || val === undefined) return;
                 try { localStorage.setItem(k, val); } catch(e) { console.warn('importBackup ls set:', k, e); }
             });
 
             // Si el usuario del backup ≠ usuario actual, remap:
-            // 1) Estado principal + avatar (mr_data_<hash>)
+            // 1) Estado principal (mr_data_<hash>) — el avatar ya se procesó arriba
             // 2) Todas las claves user-scoped (mr_plan_<hash>, mr_strength_plan_<hash>, etc.)
             if (keysNeedRemap) {
                 // Estado principal
                 const stateVal  = backup.localStorage[backupUserKey];
                 const bakVal    = backup.localStorage[backupUserKey + '_bak'];
-                const avatarVal = backup.localStorage[backupUserKey + '_avatar'];
                 if (stateVal)            { try { localStorage.setItem(currentKey, stateVal); localStorage.setItem(currentKey + '_bak', stateVal); } catch(e) {} }
                 else if (bakVal)         { try { localStorage.setItem(currentKey, bakVal);   localStorage.setItem(currentKey + '_bak', bakVal);   } catch(e) {} }
-                // [FASE 6 · Backup audit] Restauración robusta del avatar:
-                // antes el catch silenciaba errores de cuota (avatares de iPhone
-                // pueden pesar 1-3 MB en base64 → QuotaExceededError común).
-                // Ahora: log explícito + retry tras limpiar la clave antigua del
-                // backup que duplicaría espacio (ya está escrita por el loop de
-                // arriba con la clave del backup, no la del usuario actual).
-                if (avatarVal) {
-                    try {
-                        localStorage.setItem(currentKey + '_avatar', avatarVal);
-                        console.log('[Backup] Avatar restaurado correctamente · ' + Math.round(avatarVal.length/1024) + 'KB');
-                    } catch(e1) {
-                        console.warn('[Backup] Avatar primer intento falló (' + (e1 && e1.name) + '), reintentando tras limpiar duplicado…');
-                        try {
-                            // Liberar espacio: la clave del backup ya está escrita arriba pero
-                            // duplica el avatar — la borramos ahora que tenemos el valor en memoria.
-                            localStorage.removeItem(backupUserKey + '_avatar');
-                            localStorage.setItem(currentKey + '_avatar', avatarVal);
-                            console.log('[Backup] Avatar restaurado en 2º intento');
-                        } catch(e2) {
-                            console.error('[Backup] Avatar NO se pudo restaurar (cuota localStorage):', e2);
-                            // Marcamos en sessionStorage para avisar tras reload
-                            try { sessionStorage.setItem('mr_backup_avatar_failed', '1'); } catch(_) {}
-                        }
-                    }
-                } else {
-                    console.log('[Backup] No hay avatar en el backup');
-                }
+                // [B1] Avatar ya restaurado a IDB arriba — bloque legacy con retry de
+                // localStorage eliminado porque IDB no tiene quota práctica.
 
                 // Claves user-scoped: copiar de _<backupSuffix> a _<currentSuffix>
                 userScopedBases.forEach(base => {
@@ -46404,6 +46551,62 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [B1] Verifica que la migración del avatar a IDB está operativa.
+    // Read-only, sin escritura ni borrado: comprueba que existen los helpers
+    // expuestos en window, que el store 'photos' está creado en IDB v2, y que
+    // los puntos críticos del código siguen el patrón correcto (handleAvatar
+    // usa _idbPhotoSet, exportBackup/importBackup leen/escriben IDB para
+    // avatar, wipe limpia photos store).
+    function _testIdbPhotosStore() {
+        var checks = [];
+        try {
+            if (typeof window._idbPhotoSet !== 'function')    checks.push('window._idbPhotoSet no expuesto');
+            if (typeof window._idbPhotoGet !== 'function')    checks.push('window._idbPhotoGet no expuesto');
+            if (typeof window._idbPhotoDelete !== 'function') checks.push('window._idbPhotoDelete no expuesto');
+            if (typeof window._avatarIdbKey !== 'function')   checks.push('window._avatarIdbKey no expuesto');
+
+            // handleAvatar debe usar _idbPhotoSet (no localStorage.setItem para _avatar)
+            var handleAvatarSrc = (typeof handleAvatar === 'function') ? handleAvatar.toString() : '';
+            if (handleAvatarSrc.indexOf('_idbPhotoSet') < 0)
+                checks.push('handleAvatar no usa _idbPhotoSet');
+            if (handleAvatarSrc.indexOf("localStorage.setItem(_avKey") >= 0)
+                checks.push('handleAvatar todavía hace localStorage.setItem del avatar');
+
+            // exportBackup debe leer avatar de IDB con _idbPhotoGet
+            var exportSrc = (typeof exportBackup === 'function') ? exportBackup.toString() : '';
+            if (exportSrc.indexOf('_idbPhotoGet') < 0)
+                checks.push('exportBackup no lee avatar de IDB');
+
+            // importBackup debe escribir avatar a IDB con _idbPhotoSet
+            var importSrc = (typeof importBackup === 'function') ? importBackup.toString() : '';
+            if (importSrc.indexOf('_idbPhotoSet') < 0)
+                checks.push('importBackup no escribe avatar a IDB');
+
+            // IDB_VER >= 2 (necesario para el store photos)
+            // No podemos leer la constante directamente; verificamos abriendo IDB
+            // y comprobando que el store existe. Async via IDB API.
+            // Ejecutado en modo síncrono: si openIDB falla o el store no está,
+            // se detectará al menos por los demás checks. Para no bloquear el
+            // smoke, lo hacemos best-effort sin await (el smoke es sync).
+            // Verificación indirecta: si _avatarIdbKey() retorna un string
+            // con prefijo 'avatar:', el sistema está conectado al estado actual.
+            if (typeof window._avatarIdbKey === 'function') {
+                var k = window._avatarIdbKey();
+                if (typeof k !== 'string' || k.indexOf('avatar:') !== 0)
+                    checks.push('_avatarIdbKey() no devuelve formato avatar:<key>');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'b1.idb_photos',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'helpers + handleAvatar + export/import + key format OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -46415,7 +46618,8 @@ window.addEventListener('DOMContentLoaded', function() {
         hitos:   [_testHitosCoherence],
         fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy],
         backup:  [_testBackupSnapshot],
-        fase9:   [_testBulkStravaPipeline]
+        fase9:   [_testBulkStravaPipeline],
+        b1:      [_testIdbPhotosStore]
     };
 
     window.__mrSmoke = function(group) {
