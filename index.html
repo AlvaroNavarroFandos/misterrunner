@@ -33518,6 +33518,45 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
     // ─────────────────────────────────────────────────────────────────
     async function _rebuildAllPRsAndMilestones() {
         var t0 = Date.now();
+
+        // [HITO 14] Refresh defensivo activities ←→ BD ANTES de rebuild.
+        //
+        // Por qué: en escenarios de sesiones simultáneas (móvil + PC abiertos)
+        // un device puede guardar una activity en BD que el otro device aún
+        // no conoce en su array `activities` local. Si en el device B se
+        // dispara rebuild, calcularía PRs/hitos sobre el array obsoleto.
+        // Descubierto en FASE 9 testing E2E (L.10): la 1ª ejecución leyó 291
+        // activities cuando en BD había 292.
+        //
+        // Solución: forzar `_refreshActivitiesFromBD` (canónica · misma
+        // función que usa el bulk vía `window._MR_StravaImport.refreshActivities`)
+        // que sincroniza el array desde BD + elimina huérfanas cross-device +
+        // re-renderiza la UI. Es idempotente: si ya está sync, no hace nada
+        // observable más allá de la query.
+        //
+        // Garantías:
+        //  - Idempotente: refresh-ya-hecho no produce drift extra
+        //  - Fail-open: si refresh falla (sin red, BD down, etc.) seguimos
+        //    con el array en memoria — mejor PR sobre datos viejos que
+        //    ningún PR
+        //  - Sin recursión: el path de orphans en _refreshActivitiesFromBD
+        //    que llama rebuild es raro y se auto-consume (orphans removidas
+        //    en 1ª pasada → 2ª pasada no encuentra ninguna). Misma lógica
+        //    para el path post-snapshot (sessionStorage key consumida en 1ª)
+        //  - Coste: ~200-400ms por la query a Supabase. Aceptable: rebuild
+        //    completo ya tarda 2-5s sobre 290+ activities
+        try {
+            if (typeof _refreshActivitiesFromBD === 'function') {
+                var rRes = await _refreshActivitiesFromBD();
+                if (rRes && rRes.added > 0) {
+                    console.log('[MR][HITO 14] pre-rebuild refresh: +' + rRes.added +
+                                ' añadidas (total=' + rRes.total + ')');
+                }
+            }
+        } catch (e) {
+            console.warn('[MR][HITO 14] refresh defensivo falló, continuando con array en memoria:', e);
+        }
+
         var records   = [];
         var milestones = [];
         try {
@@ -46908,6 +46947,43 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [HITO 14] Refresh defensivo en _rebuildAllPRsAndMilestones.
+    // Verifica que: (a) la función rebuild está expuesta, (b) la canónica
+    // de refresh (alias en window._MR_StravaImport.refreshActivities) está
+    // disponible y es la misma función que _refreshActivitiesFromBD del
+    // scope cerrado, (c) el código fuente de rebuild contiene el bloque
+    // de refresh defensivo (regex match sobre toString para detectar
+    // regresiones si alguien quita el bloque por error).
+    function _testRebuildRefreshDefensive() {
+        var checks = [];
+        try {
+            if (typeof window._rebuildAllPRsAndMilestones !== 'function')
+                checks.push('_rebuildAllPRsAndMilestones:missing');
+            var imp = window._MR_StravaImport || {};
+            if (typeof imp.refreshActivities !== 'function')
+                checks.push('_MR_StravaImport.refreshActivities:missing');
+            // Verificar que rebuild incluye el bloque defensivo. Buscamos
+            // por la cadena "HITO 14" en el cuerpo de la función (toString)
+            // y por la llamada a _refreshActivitiesFromBD.
+            if (typeof window._rebuildAllPRsAndMilestones === 'function') {
+                var src = window._rebuildAllPRsAndMilestones.toString();
+                if (src.indexOf('HITO 14') < 0)
+                    checks.push('bloque HITO 14 ausente en rebuild');
+                if (src.indexOf('_refreshActivitiesFromBD') < 0)
+                    checks.push('llamada _refreshActivitiesFromBD ausente en rebuild');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'hito14.rebuild.refresh.defensive',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'refresh defensivo activo · sync activities ←→ BD pre-rebuild'
+                : checks.join(' · ')
+        };
+    }
+
     // [S26.C] Mausoleo de zapatillas — verifica que las funciones y
     // los DOM IDs nuevos están presentes. NO ejecuta los flujos (UI),
     // solo comprueba que el wiring está. Las funciones viven en otro
@@ -47258,7 +47334,7 @@ window.addEventListener('DOMContentLoaded', function() {
         renders: [_testRendersDontCrash],
         s26b:    [_testS26BCatalog, _testS26BWizard, _testGarminWizardReady, _testPolarWizardReady],
         s26c:    [_testS26CMausoleo],
-        hitos:   [_testHitosCoherence],
+        hitos:   [_testHitosCoherence, _testRebuildRefreshDefensive],
         fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy],
         backup:  [_testBackupSnapshot],
         fase9:   [_testBulkStravaPipeline],
