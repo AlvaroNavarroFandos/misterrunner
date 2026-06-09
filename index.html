@@ -910,8 +910,10 @@
          riesgo (no toca el fondo). Curva coincide con el resto de
          animaciones canónicas de la app (toast, evalPop, dropdowns)
          → sensación uniforme en toda la UI.
-       - Sheet de salida: .42s cubic-bezier(.5,0,.75,0) (ease-in puro sin
-         overshoot) — cierre decisivo, el rebote solo se aprecia al ABRIR.
+       - Sheet de salida: .42s cubic-bezier(.32,.72,0,1) (ease-out iOS:
+         rápido al inicio, frena al final — momentum natural coherente
+         con el swipe-to-dismiss del handle). Backdrop sincronizado con
+         el mismo timing y curva para que ambos completen a la vez.
        - Sombra premium reforzada (blur 50px, alpha 42%) + highlight 1px
          para marcar capa elevada con el rebote pronunciado.
        - Handle: zona ampliada (touch-action:none) preparada para
@@ -945,9 +947,15 @@
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        /* transition mínima sólo en opacity/visibility — backdrop-filter no
-           se anima en el ocultado para no mantener el filtro activo. */
-        transition: opacity .32s ease-out, visibility .32s ease-out;
+        /* [Sheets Premium v3.1] Transición de CIERRE del backdrop: 0.42s
+           con la misma curva ease-out iOS que el sheet (cubic-bezier
+           .32,.72,0,1). Antes era 0.32s ease-out que terminaba ANTES que
+           el sheet (0.42s) → el sheet seguía bajando 0.10s sin backdrop y
+           se percibía como "desvanecerse" en lugar de "deslizar hacia
+           abajo". Ahora ambos terminan a la vez y se siente como un único
+           gesto coherente con el swipe-to-dismiss del handle. */
+        transition: opacity .42s cubic-bezier(.32,.72,0,1),
+                    visibility .42s linear;
     }
 
     .sheet-backdrop.show {
@@ -1011,11 +1019,14 @@
     /* Animación de salida: cuando el backdrop pierde .show, el sheet debe
        animarse de vuelta a translateY(100%). La transición la pone el estado
        transitorio que mantenemos un instante via JS (clase .closing).
-       [Sheets Premium v3] Salida más rápida (0.42s) y sin overshoot (curve
-       de ease-in puro) para que el cierre se sienta decisivo: el rebote
-       solo se aprecia al ABRIR, no al cerrar — patrón iOS canónico. */
+       [Sheets Premium v3.1] Curva ease-out iOS (cubic-bezier .32,.72,0,1):
+       rápido al inicio, frena al final — exactamente el momentum natural
+       cuando sueltas el dedo tras arrastrar el sheet con swipe-to-dismiss.
+       Antes era cubic-bezier(.5,0,.75,0) (ease-in: lento→rápido, sensación
+       de "caer y desaparecer"), incoherente con el gesto del swipe. Mismo
+       timing que el backdrop (0.42s) para que ambos completen a la vez. */
     .sheet-backdrop.closing .sheet {
-        transition: transform .42s cubic-bezier(.5,0,.75,0);
+        transition: transform .42s cubic-bezier(.32,.72,0,1);
     }
 
     /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS.
