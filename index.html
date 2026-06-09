@@ -897,20 +897,32 @@
          (400ms cubic-bezier estilo iOS espring)
        El uso de visibility + pointer-events permite transiciones reales
        (display:none rompe transitions) sin romper el comportamiento de
-    /* [Sesión Sheets Premium] Sistema de sheets renovado:
+    /* [Sesión Sheets Premium · v3 09-jun-2026] Sistema de sheets renovado:
        - Backdrop: opacity 0→1 + blur 0→16px (.32s ease-out)
-       - Sheet: translateY(100%) → 0 con SPRING iOS .55s cubic-bezier(.22,.94,.32,1.04)
-         que sobrepasa muy ligeramente al final para sensación física (no llega
-         frenando). Sustituye al translateY(40px) + scale(.96) + opacity que se
-         sentía plano y "fade-in" en vez de "subida desde abajo".
-       - Sombra premium hacia arriba + highlight interior de 1px para marcar capa.
-       - Handle: zona ampliada (touch-action:none) preparada para swipe-to-dismiss
-         desde JS. Se ensancha y oscurece al tocarse para pista visual.
+       - Sheet: translateY(100%) → 0 con BACK-OUT SPRING iOS
+         .62s cubic-bezier(.34,1.56,.64,1) — overshoot +56% para rebote
+         pronunciado tipo iOS moderno (Apple Music, Health, etc.).
+         Reemplaza al cubic-bezier(.22,.94,.32,1.04) v2 que tenía overshoot
+         de solo +4% y pasaba desapercibido. Validado con preview
+         standalone vs variantes B (backdrop dramático), C (escala del
+         fondo, descartada por riesgo del bug Home en blanco) y D (muelle
+         muy expresivo). Elegida A por máxima mejora percibida + cero
+         riesgo (no toca el fondo). Curva coincide con el resto de
+         animaciones canónicas de la app (toast, evalPop, dropdowns)
+         → sensación uniforme en toda la UI.
+       - Sheet de salida: .42s cubic-bezier(.5,0,.75,0) (ease-in puro sin
+         overshoot) — cierre decisivo, el rebote solo se aprecia al ABRIR.
+       - Sombra premium reforzada (blur 50px, alpha 42%) + highlight 1px
+         para marcar capa elevada con el rebote pronunciado.
+       - Handle: zona ampliada (touch-action:none) preparada para
+         swipe-to-dismiss desde JS. Se ensancha y oscurece al tocarse.
        Nombres de clases CONSERVADOS (.sheet, .sheet-backdrop, .sheet-handle,
        .sheet-handle-wrap, .sheet-body, .sheet-title) para no romper los muchos
        sitios que las usan ni la API openSheet/closeSheet.
-       NOTA: la escala del fondo (.view.active) se eliminó por causar bugs
-       visuales (Home en blanco al volver) — ver bloque siguiente. */
+       NOTA: la escala del fondo (.view.active) se eliminó en v2 por causar
+       bugs visuales (Home en blanco al volver) — ver bloque siguiente.
+       En v3 NO se reintroduce: el rebote del sheet + sombra reforzada da
+       el premium feel deseado sin riesgo de regresión. */
 
     /* [Sesión Sheets Premium · Rollback v2] La escala del fondo (.view.active
        a scale 0.93 + filter brightness) se ELIMINA porque dejaba estados
@@ -979,17 +991,31 @@
     .sheet-backdrop.show .sheet {
         transform: translateY(0);
         will-change: transform;
-        /* Sombra premium hacia arriba + highlight interior 1px (capa elevada) */
+        /* Sombra premium hacia arriba + highlight interior 1px (capa elevada).
+           [Sheets Premium v3 · HITO post-14] Sombra reforzada (blur 40→50px,
+           alpha 35%→42%, highlight 6%→8%) para acompañar el rebote pronunciado
+           y vender la sensación de capa elevada por encima del view. */
         box-shadow:
-            0 -12px 40px rgba(0,0,0,.35),
-            0 -1px 0 rgba(255,255,255,.06) inset;
-        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
+            0 -16px 50px rgba(0,0,0,.42),
+            0 -1px 0 rgba(255,255,255,.08) inset;
+        /* [Sheets Premium v3 · HITO post-14] Back-out spring iOS: overshoot
+           pronunciado (+56% vs 4% del anterior) para sensación premium con
+           rebote físico. Reemplaza cubic-bezier(.22,.94,.32,1.04) — 0.55s
+           que pasaba desapercibido. Validado en preview standalone con
+           toggle claro/oscuro frente a las variantes B (backdrop dramático),
+           C (escala del fondo, con riesgo) y D (muelle muy expresivo).
+           Elegida A por: máxima mejora percibida + cero riesgo (no toca
+           el fondo → bug del Home en blanco descartado por construcción). */
+        transition: transform .62s cubic-bezier(.34,1.56,.64,1);
     }
     /* Animación de salida: cuando el backdrop pierde .show, el sheet debe
        animarse de vuelta a translateY(100%). La transición la pone el estado
-       transitorio que mantenemos un instante via JS (clase .closing). */
+       transitorio que mantenemos un instante via JS (clase .closing).
+       [Sheets Premium v3] Salida más rápida (0.42s) y sin overshoot (curve
+       de ease-in puro) para que el cierre se sienta decisivo: el rebote
+       solo se aprecia al ABRIR, no al cerrar — patrón iOS canónico. */
     .sheet-backdrop.closing .sheet {
-        transition: transform .55s cubic-bezier(.22,.94,.32,1.04);
+        transition: transform .42s cubic-bezier(.5,0,.75,0);
     }
 
     /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS.
