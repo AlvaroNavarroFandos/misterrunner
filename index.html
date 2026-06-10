@@ -35761,6 +35761,7 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
                 currentUser = null;
                 APP_KEY_OVERRIDE = null;
+                _clubSupabaseInited = false;
                 // FASE 5.4: limpiar cache de streams al cerrar sesión
                 try { _streamsCache = {}; } catch(_) {}
                 // FASE 5.6: limpiar cache de signed URLs de fotos al cerrar sesión
@@ -35860,11 +35861,14 @@ function _applyDark(on, save) {
    CLUB — Supabase backend
 ══════════════════════════════════════════════════════════════════ */
 var _sbFeedChannel = null, _sbDmChannel = null;
+var _clubSupabaseInited = false;
 var _activeChatUserId = null, _activeChatUsername = '';
 
 async function _initClubSupabase() {
+    if (_clubSupabaseInited) return;
+    _clubSupabaseInited = true;
     const { data: { session } } = await window._sbClient.auth.getSession();
-    if (!session) return;
+    if (!session) { _clubSupabaseInited = false; return; }
     const userId = session.user.id;
 
     _refreshUnreadBadge();
@@ -47363,6 +47367,29 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    function _testClubSupabaseGuard() {
+        var checks = [];
+        try {
+            if (typeof _clubSupabaseInited === 'undefined') checks.push('flag no declarado');
+            if (typeof _initClubSupabase !== 'function') checks.push('_initClubSupabase no es funcion');
+            else {
+                var src = _initClubSupabase.toString();
+                if (!/if\s*\(\s*_clubSupabaseInited\s*\)\s*return/.test(src)) checks.push('falta guard return');
+                if (!/_clubSupabaseInited\s*=\s*true/.test(src)) checks.push('falta marca inited=true');
+                if (!/_clubSupabaseInited\s*=\s*false/.test(src)) checks.push('falta revert en !session');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'realtime.club_supabase_guard',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'guard idempotente + revert en no-session OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47375,7 +47402,8 @@ window.addEventListener('DOMContentLoaded', function() {
         fase7:   [_testClubRecordsRanking, _testClubRecordsPrivacy],
         backup:  [_testBackupSnapshot],
         fase9:   [_testBulkStravaPipeline],
-        b1:      [_testIdbPhotosStore]
+        b1:      [_testIdbPhotosStore],
+        realtime:[_testClubSupabaseGuard]
     };
 
     window.__mrSmoke = function(group) {
