@@ -40,6 +40,40 @@
 
     <!-- ── PWA BOOTSTRAP ──────────────────────────────────────── -->
     <script>
+    /* ── MR LOG SILENCER ───────────────────────────────────────────────────
+       Silencia console.log y console.info en producción para mantener la
+       consola limpia al iniciar. Whitelist:
+         • log cuyo primer arg comienza por '%c' (styling intencional → smoke
+           tests, mensajes etiquetados)
+         • log cuyo primer arg contiene '[MR' (boot del SW, logs MR explícitos)
+       warn y error SIEMPRE pasan (catches defensivos, errores reales).
+       Bypass (sin redeploy):
+         - localStorage.setItem('mr_verbose','1') + reload
+         - URL con ?mr-debug
+         - localhost / 127.0.0.1
+       Revertir bypass: localStorage.removeItem('mr_verbose') + reload.
+       ─────────────────────────────────────────────────────────────────── */
+    (function(){
+      try {
+        var verbose = location.hostname === 'localhost' ||
+                      location.hostname === '127.0.0.1' ||
+                      location.search.indexOf('mr-debug') >= 0 ||
+                      (typeof localStorage !== 'undefined' &&
+                       localStorage.getItem('mr_verbose') === '1');
+        if (verbose) return;
+        var __origLog = console.log;
+        console.log = function(){
+          var first = arguments[0];
+          if (typeof first === 'string' &&
+              (first.indexOf('%c') === 0 || first.indexOf('[MR') >= 0)) {
+            return __origLog.apply(console, arguments);
+          }
+          /* silenciado */
+        };
+        console.info = function(){};
+      } catch(e){ /* fail-safe: si algo va mal, no rompemos el boot */ }
+    })();
+
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             // Only register SW when running on the real origin, not inside iframes from other domains
