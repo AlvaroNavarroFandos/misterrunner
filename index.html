@@ -21977,6 +21977,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ── OPEN ACTIVITY DETAIL ─────────────────────────────────────
+    // [Pre-Capacitor TODO-3 · C28] WeakMap externa para memoizar arrays derivados
+    // de streams (HR values, pace values) que drawSparkline necesita en cada apertura
+    // del visor. WeakMap evita contaminar el objeto `act` (que se exporta en backup
+    // JSON) y libera entradas automaticamente cuando act deja de tener referencias.
+    // Streams son immutable tras hidratacion (FASE 5.4), asi que no hace falta invalidar.
+    var _sparklineCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+
     // FASE 5.4 — wrapper async para cargar streams antes del render (bulk only).
     // Si activity bulk y streams no cargados aún: mostrar spinner, esperar streams,
     // hidratar act.hrSeries/cadSeries/etc, y entonces llamar al render original.
@@ -22805,19 +22812,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // Each chart gets half the remaining space
             const chartH = Math.max(80, Math.floor((c2H - fixedH) / 2) - 2);
 
+            // [Pre-Capacitor TODO-3 · C28] Lazy init de cache memoizado para este act.
+            // Hit en reaperturas: no se recrea el array .map(p=>p.v) ni el bucle de paceVals.
+            // Cache es WeakMap externo, no contamina act (no aparece en backup JSON).
+            var _sparkCacheEntry = null;
+            if (_sparklineCache) {
+                _sparkCacheEntry = _sparklineCache.get(act);
+                if (!_sparkCacheEntry) {
+                    _sparkCacheEntry = {};
+                    _sparklineCache.set(act, _sparkCacheEntry);
+                }
+            }
+
             if (hrCanvas && act.hrSeries && act.hrSeries.length > 1) {
+                var hrVals;
+                if (_sparkCacheEntry) {
+                    if (!_sparkCacheEntry.hr) _sparkCacheEntry.hr = act.hrSeries.map(p=>p.v);
+                    hrVals = _sparkCacheEntry.hr;
+                } else {
+                    hrVals = act.hrSeries.map(p=>p.v);
+                }
                 hrCanvas.width  = c2.offsetWidth;
                 hrCanvas.height = chartH;
                 hrCanvas.style.height = chartH + 'px';
-                drawSparkline(hrCanvas, act.hrSeries.map(p=>p.v), '#4CAF50', 30, 220, fcB, ['#3BBCE0','#4CAF50','#FFC107','#FF9800','#FF5722','#F44336']);
+                drawSparkline(hrCanvas, hrVals, '#4CAF50', 30, 220, fcB, ['#3BBCE0','#4CAF50','#FFC107','#FF9800','#FF5722','#F44336']);
             }
             if (pcCanvas && ds.length > 1) {
-                const paceVals = [];
-                for (let i=1;i<ds.length;i++){
-                    let pv = 0;
-                    if (ds[i].spd && ds[i].spd > 0.3) { pv = Math.min(800, 1000/ds[i].spd); }
-                    else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
-                    paceVals.push(pv);
+                var paceVals;
+                if (_sparkCacheEntry && _sparkCacheEntry.pc) {
+                    paceVals = _sparkCacheEntry.pc;
+                } else {
+                    paceVals = [];
+                    for (let i=1;i<ds.length;i++){
+                        let pv = 0;
+                        if (ds[i].spd && ds[i].spd > 0.3) { pv = Math.min(800, 1000/ds[i].spd); }
+                        else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
+                        paceVals.push(pv);
+                    }
+                    if (_sparkCacheEntry) _sparkCacheEntry.pc = paceVals;
                 }
                 pcCanvas.width  = c2.offsetWidth;
                 pcCanvas.height = chartH;
@@ -47541,6 +47573,36 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Pre-Capacitor TODO-3 · C28] Verifica que openActivityDetail usa cache memoizado
+    // para los arrays de HR y pace que alimentan drawSparkline. Patron WeakMap externa:
+    // _sparklineCache.get(act) / .set(act, entry), con sub-claves .hr y .pc.
+    function _testStreamMemoizationPresent() {
+        var checks = [];
+        try {
+            var fn = (typeof window.openActivityDetail === 'function')
+                ? window.openActivityDetail
+                : (typeof openActivityDetail === 'function' ? openActivityDetail : null);
+            if (!fn) {
+                checks.push('openActivityDetail no localizada');
+            } else {
+                var src = fn.toString();
+                if (!/_sparklineCache\.get/.test(src)) checks.push('falta _sparklineCache.get(act)');
+                if (!/_sparklineCache\.set/.test(src)) checks.push('falta _sparklineCache.set(act, entry)');
+                if (!/_sparkCacheEntry\.hr/.test(src)) checks.push('falta cache HR (.hr)');
+                if (!/_sparkCacheEntry\.pc/.test(src)) checks.push('falta cache pace (.pc)');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'visor.stream_memoization_present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'WeakMap _sparklineCache + cache HR/pace OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47556,7 +47618,7 @@ window.addEventListener('DOMContentLoaded', function() {
         b1:      [_testIdbPhotosStore],
         realtime:[_testClubSupabaseGuard],
         persist: [_testC17DebouncePresent],
-        visor:   [_testVisorAbortCleanupPresent]
+        visor:   [_testVisorAbortCleanupPresent, _testStreamMemoizationPresent]
     };
 
     window.__mrSmoke = function(group) {
