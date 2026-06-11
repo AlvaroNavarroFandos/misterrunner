@@ -22056,6 +22056,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         ov.className = 'det-overlay mr-fx-hero-in';
         document.body.appendChild(ov);
 
+        // [Pre-Capacitor TODO-2 · C27+C30] AbortController para cleanup en cierre
+        // del visor. Todos los addEventListener del visor pasarán
+        // { signal: _detAbortCtrl.signal } como opciones, y _detCleanup() llamará
+        // a _detAbortCtrl.abort() para desregistrarlos en bloque. Resuelve el leak
+        // de ~1.7 MB/apertura (DOM nodes + listeners retenidos por closures que
+        // capturan `act` con sus ~19K tuplas de streams). API estándar Web,
+        // disponible en iOS Safari 15+. AbortController en window indica disponibilidad.
+        var _detAbortCtrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        // Helper precomputado: { signal: <sig> } si hay AbortController, sino undefined.
+        // Pasado como 3er argumento a cada addEventListener del visor. Pasar undefined
+        // es equivalente a omitir el argumento (defaults seguros: bubbling phase).
+        var _detSigOpts = _detAbortCtrl ? { signal: _detAbortCtrl.signal } : undefined;
+
         // Header
         // [FASE 5.6.1] Para bulk, fallback del título es '—' (no getTypeLabel)
         // si no hubiera name. En la práctica Strava siempre rellena name.
@@ -22088,13 +22101,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         ov.appendChild(hdr);
         // [Efectos UI] Cierre slide-down (340ms out): quitamos la clase de entrada
         // (slide-up) y aplicamos la de salida.
+        // [Pre-Capacitor TODO-2 · C27+C30] _detCleanup() libera listeners + canvas
+        // bitmaps. Se llama DENTRO del setTimeout (a los 340ms) para no afectar
+        // visualmente la animación de salida — los canvas siguen renderizados
+        // durante el slide-down (la animación es solo translateY+opacity).
+        function _detCleanup() {
+            try {
+                if (_detAbortCtrl && !_detAbortCtrl.signal.aborted) _detAbortCtrl.abort();
+            } catch(_){}
+            try {
+                ov.querySelectorAll('canvas').forEach(function(c){
+                    try { var ctx = c.getContext('2d'); if (ctx) ctx.clearRect(0,0,c.width,c.height); } catch(_){}
+                    // Truco V8/Safari: width=0 libera el backing store del bitmap.
+                    try { c.width = 0; c.height = 0; } catch(_){}
+                });
+            } catch(_){}
+        }
         function _detCloseAnimated() {
             ov.classList.remove('mr-fx-hero-in');
             ov.classList.add('mr-fx-hero-out');
-            setTimeout(function(){ if (ov.parentNode) ov.remove(); }, 340);
+            setTimeout(function(){
+                try { _detCleanup(); } catch(_){}
+                if (ov.parentNode) ov.remove();
+            }, 340);
         }
-        document.getElementById('det-close').addEventListener('click', _detCloseAnimated);
-        document.getElementById('det-share-btn').addEventListener('click', () => shareActivityCard(act));
+        document.getElementById('det-close').addEventListener('click', _detCloseAnimated, _detSigOpts);
+        document.getElementById('det-share-btn').addEventListener('click', () => shareActivityCard(act), _detSigOpts);
         // Club sharing now via share sheet
 
         // Cards wrap
@@ -22758,7 +22790,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (ev.target && ev.target.closest('[data-mapbox-attr] a')) return;
                         if (mapC.dataset.mapboxOk !== '1') return; // no real map yet → ignore
                         openMapZoomModal(act);
-                    });
+                    }, _detSigOpts);
                 }
             }
 
@@ -23290,7 +23322,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     phTx = e.touches[0].clientX; phTy = e.touches[0].clientY;
                     phDx = 0; phDy = 0; phDrag = true; phDir = null;
                     phInner.style.transition = 'none';
-                }, { passive: true });
+                }, { passive: true, signal: _detAbortCtrl ? _detAbortCtrl.signal : undefined });
                 phTrack.addEventListener('touchmove', function(e){
                     if (!phDrag) return;
                     phDx = e.touches[0].clientX - phTx;
@@ -23303,7 +23335,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         var bx = -phCur * trackW;
                         phInner.style.transform = 'translateX('+(bx + phDx)+'px)';
                     }
-                }, { passive: false });
+                }, { passive: false, signal: _detAbortCtrl ? _detAbortCtrl.signal : undefined });
                 phTrack.addEventListener('touchend', function(e){
                     phDrag = false;
                     if (phDir === 'h') {
@@ -23314,11 +23346,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         else _phGoTo(phCur);
                     }
                     phDir = null;
-                });
+                }, _detSigOpts);
                 // Click en dots pequeños
                 if (phDots) {
                     phDots.querySelectorAll('div').forEach(function(dt){
-                        dt.addEventListener('click', function(){ _phGoTo(+dt.dataset.phIdx); });
+                        dt.addEventListener('click', function(){ _phGoTo(+dt.dataset.phIdx); }, _detSigOpts);
                     });
                 }
             }
@@ -23371,7 +23403,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             dtx=e.touches[0].clientX; dty=e.touches[0].clientY;
             ddx=0; ddy=0; drag=true; dragDir=null;
             track.style.transition='none';
-        },{passive:true});
+        },{passive:true, signal: _detAbortCtrl ? _detAbortCtrl.signal : undefined});
         wrap.addEventListener('touchmove',e=>{
             if(!drag) return;
             ddx=e.touches[0].clientX-dtx;
@@ -23382,7 +23414,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const bx=-curCard*wrap.offsetWidth;
                 track.style.transform='translateX('+(bx+ddx)+'px)';
             }
-        },{passive:false});
+        },{passive:false, signal: _detAbortCtrl ? _detAbortCtrl.signal : undefined});
         wrap.addEventListener('touchend',()=>{
             drag=false;
             if(dragDir==='h'){
@@ -23392,8 +23424,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 else goToCard(curCard);
             }
             dragDir=null;
-        });
-        dots.forEach(dot=>dot.addEventListener('click',()=>goToCard(+dot.dataset.idx)));
+        }, _detSigOpts);
+        dots.forEach(dot=>dot.addEventListener('click',()=>goToCard(+dot.dataset.idx), _detSigOpts));
     }
     // Exponer openActivityDetail al window para uso desde otros bloques (sección PRs, etc.)
     window.openActivityDetail = openActivityDetail;
@@ -47470,6 +47502,45 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Pre-Capacitor TODO-2 · C27+C30] Verifica que openActivityDetail tiene el
+    // patron AbortController + cleanup de canvases + cobertura signal en los
+    // 11 addEventListener. Usa patrones que SOLO aparecen en codigo real
+    // (no en comentarios) para evitar false positives — leccion POST-AUD1-B3.
+    function _testVisorAbortCleanupPresent() {
+        var checks = [];
+        try {
+            var fn = (typeof window.openActivityDetail === 'function')
+                ? window.openActivityDetail
+                : (typeof openActivityDetail === 'function' ? openActivityDetail : null);
+            if (!fn) {
+                checks.push('openActivityDetail no localizada');
+            } else {
+                var src = fn.toString();
+                // 1) Instanciacion AbortController (paréntesis → solo código real).
+                if (!/new AbortController\(\)/.test(src)) checks.push('falta new AbortController()');
+                // 2) Patron .signal.aborted dentro de cleanup (solo aparece en codigo).
+                if (!/\.signal\.aborted/.test(src)) checks.push('falta chequeo .signal.aborted');
+                // 3) Liberacion canvas: c.width = 0 (sintaxis exacta del cleanup).
+                if (!/c\.width\s*=\s*0/.test(src)) checks.push('falta c.width=0 (liberacion canvas)');
+                // 4) Cobertura: 7 listeners pasan _detSigOpts como 3er arg.
+                var sigOptsUses = (src.match(/,\s*_detSigOpts/g) || []).length;
+                if (sigOptsUses < 7) checks.push('cobertura _detSigOpts insuficiente ('+sigOptsUses+'<7)');
+                // 5) Cobertura inline: 4 listeners con passive+signal merge.
+                var inlineSig = (src.match(/signal:\s*_detAbortCtrl\s*\?/g) || []).length;
+                if (inlineSig < 4) checks.push('cobertura signal inline insuficiente ('+inlineSig+'<4)');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'visor.abort_cleanup_present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'AbortController + cleanup canvas + 11 listeners con signal OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47484,7 +47555,8 @@ window.addEventListener('DOMContentLoaded', function() {
         fase9:   [_testBulkStravaPipeline],
         b1:      [_testIdbPhotosStore],
         realtime:[_testClubSupabaseGuard],
-        persist: [_testC17DebouncePresent]
+        persist: [_testC17DebouncePresent],
+        visor:   [_testVisorAbortCleanupPresent]
     };
 
     window.__mrSmoke = function(group) {
