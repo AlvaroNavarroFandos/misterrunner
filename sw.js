@@ -1,7 +1,7 @@
 /* MisterRunner Service Worker — Production */
 /* Bloque K — Auditoría SW (K.1 + K.2) — 17 mayo 2026 */
 
-const CACHE_VERSION = 'mr-v3.2-2026-06-10';
+const CACHE_VERSION = 'mr-v3.3-2026-06-11';
 const CACHE_STATIC  = `${CACHE_VERSION}-static`;
 const CACHE_PAGES   = `${CACHE_VERSION}-pages`;
 
@@ -9,7 +9,9 @@ const SUPABASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co';
 
 /* Assets que precacheamos en install. Si alguno falla, no rompe el install. */
 const STATIC_ASSETS = [
-  '/'
+  '/',
+  '/icon-192.png',
+  '/badge-72.png'
 ];
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
