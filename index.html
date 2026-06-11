@@ -27322,10 +27322,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     } else {
         _initAutoLogin();
     }
-    // Auto-save when app goes to background or tab closes (iOS Safari PWA)
-    document.addEventListener('visibilitychange', () => { if(document.visibilityState==='hidden') saveAppState(); });
-    window.addEventListener('pagehide', saveAppState);
-    window.addEventListener('beforeunload', saveAppState);
+    // [C17 / TODO-1] Auto-save al cerrar app real. Antes había 3 handlers
+    // (visibilitychange/pagehide/beforeunload) → write storm en mobile (lock,
+    // switch app, notif disparaban wipe+rewrite IDB de 291 actividades cada
+    // vez). Mantenemos solo pagehide (señal fiable de cierre real) con flush
+    // inmediato del pending del debounce de saveAppState.
+    window.addEventListener('pagehide', function(){ saveAppState({immediate:true}); });
     // iOS PWA: re-check auth when restored from BFCache (back/forward navigation)
     // IMPORTANT: After navigator.share() returns, the page is restored from BFCache
     // and this fires. checkAutoLogin() returns false synchronously even when a session
@@ -28434,7 +28436,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // ── FULL APP PERSISTENCE (localStorage) ───────────────────────
     // APP_KEY declared at top of script
 
-    function saveAppState() {
+    /* [C17 / TODO-1] Implementación interna. Usa el wrapper debounceado
+       saveAppState() definido abajo. Para flush inmediato (pagehide, etc.):
+       saveAppState({immediate:true}). */
+    function _saveAppStateNow() {
         try {
             const state = {
                 activities,
@@ -28484,6 +28489,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } catch(e2){ console.warn('saveAppState quota exceeded:', e2); }
             }
         } catch(e){ console.warn('saveAppState:', e); }
+    }
+
+    /* [C17 / TODO-1] Wrapper debounceado de _saveAppStateNow().
+       Por defecto: agrega múltiples calls en una sola escritura tras
+       _SAVE_DEBOUNCE_MS de quietud (protección contra write storm).
+       Para forzar escritura inmediata: saveAppState({immediate:true}).
+       Las invocaciones existentes pasan por el debounce sin cambios.
+       Solo el handler de pagehide usa la flag de escritura inmediata. */
+    var _saveAppStateTimer = null;
+    var _SAVE_DEBOUNCE_MS = 500;
+    function saveAppState(opts) {
+        if (opts && opts.immediate) {
+            if (_saveAppStateTimer) { clearTimeout(_saveAppStateTimer); _saveAppStateTimer = null; }
+            return _saveAppStateNow();
+        }
+        if (_saveAppStateTimer) clearTimeout(_saveAppStateTimer);
+        _saveAppStateTimer = setTimeout(function(){
+            _saveAppStateTimer = null;
+            _saveAppStateNow();
+        }, _SAVE_DEBOUNCE_MS);
     }
 
     function loadAppState() {
@@ -47423,6 +47448,28 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    function _testC17DebouncePresent() {
+        var checks = [];
+        try {
+            if (typeof saveAppState !== 'function') checks.push('saveAppState no es funcion');
+            if (typeof _saveAppStateNow !== 'function') checks.push('_saveAppStateNow no existe');
+            if (typeof _saveAppStateTimer === 'undefined') checks.push('timer holder no declarado');
+            var src = (saveAppState||function(){}).toString();
+            if (!/setTimeout/.test(src)) checks.push('falta setTimeout (debounce)');
+            if (!/clearTimeout/.test(src)) checks.push('falta clearTimeout');
+            if (!/opts\s*&&\s*opts\.immediate/.test(src)) checks.push('falta flag de escritura inmediata');
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'c17.debounce_present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'wrapper debounce + flush inmediato OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47436,7 +47483,8 @@ window.addEventListener('DOMContentLoaded', function() {
         backup:  [_testBackupSnapshot],
         fase9:   [_testBulkStravaPipeline],
         b1:      [_testIdbPhotosStore],
-        realtime:[_testClubSupabaseGuard]
+        realtime:[_testClubSupabaseGuard],
+        persist: [_testC17DebouncePresent]
     };
 
     window.__mrSmoke = function(group) {
