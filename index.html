@@ -27392,6 +27392,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // vez). Mantenemos solo pagehide (señal fiable de cierre real) con flush
     // inmediato del pending del debounce de saveAppState.
     window.addEventListener('pagehide', function(){ saveAppState({immediate:true}); });
+    // [Pre-Capacitor TODO-5 · C31] Reconnect handler para realtime post-background.
+    // El cliente Supabase v2 maneja reconexion automatica del WS con backoff pero
+    // espera al heartbeat (cada 30s) para detectar el WS muerto. En mobile, tras
+    // volver de background, hay una ventana de hasta 30s sin eventos realtime.
+    // Este boost reduce esa ventana a 0: al volver a foreground O al recuperar red,
+    // si el WS esta closed forzamos connect() — el cliente Phoenix re-suscribe los
+    // canales registrados internamente. Solo Op. A (minima): sin refetch incremental
+    // ni toast. Eventos perdidos durante el corte siguen perdidos (escalable a Op. B/C
+    // si los datos de produccion muestran que es necesario).
+    function _mrRealtimeReconnectBoost() {
+        try {
+            var sb = window._sbClient;
+            if (!sb || !sb.realtime) return;
+            var rt = sb.realtime;
+            var state = (typeof rt.connectionState === 'function') ? rt.connectionState() : null;
+            if (state === 'open' || state === 'connecting') return;
+            if (typeof rt.connect === 'function') {
+                console.log('%c[MR][realtime] reconnect boost · state previo: ' + state, 'color:#C9A84C;');
+                rt.connect();
+            }
+        } catch(e) { console.warn('[MR][realtime reconnect boost]', e); }
+    }
+    window._mrRealtimeReconnectBoost = _mrRealtimeReconnectBoost;
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') _mrRealtimeReconnectBoost();
+    });
+    window.addEventListener('online', _mrRealtimeReconnectBoost);
     // iOS PWA: re-check auth when restored from BFCache (back/forward navigation)
     // IMPORTANT: After navigator.share() returns, the page is restored from BFCache
     // and this fires. checkAutoLogin() returns false synchronously even when a session
@@ -47603,6 +47630,32 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Pre-Capacitor TODO-5 · C31] Verifica que existe el reconnect boost handler
+    // para realtime post-background. Comprueba que _mrRealtimeReconnectBoost esta
+    // expuesta y contiene los patrones core: chequeo de connectionState + connect().
+    function _testRealtimeReconnectBoostPresent() {
+        var checks = [];
+        try {
+            if (typeof window._mrRealtimeReconnectBoost !== 'function') {
+                checks.push('window._mrRealtimeReconnectBoost no es funcion');
+            } else {
+                var src = window._mrRealtimeReconnectBoost.toString();
+                if (!/connectionState/.test(src)) checks.push('falta chequeo connectionState');
+                if (!/\.connect\(\)/.test(src)) checks.push('falta llamada rt.connect()');
+                if (!/sb\.realtime/.test(src) && !/realtime/.test(src)) checks.push('falta referencia a realtime');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'realtime.reconnect_boost_present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'reconnect boost handler presente y operativo'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47616,7 +47669,7 @@ window.addEventListener('DOMContentLoaded', function() {
         backup:  [_testBackupSnapshot],
         fase9:   [_testBulkStravaPipeline],
         b1:      [_testIdbPhotosStore],
-        realtime:[_testClubSupabaseGuard],
+        realtime:[_testClubSupabaseGuard, _testRealtimeReconnectBoostPresent],
         persist: [_testC17DebouncePresent],
         visor:   [_testVisorAbortCleanupPresent, _testStreamMemoizationPresent]
     };
