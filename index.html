@@ -27407,7 +27407,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!sb || !sb.realtime) return;
             var rt = sb.realtime;
             var state = (typeof rt.connectionState === 'function') ? rt.connectionState() : null;
-            if (state === 'open' || state === 'connecting') return;
+            // Solo reconectar cuando el WS esta DEFINITIVAMENTE cerrado. Estados
+            // 'open' y 'connecting' ya estan OK. Estado 'closing' es transitorio
+            // (cliente esta cerrando WS anterior) — forzar connect() durante closing
+            // causa race "WebSocket is closed before the connection is established".
+            if (state !== 'closed') return;
             if (typeof rt.connect === 'function') {
                 console.log('%c[MR][realtime] reconnect boost · state previo: ' + state, 'color:#C9A84C;');
                 rt.connect();
