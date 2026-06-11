@@ -27392,6 +27392,128 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // vez). Mantenemos solo pagehide (señal fiable de cierre real) con flush
     // inmediato del pending del debounce de saveAppState.
     window.addEventListener('pagehide', function(){ saveAppState({immediate:true}); });
+    // [Pre-Capacitor TODO-10] Telemetria liviana realtime persistida en localStorage.
+    // Objetivo: medir patrones reales de reconexion + eventos en mobile (PWA closes,
+    // background largos) para decidir si TODO-5 necesita escalar a Op. B/C. Sin BD
+    // ni UI: contadores + rolling buffer (100 entries max) + API consola.
+    // Acceso: __mrRtStats() / __mrRtStatsBuffer() / __mrRtStatsReset().
+    var _MR_RT_STATS_KEY = 'mr_rt_stats_v1';
+    var _MR_RT_BUF_MAX = 100;
+    var _mrRtStats = null;
+    function _mrRtStatsDefault() {
+        return {
+            v: 1,
+            sessionStart: Date.now(),
+            counters: {
+                boostFired: 0,
+                boostApplied: 0,
+                boostSkipped: { open: 0, connecting: 0, closing: 0, null: 0 },
+                eventsReceived: 0,
+                bgEnters: 0,
+                bgExits: 0
+            },
+            subStatus: {},
+            eventsByChannel: {},
+            maxBgDurationMs: 0,
+            lastBgEnterTs: 0,
+            buffer: []
+        };
+    }
+    function _mrRtStatsLoad() {
+        try {
+            var raw = localStorage.getItem(_MR_RT_STATS_KEY);
+            if (!raw) { _mrRtStats = _mrRtStatsDefault(); return; }
+            var parsed = JSON.parse(raw);
+            if (!parsed || parsed.v !== 1) { _mrRtStats = _mrRtStatsDefault(); return; }
+            var def = _mrRtStatsDefault();
+            for (var k in def) { if (!(k in parsed)) parsed[k] = def[k]; }
+            _mrRtStats = parsed;
+        } catch(e) { _mrRtStats = _mrRtStatsDefault(); }
+    }
+    var _mrRtSaveTimer = null;
+    function _mrRtStatsSave() {
+        if (_mrRtSaveTimer) return;
+        _mrRtSaveTimer = setTimeout(function() {
+            _mrRtSaveTimer = null;
+            try { localStorage.setItem(_MR_RT_STATS_KEY, JSON.stringify(_mrRtStats)); }
+            catch(e) { /* quota o private mode */ }
+        }, 500);
+    }
+    function _mrRtStatsPush(kind, data) {
+        if (!_mrRtStats) return;
+        var s = _mrRtStats, c = s.counters;
+        var entry = { t: Date.now(), k: kind };
+        if (data) entry.d = data;
+        if (kind === 'BOOST_FIRED') {
+            c.boostFired++;
+        } else if (kind === 'BOOST_APPLIED') {
+            c.boostApplied++;
+        } else if (kind === 'BOOST_SKIP') {
+            var st = (data && data.state) ? String(data.state) : 'null';
+            if (c.boostSkipped[st] === undefined) c.boostSkipped[st] = 0;
+            c.boostSkipped[st]++;
+        } else if (kind === 'EVT') {
+            c.eventsReceived++;
+            if (data && data.ch) {
+                s.eventsByChannel[data.ch] = (s.eventsByChannel[data.ch] || 0) + 1;
+            }
+        } else if (kind === 'SUB') {
+            if (data && data.ch && data.status) {
+                var key = data.ch + ':' + data.status;
+                s.subStatus[key] = (s.subStatus[key] || 0) + 1;
+            }
+        } else if (kind === 'BG_IN') {
+            c.bgEnters++;
+            s.lastBgEnterTs = entry.t;
+        } else if (kind === 'BG_OUT') {
+            c.bgExits++;
+            if (s.lastBgEnterTs) {
+                var dur = entry.t - s.lastBgEnterTs;
+                if (dur > s.maxBgDurationMs) s.maxBgDurationMs = dur;
+                entry.d = entry.d || {};
+                entry.d.durMs = dur;
+                s.lastBgEnterTs = 0;
+            }
+        }
+        s.buffer.push(entry);
+        if (s.buffer.length > _MR_RT_BUF_MAX) {
+            s.buffer.splice(0, s.buffer.length - _MR_RT_BUF_MAX);
+        }
+        _mrRtStatsSave();
+    }
+    window.__mrRtStats = function() {
+        if (!_mrRtStats) { console.log('[MR][rt] stats no inicializadas'); return; }
+        var s = _mrRtStats;
+        var ageMin = Math.round((Date.now() - s.sessionStart) / 60000);
+        console.log('%c[MR][rt] Telemetria realtime · uptime ' + ageMin + ' min', 'color:#C9A84C; font-weight:bold;');
+        console.table(s.counters);
+        if (Object.keys(s.eventsByChannel).length) {
+            console.log('[MR][rt] Eventos por canal:');
+            console.table(s.eventsByChannel);
+        }
+        if (Object.keys(s.subStatus).length) {
+            console.log('[MR][rt] Subscription status (canal:status):');
+            console.table(s.subStatus);
+        }
+        if (s.maxBgDurationMs) {
+            console.log('[MR][rt] Max background duration: ' + Math.round(s.maxBgDurationMs / 1000) + 's');
+        }
+        console.log('[MR][rt] Buffer entries: ' + s.buffer.length + ' (use __mrRtStatsBuffer())');
+        return s;
+    };
+    window.__mrRtStatsBuffer = function() {
+        if (!_mrRtStats) return [];
+        return _mrRtStats.buffer.slice();
+    };
+    window.__mrRtStatsReset = function() {
+        _mrRtStats = _mrRtStatsDefault();
+        try { localStorage.removeItem(_MR_RT_STATS_KEY); } catch(_) {}
+        console.log('[MR][rt] stats reset');
+    };
+    // Expose para acceso cross-script (el wrap de sb.channel vive en otro <script>).
+    window.__mrRtStatsPush = _mrRtStatsPush;
+    _mrRtStatsLoad();
+
     // [Pre-Capacitor TODO-5 · C31] Reconnect handler para realtime post-background.
     // El cliente Supabase v2 maneja reconexion automatica del WS con backoff pero
     // espera al heartbeat (cada 30s) para detectar el WS muerto. En mobile, tras
@@ -27407,14 +27529,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!sb || !sb.realtime) return;
             var rt = sb.realtime;
             var state = (typeof rt.connectionState === 'function') ? rt.connectionState() : null;
+            try { _mrRtStatsPush('BOOST_FIRED', { state: state }); } catch(_) {}
             // Solo reconectar cuando el WS esta DEFINITIVAMENTE cerrado. Estados
             // 'open' y 'connecting' ya estan OK. Estado 'closing' es transitorio
             // (cliente esta cerrando WS anterior) — forzar connect() durante closing
             // causa race "WebSocket is closed before the connection is established".
-            if (state !== 'closed') return;
+            if (state !== 'closed') {
+                try { _mrRtStatsPush('BOOST_SKIP', { state: state }); } catch(_) {}
+                return;
+            }
             if (typeof rt.connect === 'function') {
                 console.log('%c[MR][realtime] reconnect boost · state previo: ' + state, 'color:#C9A84C;');
                 rt.connect();
+                try { _mrRtStatsPush('BOOST_APPLIED', { state: state }); } catch(_) {}
             }
         } catch(e) { console.warn('[MR][realtime reconnect boost]', e); }
     }
@@ -27423,6 +27550,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (document.visibilityState === 'visible') _mrRealtimeReconnectBoost();
     });
     window.addEventListener('online', _mrRealtimeReconnectBoost);
+    // [Pre-Capacitor TODO-10] Tracking paralelo de background enter/exit para
+    // telemetria. NO toca el handler de arriba (que dispara reconnectBoost solo
+    // en 'visible'). Aqui registramos AMBAS transiciones para medir duracion.
+    document.addEventListener('visibilitychange', function() {
+        try {
+            if (document.visibilityState === 'hidden') {
+                _mrRtStatsPush('BG_IN');
+            } else if (document.visibilityState === 'visible') {
+                _mrRtStatsPush('BG_OUT');
+            }
+        } catch(_) {}
+    });
     // iOS PWA: re-check auth when restored from BFCache (back/forward navigation)
     // IMPORTANT: After navigator.share() returns, the page is restored from BFCache
     // and this fires. checkAutoLogin() returns false synchronously even when a session
@@ -35877,6 +36016,52 @@ const _SB_KEY = 'sb_publishable_5ljbeJX1TUUx5eilGVEsEg_eaSlA-V8';
 window._sbClient = supabase.createClient(_SB_URL, _SB_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'mr_sb_session' }
 });
+
+/* [Pre-Capacitor TODO-10] Wrap de sb.channel() para telemetria automatica de
+   eventos realtime + status de suscripcion. Inocuo al consumidor: preserva el
+   chaining .on().on().subscribe() porque _origOn devuelve el mismo channel.
+   Cada handler/callback se envuelve en try/catch para no afectar la app si
+   window.__mrRtStatsPush no esta disponible. DEBE ir ANTES del onAuthStateChange
+   y de _initClubSupabase para capturar todos los canales creados. */
+(function _mrWrapChannelForTelemetry(){
+    try {
+        var sb = window._sbClient;
+        if (!sb || typeof sb.channel !== 'function') return;
+        var _origChannel = sb.channel.bind(sb);
+        sb.channel = function(name, opts) {
+            var ch = _origChannel(name, opts);
+            if (!ch) return ch;
+            if (typeof ch.on === 'function') {
+                var _origOn = ch.on.bind(ch);
+                ch.on = function(type, filter, handler) {
+                    var wrapped = function(payload) {
+                        try {
+                            if (typeof window.__mrRtStatsPush === 'function') {
+                                window.__mrRtStatsPush('EVT', { ch: name });
+                            }
+                        } catch(_) {}
+                        if (typeof handler === 'function') return handler(payload);
+                    };
+                    return _origOn(type, filter, wrapped);
+                };
+            }
+            if (typeof ch.subscribe === 'function') {
+                var _origSub = ch.subscribe.bind(ch);
+                ch.subscribe = function(cb) {
+                    return _origSub(function(status, err) {
+                        try {
+                            if (typeof window.__mrRtStatsPush === 'function') {
+                                window.__mrRtStatsPush('SUB', { ch: name, status: status });
+                            }
+                        } catch(_) {}
+                        if (typeof cb === 'function') return cb(status, err);
+                    });
+                };
+            }
+            return ch;
+        };
+    } catch(e) { console.warn('[MR][rt telemetry wrap]', e); }
+})();
 
 /* ── Auth state listener ─────────────────────────────────────────── */
 window._sbClient.auth.onAuthStateChange((event, session) => {
@@ -47660,6 +47845,41 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Pre-Capacitor TODO-10] Verifica que la telemetria realtime esta presente:
+    // API consola + helper export + hooks en boost + wrap de sb.channel. NO invoca
+    // __mrRtStats() (imprime a consola, evitamos ruido durante smoke).
+    function _testRealtimeTelemetryPresent() {
+        var checks = [];
+        try {
+            if (typeof window.__mrRtStats !== 'function') checks.push('__mrRtStats no es funcion');
+            if (typeof window.__mrRtStatsBuffer !== 'function') checks.push('__mrRtStatsBuffer no es funcion');
+            if (typeof window.__mrRtStatsReset !== 'function') checks.push('__mrRtStatsReset no es funcion');
+            if (typeof window.__mrRtStatsPush !== 'function') checks.push('__mrRtStatsPush no es funcion');
+            if (typeof window._mrRealtimeReconnectBoost === 'function') {
+                var bs = window._mrRealtimeReconnectBoost.toString();
+                if (!/_mrRtStatsPush\('BOOST_FIRED'/.test(bs)) checks.push('boost sin hook BOOST_FIRED');
+                if (!/_mrRtStatsPush\('BOOST_APPLIED'/.test(bs)) checks.push('boost sin hook BOOST_APPLIED');
+            }
+            if (window._sbClient && typeof window._sbClient.channel === 'function') {
+                var cs = window._sbClient.channel.toString();
+                if (!/__mrRtStatsPush/.test(cs)) checks.push('sb.channel sin wrap telemetria');
+            } else {
+                checks.push('window._sbClient.channel no disponible');
+            }
+            var buf = window.__mrRtStatsBuffer && window.__mrRtStatsBuffer();
+            if (!Array.isArray(buf)) checks.push('buffer no es array');
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'realtime.telemetry_present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'telemetria persistida + wrap sb.channel OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical],
@@ -47673,7 +47893,7 @@ window.addEventListener('DOMContentLoaded', function() {
         backup:  [_testBackupSnapshot],
         fase9:   [_testBulkStravaPipeline],
         b1:      [_testIdbPhotosStore],
-        realtime:[_testClubSupabaseGuard, _testRealtimeReconnectBoostPresent],
+        realtime:[_testClubSupabaseGuard, _testRealtimeReconnectBoostPresent, _testRealtimeTelemetryPresent],
         persist: [_testC17DebouncePresent],
         visor:   [_testVisorAbortCleanupPresent, _testStreamMemoizationPresent]
     };
