@@ -3792,6 +3792,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>
 
+                <!-- DEV TOOLS · visible solo whitelist o ?debug=1, gestionado por applyDebugVisibility() -->
+                <!-- Contenedor extensible: si en el futuro añadimos más herramientas dev, viven aquí dentro -->
+                <div id="dev-tools-block" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:8px;">
+                    <div id="dev-storage-audit-btn" onclick="runStorageAudit()" style="display:flex;align-items:center;gap:12px;padding:13px 14px;cursor:pointer;">
+                        <div style="width:30px;height:30px;border-radius:8px;background:rgba(59,130,246,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--acc-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:var(--tw);">Storage Audit</div>
+                            <div style="font-size:10px;color:var(--tm);margin-top:1px;">Mide IDB + localStorage + caches en device</div>
+                        </div>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </div>
+                </div>
+
                 <!-- ZONA DE PELIGRO -->
                 <div style="background:var(--card);border:1px solid var(--inj-lt);border-radius:16px;overflow:hidden;">
                     <!-- Botón modo dev (Bloque L): visible solo con ?debug=1 o whitelist. Se muestra/oculta vía applyDebugVisibility() -->
@@ -12373,6 +12388,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const show = await isDebugUserAsync();
             const btnWipe = document.getElementById('dev-wipe-activities-btn');
             if (btnWipe) btnWipe.style.display = show ? 'flex' : 'none';
+            // [Auditoría #2 · Storage Audit] Bloque contenedor de herramientas dev.
+            // Extensible: si añadimos más botones debug en el futuro viven dentro
+            // y se muestran/ocultan a la vez con una sola línea.
+            const devToolsBlock = document.getElementById('dev-tools-block');
+            if (devToolsBlock) devToolsBlock.style.display = show ? 'block' : 'none';
             // [FASE 6 · UI cleanup] El bloque "Modo desarrollador" del
             // importador Strava (FASE 2.7) ha sido eliminado de la UI:
             // ya no hace falta el testeo single-file, el pipeline bulk
@@ -12383,6 +12403,264 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(_) {}
     }
     window.applyDebugVisibility = applyDebugVisibility;
+
+    // ── [Auditoría #2 · Storage Audit] ──────────────────────────────
+    // Mide cuánto ocupan en local: IDB (misterrunner_db: activities + photos),
+    // localStorage, sessionStorage y Cache API del Service Worker.
+    // Muestra el resultado en un sheet con JSON copiable/compartible.
+    //
+    // Por qué existe: pre-migración a Capacitor (WKWebView ~50 MB cuota IDB vs
+    // ~1 GB en Safari standalone). Si total >30 MB diseñar eviction antes.
+    //
+    // Visible solo para UIDs en DEBUG_USER_WHITELIST o con ?debug=1.
+    // Gestionado por applyDebugVisibility() vía contenedor #dev-tools-block.
+    async function runStorageAudit() {
+        // Idempotente: si hay un sheet previo, lo eliminamos antes
+        var prev = document.getElementById('storage-audit-sheet');
+        if (prev) prev.remove();
+
+        // Construir sheet siguiendo el patrón MR (.sheet-backdrop + .sheet)
+        var sheetEl = document.createElement('div');
+        sheetEl.id = 'storage-audit-sheet';
+        sheetEl.className = 'sheet-backdrop';
+        sheetEl.setAttribute('onclick', "if(event.target===this)_closeStorageAuditSheet()");
+        sheetEl.innerHTML = '<div class="sheet">' +
+            '<div class="sheet-handle-wrap" style="position:relative;z-index:1;">' +
+                '<div class="sheet-handle"></div>' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 4px 0;">' +
+                    '<div style="display:flex;align-items:center;gap:10px;min-width:0;">' +
+                        '<span style="font-size:20px;line-height:1;">📊</span>' +
+                        '<div style="font-size:17px;font-weight:700;color:var(--tw);">Storage Audit</div>' +
+                    '</div>' +
+                    '<button onclick="_closeStorageAuditSheet()" aria-label="Cerrar" style="width:32px;height:32px;border-radius:50%;border:none;background:var(--bsoft);color:var(--tm);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="sheet-body" style="padding:8px 14px 18px;">' +
+                '<div id="storage-audit-loading" style="text-align:center;padding:60px 0;color:var(--tm);">' +
+                    '<div style="font-size:13px;margin-bottom:6px;">⏳ Midiendo storage…</div>' +
+                    '<div style="font-size:11px;opacity:.7;">Puede tardar 5-15s</div>' +
+                '</div>' +
+                '<div id="storage-audit-result" style="display:none;">' +
+                    '<div id="storage-audit-verdict" style="padding:10px 12px;border-radius:10px;margin-bottom:10px;font-size:13px;font-weight:700;text-align:center;"></div>' +
+                    '<textarea id="storage-audit-json" readonly style="width:100%;height:46vh;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace;font-size:11px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--tw);resize:none;box-sizing:border-box;"></textarea>' +
+                    '<div style="display:flex;gap:8px;margin-top:10px;">' +
+                        '<button id="storage-audit-copy-btn" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--tw);font-size:13px;font-weight:600;cursor:pointer;">📋 Copiar</button>' +
+                        '<button id="storage-audit-share-btn" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--acc-blue);color:#fff;font-size:13px;font-weight:600;cursor:pointer;">📤 Compartir</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+        // Insertar en #app (si existe) o body. openSheet detectará wasReattached
+        // y aplicará doble-RAF para animar la entrada correctamente.
+        var host = document.getElementById('app') || document.body;
+        host.appendChild(sheetEl);
+        if (typeof window.openSheet === 'function') {
+            window.openSheet('storage-audit-sheet');
+        } else {
+            sheetEl.classList.add('show');
+        }
+
+        // Ejecutar la medición
+        var report = await _doStorageAudit();
+
+        // Pintar resultado
+        var loadingEl = document.getElementById('storage-audit-loading');
+        var resultEl = document.getElementById('storage-audit-result');
+        var verdictEl = document.getElementById('storage-audit-verdict');
+        var jsonEl = document.getElementById('storage-audit-json');
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (resultEl) resultEl.style.display = 'block';
+
+        // Veredicto coloreado según los criterios del doc maestro (<30/<80/≥80 MB)
+        var totalMB = (report.grandTotal || 0) / 1048576;
+        if (verdictEl) {
+            if (totalMB < 30) {
+                verdictEl.style.background = 'rgba(34,197,94,.15)';
+                verdictEl.style.color = '#16a34a';
+                verdictEl.textContent = '✅ ' + report.grandTotalHuman + ' · Pasa sin cambios';
+            } else if (totalMB < 80) {
+                verdictEl.style.background = 'rgba(234,179,8,.15)';
+                verdictEl.style.color = '#ca8a04';
+                verdictEl.textContent = '⚠️ ' + report.grandTotalHuman + ' · Necesita eviction';
+            } else {
+                verdictEl.style.background = 'rgba(239,68,68,.15)';
+                verdictEl.style.color = '#dc2626';
+                verdictEl.textContent = '🔴 ' + report.grandTotalHuman + ' · Bloqueante Capacitor';
+            }
+        }
+
+        var jsonStr = JSON.stringify(report, null, 2);
+        if (jsonEl) jsonEl.value = jsonStr;
+
+        // Bind Copiar (con fallback a execCommand para iOS PWA standalone)
+        var copyBtn = document.getElementById('storage-audit-copy-btn');
+        if (copyBtn) copyBtn.onclick = function() {
+            var done = function() {
+                copyBtn.textContent = '✓ Copiado';
+                setTimeout(function(){ copyBtn.textContent = '📋 Copiar'; }, 1500);
+            };
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(jsonStr).then(done).catch(function(){
+                        try { jsonEl.select(); document.execCommand('copy'); done(); } catch(_) {}
+                    });
+                } else {
+                    jsonEl.select(); document.execCommand('copy'); done();
+                }
+            } catch(_) { try { jsonEl.select(); } catch(_2) {} }
+        };
+
+        // Bind Compartir (Web Share API, con fallback a copiar)
+        var shareBtn = document.getElementById('storage-audit-share-btn');
+        if (shareBtn) shareBtn.onclick = function() {
+            if (navigator.share) {
+                navigator.share({
+                    title: 'MR Storage Audit',
+                    text: jsonStr
+                }).catch(function(){ /* user cancelled, no-op */ });
+            } else {
+                try {
+                    navigator.clipboard.writeText(jsonStr);
+                    shareBtn.textContent = '✓ Copiado (no share API)';
+                    setTimeout(function(){ shareBtn.textContent = '📤 Compartir'; }, 2000);
+                } catch(_) {}
+            }
+        };
+
+        // Guardar también en window por si quieres inspeccionar desde consola
+        window.__mrStorageAudit = report;
+    }
+
+    // Helper interno: ejecuta la medición y devuelve el report
+    async function _doStorageAudit() {
+        var fmt = function(b) {
+            if (b == null || isNaN(b)) return 'n/a';
+            if (b < 1024) return b + ' B';
+            if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+            return (b/1048576).toFixed(2) + ' MB';
+        };
+        var report = {
+            ts: new Date().toISOString(),
+            ua: navigator.userAgent,
+            quota: null, usage: null, usagePct: null, usageDetails: null,
+            idb: { total: 0 },
+            localStorage: { total: 0, keys: 0, topKeys: [], byPrefix: {} },
+            sessionStorage: { total: 0, keys: 0 },
+            caches: { total: 0, list: [] },
+            grandTotal: 0, grandTotalHuman: null, verdict: null
+        };
+        // 1) navigator.storage.estimate
+        try {
+            var est = await navigator.storage.estimate();
+            report.quota = est.quota;
+            report.usage = est.usage;
+            report.usagePct = est.quota ? (est.usage/est.quota*100).toFixed(2) : null;
+            if (est.usageDetails) report.usageDetails = est.usageDetails;
+        } catch(e) { report.estimateError = String(e); }
+        // 2) IndexedDB misterrunner_db (apertura sin versión → última)
+        try {
+            var db = await new Promise(function(res, rej){
+                var req = indexedDB.open('misterrunner_db');
+                req.onsuccess = function(e){ res(e.target.result); };
+                req.onerror = function(e){ rej(e.target.error); };
+            });
+            report.idb.version = db.version;
+            report.idb.stores = Array.prototype.slice.call(db.objectStoreNames);
+            for (var i = 0; i < db.objectStoreNames.length; i++) {
+                var storeName = db.objectStoreNames[i];
+                var count = 0, bytes = 0;
+                await new Promise(function(res){
+                    var tx = db.transaction(storeName, 'readonly');
+                    var req2 = tx.objectStore(storeName).openCursor();
+                    req2.onsuccess = function(e){
+                        var cur = e.target.result;
+                        if (cur) {
+                            count++;
+                            try { bytes += new Blob([JSON.stringify(cur.value)]).size; } catch(_) {}
+                            cur.continue();
+                        } else res();
+                    };
+                    req2.onerror = function(){ res(); };
+                });
+                report.idb[storeName] = { count: count, bytes: bytes };
+                report.idb.total += bytes;
+            }
+            db.close();
+        } catch(e) { report.idbError = String(e); }
+        // 3) localStorage
+        try {
+            var items = [];
+            for (var j = 0; j < localStorage.length; j++) {
+                var k = localStorage.key(j);
+                var v = localStorage.getItem(k) || '';
+                var sz = new Blob([k + v]).size;
+                items.push({ key: k, bytes: sz });
+                report.localStorage.total += sz;
+                var prefix = k.indexOf(':') >= 0 ? k.split(':')[0] + ':*' : '(otros)';
+                report.localStorage.byPrefix[prefix] = (report.localStorage.byPrefix[prefix] || 0) + sz;
+            }
+            report.localStorage.keys = items.length;
+            items.sort(function(a,b){ return b.bytes - a.bytes; });
+            report.localStorage.topKeys = items.slice(0, 10);
+        } catch(e) { report.lsError = String(e); }
+        // 4) sessionStorage
+        try {
+            for (var k2 = 0; k2 < sessionStorage.length; k2++) {
+                var key2 = sessionStorage.key(k2);
+                var val2 = sessionStorage.getItem(key2) || '';
+                report.sessionStorage.total += new Blob([key2+val2]).size;
+            }
+            report.sessionStorage.keys = sessionStorage.length;
+        } catch(e) { report.ssError = String(e); }
+        // 5) Cache API (Service Worker)
+        try {
+            if ('caches' in self) {
+                var names = await caches.keys();
+                for (var n = 0; n < names.length; n++) {
+                    var name = names[n];
+                    var cache = await caches.open(name);
+                    var reqs = await cache.keys();
+                    var cbytes = 0;
+                    for (var r = 0; r < reqs.length; r++) {
+                        try {
+                            var resp = await cache.match(reqs[r]);
+                            if (resp) {
+                                var buf = await resp.clone().arrayBuffer();
+                                cbytes += buf.byteLength;
+                            }
+                        } catch(_) {}
+                    }
+                    report.caches.list.push({ name: name, entries: reqs.length, bytes: cbytes });
+                    report.caches.total += cbytes;
+                }
+            } else {
+                report.caches.note = 'Cache API no disponible';
+            }
+        } catch(e) { report.cachesError = String(e); }
+        // Total + veredicto
+        report.grandTotal = (report.idb.total || 0) + report.localStorage.total + report.sessionStorage.total + report.caches.total;
+        report.grandTotalHuman = fmt(report.grandTotal);
+        var totalMB = report.grandTotal / 1048576;
+        if (totalMB < 30) report.verdict = 'PASA - via libre Capacitor';
+        else if (totalMB < 80) report.verdict = 'NECESITA EVICTION';
+        else report.verdict = 'BLOQUEANTE - refactor antes de Capacitor';
+        return report;
+    }
+
+    // Helper interno: cierra el sheet y limpia el DOM tras la animación
+    function _closeStorageAuditSheet() {
+        if (typeof window.closeSheet === 'function') {
+            window.closeSheet('storage-audit-sheet');
+        }
+        setTimeout(function(){
+            var s = document.getElementById('storage-audit-sheet');
+            if (s) s.remove();
+        }, 600);
+    }
+
+    window.runStorageAudit = runStorageAudit;
+    window._closeStorageAuditSheet = _closeStorageAuditSheet;
 
     /* ── NAV ── */
     // [Pieza 2 · helper] Monta el overlay de cards fantasma (skeleton) sobre la
@@ -37214,9 +37492,31 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // [Auditoría #2 · Storage Audit] Verifica que el botón debug y la función
+    // global están presentes (HTML + JS). No verifica visibilidad (depende de
+    // applyDebugVisibility y solo Álvaro lo ve).
+    function _testStorageAuditPresent() {
+        var checks = [];
+        try {
+            if (!document.getElementById('dev-tools-block')) checks.push('#dev-tools-block falta');
+            if (!document.getElementById('dev-storage-audit-btn')) checks.push('#dev-storage-audit-btn falta');
+            if (typeof window.runStorageAudit !== 'function') checks.push('runStorageAudit no es funcion');
+            if (typeof window._closeStorageAuditSheet !== 'function') checks.push('_closeStorageAuditSheet no es funcion');
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'storage.audit.present',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'botón + funciones OK (DOM + global)'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
-        dom:     [_testDomCritical, _testGlobalsCritical],
+        dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent],
         state:   [_testActivitiesArray, _testUserKeyScoped],
         css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
         renders: [_testRendersDontCrash],
