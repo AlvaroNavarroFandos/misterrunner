@@ -36852,20 +36852,66 @@ window._handleStravaReturn = _handleStravaReturn;
     // ────────────────────────────────────────────────────────────
     // Tap en una card → descargar UNA actividad → bridge → modal
     // ────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────
+    // Loading overlay premium (sustituye fxToast info que se queda pegado).
+    // Centra spinner naranja Strava + texto + backdrop blur. Cierre programático.
+    // Reusa @keyframes spin global (L202). z-index 100040 (entre sheets y fxToast).
+    // ────────────────────────────────────────────────────────────
+    function _stravaShowLoadingOverlay(text) {
+        text = text || 'Descargando de Strava…';
+        var prev = document.getElementById('mr-strava-loading-overlay');
+        if (prev) prev.remove();
+        var o = document.createElement('div');
+        o.id = 'mr-strava-loading-overlay';
+        o.style.cssText = 'position:fixed;inset:0;z-index:100040;background:rgba(0,0,0,.55);'
+            + '-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);'
+            + 'display:flex;align-items:center;justify-content:center;'
+            + 'opacity:0;transition:opacity .25s ease;pointer-events:auto;';
+        o.innerHTML = ''
+            + '<div style="background:var(--card);border-radius:18px;padding:26px 32px 24px;'
+            +   'display:flex;flex-direction:column;align-items:center;gap:14px;min-width:200px;'
+            +   'box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--border) inset;">'
+            +   '<div style="width:42px;height:42px;border:3.5px solid var(--bsoft);'
+            +     'border-top-color:#FC4C02;border-radius:50%;animation:spin .85s linear infinite;"></div>'
+            +   '<div style="font-size:13px;font-weight:700;color:var(--tw);text-align:center;letter-spacing:.2px;">'
+            +     text + '</div>'
+            + '</div>';
+        document.body.appendChild(o);
+        // Doble RAF para forzar transición fade-in tras paint
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                o.style.opacity = '1';
+            });
+        });
+    }
+    function _stravaHideLoadingOverlay() {
+        var o = document.getElementById('mr-strava-loading-overlay');
+        if (!o) return;
+        o.style.opacity = '0';
+        setTimeout(function() {
+            if (o.parentNode) o.parentNode.removeChild(o);
+        }, 260);
+    }
+    window._stravaShowLoadingOverlay = _stravaShowLoadingOverlay;
+    window._stravaHideLoadingOverlay = _stravaHideLoadingOverlay;
+
+    // ────────────────────────────────────────────────────────────
+    // Tap en una card → descargar UNA actividad → bridge → modal
+    // ────────────────────────────────────────────────────────────
     async function _stravaImportOne(stravaActivityId) {
         if (!stravaActivityId) return;
         // Cierra el sheet picker primero (la actividad ya está elegida)
         try { if (typeof closeSheet === 'function') closeSheet('strava-picker-sheet'); } catch (e) {}
-        // Toast de loading mientras descarga
-        if (typeof window.fxToast === 'function') {
-            window.fxToast('Descargando de Strava…', { variant: 'info', duration: 30000 });
-        }
+        // Overlay premium con spinner mientras descarga (se cierra justo antes
+        // de abrir el modal de import o cuando salta error)
+        _stravaShowLoadingOverlay('Descargando de Strava…');
         try {
             var r = await _stravaFetch('/fetch-activity', {
                 method: 'POST',
                 body: JSON.stringify({ strava_activity_id: stravaActivityId })
             });
             if (!r.ok) {
+                _stravaHideLoadingOverlay();
                 var code = (r.body && r.body.error) || 'unknown_error';
                 var msg = _stravaErrorMessage(code);
                 if (typeof window.fxToast === 'function') {
@@ -36875,6 +36921,7 @@ window._handleStravaReturn = _handleStravaReturn;
             }
             // Éxito: aplicar bridge (Paso 8)
             if (typeof window._stravaToPendingFitData !== 'function') {
+                _stravaHideLoadingOverlay();
                 console.error('[MR][Strava] _stravaToPendingFitData no definida (Paso 8 pendiente)');
                 if (typeof window.fxToast === 'function') {
                     window.fxToast('Bridge Strava no disponible. Recarga la app o avisa al admin.', { variant: 'error', duration: 5000 });
@@ -36883,12 +36930,14 @@ window._handleStravaReturn = _handleStravaReturn;
             }
             var bridge = await window._stravaToPendingFitData(r.body.activity, r.body.streams);
             if (!bridge) {
+                _stravaHideLoadingOverlay();
                 if (typeof window.fxToast === 'function') {
                     window.fxToast('No se pudo procesar la actividad de Strava.', { variant: 'error', duration: 4000 });
                 }
                 return;
             }
-            // Setear pendingFitData (scope-local del IIFE del parser) + abrir modal
+            // Cerrar overlay JUSTO antes de abrir el modal (transición fluida)
+            _stravaHideLoadingOverlay();
             if (typeof window._mrSetPendingFromStravaAndOpen === 'function') {
                 window._mrSetPendingFromStravaAndOpen(bridge);
             } else {
@@ -36898,6 +36947,7 @@ window._handleStravaReturn = _handleStravaReturn;
                 }
             }
         } catch (e) {
+            _stravaHideLoadingOverlay();
             console.error('[MR][Strava] importOne falló:', e);
             var isAbort = (e && e.name === 'AbortError');
             if (typeof window.fxToast === 'function') {
