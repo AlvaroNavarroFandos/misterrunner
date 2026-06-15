@@ -37142,22 +37142,56 @@ window._handleStravaReturn = _handleStravaReturn;
             strideLen = Math.round((activity.average_speed * 60 / spmAvg) * 100);
         }
 
-        // csvBlocks desde splits_metric (1 split = 1 km en Strava)
+        // [FIX mapping bloques/km] El visor MR muestra DOS tablas distintas:
+        //   · "Análisis por bloques" (L22855) ← act.csvBlocks → lap markers REALES
+        //     del reloj (calentamiento + 5×1000 + recovery + ...). Cada bloque
+        //     es un INTERVALO del entreno marcado con botón LAP.
+        //   · "Análisis por km"      (L22871) ← act.laps      → cada km automático.
+        //     Shape: {n, paceS, avgHr} (paceS=tiempo del km).
+        // Strava nos da AMBOS:
+        //   · activity.laps           → lap markers reales del reloj
+        //   · activity.splits_metric  → cada 1km automático
+        // Pero ojo: si la actividad no tiene markers manuales, Strava devuelve
+        // activity.laps con auto-laps cada 1km (~1000m cada uno). En ese caso
+        // dejamos csvBlocks vacío (mismo comportamiento que el CSV de Coros sin
+        // bloques de entreno).
         var csvBlocks = [];
-        if (Array.isArray(activity.splits_metric)) {
-            activity.splits_metric.forEach(function(s) {
-                var avgPaceS = (s.average_speed > 0) ? Math.round(1000 / s.average_speed) : 0;
+        var hasRealLapMarkers = false;
+        if (Array.isArray(activity.laps) && activity.laps.length > 1) {
+            // Heurística: si TODOS los laps son ~1km uniformes (1000±100m) son
+            // auto-generados por Strava, no markers reales del reloj.
+            var allClose1km = activity.laps.every(function(lap) {
+                return Math.abs((lap.distance || 0) - 1000) < 100;
+            });
+            hasRealLapMarkers = !allClose1km;
+        }
+        if (hasRealLapMarkers) {
+            activity.laps.forEach(function(lap, idx) {
+                var avgPaceS = (lap.average_speed > 0) ? Math.round(1000 / lap.average_speed) : 0;
                 csvBlocks.push({
-                    n:           s.split || 0,
-                    dist:        (s.distance || 0) / 1000,
-                    movingSecs:  s.moving_time || s.elapsed_time || 0,
+                    n:           lap.lap_index || (idx + 1),
+                    dist:        (lap.distance || 0) / 1000,
+                    movingSecs:  lap.moving_time || lap.elapsed_time || 0,
                     avgPaceS:    avgPaceS,
-                    avgHr:       s.average_heartrate ? Math.round(s.average_heartrate) : 0,
-                    maxHr:       0,
-                    cadence:     0,
+                    avgHr:       lap.average_heartrate ? Math.round(lap.average_heartrate) : 0,
+                    maxHr:       lap.max_heartrate ? Math.round(lap.max_heartrate) : 0,
+                    cadence:     lap.average_cadence ? Math.round(lap.average_cadence * 2) : 0,
                     bestPaceS:   avgPaceS,
-                    eleGain:     s.elevation_difference > 0 ? Math.round(s.elevation_difference) : 0,
+                    eleGain:     lap.total_elevation_gain > 0 ? Math.round(lap.total_elevation_gain) : 0,
                     temperature: null
+                });
+            });
+        }
+
+        // laps (visor "Análisis por km") ← splits_metric (cada 1km auto)
+        var laps = [];
+        if (Array.isArray(activity.splits_metric)) {
+            activity.splits_metric.forEach(function(s, idx) {
+                var paceS = (s.average_speed > 0) ? Math.round(1000 / s.average_speed) : 0;
+                laps.push({
+                    n:     s.split || (idx + 1),
+                    paceS: paceS,
+                    avgHr: s.average_heartrate ? Math.round(s.average_heartrate) : 0
                 });
             });
         }
@@ -37202,7 +37236,7 @@ window._handleStravaReturn = _handleStravaReturn;
             maxHr:           activity.max_heartrate ? Math.round(activity.max_heartrate) : null,
             ascentM:         ascentM,
             descentM:        descentM > 0 ? descentM : null,
-            laps:            [],
+            laps:            laps,
             hrSeries:        hrSeries,
             cadSeries:       cadSeries,
             eleSeries:       eleSeries,
