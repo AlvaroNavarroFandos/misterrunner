@@ -37044,6 +37044,8 @@ window._handleStravaReturn = _handleStravaReturn;
         } catch (e) {}
 
         // Records para drawTrack: merge multi-stream a {lat,lon,...}
+        // (cadence raw, sin x2 — la usamos solo para el archivo de records y MR
+        //  multiplica internamente cuando lo necesita)
         var records = [];
         if (latlng.length > 0) {
             for (var i = 0; i < latlng.length; i++) {
@@ -37053,26 +37055,63 @@ window._handleStravaReturn = _handleStravaReturn;
                 if (time[i] != null)      rec.ts = time[i];
                 if (altitude[i] != null)  rec.ele = altitude[i];
                 if (heartrate[i] != null) rec.hr = heartrate[i];
-                if (cadence[i] != null)   rec.cadence = cadence[i] * 2;
+                if (cadence[i] != null)   rec.cadence = cadence[i];
                 if (distance[i] != null)  rec.dist = distance[i];
                 records.push(rec);
             }
         }
 
-        // Series 1D
-        var hrSeries  = heartrate.slice();
-        var cadSeries = cadence.map(function(v) { return v * 2; }); // spm
-        var eleSeries = altitude.slice();
-        var distSer   = distance.slice();
+        // [FIX shape series MR] El visor MR espera:
+        //   hrSeries  = [{t, v}, ...]          (t=segs, v=bpm)
+        //   cadSeries = [{t, v}, ...]          (t=segs, v=rpm one-foot · el visor x2 → spm)
+        //   distSer   = [{t, d, spd}, ...]    (t=segs, d=cm, spd=m/s)
+        //   eleSeries = [num, num, ...]       (array plano de m)
+        // Si meto arrays planos en hr/cad/dist los gráficos se quedan vacíos
+        // y la cadencia/zonas FC muestran NaN%.
+        var hrSeries  = [];
+        var cadSeries = [];
+        var distSer   = [];
+        var eleSeries = altitude.slice(); // plano OK
+        // Pivote temporal: el stream `time` es la fuente de verdad. Si falta,
+        // usamos i como segundo (Strava muestrea ~1Hz).
+        var nSamples = Math.max(
+            time.length, heartrate.length, cadence.length, distance.length, velSmooth.length
+        );
+        for (var i2 = 0; i2 < nSamples; i2++) {
+            var t = (time[i2] != null) ? time[i2] : i2;
+            if (heartrate[i2] != null) {
+                var hv = heartrate[i2];
+                if (hv > 30 && hv < 250) hrSeries.push({ t: t, v: hv });
+            }
+            if (cadence[i2] != null) {
+                var cv = cadence[i2];
+                if (cv > 0) cadSeries.push({ t: t, v: cv });
+            }
+            if (distance[i2] != null) {
+                distSer.push({
+                    t: t,
+                    d: Math.round(distance[i2] * 100),       // m → cm
+                    spd: (velSmooth[i2] != null) ? velSmooth[i2] : 0
+                });
+            }
+        }
 
-        // ascentM (de activity) y descentM (de stream)
-        var ascentM = activity.total_elevation_gain || 0;
+        // ascentM / descentM ambos desde altitude stream (mismo método que el
+        // parser GPX/FIT de MR — L15339 ss. — así "Ascenso" del top y "D+" del
+        // gráfico altimétrico coinciden al pixel). Fallback a activity.total_elevation_gain
+        // si no hay stream altitude (raro pero posible para actividades manuales).
+        var ascentM = 0;
         var descentM = 0;
         if (altitude.length > 1) {
             for (var j = 1; j < altitude.length; j++) {
                 var diff = altitude[j] - altitude[j - 1];
-                if (diff < 0) descentM += -diff;
+                if (diff > 0) ascentM += diff;
+                else if (diff < 0) descentM += -diff;
             }
+            ascentM = Math.round(ascentM);
+            descentM = Math.round(descentM);
+        } else {
+            ascentM = activity.total_elevation_gain || 0;
         }
 
         // bestPace desde velocity_smooth (m/s → sec/km)
@@ -37162,7 +37201,7 @@ window._handleStravaReturn = _handleStravaReturn;
             avgHr:           activity.average_heartrate ? Math.round(activity.average_heartrate) : 0,
             maxHr:           activity.max_heartrate ? Math.round(activity.max_heartrate) : null,
             ascentM:         ascentM,
-            descentM:        descentM > 0 ? Math.round(descentM) : null,
+            descentM:        descentM > 0 ? descentM : null,
             laps:            [],
             hrSeries:        hrSeries,
             cadSeries:       cadSeries,
