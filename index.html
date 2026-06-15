@@ -17442,6 +17442,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         openSheet('import-modal');
     }
 
+    // ─── [Sesión Strava #3 · Paso 7] Setter scope-local + opener del modal ───
+    // Las funciones del Paso 7 (definidas en el bloque tras _handleStravaReturn,
+    // FUERA de este IIFE) NO pueden asignar a la `pendingFitData` local de este
+    // scope. Este helper SÍ está en el mismo scope: asigna la `pendingFitData`
+    // que lee `_saveImportedActivityCore` al guardar, y abre el modal con los
+    // mismos datos. Expuesto vía window para invocación cross-scope desde el
+    // _stravaImportOne del flow OAuth.
+    function _mrSetPendingFromStravaAndOpen(data) {
+        if (!data || typeof data !== 'object') return false;
+        pendingFitData = data;
+        showImportModal(data);
+        return true;
+    }
+    window._mrSetPendingFromStravaAndOpen = _mrSetPendingFromStravaAndOpen;
+
     // ── BLOQUE WIZARD IMPORT MANUAL · Sesión 17 ─────────────────────
     // Logos PNG (con alpha) de las marcas soportadas/en desarrollo del wizard
     // de import manual. Constante separada de BRAND_LOGOS (visor) para no
@@ -35648,6 +35663,69 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
         </div>
     </div>
 
+    <!-- [Sesión Strava #3 · Paso 6] Sheet picker de actividades nuevas en Strava.
+         Se abre con openStravaImport() desde el botón #home-strava-btn (Paso 5).
+         Llama a /strava-api/list-recent y según resultado muestra uno de 4 estados:
+         loading / list / empty / error. Cada card de actividad llevará un
+         data-strava-id que JS usa para llamar _stravaImportOne(strava_activity_id)
+         al tap → fetch-activity → parser bridge → showImportModal con pendingFitData
+         prerellenado. Footer "Powered by Strava" cumple ToS attribution.
+         Spinner reusa @keyframes spin global de L202. -->
+    <div id="strava-picker-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('strava-picker-sheet')">
+        <div class="sheet">
+            <div class="sheet-handle-wrap">
+                <div class="sheet-handle"></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <div class="sheet-title" style="display:flex;align-items:center;gap:9px;text-transform:none;letter-spacing:0;font-size:15px;min-width:0;">
+                        <span style="width:26px;height:26px;border-radius:8px;background:#FC4C02;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(252,76,2,.4);">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff" stroke="none" aria-hidden="true"><path d="M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z"/></svg>
+                        </span>
+                        <span>Importar de Strava</span>
+                        <span id="strava-picker-count" style="font-size:11px;color:var(--tm);font-weight:600;margin-left:2px;"></span>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <button id="strava-picker-refresh-btn" onclick="if(window._stravaRefreshList)_stravaRefreshList()" aria-label="Recargar" title="Recargar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                        </button>
+                        <button onclick="closeSheet('strava-picker-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
+                    </div>
+                </div>
+            </div>
+            <div class="sheet-body" style="padding:4px 16px 24px;">
+                <!-- STATE: LOADING (visible por defecto al abrir) -->
+                <div id="strava-picker-loading" style="padding:60px 24px 40px;text-align:center;">
+                    <div style="width:32px;height:32px;border:3px solid var(--bsoft);border-top-color:#FC4C02;border-radius:50%;margin:0 auto 16px;animation:spin .85s linear infinite;"></div>
+                    <div style="font-size:12px;color:var(--ts);">Buscando en Strava…</div>
+                </div>
+
+                <!-- STATE: ERROR (display:none por defecto) -->
+                <div id="strava-picker-error" style="display:none;padding:40px 24px 30px;text-align:center;">
+                    <div style="width:56px;height:56px;border-radius:50%;background:rgba(239,68,68,.12);color:#ef4444;display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px;">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    </div>
+                    <div id="strava-picker-error-title" style="font-size:14px;font-weight:700;color:var(--tw);margin-bottom:6px;">No se pudo cargar Strava</div>
+                    <div id="strava-picker-error-sub" style="font-size:12px;color:var(--ts);line-height:1.5;max-width:280px;margin:0 auto 18px;">Comprueba tu conexión a internet y vuelve a intentarlo en unos segundos.</div>
+                    <button onclick="if(window._stravaRefreshList)_stravaRefreshList()" style="background:#FC4C02;color:#fff;border:none;border-radius:10px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(252,76,2,.3);">Reintentar</button>
+                </div>
+
+                <!-- STATE: EMPTY (display:none por defecto) -->
+                <div id="strava-picker-empty" style="display:none;padding:50px 24px 30px;text-align:center;">
+                    <div style="width:56px;height:56px;border-radius:50%;background:var(--bsoft);display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px;color:var(--ts);">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div style="font-size:14px;font-weight:700;color:var(--tw);margin-bottom:6px;">Al día</div>
+                    <div style="font-size:12px;color:var(--ts);line-height:1.5;max-width:280px;margin:0 auto;">No hay actividades nuevas en Strava. Las últimas ya están en MR.</div>
+                </div>
+
+                <!-- STATE: LIST (display:none por defecto, _stravaRenderPickerList rellena strava-picker-list) -->
+                <div id="strava-picker-list-wrap" style="display:none;">
+                    <div id="strava-picker-list" style="display:flex;flex-direction:column;gap:10px;"></div>
+                    <div style="padding:14px 14px 2px;text-align:center;font-size:10px;color:var(--ts);letter-spacing:.3px;opacity:.75;">Powered by Strava · últimos 7 días</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="import-modal" class="sheet-backdrop">
         <div class="sheet">
             <div class="sheet-handle-wrap">
@@ -36520,6 +36598,616 @@ if (document.readyState === 'loading') {
     _handleStravaReturn();
 }
 window._handleStravaReturn = _handleStravaReturn;
+
+/* ═══════════════════════════════════════════════════════════════════
+   Strava integration · Import on-demand · Paso 7 (Sesión Strava #3)
+   ═══════════════════════════════════════════════════════════════════
+   Conjunto de funciones para el flow de import on-demand desde Strava.
+   El flujo: usuario tap #home-strava-btn → openStravaImport() → sheet
+   picker carga lista (state=loading) → _stravaRefreshList() llama a
+   /strava-api/list-recent → render cards (state=list) → tap en card
+   → _stravaImportOne(id) → /strava-api/fetch-activity → bridge (Paso 8)
+   → _mrSetPendingFromStravaAndOpen(bridgeData) → modal import abierto
+   prerellenado con datos de Strava. Usuario completa RPE/zapatilla/etc
+   y guarda → flow normal de _saveImportedActivityCore.
+
+   Edge Function backend:
+     · GET  /functions/v1/strava-api/list-recent     (Verify JWT ON)
+     · POST /functions/v1/strava-api/fetch-activity  (Verify JWT ON)
+
+   Cache localStorage:
+     · mr_strava_connected_v1  → '1' o '0' para pintar el botón al boot
+
+   El parser bridge _stravaToPendingFitData(activity, streams) se define
+   en Paso 8 y debe estar disponible en window cuando _stravaImportOne
+   se ejecute. Si no está, se muestra toast de error informativo. */
+
+(function _mrStravaImportInit() {
+    'use strict';
+
+    const STRAVA_API_BASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co/functions/v1/strava-api';
+    const STRAVA_LS_CONNECTED = 'mr_strava_connected_v1';
+    const STRAVA_FETCH_TIMEOUT_MS = 20000; // 20s: margen para refresh + 2 fetches Strava
+
+    // Estado interno del módulo
+    var _stravaPickerActivities = [];
+
+    // ────────────────────────────────────────────────────────────
+    // Helper: fetch a strava-api con JWT del usuario + timeout
+    // ────────────────────────────────────────────────────────────
+    async function _stravaFetch(path, opts) {
+        opts = opts || {};
+        var sb = window._sbClient;
+        if (!sb) throw new Error('no_supabase_client');
+        var sess = await sb.auth.getSession();
+        var jwt = sess && sess.data && sess.data.session && sess.data.session.access_token;
+        if (!jwt) throw new Error('no_session');
+
+        var ctrl = new AbortController();
+        var tmo = setTimeout(function() { ctrl.abort(); }, STRAVA_FETCH_TIMEOUT_MS);
+        try {
+            var headers = Object.assign({}, opts.headers || {}, {
+                'Authorization': 'Bearer ' + jwt
+            });
+            if (opts.body) headers['Content-Type'] = 'application/json';
+            var resp = await fetch(STRAVA_API_BASE_URL + path, {
+                method: opts.method || 'GET',
+                headers: headers,
+                body: opts.body,
+                signal: ctrl.signal
+            });
+            var txt = await resp.text();
+            var json = null;
+            try { json = JSON.parse(txt); } catch (e) {}
+            return { ok: resp.ok, status: resp.status, body: json };
+        } finally {
+            clearTimeout(tmo);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Format helpers
+    // ────────────────────────────────────────────────────────────
+    function _stravaFmtDate(isoLocal) {
+        // start_date_local viene como '2026-06-15T18:30:00Z' pero conceptualmente
+        // es wall-clock local del usuario (Strava lo declara así). Usamos UTC* del
+        // Date para extraer los componentes literales sin desplazamiento de TZ.
+        if (!isoLocal) return '';
+        try {
+            var d = new Date(isoLocal);
+            if (isNaN(d.getTime())) return '';
+            var meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+            var day = d.getUTCDate();
+            var mes = meses[d.getUTCMonth()];
+            var h = String(d.getUTCHours()).padStart(2, '0');
+            var m = String(d.getUTCMinutes()).padStart(2, '0');
+            return day + ' ' + mes + ', ' + h + ':' + m;
+        } catch (e) {
+            return '';
+        }
+    }
+    function _stravaFmtDuration(secs) {
+        if (!secs) return '—';
+        secs = Math.round(secs);
+        var h = Math.floor(secs / 3600);
+        var m = Math.floor((secs % 3600) / 60);
+        var s = secs % 60;
+        if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+        return m + ':' + String(s).padStart(2,'0');
+    }
+    function _stravaFmtPace(distM, secs) {
+        if (!distM || !secs || distM < 100) return '—';
+        var km = distM / 1000;
+        var spkm = secs / km;
+        var min = Math.floor(spkm / 60);
+        var ss = Math.round(spkm % 60);
+        return min + ':' + String(ss).padStart(2,'0') + ' /km';
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Toggle estados del sheet picker
+    // ────────────────────────────────────────────────────────────
+    function _stravaShowState(state) {
+        var targets = ['strava-picker-loading', 'strava-picker-error', 'strava-picker-empty', 'strava-picker-list-wrap'];
+        var visibleId = (state === 'list') ? 'strava-picker-list-wrap' : 'strava-picker-' + state;
+        for (var i = 0; i < targets.length; i++) {
+            var el = document.getElementById(targets[i]);
+            if (el) el.style.display = (targets[i] === visibleId) ? '' : 'none';
+        }
+    }
+    window._stravaShowState = _stravaShowState;
+
+    // ────────────────────────────────────────────────────────────
+    // Mapear códigos de error backend a mensajes user-friendly
+    // ────────────────────────────────────────────────────────────
+    function _stravaErrorMessage(code) {
+        var map = {
+            not_connected:         { title: 'Strava no conectado',     sub: 'Conecta tu cuenta Strava desde Ajustes > Conexiones primero.' },
+            integration_inactive:  { title: 'Integración desactivada', sub: 'Tu integración Strava fue desactivada. Vuelve a conectar desde Ajustes.' },
+            refresh_token_invalid: { title: 'Sesión Strava caducada',  sub: 'Reconecta tu cuenta desde Ajustes > Conexiones.' },
+            token_invalid:         { title: 'Token Strava no válido',  sub: 'Reconecta tu cuenta desde Ajustes > Conexiones.' },
+            rate_limited:          { title: 'Demasiadas peticiones',   sub: 'Strava ha limitado el ritmo. Vuelve en 1 minuto.' },
+            strava_api_error:      { title: 'Strava no responde',      sub: 'La API de Strava devolvió un error. Inténtalo en unos segundos.' },
+            activity_not_found:    { title: 'Actividad no encontrada', sub: 'Strava no encuentra esta actividad. Quizá la eliminaste.' },
+            activity_not_owned:    { title: 'Actividad no permitida',  sub: 'Esta actividad no pertenece a tu cuenta Strava.' },
+            invalid_auth:          { title: 'Sesión MR caducada',      sub: 'Vuelve a iniciar sesión en MisterRunner.' },
+            server_misconfigured:  { title: 'Error de configuración',  sub: 'El servidor no está bien configurado. Avisa al admin.' }
+        };
+        return map[code] || { title: 'Error inesperado', sub: 'Inténtalo de nuevo en unos segundos.' };
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Cargar (o recargar) lista de actividades pendientes
+    // ────────────────────────────────────────────────────────────
+    async function _stravaRefreshList() {
+        _stravaShowState('loading');
+        try {
+            var r = await _stravaFetch('/list-recent');
+            if (!r.ok) {
+                var code = (r.body && r.body.error) || 'unknown_error';
+                var msg = _stravaErrorMessage(code);
+                var te = document.getElementById('strava-picker-error-title');
+                var se = document.getElementById('strava-picker-error-sub');
+                if (te) te.textContent = msg.title;
+                if (se) se.textContent = msg.sub;
+                _stravaShowState('error');
+                // Si error sugiere desconexión, mutar también el botón home
+                if (code === 'not_connected' || code === 'integration_inactive' ||
+                    code === 'refresh_token_invalid' || code === 'token_invalid') {
+                    try { localStorage.setItem(STRAVA_LS_CONNECTED, '0'); } catch (e) {}
+                    if (typeof window._updateStravaButton === 'function') {
+                        window._updateStravaButton('not-connected');
+                    }
+                }
+                return;
+            }
+            // Éxito
+            var acts = (r.body && Array.isArray(r.body.activities)) ? r.body.activities : [];
+            _stravaPickerActivities = acts;
+            try { localStorage.setItem(STRAVA_LS_CONNECTED, '1'); } catch (e) {}
+            if (typeof window._updateStravaButton === 'function') {
+                window._updateStravaButton('connected');
+            }
+            // Update count en header
+            var countEl = document.getElementById('strava-picker-count');
+            if (countEl) {
+                countEl.textContent = acts.length > 0
+                    ? (acts.length === 1 ? '1 nueva' : acts.length + ' nuevas')
+                    : '';
+            }
+            // Update dot home
+            var dotEl = document.getElementById('home-strava-dot');
+            if (dotEl) dotEl.style.display = acts.length > 0 ? '' : 'none';
+            // Render según count
+            if (acts.length === 0) {
+                _stravaShowState('empty');
+            } else {
+                _stravaRenderPickerList(acts);
+                _stravaShowState('list');
+            }
+        } catch (e) {
+            console.error('[MR][Strava] refreshList falló:', e);
+            var isAbort = (e && e.name === 'AbortError');
+            var te2 = document.getElementById('strava-picker-error-title');
+            var se2 = document.getElementById('strava-picker-error-sub');
+            if (te2) te2.textContent = isAbort ? 'Demasiado tiempo' : 'No se pudo cargar Strava';
+            if (se2) se2.textContent = isAbort
+                ? 'La conexión tardó demasiado. Comprueba tu red e inténtalo de nuevo.'
+                : 'Comprueba tu conexión a internet y vuelve a intentarlo en unos segundos.';
+            _stravaShowState('error');
+        }
+    }
+    window._stravaRefreshList = _stravaRefreshList;
+
+    // ────────────────────────────────────────────────────────────
+    // Renderiza cards en el sheet picker
+    // ────────────────────────────────────────────────────────────
+    function _stravaRenderPickerList(activities) {
+        var list = document.getElementById('strava-picker-list');
+        if (!list) return;
+        list.innerHTML = '';
+        activities.forEach(function(act) {
+            var card = document.createElement('div');
+            card.dataset.stravaId = String(act.strava_activity_id);
+            card.style.cssText = 'background:var(--card);border:1px solid var(--border);border-radius:14px;padding:13px 14px 14px;cursor:pointer;position:relative;transition:transform .12s;';
+            var distKm = act.distance ? (act.distance / 1000).toFixed(2) : '—';
+            var dur = _stravaFmtDuration(act.moving_time);
+            var pace = _stravaFmtPace(act.distance, act.moving_time);
+            var hr = act.average_heartrate ? Math.round(act.average_heartrate) : null;
+            var elev = act.total_elevation_gain ? Math.round(act.total_elevation_gain) : 0;
+            var dateFmt = _stravaFmtDate(act.start_date_local);
+            var name = String(act.name || 'Actividad sin nombre').replace(/</g, '&lt;');
+            var hrHtml = hr
+                ? '<span style="color:var(--ts);margin:0 8px;opacity:.55;">·</span><span style="display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:#ef4444;font-weight:600;">♥ ' + hr + '</span>'
+                : '';
+            var elevHtml = (elev >= 100)
+                ? '<span style="color:var(--ts);margin:0 8px;opacity:.55;">·</span><span style="display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--gold);font-weight:600;">⛰ ' + elev + ' m</span>'
+                : '';
+            card.innerHTML = ''
+                + '<div style="position:absolute;top:11px;left:11px;width:4px;height:32px;border-radius:2px;background:#FC4C02;"></div>'
+                + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-left:13px;margin-bottom:2px;">'
+                +   '<div style="font-size:14.5px;font-weight:700;color:var(--tw);line-height:1.2;flex:1;min-width:0;word-break:break-word;">' + name + '</div>'
+                +   '<span style="color:var(--ts);flex-shrink:0;margin-top:2px;">'
+                +     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>'
+                +   '</span>'
+                + '</div>'
+                + '<div style="font-size:11px;color:var(--ts);margin-left:13px;margin-bottom:9px;font-weight:500;">' + dateFmt + '</div>'
+                + '<div style="display:flex;align-items:center;margin-left:13px;flex-wrap:wrap;">'
+                +   '<span style="display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--tw);font-weight:600;">' + distKm + ' km</span>'
+                +   '<span style="color:var(--ts);margin:0 8px;opacity:.55;">·</span>'
+                +   '<span style="display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--tw);font-weight:600;">' + dur + '</span>'
+                +   '<span style="color:var(--ts);margin:0 8px;opacity:.55;">·</span>'
+                +   '<span style="display:inline-flex;align-items:center;gap:4px;font-size:12.5px;color:var(--tw);font-weight:600;">' + pace + '</span>'
+                +   hrHtml + elevHtml
+                + '</div>';
+            card.addEventListener('click', function() {
+                var id = parseInt(card.dataset.stravaId, 10);
+                if (!isNaN(id)) _stravaImportOne(id);
+            });
+            list.appendChild(card);
+        });
+    }
+    window._stravaRenderPickerList = _stravaRenderPickerList;
+
+    // ────────────────────────────────────────────────────────────
+    // Tap en una card → descargar UNA actividad → bridge → modal
+    // ────────────────────────────────────────────────────────────
+    async function _stravaImportOne(stravaActivityId) {
+        if (!stravaActivityId) return;
+        // Cierra el sheet picker primero (la actividad ya está elegida)
+        try { if (typeof closeSheet === 'function') closeSheet('strava-picker-sheet'); } catch (e) {}
+        // Toast de loading mientras descarga
+        if (typeof window.fxToast === 'function') {
+            window.fxToast('Descargando de Strava…', { variant: 'info', duration: 30000 });
+        }
+        try {
+            var r = await _stravaFetch('/fetch-activity', {
+                method: 'POST',
+                body: JSON.stringify({ strava_activity_id: stravaActivityId })
+            });
+            if (!r.ok) {
+                var code = (r.body && r.body.error) || 'unknown_error';
+                var msg = _stravaErrorMessage(code);
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast(msg.title + ' · ' + msg.sub, { variant: 'error', duration: 5000 });
+                }
+                return;
+            }
+            // Éxito: aplicar bridge (Paso 8)
+            if (typeof window._stravaToPendingFitData !== 'function') {
+                console.error('[MR][Strava] _stravaToPendingFitData no definida (Paso 8 pendiente)');
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('Bridge Strava no disponible. Recarga la app o avisa al admin.', { variant: 'error', duration: 5000 });
+                }
+                return;
+            }
+            var bridge = await window._stravaToPendingFitData(r.body.activity, r.body.streams);
+            if (!bridge) {
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('No se pudo procesar la actividad de Strava.', { variant: 'error', duration: 4000 });
+                }
+                return;
+            }
+            // Setear pendingFitData (scope-local del IIFE del parser) + abrir modal
+            if (typeof window._mrSetPendingFromStravaAndOpen === 'function') {
+                window._mrSetPendingFromStravaAndOpen(bridge);
+            } else {
+                console.error('[MR][Strava] _mrSetPendingFromStravaAndOpen no expuesto');
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('No se pudo abrir el modal de import.', { variant: 'error' });
+                }
+            }
+        } catch (e) {
+            console.error('[MR][Strava] importOne falló:', e);
+            var isAbort = (e && e.name === 'AbortError');
+            if (typeof window.fxToast === 'function') {
+                window.fxToast(
+                    isAbort ? 'La descarga tardó demasiado. Vuelve a intentarlo.' : 'Error al descargar de Strava.',
+                    { variant: 'error', duration: 5000 }
+                );
+            }
+        }
+    }
+    window._stravaImportOne = _stravaImportOne;
+
+    // ────────────────────────────────────────────────────────────
+    // Muta el botón home según estado de conexión Strava
+    // ────────────────────────────────────────────────────────────
+    function _updateStravaButton(state) {
+        // state: 'connected' | 'not-connected'
+        var btn = document.getElementById('home-strava-btn');
+        if (!btn) return;
+        var span = btn.querySelector('span');
+        var svgPath = btn.querySelector('svg path');
+        if (state === 'not-connected') {
+            btn.style.background = 'var(--bsoft)';
+            btn.style.boxShadow = 'none';
+            btn.setAttribute('data-strava-state', 'not-connected');
+            if (span) { span.textContent = 'CONECTAR'; span.style.color = 'var(--ts)'; }
+            if (svgPath) svgPath.setAttribute('fill', 'var(--ts)');
+            btn.onclick = function() {
+                try {
+                    if (typeof window.openSheet === 'function') openSheet('config-sheet');
+                } catch (e) { console.warn('[MR][Strava] abrir config-sheet:', e); }
+            };
+            var dotNC = document.getElementById('home-strava-dot');
+            if (dotNC) dotNC.style.display = 'none';
+        } else {
+            btn.style.background = 'linear-gradient(135deg,#FC4C02 0%,#E84500 100%)';
+            btn.style.boxShadow = '0 2px 8px rgba(252,76,2,.35)';
+            btn.setAttribute('data-strava-state', 'connected');
+            if (span) { span.textContent = 'STRAVA'; span.style.color = '#fff'; }
+            if (svgPath) svgPath.setAttribute('fill', '#fff');
+            btn.onclick = function() {
+                if (typeof window.openStravaImport === 'function') window.openStravaImport();
+            };
+        }
+    }
+    window._updateStravaButton = _updateStravaButton;
+
+    // ────────────────────────────────────────────────────────────
+    // Verificación inicial al boot: ¿el usuario tiene integración Strava?
+    // ────────────────────────────────────────────────────────────
+    async function _stravaCheckConnection() {
+        // 1. Lectura optimista del cache localStorage (sin flash)
+        try {
+            var cached = localStorage.getItem(STRAVA_LS_CONNECTED);
+            if (cached === '1')      _updateStravaButton('connected');
+            else if (cached === '0') _updateStravaButton('not-connected');
+        } catch (e) {}
+        // 2. Verificación real contra BD
+        try {
+            var sb = window._sbClient;
+            if (!sb) return;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return;
+            var resp = await sb.from('user_strava_integrations')
+                .select('user_id, is_active')
+                .eq('user_id', uid)
+                .maybeSingle();
+            if (resp.error) {
+                console.warn('[MR][Strava] check_connection select error:', resp.error.message);
+                return;
+            }
+            var connected = !!(resp.data && resp.data.is_active);
+            try { localStorage.setItem(STRAVA_LS_CONNECTED, connected ? '1' : '0'); } catch (e) {}
+            _updateStravaButton(connected ? 'connected' : 'not-connected');
+        } catch (e) {
+            console.warn('[MR][Strava] check_connection falló:', e);
+        }
+    }
+    window._stravaCheckConnection = _stravaCheckConnection;
+
+    // ────────────────────────────────────────────────────────────
+    // Opener principal: tap en #home-strava-btn (estado 'connected')
+    // ────────────────────────────────────────────────────────────
+    function openStravaImport() {
+        try {
+            if (typeof openSheet === 'function') openSheet('strava-picker-sheet');
+            var countEl = document.getElementById('strava-picker-count');
+            if (countEl) countEl.textContent = '';
+            _stravaShowState('loading');
+            // Disparar fetch (fire-and-forget async)
+            _stravaRefreshList();
+        } catch (e) {
+            console.error('[MR][Strava] openStravaImport falló:', e);
+        }
+    }
+    window.openStravaImport = openStravaImport;
+
+    // ════════════════════════════════════════════════════════════════
+    // [Sesión Strava #3 · Paso 8] Parser bridge JSON Strava → pendingFitData
+    // ════════════════════════════════════════════════════════════════
+    // Toma el output de /strava-api/fetch-activity (activity + streams) y
+    // construye un objeto con el shape exacto que showImportModal espera
+    // (el mismo que producen parseFitCoros, parseFitGarmin, parseFitPolar, etc).
+    //
+    // Conversiones técnicas clave:
+    //   · cadence: Strava devuelve rpm en running (half-spm) → multiplicar x2 para spm
+    //   · calories: si activity.calories=0 pero hay kilojoules → kcal ≈ kj × 0.239
+    //   · bestPace: max value del stream velocity_smooth → 1000 / max(m/s) = sec/km
+    //   · dateStr: extraer UTC* del start_date_local (es wall-clock local literal)
+    //   · descentM: calcular desde altitude stream (Strava no lo expone)
+    //   · strideLen: avg_speed × 60 / spm × 100 (cm) si tenemos cadence + speed
+    //   · records: merge de streams en array {lat, lon, ts?, ele?, hr?, cadence?, dist?}
+    //   · csvBlocks: mapear activity.splits_metric (1 split = 1 km) al shape MR
+    //   · deviceBrand: heurística substring sobre activity.device_name
+    //
+    // Se guarda window._mrPendingStravaActivityId para que el Paso 10 (hook
+    // post-save) lo lea e inserte en strava_import_log tras guardar.
+    async function _stravaToPendingFitData(activity, streams) {
+        if (!activity) return null;
+        streams = streams || {};
+
+        function streamData(key) {
+            return (streams && streams[key] && Array.isArray(streams[key].data))
+                ? streams[key].data : [];
+        }
+
+        var time      = streamData('time');
+        var latlng    = streamData('latlng');
+        var distance  = streamData('distance');
+        var altitude  = streamData('altitude');
+        var heartrate = streamData('heartrate');
+        var cadence   = streamData('cadence');
+        var velSmooth = streamData('velocity_smooth');
+        // temp/watts/moving/grade_smooth no consumidos en v1 del bridge
+
+        // dateStr formato YYYY-MM-DD desde start_date_local (UTC* literal)
+        var dateStr = '';
+        try {
+            var d = new Date(activity.start_date_local || activity.start_date || Date.now());
+            dateStr = d.getUTCFullYear() + '-' +
+                      String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                      String(d.getUTCDate()).padStart(2, '0');
+        } catch (e) {}
+
+        // Records para drawTrack: merge multi-stream a {lat,lon,...}
+        var records = [];
+        if (latlng.length > 0) {
+            for (var i = 0; i < latlng.length; i++) {
+                var p = latlng[i];
+                if (!p || p.length !== 2) continue;
+                var rec = { lat: p[0], lon: p[1] };
+                if (time[i] != null)      rec.ts = time[i];
+                if (altitude[i] != null)  rec.ele = altitude[i];
+                if (heartrate[i] != null) rec.hr = heartrate[i];
+                if (cadence[i] != null)   rec.cadence = cadence[i] * 2;
+                if (distance[i] != null)  rec.dist = distance[i];
+                records.push(rec);
+            }
+        }
+
+        // Series 1D
+        var hrSeries  = heartrate.slice();
+        var cadSeries = cadence.map(function(v) { return v * 2; }); // spm
+        var eleSeries = altitude.slice();
+        var distSer   = distance.slice();
+
+        // ascentM (de activity) y descentM (de stream)
+        var ascentM = activity.total_elevation_gain || 0;
+        var descentM = 0;
+        if (altitude.length > 1) {
+            for (var j = 1; j < altitude.length; j++) {
+                var diff = altitude[j] - altitude[j - 1];
+                if (diff < 0) descentM += -diff;
+            }
+        }
+
+        // bestPace desde velocity_smooth (m/s → sec/km)
+        var bestPace = 0;
+        if (velSmooth.length > 0) {
+            var maxSpeed = 0;
+            for (var k = 0; k < velSmooth.length; k++) {
+                if (velSmooth[k] > maxSpeed) maxSpeed = velSmooth[k];
+            }
+            if (maxSpeed > 0) bestPace = Math.round(1000 / maxSpeed);
+        }
+
+        // calories: activity.calories directo, o kilojoules × 0.239
+        var calories = 0;
+        if (typeof activity.calories === 'number' && activity.calories > 0) {
+            calories = Math.round(activity.calories);
+        } else if (typeof activity.kilojoules === 'number' && activity.kilojoules > 0) {
+            calories = Math.round(activity.kilojoules * 0.239);
+        }
+
+        // avgTemp (raramente disponible)
+        var avgTemp = (typeof activity.average_temp === 'number') ? activity.average_temp : null;
+
+        // strideLen (cm): velocidad_avg × 60 / spm × 100
+        var strideLen = 0;
+        if (activity.average_speed > 0 && activity.average_cadence > 0) {
+            var spmAvg = activity.average_cadence * 2;
+            strideLen = Math.round((activity.average_speed * 60 / spmAvg) * 100);
+        }
+
+        // csvBlocks desde splits_metric (1 split = 1 km en Strava)
+        var csvBlocks = [];
+        if (Array.isArray(activity.splits_metric)) {
+            activity.splits_metric.forEach(function(s) {
+                var avgPaceS = (s.average_speed > 0) ? Math.round(1000 / s.average_speed) : 0;
+                csvBlocks.push({
+                    n:           s.split || 0,
+                    dist:        (s.distance || 0) / 1000,
+                    movingSecs:  s.moving_time || s.elapsed_time || 0,
+                    avgPaceS:    avgPaceS,
+                    avgHr:       s.average_heartrate ? Math.round(s.average_heartrate) : 0,
+                    maxHr:       0,
+                    cadence:     0,
+                    bestPaceS:   avgPaceS,
+                    eleGain:     s.elevation_difference > 0 ? Math.round(s.elevation_difference) : 0,
+                    temperature: null
+                });
+            });
+        }
+
+        // Cadence avg/max (en spm)
+        var avgCadence = activity.average_cadence ? Math.round(activity.average_cadence * 2) : null;
+        var maxCadence = null;
+        if (cadence.length > 0) {
+            var maxC = 0;
+            for (var ci = 0; ci < cadence.length; ci++) {
+                if (cadence[ci] > maxC) maxC = cadence[ci];
+            }
+            maxCadence = maxC > 0 ? maxC * 2 : null;
+        }
+
+        // Watts (running power, opcional)
+        var avgPower  = (typeof activity.average_watts === 'number')           ? Math.round(activity.average_watts)           : null;
+        var maxPower  = (typeof activity.max_watts === 'number')               ? Math.round(activity.max_watts)               : null;
+        var normPower = (typeof activity.weighted_average_watts === 'number')  ? Math.round(activity.weighted_average_watts)  : null;
+
+        // deviceBrand desde device_name (heurística)
+        var deviceBrand = 'Strava';
+        if (activity.device_name) {
+            var dn = String(activity.device_name).toLowerCase();
+            if      (dn.indexOf('coros')  >= 0) deviceBrand = 'Coros';
+            else if (dn.indexOf('garmin') >= 0) deviceBrand = 'Garmin';
+            else if (dn.indexOf('polar')  >= 0) deviceBrand = 'Polar';
+            else if (dn.indexOf('suunto') >= 0) deviceBrand = 'Suunto';
+            else if (dn.indexOf('apple')  >= 0) deviceBrand = 'Apple';
+        }
+
+        // Guardar el strava_activity_id en variable módulo para que el hook
+        // post-save (Paso 10) inserte en strava_import_log
+        try {
+            window._mrPendingStravaActivityId = activity.id || null;
+        } catch (e) {}
+
+        return {
+            distKm:          (activity.distance || 0) / 1000,
+            durationSec:     activity.moving_time || activity.elapsed_time || 0,
+            avgHr:           activity.average_heartrate ? Math.round(activity.average_heartrate) : 0,
+            maxHr:           activity.max_heartrate ? Math.round(activity.max_heartrate) : null,
+            ascentM:         ascentM,
+            descentM:        descentM > 0 ? Math.round(descentM) : null,
+            laps:            [],
+            hrSeries:        hrSeries,
+            cadSeries:       cadSeries,
+            eleSeries:       eleSeries,
+            distSer:         distSer,
+            csvBlocks:       csvBlocks,
+            calories:        calories,
+            bestPace:        bestPace,
+            strideLen:       strideLen,
+            avgTemp:         avgTemp,
+            filesLoaded:     'strava',
+            dateStr:         dateStr,
+            records:         records,
+            rawFit:          null,
+            deviceBrand:     deviceBrand,
+            activityName:    activity.name || null,
+            avgCadence:      avgCadence,
+            maxCadence:      maxCadence,
+            avgPower:        avgPower,
+            maxPower:        maxPower,
+            normPower:       normPower,
+            tssSuunto:       null,
+            trainingEffect:  null,
+            vo2maxSuunto:    null,
+            recoveryTimeMin: null
+        };
+    }
+    window._stravaToPendingFitData = _stravaToPendingFitData;
+
+    // ────────────────────────────────────────────────────────────
+    // Auto-init: verificar conexión cuando Supabase esté listo
+    // ────────────────────────────────────────────────────────────
+    // El cliente _sbClient se inicializa más tarde en el boot. Probamos cada
+    // 400ms hasta 8s. Si no aparece, dejamos el botón en su estado HTML inicial.
+    var _stravaInitTries = 0;
+    var _stravaInitTimer = setInterval(function() {
+        _stravaInitTries++;
+        if (window._sbClient && typeof window._sbClient.auth === 'object') {
+            clearInterval(_stravaInitTimer);
+            _stravaCheckConnection();
+        } else if (_stravaInitTries >= 20) {
+            clearInterval(_stravaInitTimer);
+        }
+    }, 400);
+})();
 
 /* [Pre-Capacitor TODO-12] Declaracion adelantada de _clubSupabaseInited en core.
    El handler SIGNED_OUT del onAuthStateChange (mas abajo) la asigna a false,
