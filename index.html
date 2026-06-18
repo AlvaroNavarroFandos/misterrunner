@@ -20328,6 +20328,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(e) {
                 console.warn('[MR][6.1] _saveManualActivityToSupabase falló (no bloqueante):', e);
             }
+            // [Sesión Strava #3 · Paso 10] Si esta activity vino de Strava,
+            // logear en strava_import_log para que list-recent la filtre.
+            // Se ejecuta DESPUÉS del upsert para tener act._dbActivityId (UUID).
+            // No bloqueante: si falla, la activity ya está guardada local + Supabase,
+            // solo se reaparecería en el sheet picker en una futura lectura.
+            try {
+                if (act.filesLoaded === 'strava' && window._mrPendingStravaActivityId) {
+                    if (typeof window._stravaLogImport === 'function') {
+                        await window._stravaLogImport(
+                            window._mrPendingStravaActivityId,
+                            act._dbActivityId || null,
+                            'success',
+                            null
+                        );
+                    }
+                    window._mrPendingStravaActivityId = null;
+                }
+            } catch(e) {
+                console.warn('[MR][Strava] log post-save falló (no bloqueante):', e);
+            }
         })();
         document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -37045,6 +37065,43 @@ window._handleStravaReturn = _handleStravaReturn;
         }
     }
     window.openStravaImport = openStravaImport;
+
+    // ────────────────────────────────────────────────────────────
+    // [Sesión Strava #3 · Paso 10] Loguear import → strava_import_log
+    // ────────────────────────────────────────────────────────────
+    // El endpoint /log-import requiere service_role en backend (RLS solo
+    // permite SELECT al cliente authenticated). Llamado desde
+    // _saveImportedActivityCore tras subida a Supabase, con el UUID que
+    // devolvió el upsert (act._dbActivityId). Idempotente: la BD usa
+    // ON CONFLICT (user_id, strava_activity_id) DO UPDATE.
+    // No bloqueante: si falla, la activity ya está guardada local + Supabase,
+    // solo se pierde el filtrado en futuras llamadas a list-recent (aparecería
+    // de nuevo en el sheet picker como "pendiente").
+    async function _stravaLogImport(stravaActivityId, mrActivityId, status, errorMessage) {
+        if (!stravaActivityId) return { ok: false, reason: 'missing_strava_activity_id' };
+        status = status || 'success';
+        try {
+            var r = await _stravaFetch('/log-import', {
+                method: 'POST',
+                body: JSON.stringify({
+                    strava_activity_id: stravaActivityId,
+                    mr_activity_id: mrActivityId || null,
+                    status: status,
+                    error_message: errorMessage || null
+                })
+            });
+            if (!r.ok) {
+                console.warn('[MR][Strava] log-import not ok:', r.status, r.body);
+                return { ok: false, reason: 'http_' + r.status, body: r.body };
+            }
+            console.log('[MR][Strava] log-import OK:', stravaActivityId, '→', mrActivityId);
+            return { ok: true, body: r.body };
+        } catch (e) {
+            console.warn('[MR][Strava] log-import excepción:', e);
+            return { ok: false, reason: 'exception' };
+        }
+    }
+    window._stravaLogImport = _stravaLogImport;
 
     // ════════════════════════════════════════════════════════════════
     // [Sesión Strava #3 · Paso 8] Parser bridge JSON Strava → pendingFitData
