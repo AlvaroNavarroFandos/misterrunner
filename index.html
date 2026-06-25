@@ -2780,7 +2780,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  import (openStravaImport definida en Paso 7 con guard defensivo
                  en el onclick para no romper si aún no está cargada).
                  #home-strava-dot se muestra cuando _stravaCheckPending() detecta
-                 actividades nuevas en Strava no importadas (auto-detect post-login).
+                 pendings en strava_pending_imports (auto-import del worker
+                 server-side, ver bloque · Paso 6.1 más abajo).
                  Padding lateral 0 10px, letter-spacing .6px, gap 6px, icono 14×14
                  ajustados para que entren cómodamente los 3 botones en iPhone SE. -->
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px 15px 2px;flex-shrink:0;">
@@ -2805,7 +2806,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </svg>
                         <span style="font-size:11px;font-weight:800;color:#fff;letter-spacing:.6px;">STRAVA</span>
                     </button>
-                    <div id="home-strava-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:50%;background:#ef4444;border:2px solid #f0ebe0;box-shadow:0 1px 3px rgba(239,68,68,.5);pointer-events:none;"></div>
+                    <!-- [Strava integration #6 · Paso 6.1] Badge auto-import.
+                         Antes era dot 11×11 sin texto (placeholder reservado para
+                         _stravaCheckPending() fantasma). Ahora píldora 16×16 con
+                         counter de pendings en strava_pending_imports (consumed_at
+                         IS NULL). Mantiene id="home-strava-dot" para compat con
+                         _updateStravaButton('not-connected'). display:none por
+                         defecto; _stravaUpdatePendingBadge() lo activa a
+                         inline-flex cuando count>0. Clamp a "9+" si count>9. -->
+                    <div id="home-strava-dot" aria-hidden="true" style="display:none;position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;border-radius:8px;padding:0 4px;background:#ef4444;border:2px solid #f0ebe0;box-shadow:0 1px 3px rgba(239,68,68,.5);pointer-events:none;align-items:center;justify-content:center;color:#fff;font-family:var(--f);font-size:9px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:0;box-sizing:border-box;"></div>
                 </div>
             </div>
             <div class="vi" id="home-content">
@@ -36795,9 +36804,11 @@ window._handleStravaReturn = _handleStravaReturn;
                     ? (acts.length === 1 ? '1 nueva' : acts.length + ' nuevas')
                     : '';
             }
-            // Update dot home
-            var dotEl = document.getElementById('home-strava-dot');
-            if (dotEl) dotEl.style.display = acts.length > 0 ? '' : 'none';
+            // [Strava integration #6 · Paso 6.1] El dot home ya NO se pinta
+            // desde el picker on-demand. La píldora #home-strava-dot pasa a
+            // reflejar exclusivamente el counter de pendings auto-import
+            // (strava_pending_imports.consumed_at IS NULL) que actualiza
+            // _stravaUpdatePendingBadge desde _stravaCheckPending.
             // Render según count
             if (acts.length === 0) {
                 _stravaShowState('empty');
@@ -37001,7 +37012,7 @@ window._handleStravaReturn = _handleStravaReturn;
                 } catch (e) { console.warn('[MR][Strava] abrir config-sheet:', e); }
             };
             var dotNC = document.getElementById('home-strava-dot');
-            if (dotNC) dotNC.style.display = 'none';
+            if (dotNC) { dotNC.style.display = 'none'; dotNC.textContent = ''; }
         } else {
             btn.style.background = 'linear-gradient(135deg,#FC4C02 0%,#E84500 100%)';
             btn.style.boxShadow = '0 2px 8px rgba(252,76,2,.35)';
@@ -37372,6 +37383,105 @@ window._handleStravaReturn = _handleStravaReturn;
     }
     window._stravaToPendingFitData = _stravaToPendingFitData;
 
+    // ════════════════════════════════════════════════════════════
+    // [Strava integration #6 · Paso 6.1] Auto-import: pending imports buffer
+    // ────────────────────────────────────────────────────────────
+    // El worker server-side (strava-webhook-worker) persiste payloads Strava
+    // en `strava_pending_imports` (consumed_at IS NULL). Aquí el cliente lee
+    // esa cola, pinta counter en la píldora del botón STRAVA y prepara el
+    // estado para que el consumer (Paso 6.2) lo procese al tap del usuario.
+    //
+    // 3 funciones expuestas:
+    //   _stravaFetchPendingImports() → SELECT rows WHERE consumed_at IS NULL
+    //   _stravaUpdatePendingBadge(n) → actualiza píldora DOM (clamp 9+)
+    //   _stravaCheckPending()         → orquesta fetch + state + UI (idempotente)
+    //
+    // Estado interno _stravaPendingState compartido con el consumer (Paso 6.2).
+    // ════════════════════════════════════════════════════════════
+    var _stravaPendingState = {
+        pendings: [],         // Array rows: {id, strava_activity_id, activity_payload, streams_payload, created_at}
+        lastCheckedAt: 0,     // ms desde último check exitoso (fetcher devolvió !== null)
+        inFlight: false       // anti-double-trigger
+    };
+    window._stravaPendingState = _stravaPendingState;
+
+    // Actualiza el badge DOM con count actual. Clamp visual a "9+".
+    // count=0 → display:none + textContent vaciado.
+    function _stravaUpdatePendingBadge(count) {
+        var el = document.getElementById('home-strava-dot');
+        if (!el) return;
+        var n = (typeof count === 'number' && count > 0) ? Math.floor(count) : 0;
+        if (n === 0) {
+            el.style.display = 'none';
+            el.textContent = '';
+            return;
+        }
+        el.textContent = (n > 9) ? '9+' : String(n);
+        el.style.display = 'inline-flex';
+    }
+    window._stravaUpdatePendingBadge = _stravaUpdatePendingBadge;
+
+    // Fetcher I/O puro. Devuelve array de rows o null en error/no-auth.
+    // RLS de strava_pending_imports filtra por user_id=auth.uid() server-side.
+    async function _stravaFetchPendingImports() {
+        try {
+            var sb = window._sbClient;
+            if (!sb || typeof sb.auth !== 'object') return null;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return null;
+            var resp = await sb.from('strava_pending_imports')
+                .select('id, strava_activity_id, activity_payload, streams_payload, created_at')
+                .is('consumed_at', null)
+                .eq('user_id', uid)
+                .order('created_at', { ascending: true });
+            if (resp.error) {
+                console.warn('[MR][Strava] fetchPending error:', resp.error.message);
+                return null;
+            }
+            return Array.isArray(resp.data) ? resp.data : [];
+        } catch (e) {
+            console.warn('[MR][Strava] fetchPending exception:', e);
+            return null;
+        }
+    }
+    window._stravaFetchPendingImports = _stravaFetchPendingImports;
+
+    // Check completo idempotente: fetcher + state + UI. Fire-and-forget seguro.
+    // Anti-concurrent: si hay otro check en vuelo, no dispara segundo.
+    // Si el fetcher devuelve null (error/no-auth) NO toca el state (preserva
+    // counter previo en pantalla en vez de hacer flicker a 0).
+    async function _stravaCheckPending() {
+        if (_stravaPendingState.inFlight) return;
+        _stravaPendingState.inFlight = true;
+        try {
+            var rows = await _stravaFetchPendingImports();
+            if (rows === null) return; // error o sin auth: preservar state
+            _stravaPendingState.pendings = rows;
+            _stravaPendingState.lastCheckedAt = Date.now();
+            _stravaUpdatePendingBadge(rows.length);
+            if (rows.length > 0) {
+                console.log('[MR][Strava] pendings detectadas:', rows.length,
+                            '(ids:', rows.map(function(r){return r.id;}).join(','), ')');
+            }
+        } finally {
+            _stravaPendingState.inFlight = false;
+        }
+    }
+    window._stravaCheckPending = _stravaCheckPending;
+
+    // visibilitychange → refresh al volver a foreground. Cubre el caso real:
+    // Álvaro termina entreno → Coros sincroniza → MR estaba en background →
+    // al volver a la app, badge se actualiza sin recargar.
+    // Cooldown 30s para no spammear contra Supabase en tab-switch frenético.
+    var _STRAVA_PENDING_VIS_COOLDOWN_MS = 30000;
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState !== 'visible') return;
+        var since = Date.now() - (_stravaPendingState.lastCheckedAt || 0);
+        if (since < _STRAVA_PENDING_VIS_COOLDOWN_MS) return;
+        _stravaCheckPending();
+    });
+
     // ────────────────────────────────────────────────────────────
     // Auto-init: verificar conexión cuando Supabase esté listo
     // ────────────────────────────────────────────────────────────
@@ -37383,6 +37493,11 @@ window._handleStravaReturn = _handleStravaReturn;
         if (window._sbClient && typeof window._sbClient.auth === 'object') {
             clearInterval(_stravaInitTimer);
             _stravaCheckConnection();
+            // [Strava integration #6 · Paso 6.1] tras detectar Supabase listo,
+            // disparamos también el check de pendings (paralelo, defensivo).
+            // Si no hay integración activa o no hay rows, el fetcher devuelve
+            // [] y la píldora se queda oculta.
+            _stravaCheckPending();
         } else if (_stravaInitTries >= 20) {
             clearInterval(_stravaInitTimer);
         }
