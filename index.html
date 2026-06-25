@@ -2799,7 +2799,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </button>
                 <div style="position:relative;min-width:0;">
                     <button type="button" id="home-strava-btn" aria-label="Importar de Strava"
-                        onclick="if(window.openStravaImport)openStravaImport()"
+                        onclick="if(window._stravaHomeTap)_stravaHomeTap();else if(window.openStravaImport)openStravaImport()"
                         style="box-sizing:border-box;width:100%;min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;background:linear-gradient(135deg,#FC4C02 0%,#E84500 100%);border:none;border-radius:12px;padding:0 10px;height:44px;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(252,76,2,.35);">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff" stroke="none" aria-hidden="true">
                             <path d="M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z"/>
@@ -20357,6 +20357,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(e) {
                 console.warn('[MR][Strava] log post-save falló (no bloqueante):', e);
             }
+            // [Strava integration #6 · Paso 6.2] Si esta activity vino de la
+            // cola auto-import (consumingFromQueue activo), marcar consumed_at
+            // en strava_pending_imports y encadenar con la siguiente pending.
+            // Si el upsert a Supabase falló (no hay act._dbActivityId), igual
+            // se llama con null y la pending se marca consumed con UUID NULL
+            // (acta de que se procesó, aunque la activity sólo viva en IDB).
+            try {
+                if (act.filesLoaded === 'strava'
+                    && window._stravaPendingState
+                    && window._stravaPendingState.consumingFromQueue
+                    && typeof window._stravaOnAutoImportSaved === 'function') {
+                    await window._stravaOnAutoImportSaved(act._dbActivityId || null);
+                }
+            } catch(e) {
+                console.warn('[MR][Strava] auto-import post-save (no bloqueante):', e);
+            }
         })();
         document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -37020,7 +37036,9 @@ window._handleStravaReturn = _handleStravaReturn;
             if (span) { span.textContent = 'STRAVA'; span.style.color = '#fff'; }
             if (svgPath) svgPath.setAttribute('fill', '#fff');
             btn.onclick = function() {
-                if (typeof window.openStravaImport === 'function') window.openStravaImport();
+                // [Strava #6 · Paso 6.2] router consumer-cola / on-demand
+                if (typeof window._stravaHomeTap === 'function') window._stravaHomeTap();
+                else if (typeof window.openStravaImport === 'function') window.openStravaImport();
             };
         }
     }
@@ -37401,7 +37419,8 @@ window._handleStravaReturn = _handleStravaReturn;
     var _stravaPendingState = {
         pendings: [],         // Array rows: {id, strava_activity_id, activity_payload, streams_payload, created_at}
         lastCheckedAt: 0,     // ms desde último check exitoso (fetcher devolvió !== null)
-        inFlight: false       // anti-double-trigger
+        inFlight: false,      // anti-double-trigger del checker
+        consumingFromQueue: null // [Paso 6.2] null o {pendingId, stravaActivityId, processedCount, startedAt}
     };
     window._stravaPendingState = _stravaPendingState;
 
@@ -37469,6 +37488,154 @@ window._handleStravaReturn = _handleStravaReturn;
         }
     }
     window._stravaCheckPending = _stravaCheckPending;
+
+    // ════════════════════════════════════════════════════════════
+    // [Strava integration #6 · Paso 6.2] Consumer cola encadenada
+    // ────────────────────────────────────────────────────────────
+    // Cuando el usuario tap el botón STRAVA con pendings > 0, entra "consume
+    // mode": abre modal con la pending #0 ya cargada (bridge listo, sin fetch
+    // a Strava API → cero cuota). Al guardar, se marca consumed_at en BD y
+    // se encadena con la siguiente. Al vaciar la cola, toast premium.
+    // Sin pendings → fallback al flow on-demand (openStravaImport).
+    //
+    // Si el usuario cancela el modal (D3=a), la pending sigue en BD pendiente,
+    // el flag consumingFromQueue se mantiene y el próximo tap reanuda en la
+    // misma posición. Solo save exitoso avanza la cola.
+    // ════════════════════════════════════════════════════════════
+
+    // Toma la primera pending FIFO, bridge, abre modal. Setea flag de cola.
+    // Devuelve true si abrió modal, false si no pudo (sin pendings, bridge
+    // null, etc.). Idempotente: re-llamadas mientras hay un modal abierto
+    // simplemente refrescan el flag con el mismo pendings[0].
+    async function _stravaConsumeNext() {
+        var pendings = _stravaPendingState.pendings;
+        if (!pendings || pendings.length === 0) {
+            _stravaPendingState.consumingFromQueue = null;
+            return false;
+        }
+        var next = pendings[0]; // FIFO (fetcher ordena por created_at ASC)
+
+        // Preservar processedCount si veníamos de un cancel previo, para que
+        // el toast final cuente todos los guardados de la sesión.
+        var prevProcessed = (_stravaPendingState.consumingFromQueue &&
+                            typeof _stravaPendingState.consumingFromQueue.processedCount === 'number')
+                            ? _stravaPendingState.consumingFromQueue.processedCount : 0;
+        _stravaPendingState.consumingFromQueue = {
+            pendingId: next.id,
+            stravaActivityId: next.strava_activity_id,
+            processedCount: prevProcessed,
+            startedAt: Date.now()
+        };
+
+        try {
+            if (typeof window._stravaToPendingFitData !== 'function') {
+                console.error('[MR][Strava] consumeNext: bridge no disponible');
+                _stravaPendingState.consumingFromQueue = null;
+                return false;
+            }
+            var bridge = await window._stravaToPendingFitData(next.activity_payload, next.streams_payload);
+            if (!bridge) {
+                console.warn('[MR][Strava] consumeNext: bridge null para pending id=' + next.id);
+                _stravaPendingState.consumingFromQueue = null;
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('No se pudo procesar la carrera importada de Strava', { variant: 'error', duration: 4000 });
+                }
+                return false;
+            }
+            if (typeof window._mrSetPendingFromStravaAndOpen !== 'function') {
+                console.error('[MR][Strava] consumeNext: _mrSetPendingFromStravaAndOpen no expuesto');
+                _stravaPendingState.consumingFromQueue = null;
+                return false;
+            }
+            window._mrSetPendingFromStravaAndOpen(bridge);
+            return true;
+        } catch (e) {
+            console.error('[MR][Strava] consumeNext exception:', e);
+            _stravaPendingState.consumingFromQueue = null;
+            return false;
+        }
+    }
+    window._stravaConsumeNext = _stravaConsumeNext;
+
+    // Hook invocado desde _saveImportedActivityCore tras INSERT exitoso a
+    // activities (con act._dbActivityId resuelto). Marca consumed_at + uuid
+    // en BD, avanza counter local, refresca badge y encadena con la
+    // siguiente pending (defer 350ms para no pisar la animación del sheet).
+    // Si era la última, toast premium con count total de la sesión.
+    async function _stravaOnAutoImportSaved(activityUuid) {
+        var state = _stravaPendingState.consumingFromQueue;
+        if (!state) return; // No estábamos en cola → no-op silencioso
+        var pendingId = state.pendingId;
+
+        // 1. Marcar consumed en BD (RLS policy: WHERE consumed_at IS NULL
+        // + column-level GRANT sólo en consumed_at y consumed_mr_activity_id).
+        try {
+            var sb = window._sbClient;
+            if (sb && pendingId) {
+                var nowIso = new Date().toISOString();
+                var resp = await sb.from('strava_pending_imports')
+                    .update({ consumed_at: nowIso, consumed_mr_activity_id: activityUuid || null })
+                    .eq('id', pendingId)
+                    .is('consumed_at', null); // belt-and-suspenders sobre la policy
+                if (resp.error) {
+                    console.warn('[MR][Strava] markConsumed error pending=' + pendingId + ':', resp.error.message);
+                    // No abortamos: la pending queda como zombie en BD hasta
+                    // que el siguiente _stravaCheckPending la rescate (vuelve
+                    // a aparecer en pendings[]). Es comportamiento aceptable
+                    // (idempotente; el usuario verá un duplicado en próxima
+                    // sesión y _findDuplicateActivity la pillará).
+                } else {
+                    console.log('[MR][Strava] pending id=' + pendingId + ' consumed (activity=' + (activityUuid || 'NULL') + ')');
+                }
+            }
+        } catch (e) {
+            console.warn('[MR][Strava] markConsumed exception:', e);
+        }
+
+        // 2. Avanzar counter + sacar del array local + refrescar badge
+        state.processedCount = (state.processedCount || 0) + 1;
+        if (_stravaPendingState.pendings.length > 0) {
+            _stravaPendingState.pendings.shift();
+        }
+        _stravaUpdatePendingBadge(_stravaPendingState.pendings.length);
+
+        // 3. ¿Quedan más? encadenar : toast final
+        if (_stravaPendingState.pendings.length > 0) {
+            setTimeout(function() { _stravaConsumeNext(); }, 350);
+        } else {
+            var n = state.processedCount;
+            _stravaPendingState.consumingFromQueue = null;
+            if (typeof window.fxToast === 'function') {
+                var msg = (n === 1)
+                    ? 'Importada 1 carrera de Strava automáticamente'
+                    : 'Importadas ' + n + ' carreras de Strava automáticamente';
+                window.fxToast(msg, { variant: 'success', duration: 4000 });
+            }
+        }
+    }
+    window._stravaOnAutoImportSaved = _stravaOnAutoImportSaved;
+
+    // Tap handler del #home-strava-btn (estado 'connected'). Decide entre
+    // consumer cola (si hay pendings) o flow on-demand (fallback, lista
+    // recent de Strava API). Centraliza la lógica del onclick para que
+    // tanto el HTML como el _updateStravaButton llamen al mismo sitio.
+    function _stravaHomeTap() {
+        try {
+            var hasPendings = _stravaPendingState
+                && Array.isArray(_stravaPendingState.pendings)
+                && _stravaPendingState.pendings.length > 0;
+            if (hasPendings) {
+                _stravaConsumeNext();
+            } else if (typeof window.openStravaImport === 'function') {
+                window.openStravaImport();
+            }
+        } catch (e) {
+            console.warn('[MR][Strava] homeTap:', e);
+            // Fallback al on-demand si algo explota
+            if (typeof window.openStravaImport === 'function') window.openStravaImport();
+        }
+    }
+    window._stravaHomeTap = _stravaHomeTap;
 
     // visibilitychange → refresh al volver a foreground. Cubre el caso real:
     // Álvaro termina entreno → Coros sincroniza → MR estaba en background →
