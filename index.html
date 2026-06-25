@@ -38896,9 +38896,64 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    /* [Strava integration #6 · Paso 6.3] Smoke: auto-import consumer.
+       Verifica el flow Paso 6.1 (fetcher + check + badge píldora) y Paso 6.2
+       (consumer cola + hook post-save + router onclick). NO ejecuta el
+       fetcher real (evita ruido en BD durante smoke); sólo presencia +
+       shape del state.
+       Hook en _saveImportedActivityCore se valida E2E (función no expuesta
+       en window, no se puede inspeccionar). */
+    function _testStravaAutoImportConsumerPresent() {
+        var checks = [];
+        try {
+            // DOM: la píldora ya no es dot 11×11; verificar min-width 16 y border-radius 8
+            var pill = document.getElementById('home-strava-dot');
+            if (!pill) {
+                checks.push('#home-strava-dot falta');
+            } else {
+                var st = pill.getAttribute('style') || '';
+                if (!/min-width:\s*16px/.test(st)) checks.push('píldora sin min-width:16px (¿dot legacy?)');
+                if (!/border-radius:\s*8px/.test(st)) checks.push('píldora sin border-radius:8px');
+            }
+            // Window: funciones críticas (Paso 6.1 → 3, Paso 6.2 → 3)
+            if (typeof window._stravaFetchPendingImports !== 'function') checks.push('_stravaFetchPendingImports no es funcion');
+            if (typeof window._stravaCheckPending !== 'function')        checks.push('_stravaCheckPending no es funcion');
+            if (typeof window._stravaUpdatePendingBadge !== 'function')  checks.push('_stravaUpdatePendingBadge no es funcion');
+            if (typeof window._stravaConsumeNext !== 'function')         checks.push('_stravaConsumeNext no es funcion');
+            if (typeof window._stravaOnAutoImportSaved !== 'function')   checks.push('_stravaOnAutoImportSaved no es funcion');
+            if (typeof window._stravaHomeTap !== 'function')             checks.push('_stravaHomeTap no es funcion');
+            // State: shape correcto (4 campos)
+            var s = window._stravaPendingState;
+            if (!s || typeof s !== 'object') {
+                checks.push('_stravaPendingState no es objeto');
+            } else {
+                if (!Array.isArray(s.pendings))             checks.push('_stravaPendingState.pendings no es array');
+                if (typeof s.lastCheckedAt !== 'number')    checks.push('_stravaPendingState.lastCheckedAt no es number');
+                if (typeof s.inFlight !== 'boolean')        checks.push('_stravaPendingState.inFlight no es boolean');
+                // consumingFromQueue: null o object (no podemos exigir un valor concreto)
+                if (!('consumingFromQueue' in s))           checks.push('_stravaPendingState sin consumingFromQueue');
+            }
+            // Router onclick HTML del botón apunta a _stravaHomeTap
+            var btn = document.getElementById('home-strava-btn');
+            if (btn) {
+                var onc = btn.getAttribute('onclick') || '';
+                if (!/_stravaHomeTap/.test(onc)) checks.push('home-strava-btn onclick sin _stravaHomeTap');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'strava.autoimport.consumer',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'badge píldora + 6 funciones + state shape + router onclick OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
-        dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent],
+        dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent],
         state:   [_testActivitiesArray, _testUserKeyScoped],
         css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
         renders: [_testRendersDontCrash],
