@@ -37420,7 +37420,8 @@ window._handleStravaReturn = _handleStravaReturn;
         pendings: [],         // Array rows: {id, strava_activity_id, activity_payload, streams_payload, created_at}
         lastCheckedAt: 0,     // ms desde último check exitoso (fetcher devolvió !== null)
         inFlight: false,      // anti-double-trigger del checker
-        consumingFromQueue: null // [Paso 6.2] null o {pendingId, stravaActivityId, processedCount, startedAt}
+        consumingFromQueue: null, // [Paso 6.2] null o {pendingId, stravaActivityId, processedCount, startedAt}
+        realtimeChannel: null     // [Paso 6.5] referencia al canal Supabase Realtime activo
     };
     window._stravaPendingState = _stravaPendingState;
 
@@ -37637,6 +37638,79 @@ window._handleStravaReturn = _handleStravaReturn;
     }
     window._stravaHomeTap = _stravaHomeTap;
 
+    // ════════════════════════════════════════════════════════════
+    // [Strava integration #6 · Paso 6.5] Realtime channel
+    // ────────────────────────────────────────────────────────────
+    // Canal Supabase Realtime sobre strava_pending_imports filtrado por
+    // user_id. Escucha INSERT events: cuando el worker server-side
+    // (strava-webhook-worker) persiste un nuevo pending, dispara
+    // _stravaCheckPending() para refrescar badge SIN esperar al cooldown
+    // de visibility (30s) ni a la próxima foreground.
+    //
+    // Reconnect: el WS reanuda automáticamente vía _mrRealtimeReconnectBoost
+    // (visibilitychange + online). El cliente Phoenix re-suscribe canales
+    // internamente al reconectar. Sin hooks adicionales necesarios.
+    //
+    // SIGNED_OUT: el handler en onAuthStateChange hace location.reload() →
+    // el state se descarta junto con el JS. No necesitamos desuscripción
+    // explícita en logout. _stravaUnsubscribeRealtime queda expuesto para
+    // tests + uso defensivo (ej. unmount manual desde consola).
+    //
+    // Realtime requiere la tabla habilitada en publication supabase_realtime
+    // (verificar con: SELECT * FROM pg_publication_tables WHERE pubname=
+    // 'supabase_realtime' AND tablename='strava_pending_imports'). RLS de
+    // la tabla (user_id=auth.uid()) sigue aplicándose server-side: cada
+    // cliente solo recibe eventos de sus propias filas.
+    // ════════════════════════════════════════════════════════════
+    async function _stravaSubscribeRealtime() {
+        try {
+            var sb = window._sbClient;
+            if (!sb || typeof sb.channel !== 'function') return null;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return null;
+            // Idempotente: si ya hay canal activo, devolverlo sin re-suscribir
+            if (_stravaPendingState.realtimeChannel) return _stravaPendingState.realtimeChannel;
+            var ch = sb.channel('strava-pending:' + uid)
+                .on('postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'strava_pending_imports',
+                        filter: 'user_id=eq.' + uid
+                    },
+                    function(_payload) {
+                        // Nueva pending insertada por el worker: refresh badge + state.
+                        // _stravaCheckPending es idempotente (anti-double-trigger via
+                        // inFlight) y filtra por consumed_at IS NULL, así que es safe
+                        // ante eventos espurios o re-entrega del WS.
+                        _stravaCheckPending();
+                    })
+                .subscribe();
+            _stravaPendingState.realtimeChannel = ch;
+            console.log('%c[MR][Strava] realtime channel subscribed: strava-pending:' + uid.slice(0, 8) + '…', 'color:#C9A84C;');
+            return ch;
+        } catch (e) {
+            console.warn('[MR][Strava] subscribeRealtime exception:', e);
+            return null;
+        }
+    }
+    window._stravaSubscribeRealtime = _stravaSubscribeRealtime;
+
+    function _stravaUnsubscribeRealtime() {
+        try {
+            var sb = window._sbClient;
+            var ch = _stravaPendingState.realtimeChannel;
+            if (!ch) return;
+            if (sb && typeof sb.removeChannel === 'function') sb.removeChannel(ch);
+            _stravaPendingState.realtimeChannel = null;
+            console.log('%c[MR][Strava] realtime channel unsubscribed', 'color:#C9A84C;');
+        } catch (e) {
+            console.warn('[MR][Strava] unsubscribeRealtime exception:', e);
+        }
+    }
+    window._stravaUnsubscribeRealtime = _stravaUnsubscribeRealtime;
+
     // visibilitychange → refresh al volver a foreground. Cubre el caso real:
     // Álvaro termina entreno → Coros sincroniza → MR estaba en background →
     // al volver a la app, badge se actualiza sin recargar.
@@ -37665,6 +37739,10 @@ window._handleStravaReturn = _handleStravaReturn;
             // Si no hay integración activa o no hay rows, el fetcher devuelve
             // [] y la píldora se queda oculta.
             _stravaCheckPending();
+            // [Strava integration #6 · Paso 6.5] Suscribir canal realtime
+            // sobre strava_pending_imports. INSERT events del worker disparan
+            // _stravaCheckPending() sin esperar al cooldown de visibility.
+            _stravaSubscribeRealtime();
         } else if (_stravaInitTries >= 20) {
             clearInterval(_stravaInitTimer);
         }
@@ -38951,9 +39029,38 @@ window.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // [Strava integration #6 · Paso 6.5] smoke: realtime channel
+    // Verifica que subscribe/unsubscribe están expuestos en window
+    // y que _stravaPendingState contiene el campo realtimeChannel.
+    // NO valida el estado de conexión del WS (depende de runtime).
+    // ──────────────────────────────────────────────────────────────
+    function _testStravaAutoImportRealtimePresent() {
+        var checks = [];
+        try {
+            if (typeof window._stravaSubscribeRealtime !== 'function')   checks.push('_stravaSubscribeRealtime no es funcion');
+            if (typeof window._stravaUnsubscribeRealtime !== 'function') checks.push('_stravaUnsubscribeRealtime no es funcion');
+            var s = window._stravaPendingState;
+            if (!s || typeof s !== 'object') {
+                checks.push('_stravaPendingState no es objeto');
+            } else {
+                if (!('realtimeChannel' in s)) checks.push('_stravaPendingState sin realtimeChannel');
+            }
+        } catch(e) {
+            checks.push('exception:'+e.message);
+        }
+        return {
+            name: 'strava.autoimport.realtime',
+            ok: checks.length === 0,
+            info: checks.length === 0
+                ? 'subscribe/unsubscribe + state.realtimeChannel OK'
+                : checks.join(' · ')
+        };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
-        dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent],
+        dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent, _testStravaAutoImportRealtimePresent],
         state:   [_testActivitiesArray, _testUserKeyScoped],
         css:     [_testZoomHeroCss, _testNoLegacyBgInCanvas],
         renders: [_testRendersDontCrash],
