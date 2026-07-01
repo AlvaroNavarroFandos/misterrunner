@@ -2115,7 +2115,7 @@
         background: var(--card);
         border: 1px solid var(--border);
     }
-    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol   { background: #fbf8f1; }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol   { background: #ffffff; }
     body:not(.dark-mode) .mr-lib-card .mr-lib-title    { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-val { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-lbl { color: var(--crimson); opacity: .8; }
@@ -21375,9 +21375,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function _drawLibMapBg(canvas, onReady) {
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
-        // [v5 P.Biblioteca] Fondo base adaptativo: negro en oscuro, cream en claro.
+        // [v5 P.Biblioteca · Paso M7] Fondo base adaptativo: negro en oscuro, blanco en claro.
         const _isDark = document.body.classList.contains('dark-mode');
-        ctx.fillStyle = _isDark ? '#000' : '#fbf8f1';
+        ctx.fillStyle = _isDark ? '#000' : '#ffffff';
         ctx.fillRect(0, 0, W, H);
         _getLibMapBg(function(img) {
             if (img) {
@@ -21502,7 +21502,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.stroke();
             // Puntos inicio/fin (con stroke adaptativo claro/oscuro)
             ctx.lineWidth = 1.2;
-            ctx.strokeStyle = _isDark ? '#000' : '#fbf8f1';
+            ctx.strokeStyle = _isDark ? '#000' : '#ffffff';
             ctx.fillStyle = '#22c55e';
             ctx.beginPath(); ctx.arc(xy[0].x, xy[0].y, 3.5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#ef4444';
@@ -21540,35 +21540,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (iAR > cAR) { sh=bgImg.naturalHeight; sw=sh*cAR; sx=(bgImg.naturalWidth-sw)/2; sy=0; }
                 else { sw=bgImg.naturalWidth; sh=sw/cAR; sx=0; sy=(bgImg.naturalHeight-sh)/2; }
                 ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
-                // Dark overlay for contrast
-                ctx.fillStyle='rgba(0,10,20,.50)'; ctx.fillRect(0,0,W,H);
+                // [Light Apple · Paso M5] Overlay dark SOLO en dark. En light no oscurecemos.
+                if (document.body.classList.contains('dark-mode')) {
+                    ctx.fillStyle='rgba(0,10,20,.50)'; ctx.fillRect(0,0,W,H);
+                }
             } else {
-                // Solid base + radial gradient centered on the track's centroid for depth
-                ctx.fillStyle='#0a121e'; ctx.fillRect(0,0,W,H);
-                // Compute track centroid (in canvas coords) for the gradient center
-                let cx = 0, cy = 0;
-                for (let i=0; i<pts.length; i++) { cx += tx(pts[i].lon); cy += ty(pts[i].lat); }
-                cx /= pts.length; cy /= pts.length;
-                const gradR = Math.hypot(W, H) * 0.62;
-                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, gradR);
-                grad.addColorStop(0,    'rgba(40, 78, 124, 0.45)');
-                grad.addColorStop(0.55, 'rgba(20, 40, 70, 0.22)');
-                grad.addColorStop(1,    'rgba(0, 0, 0, 0)');
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, W, H);
+                // [Light Apple · Paso M6] Bg solid base + gradient/grid SOLO en dark. Light = blanco puro.
+                if (document.body.classList.contains('dark-mode')) {
+                    // Solid base + radial gradient centered on the track's centroid for depth
+                    ctx.fillStyle='#0a121e'; ctx.fillRect(0,0,W,H);
+                    // Compute track centroid (in canvas coords) for the gradient center
+                    let cx = 0, cy = 0;
+                    for (let i=0; i<pts.length; i++) { cx += tx(pts[i].lon); cy += ty(pts[i].lat); }
+                    cx /= pts.length; cy /= pts.length;
+                    const gradR = Math.hypot(W, H) * 0.62;
+                    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, gradR);
+                    grad.addColorStop(0,    'rgba(40, 78, 124, 0.45)');
+                    grad.addColorStop(0.55, 'rgba(20, 40, 70, 0.22)');
+                    grad.addColorStop(1,    'rgba(0, 0, 0, 0)');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, W, H);
 
-                // Subtle grid (only when no satellite — would look dirty over imagery)
-                const gridStep = Math.max(28, Math.round(Math.min(W, H) / 6));
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                for (let x = gridStep; x < W; x += gridStep) {
-                    ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H);
+                    // Subtle grid (only when no satellite — would look dirty over imagery)
+                    const gridStep = Math.max(28, Math.round(Math.min(W, H) / 6));
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    for (let x = gridStep; x < W; x += gridStep) {
+                        ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H);
+                    }
+                    for (let y = gridStep; y < H; y += gridStep) {
+                        ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5);
+                    }
+                    ctx.stroke();
+                } else {
+                    // Blanco puro sin gradient ni grid.
+                    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
                 }
-                for (let y = gridStep; y < H; y += gridStep) {
-                    ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5);
-                }
-                ctx.stroke();
             }
             // Shoe silhouette watermark (faint, behind track)
             _drawShoeSilhouette(ctx, W, H, shoeColor || '#29B6F6');
@@ -21730,7 +21738,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Renders the real map (outdoors-v12) as background and overlays the neon track.
     // Falls back to drawTrack() if offline / fetch fails / no records.
     const _MAPBOX_TOKEN = 'pk.eyJ1IjoibWlzdGVycnVubmVyb2ZpY2lhbCIsImEiOiJjbXAxYmY5ZG4wM2htMnRzOW1pMHJieDdlIn0.GpKJM9556kj6CLNJATYDLw';
-    const _MAPBOX_STYLE = 'outdoors-v12';
+    const _MAPBOX_STYLE = 'light-v11';
     // In-memory cache per-actId so navigating back to the same activity doesn't re-download
     const _mapboxImgCache = {};
 
@@ -21944,9 +21952,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Mapbox image already has the correct aspect ratio (we adjusted bbox),
                 // so we can draw it stretched to the canvas without ugly distortion.
                 ctx.drawImage(bgImg, 0, 0, W, H);
-                // Very light dark overlay for contrast (lighter than satellite watermark version)
-                ctx.fillStyle = 'rgba(0,10,20,0.18)';
-                ctx.fillRect(0, 0, W, H);
+                // [Light Apple · Paso M2] Overlay de contraste SOLO en dark. En light el mapa se ve limpio.
+                if (document.body.classList.contains('dark-mode')) {
+                    ctx.fillStyle = 'rgba(0,10,20,0.18)';
+                    ctx.fillRect(0, 0, W, H);
+                }
                 // Mark canvas as "has real map" so callers (e.g. click-to-zoom) can detect it
                 try { canvas.dataset.mapboxOk = '1'; } catch(e) {}
             } else {
@@ -22005,7 +22015,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // 2. Try to load the Mapbox image. On success, repaint with map background.
         //    On failure (offline / 4xx / timeout), the fallback we just painted stays.
-        const cacheK = cacheKey || (bbox + '|' + reqW + 'x' + reqH);
+        const cacheK = cacheKey || (bbox + '|' + reqW + 'x' + reqH + '|' + _MAPBOX_STYLE);
         if (_mapboxImgCache[cacheK] && _mapboxImgCache[cacheK].complete && _mapboxImgCache[cacheK].naturalWidth > 0) {
             drawOverlay(_mapboxImgCache[cacheK]);
             _ensureMapboxAttribution(canvas);
