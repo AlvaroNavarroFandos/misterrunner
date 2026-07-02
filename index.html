@@ -2115,7 +2115,26 @@
         background: var(--card);
         border: 1px solid var(--border);
     }
-    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol   { background: #fbf8f1; }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol   { background: #ffffff; }
+    /* [Light Apple · Bib Layout] Imagen Gemini como bg del mapcol con fade horizontal F2 (55%).
+       El fade SOLO afecta a la imagen (::before). El canvas (track) y la pill fecha van por encima
+       con z-index más alto y quedan a fuego, sin difuminar. */
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image: var(--_lib-map-bg-light);
+        background-size: cover;
+        background-position: center;
+        -webkit-mask-image: linear-gradient(to right, transparent 0%, black 55%, black 100%);
+                mask-image: linear-gradient(to right, transparent 0%, black 55%, black 100%);
+        pointer-events: none;
+        z-index: 0;
+    }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol > canvas { position: relative; z-index: 1; }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol > .mr-lib-date-pill { z-index: 2; }
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol > .mr-lib-photo-badge,
+    body:not(.dark-mode) .mr-lib-card .mr-lib-mapcol > .mr-lib-indoor-badge { z-index: 2; }
     body:not(.dark-mode) .mr-lib-card .mr-lib-title    { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-val { color: var(--tw); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-lbl { color: var(--crimson); opacity: .8; }
@@ -21080,18 +21099,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //  - Icono cámara dorado si hay foto
             sliding.innerHTML = `
                 <div class="mr-lib-card-inner" style="display:flex;height:128px;border-radius:18px;overflow:hidden;">
-                    <!-- ░░░ COLUMNA IZQUIERDA: MAPA (fondo adaptativo claro/oscuro) ░░░ -->
-                    <div class="mr-lib-mapcol" style="position:relative;width:124px;flex-shrink:0;">
-                        <canvas id="${cId}" width="248" height="290" style="width:100%;height:100%;display:block;"></canvas>
-                        ${_libPhotoBadgeHTML(act)}
-                        ${_libIndoorBadgeHTML(act)}
-                        <!-- [FASE 8 polish] Pill adaptativa detrás de la fecha para legibilidad sobre el track -->
-                        <div class="mr-lib-date-pill" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);">
-                            <div class="mr-lib-date" style="font-size:9px;font-weight:700;letter-spacing:1.3px;text-shadow:none;font-family:var(--f);white-space:nowrap;">${df.toUpperCase()}</div>
-                        </div>
+                    <!-- ░░░ [Light Apple · Bib Layout] COLUMNA IZQUIERDA: OUTFIT + RPE ░░░ -->
+                    <div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:3px 0 3px 4px;flex-shrink:0;">
+                        <div style="flex:1;display:flex;align-items:flex-start;width:100%;">${buildOutfitFull(act)}</div>
+                        ${act.rpe ? '<div style="padding-bottom:2px;">' + buildRpeBadge(act.rpe) + '</div>' : ''}
                     </div>
-                    <!-- ░░░ COLUMNA CENTRAL: DATOS ░░░ -->
-                    <div class="mr-lib-data" style="flex:1;padding:7px 8px 7px 11px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
+                    <!-- ░░░ COLUMNA CENTRAL: DATOS (nota alineada a la dcha del bloque) ░░░ -->
+                    <div class="mr-lib-data" style="flex:1;padding:7px 10px 7px 8px;display:flex;flex-direction:column;justify-content:space-between;min-width:0;">
                         <!-- Fila 1: título (hasta 2 líneas) + nota -->
                         <div>
                             <div style="display:flex;align-items:flex-start;gap:6px;">
@@ -21120,10 +21134,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <span class="mr-lib-shoe" style="font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-family:var(--f);">${act.shoeName || ''}</span>
                         </div>
                     </div>
-                    <!-- ░░░ COLUMNA DERECHA: OUTFIT + RPE ░░░ -->
-                    <div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:3px 4px 3px 0;flex-shrink:0;">
-                        <div style="flex:1;display:flex;align-items:flex-start;width:100%;">${buildOutfitFull(act)}</div>
-                        ${act.rpe ? '<div style="padding-bottom:2px;">' + buildRpeBadge(act.rpe) + '</div>' : ''}
+                    <!-- ░░░ [Light Apple · Bib Layout] COLUMNA DERECHA: MAPA 45% con fade F2 sobre la imagen ░░░ -->
+                    <div class="mr-lib-mapcol" style="position:relative;flex:0 0 45%;overflow:hidden;">
+                        <canvas id="${cId}" width="248" height="290" style="width:100%;height:100%;display:block;"></canvas>
+                        ${_libPhotoBadgeHTML(act)}
+                        ${_libIndoorBadgeHTML(act)}
+                        <!-- Pill fecha: NO se difumina (z-index > ::before del bg) -->
+                        <div class="mr-lib-date-pill" style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);">
+                            <div class="mr-lib-date" style="font-size:9px;font-weight:700;letter-spacing:1.3px;text-shadow:none;font-family:var(--f);white-space:nowrap;">${df.toUpperCase()}</div>
+                        </div>
                     </div>
                 </div>`;
 
@@ -21349,6 +21368,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Se cachea cada uno por separado para no recargar al cambiar tema.
     let _libMapBgImgDark  = null;
     let _libMapBgImgLight = null;
+    // [Light Apple · Bib Layout] Publica la imagen light como CSS var global para que el
+    // pseudo-elemento ::before del .mr-lib-mapcol pueda pintarla con mask/fade CSS.
+    try {
+        document.documentElement.style.setProperty('--_lib-map-bg-light', `url("${_LIB_MAP_BG_LIGHT_B64}")`);
+    } catch(_){}
     function _getLibMapBg(cb, isDarkArg) {
         // isDarkArg permite forzar el tema en la llamada (evita race conditions
         // si cambia el tema entre la llamada y el onload). Si no se pasa, se
@@ -21375,9 +21399,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function _drawLibMapBg(canvas, onReady) {
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
-        // [v5 P.Biblioteca] Fondo base adaptativo: negro en oscuro, cream en claro.
         const _isDark = document.body.classList.contains('dark-mode');
-        ctx.fillStyle = _isDark ? '#000' : '#fbf8f1';
+        // [Light Apple · Bib Layout] En light, canvas transparente. Bg + fade viene del CSS ::before del mapcol.
+        // Track se dibuja luego sobre canvas transparente encima de la imagen CSS.
+        if (!_isDark) {
+            ctx.clearRect(0, 0, W, H);
+            if (onReady) onReady();
+            return;
+        }
+        // Dark mode: código original intacto.
+        ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, W, H);
         _getLibMapBg(function(img) {
             if (img) {
