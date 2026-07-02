@@ -6705,27 +6705,35 @@ function _openPRsSheet(userId, displayName, isSelf) {
     handle.style.cssText = 'width:42px;height:4px;border-radius:2px;background:var(--border);margin:8px auto 6px;flex-shrink:0;';
     sheet.appendChild(handle);
 
-    // ── Cabecera ──────────────────────────────────────────────────────
-    var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;gap:11px;padding:6px 16px 14px;flex-shrink:0;';
+    // ── Cabecera premium (Opción A · silver gradient + línea decorativa dorada) ─
+    // Wrapper coherente con banner KPI biblioteca (mismo lenguaje visual)
+    var hdrWrap = document.createElement('div');
+    hdrWrap.style.cssText = 'position:relative;margin:0 14px 12px;border-radius:16px;padding:14px;background:' + (isDark ? 'linear-gradient(135deg, #1c1c1f 0%, #26262a 50%, #1c1c1f 100%)' : 'linear-gradient(135deg, #fafafa 0%, #e8e8ed 50%, #fafafa 100%)') + ';border:1px solid var(--border);overflow:hidden;flex-shrink:0;';
+    // Línea decorativa dorada superior (2px, fade a los lados)
+    var hdrAccent = document.createElement('div');
+    hdrAccent.style.cssText = 'position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg, transparent, #c4881e 30%, #f5d97a 50%, #c4881e 70%, transparent);';
+    hdrWrap.appendChild(hdrAccent);
 
-    // Icono trofeo en círculo dorado
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;gap:12px;';
+
+    // Icono trofeo XL 52px con radial gradient premium
     var icon = document.createElement('div');
-    icon.style.cssText = 'flex-shrink:0;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#E8C76A 0%,#A88A2E 100%);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(201,168,76,.45);';
-    icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3C2C08" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M5 4H4v2a3 3 0 0 0 3 3"/><path d="M19 4h1v2a3 3 0 0 1-3 3"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="8" y1="20" x2="16" y2="20"/></svg>';
+    icon.style.cssText = 'flex-shrink:0;width:52px;height:52px;border-radius:13px;background:radial-gradient(circle at 30% 30%, #f5d97a, #c4881e 60%, #8a5a11);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -6px 12px rgba(0,0,0,.25), 0 4px 10px rgba(196,136,30,.35);';
+    icon.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3C2C08" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M5 4H4v2a3 3 0 0 0 3 3"/><path d="M19 4h1v2a3 3 0 0 1-3 3"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="8" y1="20" x2="16" y2="20"/></svg>';
     hdr.appendChild(icon);
 
     // Texto: título + contador
     var ttlWrap = document.createElement('div');
-    ttlWrap.style.cssText = 'flex:1;min-width:0;line-height:1.2;';
+    ttlWrap.style.cssText = 'flex:1;min-width:0;';
     var ttl = document.createElement('div');
-    ttl.style.cssText = 'font-size:16px;font-weight:800;color:var(--tw);letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    ttl.style.cssText = 'font-size:20px;font-weight:800;color:var(--tw);letter-spacing:-.5px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     ttl.textContent = resolveSelf ? 'Mis récords' : ('Récords de ' + (displayName || 'Runner'));
     var counter = document.createElement('div');
     counter.id = 'mr-prs-counter';
-    counter.style.cssText = 'margin-top:2px;font-size:11px;color:var(--tm);font-weight:600;display:flex;align-items:center;gap:6px;';
+    counter.style.cssText = 'margin-top:8px;font-size:11px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;';
     // [Bloque B · UI premium] Loading dots animados durante fetch
-    counter.innerHTML = '<span style="opacity:.75;">Cargando récords</span>'
+    counter.innerHTML = '<span style="color:var(--tm);opacity:.75;font-weight:600;">Cargando récords</span>'
         + '<span class="mr-prs-dots" style="display:inline-flex;gap:2px;">'
             + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:0s;"></span>'
             + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.2s;"></span>'
@@ -6738,10 +6746,11 @@ function _openPRsSheet(userId, displayName, isSelf) {
     // Botón cerrar
     var closeBtn = document.createElement('button');
     closeBtn.setAttribute('aria-label', 'Cerrar');
-    closeBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;border:none;background:var(--card);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    closeBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;border:none;background:var(--bsoft);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    closeBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     hdr.appendChild(closeBtn);
-    sheet.appendChild(hdr);
+    hdrWrap.appendChild(hdr);
+    sheet.appendChild(hdrWrap);
 
     // ── Contenedor scrollable que englobará ambas secciones ───────────
     var scrollArea = document.createElement('div');
@@ -6899,11 +6908,18 @@ function _openPRsSheet(userId, displayName, isSelf) {
             });
             // [Bloque B · UI premium] Sustituir loading dots por contador real
             // [FASE 8] Ampliado a 18 récords (12+6) + 12 hitos km + 3 hitos racha
-            counter.innerHTML = '<span style="color:var(--tw);font-weight:700;">' + marked
-                + '</span><span style="opacity:.75;"> / ' + ORDER.length + ' récords</span> '
-                + '<span style="opacity:.5;">·</span> '
-                + '<span style="color:var(--tw);font-weight:700;">' + (unlocked + streakUnlocked)
-                + '</span><span style="opacity:.75;"> / ' + (ORDER_MILESTONES.length + ORDER_STREAK_MILESTONES.length) + ' hitos</span>';
+            // [P.Records Opción A] Jerarquía visual: número XL + total gris + label uppercase
+            counter.innerHTML =
+                  '<span style="display:inline-flex;align-items:baseline;gap:4px;">'
+                +   '<span style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:-.3px;">' + marked + '</span>'
+                +   '<span style="color:var(--tm);font-weight:600;font-size:10px;">/ ' + ORDER.length + '</span>'
+                +   '<span style="font-size:9px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-left:2px;">Récords</span>'
+                + '</span>'
+                + '<span style="display:inline-flex;align-items:baseline;gap:4px;">'
+                +   '<span style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:-.3px;">' + (unlocked + streakUnlocked) + '</span>'
+                +   '<span style="color:var(--tm);font-weight:600;font-size:10px;">/ ' + (ORDER_MILESTONES.length + ORDER_STREAK_MILESTONES.length) + '</span>'
+                +   '<span style="font-size:9px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-left:2px;">Hitos</span>'
+                + '</span>';
         } catch (e) {
             console.warn('[MR][PRs] load fail:', e && e.message ? e.message : e);
             // [Bloque B · UI premium] Sustituir loading dots por mensaje de error
@@ -6985,22 +7001,46 @@ function _buildPRGridCard(type, rec, isDark) {
     if (!meta) meta = { tier:'gold', label:type, centerText:'PR' };
     var marked = !!rec;
 
+    // [P.Records Opción A] Mapping tier → color del accent bar superior.
+    // Cada card tiene una línea corta de 2px del color del tier (fade a los lados)
+    // que da identidad visual sin sobrecargar. Cubre todos los tiers de PR_META.
+    var TIER_ACCENT = {
+        trophy_dark:'#a16207', trophy_navy:'#1e40af',
+        gold:'#c4881e', silver:'#a8afb8', track:'#a56236',
+        lightning:'#f97316', mountain:'#10b981',
+        flame:'#dc2626', snow:'#3b82f6',
+        milestone_bronze:'#a56236', milestone_silver:'#a8afb8', milestone_gold:'#c4881e',
+        milestone_platinum:'#d4d4d8', milestone_diamond:'#22d3ee',
+        streak_fire:'#f97316', streak_15:'#fb923c', streak_30:'#f97316', streak_100:'#dc2626',
+        cadence_metro:'#8b5cf6', heart_zen:'#3b82f6',
+        week_calendar:'#0ea5e9', month_calendar:'#0284c7',
+        efficiency_spark:'#eab308'
+    };
+    var accentCol = TIER_ACCENT[meta.tier] || '#a1a1aa';
+
     var card = document.createElement('div');
     card.style.cssText = [
-        'background:' + (marked ? (isDark ? 'rgba(201,168,76,.08)' : '#F7EFD9') : (isDark ? 'rgba(255,255,255,.04)' : 'rgba(0,0,0,.045)')),
-        'border:1px solid ' + (marked ? (isDark ? 'rgba(201,168,76,.35)' : 'rgba(168,138,46,.35)') : 'var(--border)'),
+        'position:relative','overflow:hidden',
+        'background:' + (marked ? 'var(--card)' : (isDark ? 'rgba(255,255,255,.03)' : 'var(--bsoft)')),
+        'border:1px solid var(--border)',
         'border-radius:14px',
-        'padding:10px 8px 10px',
+        'padding:14px 8px 12px',
         'display:flex','flex-direction:column','align-items:center',
         'gap:4px','min-width:0',
         'transition:transform .15s ease, box-shadow .15s ease',
         marked ? 'cursor:pointer' : 'cursor:default',
-        marked ? 'box-shadow:0 2px 8px rgba(0,0,0,.08)' : ''
+        marked ? 'box-shadow:0 1px 3px rgba(0,0,0,.05), 0 0 0 1px rgba(0,0,0,.04)' : ''
     ].filter(Boolean).join(';');
+
+    // [P.Records Opción A] Accent bar superior con color del tier
+    // (fade a los lados). Opacity reducido si no marked → sutil identificador.
+    var accent = document.createElement('div');
+    accent.style.cssText = 'position:absolute;top:0;left:20%;right:20%;height:2px;background:linear-gradient(90deg, transparent, ' + accentCol + ', transparent);' + (marked ? '' : 'opacity:.25;');
+    card.appendChild(accent);
 
     // Medalla SVG
     var medalWrap = document.createElement('div');
-    medalWrap.style.cssText = 'width:48px;height:54px;display:flex;align-items:center;justify-content:center;' + (marked ? '' : 'filter:grayscale(1) opacity(.45);');
+    medalWrap.style.cssText = 'width:48px;height:54px;display:flex;align-items:center;justify-content:center;margin-top:4px;' + (marked ? '' : 'filter:grayscale(1) opacity(.45);');
     if (typeof window._buildMedalSVG === 'function') {
         var svg = window._buildMedalSVG(meta);
         medalWrap.innerHTML = svg.replace('width="56" height="64"', 'width="48" height="54"');
@@ -7009,7 +7049,7 @@ function _buildPRGridCard(type, rec, isDark) {
 
     // Label del tipo
     var lblEl = document.createElement('div');
-    lblEl.style.cssText = 'font-size:9.5px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';text-align:center;letter-spacing:.4px;text-transform:uppercase;line-height:1.15;min-height:22px;display:flex;align-items:center;justify-content:center;';
+    lblEl.style.cssText = 'font-size:9px;font-weight:800;color:' + (marked ? 'var(--ts)' : 'var(--tm)') + ';text-align:center;letter-spacing:.9px;text-transform:uppercase;line-height:1.15;min-height:22px;display:flex;align-items:center;justify-content:center;';
     lblEl.textContent = meta.label || type;
     card.appendChild(lblEl);
 
@@ -7017,9 +7057,9 @@ function _buildPRGridCard(type, rec, isDark) {
     // [FASE 8] Incluimos también streak_* en la categoría hito
     var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0 || type.indexOf('streak_') === 0);
 
-    // Valor
+    // Valor · XL con tabular-nums y letter-spacing negativo para elegancia
     var valEl = document.createElement('div');
-    valEl.style.cssText = 'font-size:14px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.3px;line-height:1.1;text-align:center;white-space:nowrap;';
+    valEl.style.cssText = 'font-size:19px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.6px;line-height:1;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums;';
     if (marked && typeof window._formatRecordValue === 'function') {
         valEl.textContent = window._formatRecordValue(type, rec.value);
     } else if (isMilestone && typeof window._formatRecordValue === 'function') {
@@ -7030,15 +7070,15 @@ function _buildPRGridCard(type, rec, isDark) {
     }
     card.appendChild(valEl);
 
-    // Subtítulo (fecha o "Sin marcar" / "Sin desbloquear")
+    // Subtítulo (fecha en pill sutil / "Sin marcar" / "Sin desbloquear")
     var subEl = document.createElement('div');
-    subEl.style.cssText = 'font-size:9px;color:var(--tm);text-align:center;opacity:.85;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;';
     if (marked && rec.activity_datestr) {
+        // Fecha en pill bg-soft con letter-spacing y uppercase (jerarquía)
+        subEl.style.cssText = 'display:inline-block;margin-top:8px;padding:2px 8px;background:var(--bsoft);border-radius:10px;font-size:9px;color:var(--ts);font-weight:700;letter-spacing:.4px;text-transform:uppercase;line-height:1.3;white-space:nowrap;';
         subEl.textContent = _prsPrettyDate(rec.activity_datestr);
-    } else if (isMilestone) {
-        subEl.textContent = 'Sin desbloquear';
     } else {
-        subEl.textContent = 'Sin marcar';
+        subEl.style.cssText = 'margin-top:8px;font-size:9px;color:var(--tm);text-align:center;opacity:.85;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;';
+        subEl.textContent = isMilestone ? 'Sin desbloquear' : 'Sin marcar';
     }
     card.appendChild(subEl);
 
