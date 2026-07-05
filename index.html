@@ -183,10 +183,10 @@
         --det-elev: rgba(0,0,0,.04);
         --det-elev-hi: rgba(0,0,0,.06);
         --det-elev-lo: rgba(0,0,0,.03);
-        --det-elev-lo2: rgba(0,0,0,.025);
+        --det-elev-lo2: rgba(0,0,0,0);
         --det-elev-hover: rgba(0,0,0,.08);
         --det-border: rgba(0,0,0,.08);
-        --det-border-lo: rgba(0,0,0,.05);
+        --det-border-lo: rgba(0,0,0,0);
         --det-tw: #18181b;
         --det-tp: rgba(24,24,27,.85);
         --det-ts: rgba(24,24,27,.65);
@@ -2460,8 +2460,8 @@
         position: fixed;
         inset: 0;
         z-index: 20000;
-        /* [FASE 5.7.4-c] visor unificado a #000 (era #08101a) */
-        background: #000;
+        /* [Visor light Apple · fix] fondo adaptativo via --det-bg */
+        background: var(--det-bg);
         display: flex;
         flex-direction: column;
         padding-top: env(safe-area-inset-top,0px);
@@ -2476,7 +2476,7 @@
         flex-shrink: 0;
     }
     .det-back-btn {
-        background: rgba(255,255,255,.08);
+        background: var(--det-elev-hover);
         border: none;
         border-radius: 50%;
         width: 34px;
@@ -23050,9 +23050,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + eleStatCell('D+',    Math.round(dPlus),  'm', '#4CAF50')
                 + eleStatCell('D-',    Math.round(dMinus), 'm', '#F44336')
                 + eleStatCell('Total', dTotal,             'm', '#FFC107')
-                + eleStatCell('Máx',   eleMax,             'm', 'rgba(255,255,255,.8)')
-                + eleStatCell('Mín',   eleMin,             'm', 'rgba(255,255,255,.8)')
-                + eleStatCell('Media', eleMed,             'm', 'rgba(255,255,255,.8)')
+                + eleStatCell('Máx',   eleMax,             'm', 'var(--det-tw)')
+                + eleStatCell('Mín',   eleMin,             'm', 'var(--det-tw)')
+                + eleStatCell('Media', eleMed,             'm', 'var(--det-tw)')
                 +'</div>';
 
             const eleCanvas = document.createElement('canvas');
@@ -24031,8 +24031,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
         ctx.clearRect(0, 0, W, H);
-        // [FASE 5.7.4-e] Fondo negro puro para coherencia dark premium
-        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        // [Visor light Apple · fix] fondo + labels adaptativos (mismo patrón que drawElevationProfile)
+        const _spIsDark = document.body.classList.contains('dark-mode');
+        const _spBg    = _spIsDark ? '#000' : '#fafafa';
+        const _spLblX  = _spIsDark ? 'rgba(255,255,255,.3)'  : 'rgba(24,24,27,.45)';
+        const _spVGrid = _spIsDark ? 'rgba(255,255,255,.1)'  : 'rgba(0,0,0,.05)';
+        const _spLblY  = _spIsDark ? 'rgba(255,255,255,.35)' : 'rgba(24,24,27,.45)';
+        ctx.fillStyle = _spBg; ctx.fillRect(0, 0, W, H);
 
         // Filter valid values
         const valid = vals.filter(v => v > 0 && v < maxV);
@@ -24105,7 +24110,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // X-axis time labels (every 30 minutes)
         const totalMins = Math.round(vals.length / 60);
-        ctx.fillStyle = 'rgba(255,255,255,.3)';
+        ctx.fillStyle = _spLblX;
         ctx.font = '9px sans-serif';
         ctx.textAlign = 'center';
         const stepMins = totalMins <= 60 ? 15 : 30;
@@ -24115,13 +24120,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const xp = toX(xi);
             ctx.fillText(min === 0 ? '0' : min + "'", xp, H - 2);
             // Vertical tick
-            ctx.strokeStyle = 'rgba(255,255,255,.1)';
+            ctx.strokeStyle = _spVGrid;
             ctx.lineWidth = 0.5;
             ctx.beginPath(); ctx.moveTo(xp, pad.t); ctx.lineTo(xp, H-pad.b); ctx.stroke();
         }
 
         // Y-axis value labels (min and max)
-        ctx.fillStyle = 'rgba(255,255,255,.35)';
+        ctx.fillStyle = _spLblY;
         ctx.font = '9px sans-serif';
         ctx.textAlign = 'left';
         if (!invertY) {
@@ -24220,7 +24225,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Línea media de referencia (discontinua)
         const avg = filt.reduce((a,b)=>a+b,0) / filt.length;
         ctx.setLineDash([2,3]);
-        ctx.strokeStyle = 'rgba(255,255,255,.18)';
+        // [Visor light Apple · fix] línea media adaptativa
+        ctx.strokeStyle = document.body.classList.contains('dark-mode')
+            ? 'rgba(255,255,255,.18)'
+            : 'rgba(24,24,27,.25)';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(0, toY(avg));
@@ -32490,8 +32498,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
         ctx.clearRect(0, 0, W, H);
-        // [FASE 5.7.4-e] Fondo negro puro coherente con Card 1
-        ctx.fillStyle = '#000';
+        // [Visor light Apple · fix] fondo + labels adaptativos al modo dark/light
+        const _elIsDark = document.body.classList.contains('dark-mode');
+        const _elBg    = _elIsDark ? '#000' : '#fafafa';
+        const _elGrid  = _elIsDark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.06)';
+        const _elLblY  = _elIsDark ? 'rgba(255,255,255,.28)' : 'rgba(24,24,27,.45)';
+        const _elLblX  = _elIsDark ? 'rgba(255,255,255,.25)' : 'rgba(24,24,27,.45)';
+        const _elVGrid = _elIsDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)';
+        ctx.fillStyle = _elBg;
         ctx.fillRect(0, 0, W, H);
 
         const pad = { t: 4, b: 18, l: 32, r: 4 };
@@ -32517,9 +32531,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Y grid lines (2-3 levels)
         const step = eRng < 30 ? 5 : eRng < 100 ? 20 : 50;
         const gridStart = Math.ceil((eMin - pad_y) / step) * step;
-        ctx.strokeStyle = 'rgba(255,255,255,.07)';
+        ctx.strokeStyle = _elGrid;
         ctx.lineWidth = 0.5;
-        ctx.fillStyle = 'rgba(255,255,255,.28)';
+        ctx.fillStyle = _elLblY;
         ctx.font = '9px sans-serif';
         ctx.textAlign = 'right';
         for (let e = gridStart; e <= eMax + pad_y; e += step) {
@@ -32532,13 +32546,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // X-axis time labels (minutes)
         const totalMins = Math.round(smooth.length / 60);
         const stepM = totalMins <= 30 ? 10 : totalMins <= 60 ? 15 : 30;
-        ctx.fillStyle = 'rgba(255,255,255,.25)';
+        ctx.fillStyle = _elLblX;
         ctx.textAlign = 'center';
         for (let m = 0; m <= totalMins; m += stepM) {
             const xi = Math.min(m * 60, smooth.length - 1);
             const x  = toX(xi);
             ctx.fillText(m === 0 ? '0' : m+"'", x, H - 3);
-            ctx.strokeStyle = 'rgba(255,255,255,.06)';
+            ctx.strokeStyle = _elVGrid;
             ctx.lineWidth = 0.5;
             ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
         }
