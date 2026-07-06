@@ -3400,6 +3400,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 <div style="font-size:9px;color:rgba(255,255,255,.5);margin-bottom:4px;">Ritmos de entrenamiento calculados:</div>
                                 <div id="plan-paces-row" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
                             </div>
+                            <!-- [v5.2 GAP 10] Badge de validación Riegel del objetivo.
+                                 Se muestra automáticamente cuando hay goalSecs válido y
+                                 existen actividades running en los últimos 12 meses. -->
+                            <div id="plan-realism-badge" style="display:none;margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid transparent;transition:background .15s, border-color .15s;"></div>
                         </div>
                         <!-- Training days -->
                         <div>
@@ -25300,6 +25304,150 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+    // [v5.2 GAP 10 · Validación Riegel del objetivo]
+    // ══════════════════════════════════════════════════════════════
+    // Al escribir un objetivo (tiempo/ritmo), validamos si es realista comparando
+    // con los mejores tiempos históricos del atleta (últimos 12 meses) usando la
+    // fórmula de Riegel: T2 = T1 × (D2/D1)^1.06.
+    //
+    // Estados:
+    //   ℹ️  Conservador (ratio > 1.10) — objetivo muy fácil, sugerimos apuntar más
+    //   ✓  Realista    (ratio > 0.98) — objetivo alineado con proyección
+    //   ⚠  Ambicioso   (0.94 – 0.98)   — mejora sustancial, alcanzable con constancia
+    //   ⛔  Poco realista (≤ 0.94)      — mejora > 6% muy difícil en un ciclo
+    //
+    // Fuentes por prioridad (más cercana en distancia = más fiable):
+    //   Maratón → HM > 10K > 5K
+    //   HM      → 10K > 5K > Maratón
+    //   10K     → 5K > HM > Maratón
+    // Si el atleta tiene un PR en la MISMA distancia del objetivo (últimos 12m),
+    // se compara directo sin aplicar Riegel.
+    // ══════════════════════════════════════════════════════════════
+    const RIEGEL_EXP = 1.06;
+    const RIEGEL_PR_MAX_AGE_MS = 12 * 30 * 86400000; // 12 meses
+    const RIEGEL_BANDS = [
+        { name:'5K',       distKm:5.0,     min:4.8,  max:5.2  },
+        { name:'10K',      distKm:10.0,    min:9.8,  max:10.5 },
+        { name:'HM',       distKm:21.097,  min:20.5, max:21.5 },
+        { name:'Marathon', distKm:42.195,  min:41.5, max:42.5 },
+    ];
+    const RIEGEL_FALLBACK_PRIORITY = {
+        'Marathon': ['HM','10K','5K'],
+        'HM':       ['10K','5K','Marathon'],
+        '10K':      ['5K','HM','Marathon'],
+        '5K':       ['10K','HM','Marathon'],
+    };
+
+    function computeRiegelValidation(goalSecs, targetKm) {
+        if (!goalSecs || goalSecs <= 0) return null;
+        if (!Array.isArray(activities) || activities.length === 0) return null;
+
+        const now = Date.now();
+        const running = activities.filter(a => {
+            if (!RUNNING_TYPES.has(String(a.type||'').toLowerCase())) return false;
+            const t = a.duration || a.movingTime || 0;
+            if (t <= 0) return false;
+            if (!a.dateStr) return false;
+            const dms = new Date(a.dateStr+'T12:00:00').getTime();
+            return (now - dms) < RIEGEL_PR_MAX_AGE_MS;
+        });
+        if (running.length === 0) return null;
+
+        // Mejor tiempo en cada banda de distancia
+        const bestByBand = {};
+        for (const band of RIEGEL_BANDS) {
+            const inBand = running.filter(a => a.distKm >= band.min && a.distKm <= band.max);
+            if (inBand.length === 0) continue;
+            const bestT = Math.min(...inBand.map(a => a.duration || a.movingTime));
+            bestByBand[band.name] = { secs: bestT, distKm: band.distKm, bandName: band.name };
+        }
+        if (Object.keys(bestByBand).length === 0) return null;
+
+        // Identificar la banda del target
+        let targetBandName = null;
+        if (Math.abs(targetKm - 42.195) < 1) targetBandName = 'Marathon';
+        else if (Math.abs(targetKm - 21.097) < 1) targetBandName = 'HM';
+        else if (Math.abs(targetKm - 10) < 1) targetBandName = '10K';
+        else if (Math.abs(targetKm - 5) < 0.5) targetBandName = '5K';
+
+        // Priorizar: mismo distance → fallbacks por cercanía
+        let sourcePR = null;
+        if (targetBandName && bestByBand[targetBandName]) {
+            sourcePR = bestByBand[targetBandName];
+        } else {
+            const order = RIEGEL_FALLBACK_PRIORITY[targetBandName] || ['HM','10K','5K','Marathon'];
+            for (const name of order) {
+                if (bestByBand[name]) { sourcePR = bestByBand[name]; break; }
+            }
+        }
+        if (!sourcePR) return null;
+
+        // Proyección Riegel: T2 = T1 × (D2/D1)^1.06
+        // Si es la MISMA distancia, la proyección es el propio PR (Riegel de 1.0 = 1.0)
+        const projectedSecs = sourcePR.secs * Math.pow(targetKm / sourcePR.distKm, RIEGEL_EXP);
+        const ratio = goalSecs / projectedSecs;
+
+        // Labels amigables de distancia
+        const bandLabelES = { '5K':'5K', '10K':'10K', 'HM':'media maratón', 'Marathon':'maratón' };
+        const srcLbl = bandLabelES[sourcePR.bandName];
+        const projFmt = secsToHMS(projectedSecs);
+        const srcFmt  = secsToHMS(sourcePR.secs);
+
+        let status, color, emoji, label, message;
+        if (ratio > 1.10) {
+            status = 'conservative';
+            color = '#60a5fa';  // azul info
+            emoji = 'ℹ️';
+            label = 'Conservador';
+            message = `Tu ${srcLbl} (${srcFmt}) proyecta ~${projFmt}. Podrías apuntar más alto si quisieras.`;
+        } else if (ratio > 0.98) {
+            status = 'realistic';
+            color = '#22c55e';  // verde
+            emoji = '✓';
+            label = 'Realista';
+            message = `Basado en tu ${srcLbl} (${srcFmt}) · Proyección Riegel ~${projFmt} · Objetivo alineado.`;
+        } else if (ratio > 0.94) {
+            status = 'ambitious';
+            color = '#fbbf24';  // ámbar
+            emoji = '⚠';
+            label = 'Ambicioso';
+            const pct = Math.round((1 - ratio) * 100);
+            message = `Tu ${srcLbl} (${srcFmt}) proyecta ${projFmt}. Objetivo un ${pct}% más rápido: alcanzable con constancia.`;
+        } else {
+            status = 'unrealistic';
+            color = '#ef4444';  // rojo
+            emoji = '⛔';
+            label = 'Poco realista';
+            const pct = Math.round((1 - ratio) * 100);
+            message = `Tu ${srcLbl} (${srcFmt}) proyecta ${projFmt}. Mejora del ${pct}% en un ciclo es muy difícil sin riesgo de lesión o abandono.`;
+        }
+        return { status, ratio, projectedSecs, sourcePR, label, message, color, emoji };
+    }
+
+    // Actualiza el badge de realismo del panel objetivo
+    function updateRealismBadge(goalSecs) {
+        const badge = document.getElementById('plan-realism-badge');
+        if (!badge) return;
+        const distKm = { '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[planDist] || 42.195;
+        const result = computeRiegelValidation(goalSecs, distKm);
+        if (!result) {
+            badge.style.display = 'none';
+            badge.innerHTML = '';
+            return;
+        }
+        badge.style.display = '';
+        badge.style.background = result.color + '18';
+        badge.style.borderColor = result.color + '55';
+        badge.dataset.status = result.status;
+        badge.innerHTML =
+            `<div style="display:flex;align-items:center;gap:6px;">`
+            +   `<span style="font-size:12px;line-height:1;">${result.emoji}</span>`
+            +   `<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:${result.color};">${result.label}</span>`
+            + `</div>`
+            + `<div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:4px;line-height:1.45;">${result.message}</div>`;
+    }
+
     function syncGoalPace(source) {
         const timeEl = document.getElementById('plan-goal-time');
         const paceEl = document.getElementById('plan-goal-pace');
@@ -25348,6 +25496,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     +`</div>`).join('');
                 prev.style.display = '';
             }
+            // [v5.2 GAP 10] Refrescar badge de realismo (Riegel) con el goalSecs actual
+            try { updateRealismBadge(goalSecs); } catch(_) {}
+        } else {
+            // Sin goalSecs válido → ocultar badge
+            try { updateRealismBadge(0); } catch(_) {}
         }
     }
 
@@ -25360,18 +25513,61 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Every session has exact paces, reps, recovery
     // ══════════════════════════════════════════════════════════════
 
-    // Long run ondulated pattern (km): varies intentionally to reduce injury risk
-    const LONG_PATTERNS = {
-        base:  [18,22,19,26,20,28,22,30,24],   // grows with dips every 3rd
-        build: [28,32,26,34,28,36,30,32,26],   // Maffetone-style waves
-        peak:  [34,28,38,30,32],                // peak then taper start
-        taper: [24,18,12]
+    // ── [v5.2 Long por tiempo] ────────────────────────────────────
+    // Los long runs ahora se prescriben en TIEMPO, no en km. Fisiológicamente
+    // las adaptaciones (depleción glucógeno, fatiga muscular, fortaleza mental)
+    // dependen del tiempo en pie, no de la distancia. Los km se derivan al
+    // vuelo desde el ritmo del atleta. Un long de 30km es 2h25 para un 3h15,
+    // pero 3h20 para un 4h00: misma prescripción → distinto estímulo y riesgo.
+    //
+    // Los patterns están en MINUTOS. Los caps por distancia protegen a
+    // corredores lentos (max: umbral riesgo lesión) y garantizan estímulo
+    // a rápidos (min: piso adaptativo). Referencias: Daniels, Pfitzinger, Hanson.
+    const LONG_TIME_PATTERNS = {
+        marathon: {
+            base:  [100,120,105,145,110,155,120,165,130],
+            build: [155,175,145,190,155,200,165,175,145],
+            peak:  [190,155,210,165,175],
+            taper: [130,100,65]
+        },
+        half: {
+            base:  [65,80,70,90,75,100,85],
+            build: [95,85,110,90,95],
+            peak:  [85,75,65],
+            taper: [55,45]
+        },
+        '10k': {
+            base:  [55,60,55,65,60,70],
+            build: [65,60,70,65,75],
+            peak:  [55,50,45],
+            taper: [40,30]
+        }
     };
 
-    function getLongKm(phase, weekNum, isRaceWeek) {
+    const LONG_TIME_CAPS = {
+        marathon: { maxMin: 195, minMin: 80 },  // 3h15 max, 1h20 min
+        half:     { maxMin: 120, minMin: 60 },  // 2h00 max, 1h00 min
+        '10k':    { maxMin: 80,  minMin: 40 },  // 1h20 max, 40min min
+    };
+
+    // Formatea segundos como "2h20" o "1h45" (long duration display).
+    function fmtLongDur(totalSecs) {
+        const h = Math.floor(totalSecs / 3600);
+        const m = Math.round((totalSecs - h*3600) / 60);
+        if(m === 60) return (h+1) + 'h00';
+        return h + 'h' + String(m).padStart(2,'0');
+    }
+
+    // Resuelve tiempo target (min) para un long, aplicando caps fisiológicos.
+    // El llamador deriva km según su patrón de bloques (easy/MP/progresivo).
+    function resolveLongTargetMin(dist, phase, weekNum, isRaceWeek) {
         if(isRaceWeek) return 0;
-        const pat = LONG_PATTERNS[phase] || LONG_PATTERNS.base;
-        return pat[Math.min(weekNum, pat.length-1)];
+        const patterns = LONG_TIME_PATTERNS[dist] || LONG_TIME_PATTERNS.marathon;
+        const caps = LONG_TIME_CAPS[dist] || LONG_TIME_CAPS.marathon;
+        const pat = patterns[phase] || patterns.base;
+        const nominal = pat[Math.min(weekNum, pat.length-1)];
+        if(!nominal) return 0;
+        return Math.max(caps.minMin, Math.min(caps.maxMin, nominal));
     }
 
     // Daniels-calibrated: exact rep counts and recoveries per VDOT zone
@@ -25395,34 +25591,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         let q2Day = mid.length>1 ? mid.find(d=>d!==q1Day) : -1;
 
         // ── BLOCK SESSIONS ──────────────────────────────────────────
-        // BLOCK 1: Aerobic Capacity (base) — mostly easy + aerobic threshold
+        // BLOCK 1: Aerobic Capacity (base) — Issurin: capacidad aeróbica pura
+        // [v5.1 Suavizado] Antes tenía Fartlek 6×3' a threshold (sem 1), Tempo 30' a
+        // threshold (sem 2), Series 8×800m a interval (sem 3) — todo ritmo de fase
+        // build/peak. La base ahora respeta filosofía Issurin: sesiones aeróbicas a
+        // marathon pace + una única picada a threshold con 400m cortos. Threshold
+        // sostenido, interval y series largas llegan en buildQuality.
         function baseQuality(wn) {
             const cyc = wn % 4;
             const sessions = [
-                // Fartlek — intro to quality
-                { type:'series', dist:10, pace:paces.threshold, fc:fcT,
+                // Fartlek corto a marathon pace — introducción a calidad aeróbica
+                { type:'series', dist:8, pace:paces.marathon, fc:fcM,
                   blocks:[WU,
-                    {label:`Fartlek 6×3'`,detail:`${thresholdRange(paces)}/km · rec 2' trote · FC ${fcT}`,color:'#f87171',km:6},
+                    {label:`Fartlek 6×2'`,detail:`${marathonRange(paces)}/km · rec 2' trote · FC ${fcM} · aeróbico`,color:'#C9A84C',km:4},
                     CD],
-                  desc:`Fartlek aeróbico 6×3' a ${fmtPace(paces.threshold)}/km` },
-                // Tempo continuo
-                { type:'series', dist:11, pace:paces.threshold, fc:fcT,
+                  desc:`Fartlek aeróbico 6×2' a ${fmtPace(paces.marathon)}/km · rec 2'` },
+                // Progresión 5km — control de ritmo aeróbico
+                { type:'series', dist:9, pace:paces.marathon, fc:fcM,
                   blocks:[WU,
-                    {label:'Tempo 30min',detail:`${thresholdRange(paces)}/km · esfuerzo sostenido · FC ${fcT}`,color:'#f87171',km:7},
+                    {label:'Progresión 5km',detail:`2km ${easyRange(paces)} → 2km ${marathonRange(paces)} → 1km MP+5\" · control de esfuerzo`,color:'#C9A84C',km:5},
                     CD],
-                  desc:`Tempo continuo 30' a ${fmtPace(paces.threshold)}/km` },
-                // 800m reps — introduces interval
-                { type:'series', dist:11, pace:paces.interval, fc:fcT,
+                  desc:`Progresión 5km · easy → ${fmtPace(paces.marathon)}/km` },
+                // Series 400m — primera picada de umbral, distancia corta
+                { type:'series', dist:9, pace:paces.threshold, fc:fcT,
                   blocks:[WU,
-                    {label:'Series 8×800m',detail:`${intervalRange(paces)}/km · rec 90" trote · FC max ${Math.round(lt*1.05)} ppm`,color:'#f87171',km:7},
+                    {label:'Series 8×400m',detail:`${thresholdRange(paces)}/km · rec 90\" trote · primera picada de umbral`,color:'#f87171',km:5},
                     CD],
-                  desc:`Series 8×800m a ${fmtPace(paces.interval)}/km · rec 90"` },
-                // Tempo intervals — bridge to build
-                { type:'series', dist:13, pace:paces.threshold, fc:fcT,
+                  desc:`Series 8×400m a ${fmtPace(paces.threshold)}/km · rec 90\"` },
+                // Tempo intervalado corto a MP — resistencia aeróbica
+                { type:'series', dist:10, pace:paces.marathon, fc:fcM,
                   blocks:[WU,
-                    {label:'Tempo intervals 4×1600m',detail:`${thresholdRange(paces)}/km · rec 3' trote`,color:'#f87171',km:9},
+                    {label:`Tempo 2×10'`,detail:`${marathonRange(paces)}/km · rec 3' trote · resistencia aeróbica`,color:'#C9A84C',km:6},
                     CD],
-                  desc:`Tempo 4×1600m a ${fmtPace(paces.threshold)}/km · rec 3'` },
+                  desc:`Tempo 2×10' a ${fmtPace(paces.marathon)}/km · rec 3'` },
             ];
             return sessions[cyc];
         }
@@ -25506,23 +25707,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── HALF MARATHON SPECIFIC SESSIONS ───────────────────────
         // HM needs: more VO2max work, faster threshold, shorter long runs
         function hmBaseQuality(wn) {
+            // [v5.1 Suavizado] Fase base HM: sesiones aeróbicas + una picada
+            // a threshold con 400m cortos. Aplicamos misma filosofía Issurin
+            // que en marathon base. Threshold sostenido llega en hmBuildQuality.
             const cyc = wn % 4;
             return [
-                { type:'series', dist:10, pace:paces.threshold, fc:fcT,
-                  blocks:[WU,{label:'Fartlek 8×2min',detail:`${thresholdRange(paces)}/km · rec 90" · FC ${fcT}`,color:'#f87171',km:6},CD],
-                  desc:`Fartlek velocidad 8×2' a ${fmtPace(paces.threshold)}/km` },
-                { type:'series', dist:10, pace:paces.interval, fc:fcT,
-                  blocks:[WU,{label:'Series 10×400m',detail:`${intervalRange(paces)}/km · rec 60" · potencia aeróbica`,color:'#f87171',km:6},CD],
-                  desc:`Series 10×400m a ${fmtPace(paces.interval)}/km · rec 60"` },
-                { type:'series', dist:11, pace:paces.threshold, fc:fcT,
-                  blocks:[WU,{label:'Tempo 35min',detail:`${thresholdRange(paces)}/km · umbral sostenido`,color:'#f87171',km:7},CD],
-                  desc:`Tempo continuo 35' a ${fmtPace(paces.threshold)}/km` },
-                { type:'series', dist:10, pace:paces.interval, fc:fcT,
-                  blocks:[WU,{label:'Series 6×800m',detail:`${intervalRange(paces)}/km · rec 90" · VO2max`,color:'#f87171',km:6},CD],
-                  desc:`Series 6×800m a ${fmtPace(paces.interval)}/km` },
+                { type:'series', dist:8, pace:paces.marathon, fc:fcM,
+                  blocks:[WU,{label:`Fartlek 6×2'`,detail:`${marathonRange(paces)}/km · rec 2' trote · FC ${fcM} · aeróbico`,color:'#C9A84C',km:4},CD],
+                  desc:`Fartlek aeróbico 6×2' a ${fmtPace(paces.marathon)}/km · rec 2'` },
+                { type:'series', dist:9, pace:paces.marathon, fc:fcM,
+                  blocks:[WU,{label:'Progresión 5km',detail:`2km ${easyRange(paces)} → 2km ${marathonRange(paces)} → 1km MP+5\" · control de esfuerzo`,color:'#C9A84C',km:5},CD],
+                  desc:`Progresión 5km · easy → ${fmtPace(paces.marathon)}/km` },
+                { type:'series', dist:9, pace:paces.threshold, fc:fcT,
+                  blocks:[WU,{label:'Series 8×400m',detail:`${thresholdRange(paces)}/km · rec 90\" trote · primera picada de umbral`,color:'#f87171',km:5},CD],
+                  desc:`Series 8×400m a ${fmtPace(paces.threshold)}/km · rec 90\"` },
+                { type:'series', dist:10, pace:paces.marathon, fc:fcM,
+                  blocks:[WU,{label:`Tempo 2×10'`,detail:`${marathonRange(paces)}/km · rec 3' trote · resistencia aeróbica`,color:'#C9A84C',km:6},CD],
+                  desc:`Tempo 2×10' a ${fmtPace(paces.marathon)}/km · rec 3'` },
             ][cyc];
         }
-        function hmBuildQuality(wn) {
+                function hmBuildQuality(wn) {
             const cyc = wn % 4;
             // HM race pace = marathon pace * 0.94 approx
             const hmPace = Math.round(paces.marathon * 0.94);
@@ -25561,19 +25765,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Long run for HM: shorter than marathon, more tempo finish
         // ── 10K PLAN SESSIONS ─────────────────────────────────────
         function tenKLongSession(ph, wn) {
-            // 10K: long runs are shorter, quality-focused
-            const pat = { base:[10,11,10,12,11,13], build:[12,11,13,12,14], peak:[10,9,8], taper:[7,6] };
-            const arr = pat[ph] || pat.base;
-            const km = arr[Math.min(wn, arr.length-1)];
-            if(!km) return null;
-            const tenKPaceRange = fmtRange(paces.race, 10);
+            // [v5.2 Long por tiempo] 10K: long shorter, quality-focused.
+            // Caps: 40min/80min. Estructura: WU (2km) + rodaje aeróbico + CD (2km).
+            const targetMin = resolveLongTargetMin('10k', ph, wn, isRaceWeek);
+            if(!targetMin) return null;
+            const targetSec = targetMin * 60;
+            // Long completo a easy (WU y CD ya son easy). Km totales = tiempo/easy pace
+            const km = Math.max(6, Math.round(targetSec / paces.easy));
+            const midKm = Math.max(1, km - 4); // km-4 = WU (2) + CD (2)
+            const realSec = km * paces.easy;
             return { type:'long', dist:km, pace:paces.easy, fc:fcE,
                 blocks:[
                     WU,
-                    {label:'Rodaje aeróbico',detail:`${km-3}km · ${easyRange(paces)}/km · FC ${fcE} ppm`,color:'#4CAF50',km:km-3},
+                    {label:'Rodaje aeróbico',detail:`${midKm}km · ${easyRange(paces)}/km · FC ${fcE} ppm`,color:'#4CAF50',km:midKm},
                     CD
                 ],
-                desc:`Long suave 10K ${km}km · ${fmtPace(paces.easy)}/km` };
+                desc:`Long suave 10K ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
         }
 
         function tenKQuality(ph, wn) {
@@ -25585,12 +25792,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const i10kRange = fmtRange(p10k, 8);
             const threshRange = fmtRange(pT, 8);
             if(ph === 'base') {
-                const reps = Math.min(8, 4 + Math.floor(wn/2));
-                return { type:'series', dist:reps+4, pace:p10k, fc:fcV,
-                    blocks:[ WU,
-                        {label:`Fartlek ${reps}×1km`,detail:`${i10kRange}/km · rec 90" trot · FC ${fcV} ppm`,color:'#f87171',km:reps},
-                        CD ],
-                    desc:`Fartlek ${reps}×1km a ${tenKPaceStr}/km` };
+                // [v5.1 Suavizado] Fase base 10K: sesiones aeróbicas + primera picada
+                // a threshold con 400m cortos. Antes tenía Fartlek reps×1km a 10K race
+                // pace (VO2max) desde semana 1 — brutal para arrancar. VO2max real y
+                // series a race pace llegan en peak.
+                const cyc = wn % 4;
+                return [
+                    { type:'series', dist:8, pace:paces.marathon, fc:fcM,
+                      blocks:[WU,{label:`Fartlek 6×2'`,detail:`${marathonRange(paces)}/km · rec 2' trote · FC ${fcM} · aeróbico`,color:'#C9A84C',km:4},CD],
+                      desc:`Fartlek aeróbico 6×2' a ${fmtPace(paces.marathon)}/km · rec 2'` },
+                    { type:'series', dist:9, pace:paces.marathon, fc:fcM,
+                      blocks:[WU,{label:'Progresión 5km',detail:`2km ${easyRange(paces)} → 2km ${marathonRange(paces)} → 1km MP+5" · control de esfuerzo`,color:'#C9A84C',km:5},CD],
+                      desc:`Progresión 5km · easy → ${fmtPace(paces.marathon)}/km` },
+                    { type:'series', dist:9, pace:paces.threshold, fc:fcT,
+                      blocks:[WU,{label:'Series 8×400m',detail:`${thresholdRange(paces)}/km · rec 90" trote · primera picada de umbral`,color:'#f87171',km:5},CD],
+                      desc:`Series 8×400m a ${fmtPace(paces.threshold)}/km · rec 90"` },
+                    { type:'series', dist:10, pace:paces.marathon, fc:fcM,
+                      blocks:[WU,{label:`Tempo 2×10'`,detail:`${marathonRange(paces)}/km · rec 3' trote · resistencia aeróbica`,color:'#C9A84C',km:6},CD],
+                      desc:`Tempo 2×10' a ${fmtPace(paces.marathon)}/km · rec 3'` },
+                ][cyc];
             } else if(ph === 'build') {
                 const tempoKm = Math.min(6, 3 + Math.floor(wn/2));
                 return { type:'series', dist:tempoKm+4, pace:pT, fc:fcT,
@@ -25616,22 +25836,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         function hmLongSession(ph, wn) {
-            const hmLongPat = { base:[12,15,13,17,14,19,16], build:[18,16,20,17,18], peak:[16,14,12], taper:[10,8] };
-            const pat = hmLongPat[ph] || hmLongPat.base;
-            const km = pat[Math.min(wn, pat.length-1)];
-            if(!km) return null;
+            // [v5.2 Long por tiempo] Half marathon: caps 60min/120min
+            const targetMin = resolveLongTargetMin('half', ph, wn, isRaceWeek);
+            if(!targetMin) return null;
+            const targetSec = targetMin * 60;
             const hmPace = Math.round(paces.marathon * 0.94);
+
             if(ph === 'peak' || (ph === 'build' && wn % 2 === 1)) {
-                const mpKm = Math.round(km * 0.4);
-                const ezKm = km - mpKm;
-                return { type:'long', dist:km, pace:hmPace, fc:fcT,
+                // HM-pace finish: 60% easy + 40% HM pace
+                const mpRatio = 0.4;
+                const easyRatio = 1 - mpRatio;
+                const avgPace = easyRatio * paces.easy + mpRatio * hmPace;
+                const totalKm = Math.max(1, Math.round(targetSec / avgPace));
+                const mpKm = Math.max(1, Math.round(totalKm * mpRatio));
+                const ezKm = Math.max(1, totalKm - mpKm);
+                const realSec = ezKm * paces.easy + mpKm * hmPace;
+                return { type:'long', dist:totalKm, pace:hmPace, fc:fcT,
                   blocks:[{label:'Fácil',detail:`${ezKm}km · ${easyRange(paces)}/km`,color:'#4CAF50',km:ezKm},
                           {label:'Ritmo Media',detail:`${mpKm}km · ${fmtPace(hmPace)}/km`,color:'#a78bfa',km:mpKm}],
-                  desc:`Long ${km}km · últimos ${mpKm}km a ritmo media (${fmtPace(hmPace)}/km)` };
+                  desc:`Long ${totalKm}km · ${fmtLongDur(realSec)} · últimos ${mpKm}km a ritmo media (${fmtPace(hmPace)}/km)` };
             }
+            // 100% easy (base + build par + taper)
+            const km = Math.max(1, Math.round(targetSec / paces.easy));
+            const realSec = km * paces.easy;
             return { type:'long', dist:km, pace:paces.easy, fc:fcE,
               blocks:[{label:'Long run',detail:`${km}km · ${easyRange(paces)}/km`,color:'#7c3aed',km}],
-              desc:`Long run ${km}km a ${fmtPace(paces.easy)}/km` };
+              desc:`Long run ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
         }
 
                 function maintenanceSession() {
@@ -25659,38 +25889,64 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return baseQuality(wn);
         }
 
-        // ── LONG RUN with ondulated MP finish ──────────────────────
+        // ── LONG RUN with ondulated MP finish (por TIEMPO fisiológico) ──
+        // El target es tiempo (min). Los km se derivan de los ritmos de cada
+        // bloque para que el atleta esté aproximadamente el tiempo prescrito
+        // en pie. Los caps por distancia protegen contra riesgo de lesión.
         function longSession(ph, wn) {
-            const km = getLongKm(ph, wn, isRaceWeek);
-            if(!km) return null;
+            const _distKey = (typeof planDist!=='undefined') ? planDist : 'marathon';
+            const targetMin = resolveLongTargetMin(_distKey, ph, wn, isRaceWeek);
+            if(!targetMin) return null;
+            const targetSec = targetMin * 60;
+
             if(ph==='taper') {
+                // 100% easy
+                const km = Math.max(1, Math.round(targetSec / paces.easy));
+                const realSec = km * paces.easy;
                 return { type:'long', dist:km, pace:paces.easy, fc:fcE,
                   blocks:[{label:'Long suave',detail:`${km}km · ${easyRange(paces)}/km · FC ${fcE}`,color:'#7c3aed',km}],
-                  desc:`Long suave ${km}km a ${fmtPace(paces.easy)}/km` };
+                  desc:`Long suave ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
             }
             if(ph==='base') {
+                // 100% easy
+                const km = Math.max(1, Math.round(targetSec / paces.easy));
+                const realSec = km * paces.easy;
                 return { type:'long', dist:km, pace:paces.easy, fc:fcE,
                   blocks:[{label:'Long run aeróbico',detail:`${km}km · ${easyRange(paces)}/km · FC ${fcE} ppm`,color:'#7c3aed',km}],
-                  desc:`Long run ${km}km a ${fmtPace(paces.easy)}/km` };
+                  desc:`Long run ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
             }
-            // build/peak: ondulated — alternating pure easy vs MP-finish
-            const mpFinish = (wn % 2 === 1); // odd weeks get MP finish
+            // build/peak: ondulado — alternando easy puro vs MP-finish
+            const mpFinish = (wn % 2 === 1);
             if(mpFinish) {
-                const mpKm = ph==='peak' ? Math.min(20, Math.round(km*0.5)) : Math.min(15, Math.round(km*0.4));
-                const easyKm = km - mpKm;
-                return { type:'long', dist:km, pace:paces.marathon, fc:fcM,
+                // Ratios MP dependen de fase: peak 50%, build 40%
+                const mpRatio = ph==='peak' ? 0.5 : 0.4;
+                const easyRatio = 1 - mpRatio;
+                // Ritmo promedio ponderado para derivar km totales
+                const avgPace = easyRatio * paces.easy + mpRatio * paces.marathon;
+                const totalKm = Math.max(1, Math.round(targetSec / avgPace));
+                // Cap absoluto de km MP (evita picos irrealistas si target sube mucho)
+                const mpKmCap = ph==='peak' ? 20 : 15;
+                const mpKm = Math.min(mpKmCap, Math.round(totalKm * mpRatio));
+                const easyKm = Math.max(1, totalKm - mpKm);
+                const realSec = easyKm * paces.easy + mpKm * paces.marathon;
+                return { type:'long', dist:totalKm, pace:paces.marathon, fc:fcM,
                   blocks:[
                     {label:'Entrada fácil',detail:`${easyKm}km · ${easyRange(paces)}/km`,color:'#4CAF50',km:easyKm},
                     {label:'Ritmo Maratón (MP)',detail:`${mpKm}km · ${marathonRange(paces)}/km · acostumbrar al cuerpo al ritmo objetivo`,color:'#C9A84C',km:mpKm}],
-                  desc:`Long ${km}km · últimos ${mpKm}km a RM ${fmtPace(paces.marathon)}/km` };
+                  desc:`Long ${totalKm}km · ${fmtLongDur(realSec)} · últimos ${mpKm}km a RM ${fmtPace(paces.marathon)}/km` };
             } else {
-                const progKm = Math.round(km*0.25);
-                const easyKm2 = km - progKm;
-                return { type:'long', dist:km, pace:paces.easy, fc:fcE,
+                // Progresivo: 25% del long a ritmo intermedio (easy→MP), promedio (easy+MP)/2
+                const progAvgPace = (paces.easy + paces.marathon) / 2;
+                const avgPace = 0.75 * paces.easy + 0.25 * progAvgPace;
+                const totalKm = Math.max(1, Math.round(targetSec / avgPace));
+                const progKm = Math.max(1, Math.round(totalKm * 0.25));
+                const easyKm2 = Math.max(1, totalKm - progKm);
+                const realSec = easyKm2 * paces.easy + progKm * progAvgPace;
+                return { type:'long', dist:totalKm, pace:paces.easy, fc:fcE,
                   blocks:[
                     {label:'Long fácil',detail:`${easyKm2}km · ${easyRange(paces)}/km`,color:'#4CAF50',km:easyKm2},
                     {label:'Progresivo final',detail:`${progKm}km · hasta ${marathonRange(paces)}/km`,color:'#C9A84C',km:progKm}],
-                  desc:`Long ${km}km · últimos ${progKm}km progresivos hacia RM` };
+                  desc:`Long ${totalKm}km · ${fmtLongDur(realSec)} · últimos ${progKm}km progresivos hacia RM` };
             }
         }
 
@@ -25832,6 +26088,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if(p.length===3)goalSecs=p[0]*3600+p[1]*60+p[2];
             else if(p.length===2)goalSecs=p[0]*60+p[1]; // mm:ss for 10K
         }
+
+        // [v5.2 GAP 10] Validación Riegel: si el objetivo es "poco realista" pedir
+        // confirmación explícita antes de generar. Los estados verde/ámbar/azul
+        // pasan directo sin fricción. Si el usuario no tiene historial suficiente,
+        // computeRiegelValidation devuelve null y también pasamos directo.
+        try {
+            const _rc = computeRiegelValidation(goalSecs, raceDist);
+            if (_rc && _rc.status === 'unrealistic') {
+                const _msg =
+                    '⛔ Objetivo poco realista\n\n' + _rc.message + '\n\n' +
+                    '¿Continuar de todos modos con este objetivo?';
+                if (!confirm(_msg)) {
+                    if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}
+                    return;
+                }
+            }
+        } catch(_) { /* fallback silencioso: nunca bloquear el plan por fallo interno */ }
+
         // For pace calculations, always pass planDist so pacesFromGoal uses correct distance
         const checkedDays=Array.from(document.querySelectorAll('#plan-days-row input:checked')).map(c=>+c.value);
         if(checkedDays.length<2){if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}alert('Selecciona al menos 2 días.');return;}
@@ -25940,16 +26214,35 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 phase==='base'?baseW:phase==='build'?buildW:phase==='peak'?peakW:taperW,isRaceWeek,vdot);
 
             // Apply deload multiplier: reduce all session distances by ~30%
+            // [Fix v5.1] También se regenera `desc` coherentemente. El bug anterior
+            // dejaba desc con el texto original (ej. "Tempo 4×1600m a 4'18\"/km") en
+            // sesiones ya convertidas a easy, o con la distancia previa en easy/long/recovery.
             const adjustedDefs = isDeloadWeek
-                ? sessionDefs.map(s=>({
-                    ...s,
-                    dist: Math.max(4, Math.round(s.dist*0.70)),
-                    // Replace series with easy on deload weeks (avoid intensity on recovery)
-                    type: s.type==='series' ? 'easy' : s.type,
-                    blocks: s.type==='series'
-                        ? [{label:'🔄 Semana descarga',detail:'Rodaje suave — recuperación activa',color:'#4ade80',km:Math.max(4,Math.round(s.dist*0.70))}]
-                        : (s.blocks||[]).map(b=>({...b,km:b.km?Math.max(2,Math.round(b.km*0.70)):b.km})),
-                  }))
+                ? sessionDefs.map(s=>{
+                    const newDist = Math.max(4, Math.round(s.dist*0.70));
+                    const wasSeries = s.type === 'series';
+                    const finalType = wasSeries ? 'easy' : s.type;
+                    // Desc coherente al type final + newDist
+                    let newDesc;
+                    if(wasSeries) {
+                        newDesc = `🔄 Descarga · Rodaje suave ${newDist}km a ${fmtPace(paces.easy)}/km`;
+                    } else if(finalType === 'long') {
+                        newDesc = `Long suave ${newDist}km a ${fmtPace(paces.easy)}/km · descarga`;
+                    } else if(finalType === 'recovery') {
+                        newDesc = `Recovery suave ${newDist}km · descarga`;
+                    } else {
+                        newDesc = `Rodaje fácil ${newDist}km a ${fmtPace(paces.easy)}/km · descarga`;
+                    }
+                    return {
+                        ...s,
+                        dist: newDist,
+                        type: finalType,
+                        desc: newDesc,
+                        blocks: wasSeries
+                            ? [{label:'🔄 Semana descarga',detail:`Rodaje suave ${newDist}km · recuperación activa`,color:'#4ade80',km:newDist}]
+                            : (s.blocks||[]).map(b=>({...b,km:b.km?Math.max(2,Math.round(b.km*0.70)):b.km})),
+                    };
+                  })
                 : sessionDefs;
 
             const sessions=adjustedDefs.map(s=>{
