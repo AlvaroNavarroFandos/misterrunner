@@ -911,37 +911,32 @@
         display: flex;
         align-items: center
     }/* NAV */
-    /* [v6 P.Nav → S27 F Premium → Fix glass Safari]
+    /* [v6 P.Nav → S27 F Premium → Fix glass Safari · V2 elemento real]
        Floating card nav style con glassmorphism iOS 26.
 
-       ── Problema técnico resuelto ──
-       Aplicar backdrop-filter + overflow:hidden + border-radius en el MISMO
-       elemento tiene issues conocidos en Safari iOS (y varias versiones de
-       Chromium): el backdrop-filter NO se compone y el efecto glass no
-       aparece. Referencia: el .sheet-backdrop de esta app SÍ usa
-       backdrop-filter y funciona porque NO tiene overflow:hidden.
+       ── Historia del problema ──
+       Aplicar backdrop-filter en el mismo elemento con overflow:hidden +
+       border-radius falla en Safari iOS. Intentar delegarlo a un pseudo-
+       elemento (::before) tampoco funcionó — Safari tiene issues de
+       composición con backdrop-filter en pseudo-elementos posicionados
+       detrás de hermanos con isolation:isolate. Ver:
+       https://bugs.webkit.org/show_bug.cgi?id=... (múltiples bugs abiertos).
 
-       ── Solución ──
-       Separamos las responsabilidades:
-       - #nav conserva overflow:hidden + border-radius (para recortar el
-         signature bar del activo por las esquinas redondeadas).
-       - #nav::before es el que aplica el backdrop-filter + background glass
-         (position:absolute; inset:0). Al ser pseudo-elemento sin overflow
-         propio, el backdrop-filter se compone correctamente en Safari.
-       - isolation:isolate en #nav crea un nuevo stacking context que
-         garantiza que el ::before quede por debajo de los .nb sin salirse
-         del recorte del border-radius.
-       - Los .nb usan z-index:1 para quedar por encima del ::before.
+       ── Solución garantizada ──
+       Usar un ELEMENTO HIJO REAL (<div class="nav-glass">) en lugar de
+       pseudo-elemento. Safari sí compone backdrop-filter en elementos DOM
+       reales sin problemas. El div se posiciona absolute; inset:0 y ocupa
+       todo el interior del nav.
 
        ── Diseño visual ──
-       - Fondo glass con tinte SUAVEMENTE distinto al --bg (visible aunque
-         no haya contenido detrás).
-       - blur(28px) saturate(1.8) para efecto glass evidente al scrollear.
-       - Shadow multi-capa (incluyendo top-shadow negativa) para levantar
-         el nav del contenido.
-       - Signature bar 2px gradient crimson/gold sobre el activo.
-       - Iconos V5 sizing: 26px inactivo / 30px activo, stroke 2.4/2.6.
-       - Tap feedback: scale(.93). */
+       - #nav mantiene overflow:hidden + border-radius (recorta signature bar)
+       - .nav-glass tiene el background rgba + backdrop-filter
+       - Border en light: rgba(0,0,0,.06) (visible sobre bg claro) — el
+         rgba(255,255,255,.6) anterior era invisible sobre --bg #f5f5f7
+       - Sombra reforzada para "flotabilidad" clara del nav sobre el contenido
+       - Iconos V5 sizing: 26px inactivo / 30px activo, stroke 2.4/2.6
+       - Signature bar 2px sobre el activo, gradient crimson/gold
+       - Tap feedback: scale(.93) */
     #nav {
         position: fixed;
         left: 10px;
@@ -949,12 +944,12 @@
         bottom: calc(2px + env(safe-area-inset-bottom, 0px));
         height: var(--nav-h);
         background: transparent;
-        border: 1px solid rgba(255,255,255,.6);
+        border: 1px solid rgba(0,0,0,.06);
         border-radius: 20px;
         box-shadow:
-            0 -2px 10px rgba(0,0,0,.03),
-            0 8px 24px rgba(0,0,0,.12),
-            0 2px 4px rgba(0,0,0,.06);
+            0 -3px 12px rgba(0,0,0,.04),
+            0 12px 32px rgba(0,0,0,.18),
+            0 4px 8px rgba(0,0,0,.08);
         display: flex;
         align-items: stretch;
         z-index: 9999;
@@ -964,15 +959,17 @@
     body.dark-mode #nav {
         border: 1px solid rgba(255,255,255,.10);
         box-shadow:
-            0 -2px 10px rgba(0,0,0,.15),
-            0 8px 24px rgba(0,0,0,.5),
-            0 2px 4px rgba(0,0,0,.25);
+            0 -3px 12px rgba(0,0,0,.2),
+            0 12px 32px rgba(0,0,0,.55),
+            0 4px 8px rgba(0,0,0,.3);
     }
-    /* Pseudo-elemento que aplica el backdrop-filter y el background glass.
-       Separado del contenedor para evitar el conflicto de composición con
-       overflow:hidden en Safari. */
-    #nav::before {
-        content: '';
+
+    /* [S27 Glass Fix] Elemento hijo real que aplica el glass efecto.
+       Ocupa todo el interior del #nav (position:absolute; inset:0). Los .nb
+       botones tienen z-index:1 y quedan por encima. En Safari iOS 15+ el
+       backdrop-filter en un elemento DOM real (no pseudo) se compone bien
+       aunque el padre tenga overflow:hidden. */
+    .nav-glass {
         position: absolute;
         inset: 0;
         background: rgba(250,250,252,.65);
@@ -981,7 +978,7 @@
         z-index: 0;
         pointer-events: none;
     }
-    body.dark-mode #nav::before {
+    body.dark-mode .nav-glass {
         background: rgba(28,28,30,.65);
     }
 
@@ -998,7 +995,7 @@
         padding: 6px 2px;
         min-width: 0;
         position: relative;
-        z-index: 1; /* Sobre el #nav::before glass para que iconos y labels se lean */
+        z-index: 1; /* Sobre el .nav-glass wrapper para que iconos y labels se lean */
         color: var(--tm); /* [Sesión 24] hereda a currentColor del SVG (ojos robot Míster) */
         transition: transform .15s ease, color .15s;
     }
@@ -9676,6 +9673,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         <!-- NAV -->
         <nav id="nav" style="display:none;">
+            <!-- [S27 Glass Fix] Wrapper glass real (no pseudo-elemento) para que
+                 backdrop-filter se componga correctamente en Safari iOS 15+.
+                 El pseudo-elemento ::before tenía issues de composición con
+                 overflow:hidden del padre. Un div real hijo con position:absolute
+                 crea su propio stacking context correctamente. -->
+            <div class="nav-glass"></div>
             <button class="nb" data-target="mister">
                 <div class="ni">
                     <svg viewBox="0 0 24 24">
