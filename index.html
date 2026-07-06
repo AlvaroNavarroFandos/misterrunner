@@ -911,17 +911,35 @@
         display: flex;
         align-items: center
     }/* NAV */
-    /* [v6 P.Nav → S27 F Premium → Fix glass visibility]
+    /* [v6 P.Nav → S27 F Premium → Fix glass Safari]
        Floating card nav style con glassmorphism iOS 26.
-       - Fondo semi-transparente con tinte SUAVEMENTE distinto al --bg del body
-         para que el nav siempre destaque del fondo aunque no haya contenido detrás
-         (crítico en light mode donde --bg #f5f5f7 es casi blanco puro).
-       - backdrop-filter blur(28px) saturate(1.8) para efecto glass evidente
-         cuando el contenido colorido pasa por detrás (cards oscuras, iconos, etc).
-       - Border sutil translúcido y border-radius 20px.
-       - Shadow multi-capa (incluye top-shadow negativa) para levantar el nav
-         claramente del contenido incluso cuando el blur no tiene contraste.
-       - Activo con signature bar 2px gradient crimson/gold sobre el borde superior.
+
+       ── Problema técnico resuelto ──
+       Aplicar backdrop-filter + overflow:hidden + border-radius en el MISMO
+       elemento tiene issues conocidos en Safari iOS (y varias versiones de
+       Chromium): el backdrop-filter NO se compone y el efecto glass no
+       aparece. Referencia: el .sheet-backdrop de esta app SÍ usa
+       backdrop-filter y funciona porque NO tiene overflow:hidden.
+
+       ── Solución ──
+       Separamos las responsabilidades:
+       - #nav conserva overflow:hidden + border-radius (para recortar el
+         signature bar del activo por las esquinas redondeadas).
+       - #nav::before es el que aplica el backdrop-filter + background glass
+         (position:absolute; inset:0). Al ser pseudo-elemento sin overflow
+         propio, el backdrop-filter se compone correctamente en Safari.
+       - isolation:isolate en #nav crea un nuevo stacking context que
+         garantiza que el ::before quede por debajo de los .nb sin salirse
+         del recorte del border-radius.
+       - Los .nb usan z-index:1 para quedar por encima del ::before.
+
+       ── Diseño visual ──
+       - Fondo glass con tinte SUAVEMENTE distinto al --bg (visible aunque
+         no haya contenido detrás).
+       - blur(28px) saturate(1.8) para efecto glass evidente al scrollear.
+       - Shadow multi-capa (incluyendo top-shadow negativa) para levantar
+         el nav del contenido.
+       - Signature bar 2px gradient crimson/gold sobre el activo.
        - Iconos V5 sizing: 26px inactivo / 30px activo, stroke 2.4/2.6.
        - Tap feedback: scale(.93). */
     #nav {
@@ -930,9 +948,7 @@
         right: 10px;
         bottom: calc(2px + env(safe-area-inset-bottom, 0px));
         height: var(--nav-h);
-        background: rgba(250,250,252,.65);
-        -webkit-backdrop-filter: blur(28px) saturate(1.8);
-                backdrop-filter: blur(28px) saturate(1.8);
+        background: transparent;
         border: 1px solid rgba(255,255,255,.6);
         border-radius: 20px;
         box-shadow:
@@ -943,14 +959,30 @@
         align-items: stretch;
         z-index: 9999;
         overflow: hidden;
+        isolation: isolate;
     }
     body.dark-mode #nav {
-        background: rgba(28,28,30,.65);
         border: 1px solid rgba(255,255,255,.10);
         box-shadow:
             0 -2px 10px rgba(0,0,0,.15),
             0 8px 24px rgba(0,0,0,.5),
             0 2px 4px rgba(0,0,0,.25);
+    }
+    /* Pseudo-elemento que aplica el backdrop-filter y el background glass.
+       Separado del contenedor para evitar el conflicto de composición con
+       overflow:hidden en Safari. */
+    #nav::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(250,250,252,.65);
+        -webkit-backdrop-filter: blur(28px) saturate(1.8);
+                backdrop-filter: blur(28px) saturate(1.8);
+        z-index: 0;
+        pointer-events: none;
+    }
+    body.dark-mode #nav::before {
+        background: rgba(28,28,30,.65);
     }
 
     .nb {
@@ -966,6 +998,7 @@
         padding: 6px 2px;
         min-width: 0;
         position: relative;
+        z-index: 1; /* Sobre el #nav::before glass para que iconos y labels se lean */
         color: var(--tm); /* [Sesión 24] hereda a currentColor del SVG (ojos robot Míster) */
         transition: transform .15s ease, color .15s;
     }
