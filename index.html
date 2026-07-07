@@ -3892,6 +3892,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                 </div>
 
+                <!-- [v4.3 GAP 1 UI] Evolución VDOT — fila Coros, siempre visible, abre sheet histórico -->
+                <div id="row-vdot-evolution" onclick="if(window._renderVdotHistorySheet)window._renderVdotHistorySheet();openSheet('vdot-history-sheet')" style="padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><polyline points="7 15 11 9 15 12 21 5"/></svg>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Evolución VDOT</div>
+                    </div>
+                    <div id="vdot-evolution-value" style="font-size:15.5px;font-weight:800;color:#C9A84C;letter-spacing:-.3px;font-variant-numeric:tabular-nums;margin-right:2px;">—</div>
+                    <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
+                </div>
+
                 <!-- 7. CALENTAMIENTO -->
                 <div id="row-warmup" onclick="openSheet('warmup-sheet')" style="padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
                     <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
@@ -4079,6 +4091,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 <!-- Populado dinámicamente por renderACWRSheet() -->
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- [v4.3 GAP 1 UI] VDOT RECALIB SHEET — confirmar aplicar/descartar (populado por _renderVdotRecalibSheet) -->
+                <div id="vdot-recalib-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('vdot-recalib-sheet')">
+                    <div class="sheet">
+                        <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
+                        <div class="sheet-body"><div id="vdot-recalib-sheet-body"></div></div>
+                    </div>
+                </div>
+
+                <!-- [v4.3 GAP 1 UI] VDOT HISTORY SHEET — evolución histórica (populado por _renderVdotHistorySheet) -->
+                <div id="vdot-history-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('vdot-history-sheet')">
+                    <div class="sheet">
+                        <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
+                        <div class="sheet-body"><div id="vdot-history-sheet-body"></div></div>
                     </div>
                 </div>
 
@@ -13982,6 +14010,49 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) { console.warn('[MR][GAP3] acwr:', e); return null; }
     }
 
+    // ── [v4.3 GAP 1] P8 · Regresión en test/carrera ─────────────────────
+    // Detecta cuando la última carrera/test es peor que el anterior comparable
+    // (misma distancia ±15%). Umbrales: ≥3% peor medium · ≥6% peor critical.
+    // Solo evalúa si latest está en los últimos 14 días.
+    function _detectRegressionPattern(activities, refDate) {
+        try {
+            if (!Array.isArray(activities)) return null;
+            var tests = activities.filter(function(a) {
+                return a && (a.type === 'test' || a.type === 'race')
+                    && a.dateStr && Number(a.distKm) > 0 && Number(a.durationSec) > 0;
+            }).sort(function(x, y) { return y.dateStr.localeCompare(x.dateStr); });
+            if (tests.length < 2) return null;
+            var latest = tests[0];
+            if (refDate) {
+                var d1 = new Date(latest.dateStr + 'T12:00:00').getTime();
+                var d2 = new Date(refDate + 'T12:00:00').getTime();
+                if ((d2 - d1) > 14 * 86400000) return null;
+            }
+            var latestKm = Number(latest.distKm);
+            var tolerance = latestKm * 0.15;
+            var previous = tests.slice(1).find(function(a) {
+                return Math.abs(Number(a.distKm) - latestKm) <= tolerance;
+            });
+            if (!previous) return null;
+            var latestPace = Number(latest.durationSec) / Number(latest.distKm);
+            var previousPace = Number(previous.durationSec) / Number(previous.distKm);
+            var deltaPct = ((latestPace - previousPace) / previousPace) * 100;
+            var severity = null;
+            if (deltaPct >= 6)      severity = 'critical';
+            else if (deltaPct >= 3) severity = 'medium';
+            if (!severity) return null;
+            return {
+                type: 'regression',
+                severity: severity,
+                message: 'Regresión en test/carrera (' + latestKm.toFixed(1) + 'km): pace ' +
+                         deltaPct.toFixed(1) + '% peor que el anterior (' + previous.dateStr + '). ' +
+                         (severity === 'critical' ? 'Posible sobreentrenamiento, considera descanso.' : 'Vigila la fatiga, revisa carga.'),
+                data: { deltaPct: Math.round(deltaPct * 10) / 10, latestKm: latestKm, latestDate: latest.dateStr, previousDate: previous.dateStr }
+            };
+        } catch(e) { console.warn('[MR][GAP1] regression:', e); return null; }
+    }
+    window._detectRegressionPattern = _detectRegressionPattern;
+
     // ── Wrapper: hub unificado ───────────────────────────────────────────
     // Fusiona alertas RPE (GAP 4) + sobrecarga (GAP 3) en un solo array.
     // refDate por defecto = hoy en local. analyzeRPETrends queda intacta
@@ -14002,7 +14073,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (Array.isArray(rpeAlerts)) alerts = alerts.concat(rpeAlerts);
             } catch(_){}
             // Alertas sobrecarga (5 patrones nuevos)
-            var detectors = [_detectMonotony, _detectVolumeJump, _detectNoRestStreak, _detect8020Ratio, _detectACWRZone];
+            var detectors = [_detectMonotony, _detectVolumeJump, _detectNoRestStreak, _detect8020Ratio, _detectACWRZone, _detectRegressionPattern];
             detectors.forEach(function(fn) {
                 try {
                     var a = fn(activities, refDate);
@@ -26335,7 +26406,576 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // ── PLAN GENERATION ─────────────────────────────────────────
     let generatedPlanData = null;
 
-    // ── VDOT paces: calibrated from Jack Daniels' tables ─────────
+    // ═══════════════════════════════════════════════════════════════
+    // [v4.3 GAP 1] Helpers cálculo VDOT globales para recalibración
+    // Replica vdotFrom + riegel locales de renderPredictor (L33157/L33160)
+    // para exponerlos como API pública. Se mantienen los locales para no
+    // romper el consumo actual (compat), pero cualquier código nuevo
+    // debe usar window.vdotFromResult / window._riegelProject.
+    // ═══════════════════════════════════════════════════════════════
+    function _riegelProject(secs, fromM, toM) {
+        if (!secs || !fromM || !toM || secs <= 0 || fromM <= 0 || toM <= 0) return 0;
+        return secs * Math.pow(toM / fromM, 1.06);
+    }
+    function vdotFromResult(secs, dist_m) {
+        if (!secs || !dist_m || secs <= 0 || dist_m <= 0) return 0;
+        // LUT: [maratón_minutos, VDOT] — misma que estimateVDOT y vdotFrom local
+        var tbl = [[120,85],[130,79],[140,74],[150,70],[160,66],[170,63],[180,60],
+                   [190,57],[200,55],[210,52],[220,50],[240,46],[270,41],[300,37]];
+        var mSecs = _riegelProject(secs, dist_m, 42195);
+        var t = mSecs / 60;
+        if (t < tbl[0][0]) return tbl[0][1];
+        if (t >= tbl[tbl.length-1][0]) return tbl[tbl.length-1][1];
+        for (var i = 0; i < tbl.length - 1; i++) {
+            var t0 = tbl[i][0], v0 = tbl[i][1];
+            var t1 = tbl[i+1][0], v1 = tbl[i+1][1];
+            if (t >= t0 && t < t1) return v0 + (v1 - v0) * (t - t0) / (t1 - t0);
+        }
+        return 0;
+    }
+    // Recalibra VDOT del plan según resultado real de un test/carrera.
+    // Q2=C: ratchet con umbral (|Δ|≥2) + smoothing 0.7×test + 0.3×actual.
+    // Retorna { shouldUpdate, oldVdot, newVdot, activityVdot, delta, reason }.
+    function _recalibrateVDOT(activity, plan) {
+        if (!activity || !plan) return { shouldUpdate: false, reason: 'no_input' };
+        if (activity.type !== 'test' && activity.type !== 'race') {
+            return { shouldUpdate: false, reason: 'not_test_or_race' };
+        }
+        var km   = Number(activity.distKm) || 0;
+        var secs = Number(activity.durationSec) || 0;
+        if (km <= 0 || secs <= 0) return { shouldUpdate: false, reason: 'no_dist_or_dur' };
+        if (km < 2) return { shouldUpdate: false, reason: 'too_short' };
+        var activityVdot = vdotFromResult(secs, km * 1000);
+        if (!activityVdot || activityVdot <= 0) return { shouldUpdate: false, reason: 'vdot_calc_failed' };
+        var oldVdot = Number(plan.vdot) || 0;
+        if (!oldVdot) return { shouldUpdate: false, reason: 'no_plan_vdot' };
+        var delta = activityVdot - oldVdot;
+        if (Math.abs(delta) < 2) {
+            return {
+                shouldUpdate: false,
+                reason: 'below_threshold',
+                oldVdot: oldVdot,
+                activityVdot: Math.round(activityVdot * 10) / 10,
+                delta: Math.round(delta * 10) / 10
+            };
+        }
+        var smoothed = 0.7 * activityVdot + 0.3 * oldVdot;
+        var newVdot = Math.round(smoothed);
+        return {
+            shouldUpdate: true,
+            reason: delta > 0 ? 'improved' : 'regressed',
+            oldVdot: oldVdot,
+            newVdot: newVdot,
+            activityVdot: Math.round(activityVdot * 10) / 10,
+            rawSmoothed: Math.round(smoothed * 10) / 10,
+            delta: Math.round(delta * 10) / 10
+        };
+    }
+    window.vdotFromResult    = vdotFromResult;
+    window._riegelProject    = _riegelProject;
+    window._recalibrateVDOT  = _recalibrateVDOT;
+
+    // ── Reescritor quirúrgico de paces en sesiones futuras ───────────
+    // Q3=C: actualiza plan.vdot + plan.paces + reescribe strings de pace
+    // en desc/blocks de sesiones cuya dateStr > fromDate. Respeta las
+    // pasadas, saltea type='test' y type='race' (no tienen pace target).
+    // Regex single-pass evita colisiones cuando newEasy iguala oldMarathon.
+    function _updateFuturePlanPaces(plan, newPaces, fromDate) {
+        if (!plan || !plan.weeks || !newPaces || !fromDate) return { updated: 0, weeksTouched: 0 };
+        var oldPaces = plan.paces || {};
+        var DELTAS = { easy: 15, marathon: 10, threshold: 8, interval: 5 };
+        function _fmtPaceLoc(secs) {
+            var m = Math.floor(secs/60), s = secs%60;
+            return m + "'" + String(s).padStart(2,'0') + '"';
+        }
+        function _fmtRangeLoc(secs, delta) {
+            var lo = Math.max(120, secs - delta);
+            var hi = secs + delta;
+            return _fmtPaceLoc(lo) + '\u2013' + _fmtPaceLoc(hi);
+        }
+        function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+        var replacements = [];
+        Object.keys(DELTAS).forEach(function(zone) {
+            var oldP = oldPaces[zone], newP = newPaces[zone];
+            if (!oldP || !newP || oldP === newP) return;
+            replacements.push({ from: _fmtRangeLoc(oldP, DELTAS[zone]), to: _fmtRangeLoc(newP, DELTAS[zone]) });
+            replacements.push({ from: _fmtPaceLoc(oldP), to: _fmtPaceLoc(newP) });
+        });
+        ['repeat', 'race'].forEach(function(z) {
+            if (oldPaces[z] && newPaces[z] && oldPaces[z] !== newPaces[z]) {
+                replacements.push({ from: _fmtPaceLoc(oldPaces[z]), to: _fmtPaceLoc(newPaces[z]) });
+            }
+        });
+        var paceValueMap = {};
+        ['easy','marathon','threshold','interval','repeat','race'].forEach(function(z) {
+            if (oldPaces[z] && newPaces[z]) paceValueMap[oldPaces[z]] = newPaces[z];
+        });
+        var lookup = {};
+        replacements.forEach(function(r) { lookup[r.from] = r.to; });
+        var allFrom = replacements.map(function(r) { return _escRe(r.from); });
+        var pattern = allFrom.length > 0 ? new RegExp('(' + allFrom.join('|') + ')', 'g') : null;
+        function replaceInString(s) {
+            if (!s || typeof s !== 'string' || !pattern) return s;
+            return s.replace(pattern, function(m) { return lookup[m] || m; });
+        }
+        function updateBlock(b) {
+            if (!b) return;
+            b.detail = replaceInString(b.detail);
+            if (Array.isArray(b.reps)) {
+                b.reps.forEach(function(r) { r.detail = replaceInString(r.detail); });
+            }
+        }
+        var updated = 0, weeksTouched = 0;
+        (plan.weeks || []).forEach(function(w) {
+            var wt = false;
+            (w.sessions || []).forEach(function(s) {
+                if (!s.dateStr || s.dateStr <= fromDate) return;
+                if (s.type === 'test' || s.type === 'race') return;
+                if (s.pace && paceValueMap[s.pace]) s.pace = paceValueMap[s.pace];
+                s.desc = replaceInString(s.desc);
+                (s.blocks || []).forEach(updateBlock);
+                updated++;
+                wt = true;
+            });
+            if (wt) weeksTouched++;
+        });
+        return { updated: updated, weeksTouched: weeksTouched };
+    }
+    window._updateFuturePlanPaces = _updateFuturePlanPaces;
+
+    // ── LUT inversa VDOT → goalSecs (para derivar paces desde nuevo VDOT) ─
+    // Aplica LUT inversa a maratón y luego Riegel a la distancia del plan.
+    function _goalSecsFromVDOT(vdot, planDist) {
+        var tbl = [[85,120],[79,130],[74,140],[70,150],[66,160],[63,170],[60,180],
+                   [57,190],[55,200],[52,210],[50,220],[46,240],[41,270],[37,300]];
+        if (!vdot) return 0;
+        var mMinutes;
+        if (vdot >= tbl[0][0])                 mMinutes = tbl[0][1];
+        else if (vdot <= tbl[tbl.length-1][0]) mMinutes = tbl[tbl.length-1][1];
+        else {
+            for (var i = 0; i < tbl.length - 1; i++) {
+                var v0 = tbl[i][0], t0 = tbl[i][1];
+                var v1 = tbl[i+1][0], t1 = tbl[i+1][1];
+                if (vdot <= v0 && vdot > v1) {
+                    mMinutes = t0 + (t1 - t0) * (v0 - vdot) / (v0 - v1);
+                    break;
+                }
+            }
+        }
+        if (mMinutes == null) return 0;
+        var mSecs = mMinutes * 60;
+        var distMMap = { '10k': 10000, 'half': 21097, 'marathon': 42195, 'marathon_intermediate': 42195 };
+        var distM = distMMap[planDist] || 42195;
+        return _riegelProject(mSecs, 42195, distM);
+    }
+
+    // ── Buscar recalibración pendiente ────────────────────────────────
+    // Q8=C: guard implícito vía plan.vdotHistory[i].activityId (evita reproces).
+    // Solo considera activities test/race de últimos 14 días con datos válidos.
+    function _findPendingVdotRecalibration(activities, plan) {
+        try {
+            if (!plan || !plan.vdot || !Array.isArray(activities)) return null;
+            var processedIds = (plan.vdotHistory || [])
+                .map(function(h) { return h && h.activityId; })
+                .filter(Boolean);
+            var nowMs = Date.now();
+            var candidates = activities.filter(function(a) {
+                if (!a || !a.id || processedIds.indexOf(a.id) >= 0) return false;
+                if (a.type !== 'test' && a.type !== 'race') return false;
+                if (!a.dateStr || !Number(a.distKm) || !Number(a.durationSec)) return false;
+                if (Number(a.distKm) < 2) return false;
+                var actMs = new Date(a.dateStr + 'T12:00:00').getTime();
+                var ageDays = (nowMs - actMs) / 86400000;
+                return ageDays >= 0 && ageDays <= 14;
+            }).sort(function(x, y) { return y.dateStr.localeCompare(x.dateStr); });
+            if (candidates.length === 0) return null;
+            var activity = candidates[0];
+            var result = _recalibrateVDOT(activity, plan);
+            if (!result || !result.shouldUpdate) return null;
+            return { activity: activity, result: result };
+        } catch(e) { console.warn('[MR][GAP1] findPending:', e); return null; }
+    }
+
+    // ── Aplicar recalibración ─────────────────────────────────────────
+    // Muta plan: vdot, paces (de pacesFromGoal), sesiones futuras (via
+    // _updateFuturePlanPaces), vdotHistory[]. Persiste con saveAppState si
+    // está disponible. Retorna resumen o null si falla.
+    function _applyVDOTRecalibration(plan, activity, result) {
+        try {
+            if (!plan || !activity || !result || !result.shouldUpdate) return null;
+            var newVdot = result.newVdot;
+            var planDist = plan.planDist || 'marathon';
+            var newGoalSecs = _goalSecsFromVDOT(newVdot, planDist);
+            if (!newGoalSecs || newGoalSecs <= 0) return null;
+            // pacesFromGoal está definido más adelante en mismo scope (function decl → hoisted)
+            var newPaces = (typeof pacesFromGoal === 'function')
+                ? pacesFromGoal(newGoalSecs, planDist)
+                : null;
+            if (!newPaces) return null;
+            // Fecha de corte = activity.dateStr (sesiones posteriores se reescriben)
+            var fromDate = activity.dateStr;
+            var updateResult = _updateFuturePlanPaces(plan, newPaces, fromDate);
+            // Historial
+            plan.vdotHistory = plan.vdotHistory || [];
+            plan.vdotHistory.push({
+                date: new Date().toISOString(),
+                vdot: newVdot,
+                oldVdot: result.oldVdot,
+                activityId: activity.id,
+                activityDate: activity.dateStr,
+                source: activity.type,
+                distKm: Number(activity.distKm),
+                durationSec: Number(activity.durationSec),
+                activityVdot: result.activityVdot,
+                delta: result.delta,
+                sessionsUpdated: updateResult.updated,
+                weeksTouched: updateResult.weeksTouched
+            });
+            // Mutar plan
+            plan.vdot = newVdot;
+            plan.goalSecs = Math.round(newGoalSecs);
+            plan.paces = newPaces;
+            // Persistir
+            if (typeof saveAppState === 'function') {
+                try { saveAppState(); } catch(e) { console.warn('[MR][GAP1] saveAppState:', e); }
+            }
+            return {
+                oldVdot: result.oldVdot, newVdot: newVdot,
+                delta: result.delta,
+                sessionsUpdated: updateResult.updated,
+                weeksTouched: updateResult.weeksTouched
+            };
+        } catch(e) { console.warn('[MR][GAP1] applyRecalibration:', e); return null; }
+    }
+
+    window._goalSecsFromVDOT           = _goalSecsFromVDOT;
+    window._findPendingVdotRecalibration = _findPendingVdotRecalibration;
+    window._applyVDOTRecalibration     = _applyVDOTRecalibration;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [v4.3 GAP 1 UI] Recalibración VDOT — capa de interfaz
+    //   · _previewVDOTRecalibration : dry-run NO-mutante (diff ritmos + conteo)
+    //   · _vdotRenderHomeCard       : card en Home si hay recalibración pendiente
+    //   · _renderVdotRecalibSheet   : sheet confirmar aplicar/descartar
+    //   · _applyVdotFromSheet       : aplica y refresca UI
+    //   · _updateVdotEvolutionRow   : valor + estado fila Runner (Predictor area)
+    //   · _renderVdotHistorySheet   : sheet histórico (chart SVG + eventos)
+    // Superficies vía CSS vars (--card/--tw/…) → auto claro/oscuro.
+    // Acentos VDOT en gold aprobado #C9A84C. Sin var() en atributos SVG.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Lectura defensiva del plan activo (let top-level; puede no estar en window)
+    function _vdotActivePlan() {
+        try { if (typeof activePlan !== 'undefined' && activePlan) return activePlan; } catch(_){}
+        return (window.activePlan || null);
+    }
+    // Formateadores self-contained
+    function _vdotFmtHMS(secs) {
+        secs = Math.round(Number(secs) || 0);
+        var h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+        var pad = function(n){ return String(n).padStart(2,'0'); };
+        return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (m + ':' + pad(s));
+    }
+    function _vdotDistLabel(km) {
+        km = Number(km) || 0;
+        if (Math.abs(km-5) < 0.6)  return '5K';
+        if (Math.abs(km-10) < 0.8) return '10K';
+        if (Math.abs(km-21.097) < 1.2) return 'HM';
+        if (Math.abs(km-42.195) < 2.0) return 'Maratón';
+        return (Math.round(km*10)/10) + ' km';
+    }
+    function _vdotSourceLabel(src) { return src === 'race' ? 'Carrera' : 'Test de campo'; }
+
+    // ── Preview NO-mutante (diff ritmos + conteo real de sesiones/semanas) ──
+    function _previewVDOTRecalibration(plan, activity, result) {
+        try {
+            if (!plan || !activity || !result || !result.shouldUpdate) return null;
+            var newVdot = result.newVdot;
+            var planDist = plan.planDist || 'marathon';
+            var newGoalSecs = _goalSecsFromVDOT(newVdot, planDist);
+            if (!newGoalSecs || newGoalSecs <= 0) return null;
+            var newPaces = (typeof pacesFromGoal === 'function') ? pacesFromGoal(newGoalSecs, planDist) : null;
+            if (!newPaces) return null;
+            var oldPaces = plan.paces || {};
+            var fromDate = activity.dateStr;
+            var sessions = 0, weeks = 0;
+            (plan.weeks || []).forEach(function(w){
+                var wt = false;
+                (w.sessions || []).forEach(function(s){
+                    if (!s.dateStr || s.dateStr <= fromDate) return;
+                    if (s.type === 'test' || s.type === 'race') return;
+                    sessions++; wt = true;
+                });
+                if (wt) weeks++;
+            });
+            var zones = [['easy','Easy'],['marathon','Maratón'],['threshold','Umbral'],['interval','Intervalo']];
+            var paceRows = zones.map(function(z){
+                var k = z[0];
+                var ov = oldPaces[k], nv = newPaces[k];
+                var o = (ov!=null && typeof fmtPace==='function') ? fmtPace(ov) : '—';
+                var n = (nv!=null && typeof fmtPace==='function') ? fmtPace(nv) : '—';
+                return { label:z[1], old:o, 'new':n, changed:(ov!==nv), faster:(nv!=null && ov!=null && nv < ov) };
+            });
+            return {
+                oldVdot: result.oldVdot, newVdot: newVdot, delta: result.delta, reason: result.reason,
+                paceRows: paceRows, sessionsToUpdate: sessions, weeksToTouch: weeks
+            };
+        } catch(e){ console.warn('[MR][GAP1] preview:', e); return null; }
+    }
+    window._previewVDOTRecalibration = _previewVDOTRecalibration;
+
+    // Estado del sheet de confirmación (qué se aplica al pulsar Aplicar)
+    var _vdotPendingSheet = null;
+
+    // ── Card en Home (si hay recalibración pendiente) ──────────────────
+    function _vdotRenderHomeCard(container, acts, plan) {
+        try {
+            if (!container) return;
+            plan = plan || _vdotActivePlan();
+            acts = acts || (typeof window._getActivities === 'function' ? window._getActivities() : []);
+            if (typeof window._findPendingVdotRecalibration !== 'function') return;
+            var pending = window._findPendingVdotRecalibration(acts, plan);
+            if (!pending || !pending.result || !pending.result.shouldUpdate) return;
+            var r = pending.result, a = pending.activity;
+            var improved = r.reason === 'improved';
+            var col = improved ? '#22c55e' : '#f59e0b';
+            var colDark = improved ? '#16a34a' : '#d97706';
+            var tag = improved ? 'VDOT en alza' : 'Recalibración a la baja';
+            var title = improved ? 'Nueva marca detectada' : 'Tu test pide ajustar el plan';
+            var icon = improved
+                ? '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="'+col+'" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>'
+                : '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="'+col+'" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 7 9 13 13 9 21 17"/><polyline points="14 17 21 17 21 10"/></svg>';
+            var sub = _vdotDistLabel(a.distKm) + ' ' + _vdotFmtHMS(a.durationSec)
+                    + ' · sugiere VDOT <b style="color:var(--tw);font-weight:700;">' + r.newVdot + '</b> '
+                    + '<span style="opacity:.6;">(era ' + r.oldVdot + ')</span>';
+            var card = document.createElement('div');
+            card.style.cssText = 'position:relative;overflow:hidden;background:var(--card);border-radius:16px;padding:13px 15px;border:1px solid var(--border);display:flex;align-items:center;gap:13px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04),0 6px 16px rgba(0,0,0,.05);';
+            card.innerHTML =
+                '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(135deg,'+col+','+colDark+');"></div>'
+              + '<div style="width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:linear-gradient(145deg,'+col+'38,'+col+'17);border:1px solid '+col+'59;box-shadow:0 4px 12px '+col+'2e;">'+icon+'</div>'
+              + '<div style="flex:1;min-width:0;">'
+              +   '<div style="font-size:9.5px;text-transform:uppercase;letter-spacing:1.2px;font-weight:800;color:'+col+';margin-bottom:3px;">'+tag+'</div>'
+              +   '<div style="font-size:14.5px;font-weight:700;color:var(--tw);line-height:1.3;margin-bottom:2px;letter-spacing:-.2px;">'+title+'</div>'
+              +   '<div style="font-size:11.5px;color:var(--ts);line-height:1.4;">'+sub+'</div>'
+              + '</div>'
+              + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--tm);opacity:.55;flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>';
+            card.onclick = function(){
+                _vdotPendingSheet = { plan: plan, activity: a, result: r };
+                if (typeof window._renderVdotRecalibSheet === 'function') window._renderVdotRecalibSheet();
+                if (typeof openSheet === 'function') openSheet('vdot-recalib-sheet');
+            };
+            container.appendChild(card);
+        } catch(e){ console.warn('[MR][GAP1] renderHomeCard:', e); }
+    }
+    window._vdotRenderHomeCard = _vdotRenderHomeCard;
+
+    // ── Sheet confirmación (aplicar/descartar) ─────────────────────────
+    function _renderVdotRecalibSheet() {
+        var body = document.getElementById('vdot-recalib-sheet-body');
+        if (!body) return;
+        var ps = _vdotPendingSheet;
+        if (!ps || !ps.plan || !ps.activity || !ps.result) {
+            body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--ts);font-size:13px;">No hay recalibración pendiente.</div>';
+            return;
+        }
+        var prev = window._previewVDOTRecalibration(ps.plan, ps.activity, ps.result);
+        if (!prev) {
+            body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--ts);font-size:13px;">No se pudo calcular la previsualización.</div>';
+            return;
+        }
+        var a = ps.activity;
+        var up = prev.newVdot >= prev.oldVdot;
+        var accent = up ? '#22c55e' : '#f59e0b';
+        var glowRgba = up ? 'rgba(34,197,94,.12)' : 'rgba(245,158,11,.12)';
+        var deltaBg  = up ? 'linear-gradient(135deg,rgba(34,197,94,.20),rgba(34,197,94,.10))' : 'linear-gradient(135deg,rgba(245,158,11,.20),rgba(245,158,11,.10))';
+        var deltaBd  = up ? 'rgba(34,197,94,.30)' : 'rgba(245,158,11,.30)';
+        var btnGrad  = up ? 'linear-gradient(135deg,#16a34a,#22c55e)' : 'linear-gradient(135deg,#d97706,#f59e0b)';
+        var btnShadow= up ? 'rgba(34,197,94,.28)' : 'rgba(245,158,11,.28)';
+        var deltaN = prev.newVdot - prev.oldVdot;
+        var actDate = a.dateStr ? new Date(a.dateStr+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'}) : '';
+        var paceRowsHtml = prev.paceRows.map(function(pr){
+            var acol = pr.faster ? '#22c55e' : '#f59e0b';
+            var arrow = pr.changed
+                ? (pr.faster
+                    ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>'
+                    : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>')
+                : '';
+            var newStyle = pr.changed ? ('color:'+acol+';font-weight:800;') : 'color:var(--ts);';
+            var oldStyle = pr.changed ? 'color:var(--tm);text-decoration:line-through;text-decoration-thickness:1px;' : 'color:var(--ts);';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-top:1px solid var(--border);">'
+                 +   '<span style="font-size:12.5px;color:var(--tw);font-weight:600;">'+pr.label+'</span>'
+                 +   '<span style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-variant-numeric:tabular-nums;">'
+                 +     '<span style="'+oldStyle+'">'+pr.old+'</span>'+arrow+'<span style="'+newStyle+'">'+pr['new']+'</span>'
+                 +   '</span>'
+                 + '</div>';
+        }).join('');
+        body.innerHTML =
+            '<div style="font-size:21px;font-weight:800;color:var(--tw);text-align:center;margin-bottom:6px;letter-spacing:-.6px;">Recalibrar plan</div>'
+          + '<div style="font-size:12px;color:var(--ts);text-align:center;margin-bottom:24px;line-height:1.5;">Tu '+_vdotDistLabel(a.distKm)+' del '+actDate+' ('+_vdotFmtHMS(a.durationSec)+')<br>sugiere ajustar tus ritmos objetivo</div>'
+          + '<div style="position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;gap:22px;padding:22px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
+          +   '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(130px 90px at 72% 45%,'+glowRgba+',transparent 70%);"></div>'
+          +   '<div style="text-align:center;position:relative;z-index:1;"><div style="font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:6px;">Antes</div><div style="font-size:36px;font-weight:800;color:var(--tm);line-height:1;letter-spacing:-1.5px;font-variant-numeric:tabular-nums;">'+prev.oldVdot+'</div></div>'
+          +   '<div style="display:flex;align-items:center;color:var(--tm);opacity:.5;z-index:1;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></div>'
+          +   '<div style="text-align:center;position:relative;z-index:1;"><div style="font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:6px;">Nuevo</div><div style="font-size:36px;font-weight:800;color:'+accent+';line-height:1;letter-spacing:-1.5px;font-variant-numeric:tabular-nums;">'+prev.newVdot+'</div>'
+          +     '<div style="display:inline-flex;align-items:center;gap:3px;padding:4px 10px;background:'+deltaBg+';border:1px solid '+deltaBd+';color:'+accent+';border-radius:999px;font-size:11px;font-weight:800;margin-top:8px;font-variant-numeric:tabular-nums;">'+(deltaN>0?'+':'')+deltaN+' pts</div>'
+          +   '</div>'
+          + '</div>'
+          + '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:6px 16px;margin-bottom:16px;">'
+          +   '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;padding:10px 0 8px;">Ritmos objetivo · /km</div>'
+          +   '<div class="mr-vdot-paces">'+paceRowsHtml+'</div>'
+          + '</div>'
+          + '<div style="display:flex;align-items:flex-start;gap:9px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.22);border-radius:12px;padding:11px 13px;font-size:11.5px;color:var(--tw);line-height:1.5;margin-bottom:20px;">'
+          +   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+          +   '<span>Se actualizarán <b>'+prev.sessionsToUpdate+' sesiones futuras</b>'+(prev.weeksToTouch>0?(' en '+prev.weeksToTouch+' semana'+(prev.weeksToTouch===1?'':'s')):'')+' del plan. Las sesiones pasadas y tests programados no se tocan.</span>'
+          + '</div>'
+          + '<div style="display:flex;gap:10px;">'
+          +   '<button onclick="closeSheet(\'vdot-recalib-sheet\')" style="flex:1;border:1px solid var(--border);border-radius:13px;padding:14px;font-family:var(--f);font-size:13.5px;font-weight:700;cursor:pointer;background:transparent;color:var(--tm);">Descartar</button>'
+          +   '<button onclick="window._applyVdotFromSheet()" style="flex:1;border:none;border-radius:13px;padding:14px;font-family:var(--f);font-size:13.5px;font-weight:700;cursor:pointer;color:#fff;background:'+btnGrad+';box-shadow:0 6px 16px '+btnShadow+';letter-spacing:-.2px;">Aplicar cambios</button>'
+          + '</div>';
+        var firstRow = body.querySelector('.mr-vdot-paces > div:first-child');
+        if (firstRow) firstRow.style.borderTop = 'none';
+    }
+    window._renderVdotRecalibSheet = _renderVdotRecalibSheet;
+
+    // ── Aplicar desde el sheet ─────────────────────────────────────────
+    function _applyVdotFromSheet() {
+        try {
+            var ps = _vdotPendingSheet;
+            if (!ps || typeof window._applyVDOTRecalibration !== 'function') return;
+            var summary = window._applyVDOTRecalibration(ps.plan, ps.activity, ps.result);
+            if (summary) {
+                if (typeof showToast === 'function') showToast('VDOT actualizado: '+summary.oldVdot+' \u2192 '+summary.newVdot+' \u00b7 '+summary.sessionsUpdated+' sesiones ajustadas', 4000);
+                _vdotPendingSheet = null;
+                if (typeof closeSheet === 'function') closeSheet('vdot-recalib-sheet');
+                if (typeof window._updateVdotEvolutionRow === 'function') window._updateVdotEvolutionRow();
+                if (typeof renderHome === 'function') renderHome();
+            } else {
+                if (typeof showToast === 'function') showToast('No se pudo aplicar la recalibración', 3000);
+            }
+        } catch(e){ console.warn('[MR][GAP1] applyFromSheet:', e); }
+    }
+    window._applyVdotFromSheet = _applyVdotFromSheet;
+
+    // ── Fila Runner "Evolución VDOT": valor (siempre visible) ──────────
+    function _updateVdotEvolutionRow() {
+        try {
+            var el = document.getElementById('vdot-evolution-value');
+            if (!el) return;
+            var plan = _vdotActivePlan();
+            el.textContent = (plan && plan.vdot != null) ? plan.vdot : '\u2014';
+        } catch(_){}
+    }
+    window._updateVdotEvolutionRow = _updateVdotEvolutionRow;
+
+    // ── Sheet histórico VDOT (chart SVG generado + eventos) ────────────
+    function _renderVdotHistorySheet() {
+        var body = document.getElementById('vdot-history-sheet-body');
+        if (!body) return;
+        var plan = _vdotActivePlan();
+        var hist = (plan && Array.isArray(plan.vdotHistory)) ? plan.vdotHistory.slice() : [];
+        var cardBg = '';
+        try { cardBg = (getComputedStyle(document.body).getPropertyValue('--card')||'').trim(); } catch(_){}
+        if (!cardBg) cardBg = document.body.classList.contains('dark-mode') ? '#0f0f11' : '#ffffff';
+        var closeBtn = '<button onclick="closeSheet(\'vdot-history-sheet\')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;position:absolute;top:0;right:0;">\u2715</button>';
+        var header = '<div style="position:relative;margin-bottom:6px;"><div style="font-size:21px;font-weight:800;color:var(--tw);text-align:center;letter-spacing:-.6px;padding:0 42px;">Evolución de tu VDOT</div>'+closeBtn+'</div>'
+                   + '<div style="font-size:12px;color:var(--ts);text-align:center;margin-bottom:24px;line-height:1.5;">Cada test o carrera refina tu VDOT<br>y ajusta los ritmos del plan</div>';
+        if (!plan || plan.vdot == null) {
+            body.innerHTML = header
+              + '<div style="padding:16px 16px 32px;text-align:center;">'
+              +   '<div style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">Sin plan activo.</div>'
+              +   '<div style="font-size:12.5px;color:var(--ts);line-height:1.6;">Crea un plan con el generador para ver aquí la evolución de tu VDOT tras cada test o carrera.</div>'
+              + '</div>';
+            return;
+        }
+        if (hist.length === 0) {
+            body.innerHTML = header
+              + '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:8px;">'
+              +   '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
+              +   '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
+              +   '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+plan.vdot+'</div>'
+              + '</div>'
+              + '<div style="padding:20px 16px 8px;text-align:center;font-size:12.5px;color:var(--ts);line-height:1.6;">Aún no hay recalibraciones.<br>Registra un <b style="color:var(--tw);">test</b> o una <b style="color:var(--tw);">carrera</b> y tu VDOT se refinará automáticamente, apareciendo aquí su evolución.</div>';
+            return;
+        }
+        // Serie: baseline (oldVdot del primer evento) + vdot de cada evento
+        var series = [Number(hist[0].oldVdot) || Number(hist[0].vdot)];
+        hist.forEach(function(h){ series.push(Number(h.vdot)); });
+        var baseline = series[0];
+        var current = plan.vdot;
+        var trend = current - baseline;
+        var W = 320, H = 148, padL = 10, padR = 22, padT = 14, padB = 22;
+        var n = series.length;
+        var minV = Math.min.apply(null, series), maxV = Math.max.apply(null, series);
+        if (maxV === minV) { maxV = minV + 1; minV = minV - 1; }
+        function xAt(i){ return padL + (W - padL - padR) * (n>1 ? i/(n-1) : 0); }
+        function yAt(v){ return padT + (H - padT - padB) * (1 - (v - minV)/(maxV - minV)); }
+        var pts = series.map(function(v,i){ return xAt(i).toFixed(1)+','+yAt(v).toFixed(1); });
+        var lineStr = pts.join(' ');
+        var areaStr = 'M'+pts[0]+' L'+pts.slice(1).join(' L')+' L'+xAt(n-1).toFixed(1)+','+(H-padB+10)+' L'+xAt(0).toFixed(1)+','+(H-padB+10)+' Z';
+        var dots = series.map(function(v,i){
+            var cx = xAt(i).toFixed(1), cy = yAt(v).toFixed(1);
+            if (i === n-1) {
+                return '<circle cx="'+cx+'" cy="'+cy+'" r="9" fill="#C9A84C" fill-opacity="0.18"/>'
+                     + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="#C9A84C"/>'
+                     + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="none" stroke="'+cardBg+'" stroke-width="2"/>';
+            }
+            return '<circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="#C9A84C"/>';
+        }).join('');
+        var lx = xAt(n-1), ly = yAt(series[n-1]);
+        var bw = 40;
+        var bubbleX = Math.max(2, Math.min(lx - bw/2, W - bw - 2));
+        var bubbleY = Math.max(2, ly - 30);
+        var chart = '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:16px 14px 10px;margin-bottom:20px;">'
+                  + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin-bottom:10px;padding-left:2px;">Progresión</div>'
+                  + '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:148px;display:block;overflow:visible;">'
+                  +   '<defs><linearGradient id="vdotAreaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#C9A84C" stop-opacity="0.28"/><stop offset="100%" stop-color="#C9A84C" stop-opacity="0"/></linearGradient>'
+                  +   '<filter id="vdotLineGlow" x="-20%" y="-40%" width="140%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#C9A84C" flood-opacity="0.45"/></filter></defs>'
+                  +   '<line x1="0" y1="'+padT+'" x2="'+W+'" y2="'+padT+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                  +   '<line x1="0" y1="'+((padT+H-padB)/2).toFixed(0)+'" x2="'+W+'" y2="'+((padT+H-padB)/2).toFixed(0)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                  +   '<line x1="0" y1="'+(H-padB)+'" x2="'+W+'" y2="'+(H-padB)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                  +   '<path d="'+areaStr+'" fill="url(#vdotAreaGrad)"/>'
+                  +   '<polyline points="'+lineStr+'" fill="none" stroke="#C9A84C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#vdotLineGlow)"/>'
+                  +   dots
+                  +   '<g><rect x="'+bubbleX.toFixed(1)+'" y="'+bubbleY.toFixed(1)+'" width="'+bw+'" height="21" rx="10.5" fill="'+cardBg+'" stroke="rgba(201,168,76,.5)" stroke-width="1"/><text x="'+(bubbleX+bw/2).toFixed(1)+'" y="'+(bubbleY+14.5).toFixed(1)+'" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12" font-weight="800" fill="#C9A84C">'+current+'</text></g>'
+                  + '</svg></div>';
+        var trendColor = trend >= 0 ? '#22c55e' : '#f59e0b';
+        var trendIcon = trend >= 0
+            ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>'
+            : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>';
+        var hero = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
+                 + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
+                 + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
+                 + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
+                 + '<div style="position:relative;z-index:1;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:'+trendColor+';font-weight:700;margin-top:8px;font-variant-numeric:tabular-nums;">'+trendIcon+(trend>=0?'+':'')+trend+' vs. inicio del plan</div>'
+                 + '</div>';
+        var evHtml = hist.slice().reverse().map(function(h){
+            var d = Number(h.vdot) - Number(h.oldVdot);
+            var up = d >= 0;
+            var col = up ? '#22c55e' : '#f59e0b';
+            var colDark = up ? '#16a34a' : '#d97706';
+            var dateTxt = (h.activityDate ? new Date(h.activityDate+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}) : '') + ' \u00b7 ' + _vdotSourceLabel(h.source);
+            var titleTxt = _vdotDistLabel(h.distKm) + ' ' + _vdotFmtHMS(h.durationSec);
+            return '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
+                 + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(135deg,'+col+','+colDark+');"></div>'
+                 + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;font-variant-numeric:tabular-nums;">'+titleTxt+'</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">'+dateTxt+'</div></div>'
+                 + '<div style="font-size:14px;font-weight:800;color:'+col+';font-variant-numeric:tabular-nums;">'+(up?'+':'')+d+'</div>'
+                 + '</div>';
+        }).join('');
+        var baseRow = '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
+                    + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:rgba(128,128,128,.35);"></div>'
+                    + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;">VDOT inicial</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">Inicio del plan</div></div>'
+                    + '<div style="font-size:10px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:1px;font-variant-numeric:tabular-nums;">Base '+baseline+'</div>'
+                    + '</div>';
+        body.innerHTML = header + hero + chart
+                       + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin:8px 4px 12px;">Eventos</div>'
+                       + evHtml + baseRow;
+    }
+    window._renderVdotHistorySheet = _renderVdotHistorySheet;
+    // ═══════════════ fin [v4.3 GAP 1 UI] ═══════════════
+
+
+
+        // ── VDOT paces: calibrated from Jack Daniels' tables ─────────
     function estimateVDOT(goalTimeSecs) {
         // Marathon VDOT lookup [minutes, vdot]
         const tbl=[[120,85],[130,79],[140,74],[150,70],[160,66],[170,63],[180,60],[190,57],[200,55],[210,52],[220,50],[240,46],[270,41],[300,37]];
@@ -33756,7 +34396,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         volume_jump: 'Salto volumen',
                         no_rest:     'Sin descanso',
                         polarized:   '80/20 roto',
-                        acwr:        'ACWR'
+                        acwr:        'ACWR',
+                        // [v4.3 GAP 1] Regresión post-test/carrera
+                        regression:  'Regresión'
                     };
                     var alertCard = document.createElement('div');
                     alertCard.style.cssText = 'background:var(--card);border-radius:14px;padding:12px 14px;border:1px solid var(--border);display:flex;flex-direction:column;gap:10px;';
@@ -33795,6 +34437,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
         } catch(e) { console.warn('[MR][GAP3] renderHome training alerts:', e); }
+
+        // ── 0a-bis. [v4.3 GAP 1 UI] VDOT RECALIBRATION CARD + fila Runner ──
+        // Pinta card solo si hay recalibración pendiente (test/race reciente
+        // no procesada con |Δ|≥2 VDOT). Refresca el valor de la fila Runner.
+        try {
+            if (typeof window._vdotRenderHomeCard === 'function') {
+                window._vdotRenderHomeCard(container, activities, activePlan);
+            }
+            if (typeof window._updateVdotEvolutionRow === 'function') {
+                window._updateVdotEvolutionRow();
+            }
+        } catch(e) { console.warn('[MR][GAP1] renderHome vdot card:', e); }
 
         // ── 0b. REHAB PROGRESS CARD (top, like running plan) ─────────
         if(activeRehabPlan && activeRehabPlan.status==='active') {
@@ -42291,6 +42945,104 @@ window.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // ─── [v4.3 GAP 1] Grupo VDOT — recalibración automática + UI ───────
+    function _testVdotHelpersPresent() {
+        var required = [
+            'vdotFromResult', '_recalibrateVDOT', '_findPendingVdotRecalibration',
+            '_applyVDOTRecalibration', '_previewVDOTRecalibration', '_goalSecsFromVDOT',
+            '_updateFuturePlanPaces', '_detectRegressionPattern',
+            '_vdotRenderHomeCard', '_renderVdotRecalibSheet', '_renderVdotHistorySheet',
+            '_updateVdotEvolutionRow', '_applyVdotFromSheet'
+        ];
+        var missing = required.filter(function(n){ return typeof window[n] !== 'function'; });
+        return {
+            name: 'vdot.helpers',
+            ok: missing.length === 0,
+            info: missing.length === 0
+                ? '13 funciones presentes (8 lógica + 5 UI)'
+                : 'FALTAN en window: ' + missing.join(', ')
+        };
+    }
+
+    function _testVdotPreviewLogic() {
+        try {
+            if (typeof window._previewVDOTRecalibration !== 'function') {
+                return { name:'vdot.preview', ok:false, info:'_previewVDOTRecalibration no en window' };
+            }
+            var plan = {
+                vdot: 50, planDist: 'marathon',
+                paces: { easy:330, marathon:298, threshold:277, interval:250, repeat:235, race:270 },
+                weeks: [{ sessions: [
+                    { dateStr:'2026-02-01', type:'easy' },   // futura no-test → cuenta
+                    { dateStr:'2026-02-03', type:'test' },   // futura test    → NO cuenta
+                    { dateStr:'2025-12-01', type:'easy' }    // pasada          → NO cuenta
+                ]}]
+            };
+            var activity = { id:'t1', dateStr:'2026-01-01', type:'race', distKm:21.097, durationSec:5700 };
+            var result = { shouldUpdate:true, reason:'improved', oldVdot:50, newVdot:54, delta:4, activityVdot:54 };
+            var prev = window._previewVDOTRecalibration(plan, activity, result);
+            var failures = [];
+            if (!prev) failures.push('preview null');
+            else {
+                if (!Array.isArray(prev.paceRows) || prev.paceRows.length !== 4) failures.push('paceRows != 4');
+                if (prev.newVdot !== 54) failures.push('newVdot != 54');
+                if (prev.sessionsToUpdate !== 1) failures.push('sessionsToUpdate != 1 (obtenido ' + (prev && prev.sessionsToUpdate) + ')');
+                if (prev.weeksToTouch !== 1) failures.push('weeksToTouch != 1');
+                if (prev.paceRows && prev.paceRows[0] && typeof prev.paceRows[0]['new'] !== 'string') failures.push('paceRows[].new no string');
+            }
+            return {
+                name: 'vdot.preview',
+                ok: failures.length === 0,
+                info: failures.length === 0
+                    ? 'preview OK (4 paceRows · 1 sesión/1 semana · skip test+pasada)'
+                    : failures.join(' · ')
+            };
+        } catch(e) { return { name:'vdot.preview', ok:false, info:'EXCEPCIÓN: ' + e.message }; }
+    }
+
+    function _testVdotUIPresence() {
+        var ids = ['vdot-recalib-sheet', 'vdot-recalib-sheet-body', 'vdot-history-sheet', 'vdot-history-sheet-body', 'row-vdot-evolution', 'vdot-evolution-value'];
+        var missing = ids.filter(function(id){ return !document.getElementById(id); });
+        return {
+            name: 'vdot.ui',
+            ok: missing.length === 0,
+            info: missing.length === 0
+                ? '6 nodos DOM presentes (2 sheets + bodies + fila Runner + valor)'
+                : 'FALTAN nodos: ' + missing.join(', ')
+        };
+    }
+
+    function _testVdotOrchestrator() {
+        try {
+            if (typeof window._recalibrateVDOT !== 'function' || typeof window._findPendingVdotRecalibration !== 'function') {
+                return { name:'vdot.orchestrator', ok:false, info:'orquestadores no en window' };
+            }
+            var failures = [];
+            var plan = { vdot: 50, planDist: 'half', paces: { easy:330, marathon:298, threshold:277, interval:250, repeat:235, race:270 }, weeks: [], vdotHistory: [] };
+            // (a) mejora clara: HM 1:25 con vdot base 50 → shouldUpdate improved
+            var strong = { id:'a1', type:'race', distKm:21.097, durationSec:5100 };
+            var r1 = window._recalibrateVDOT(strong, plan);
+            if (!r1 || r1.shouldUpdate !== true || r1.reason !== 'improved') failures.push('mejora no detectada (' + JSON.stringify(r1) + ')');
+            if (r1 && (typeof r1.newVdot !== 'number' || r1.newVdot <= 50)) failures.push('newVdot no coherente');
+            // (b) findPending con activity reciente no procesada → objeto
+            var today = new Date().toISOString().slice(0,10);
+            var acts = [{ id:'a2', type:'race', distKm:21.097, durationSec:5100, dateStr: today }];
+            var pending = window._findPendingVdotRecalibration(acts, plan);
+            if (!pending || !pending.activity || !pending.result) failures.push('findPending no devuelve pendiente para test fresco');
+            // (c) guard: misma activity ya en vdotHistory → null
+            var plan2 = { vdot: 50, planDist: 'half', paces: plan.paces, weeks: [], vdotHistory: [{ activityId:'a2', vdot:54, oldVdot:50 }] };
+            var pending2 = window._findPendingVdotRecalibration(acts, plan2);
+            if (pending2 !== null) failures.push('guard vdotHistory no filtra activity procesada');
+            return {
+                name: 'vdot.orchestrator',
+                ok: failures.length === 0,
+                info: failures.length === 0
+                    ? 'end-to-end OK (mejora improved · findPending fresco · guard vdotHistory)'
+                    : failures.join(' · ')
+            };
+        } catch(e) { return { name:'vdot.orchestrator', ok:false, info:'EXCEPCIÓN: ' + e.message }; }
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent, _testStravaAutoImportRealtimePresent],
@@ -42312,7 +43064,9 @@ window.addEventListener('DOMContentLoaded', function() {
         // [v4.1 GAP 2] Grupo ACWR — detección de fatiga por Acute:Chronic ratio
         acwr:    [_testAcwrHelpersPresent, _testAcwrLogic, _testAcwrDomPresent],
         // [v4.2 GAP 3] Grupo Overload — 5 patrones sobrecarga + hub unificado
-        overload:[_testOverloadHelpersPresent, _testOverloadLogic, _testOverloadHubIntegration]
+        overload:[_testOverloadHelpersPresent, _testOverloadLogic, _testOverloadHubIntegration],
+        // [v4.3 GAP 1] Grupo VDOT — recalibración automática + capa UI
+        vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator]
     };
 
     window.__mrSmoke = function(group) {
