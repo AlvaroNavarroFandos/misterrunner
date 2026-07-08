@@ -14041,7 +14041,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (Array.isArray(rpeAlerts)) alerts = alerts.concat(rpeAlerts);
             } catch(_){}
             // Alertas sobrecarga (5 patrones nuevos)
+            // [v5.5 SKIP] 7º detector: patrón de sesiones saltadas (long_streak + quality_streak)
             var detectors = [_detectMonotony, _detectVolumeJump, _detectNoRestStreak, _detect8020Ratio, _detectACWRZone, _detectRegressionPattern];
+            if (typeof window._detectSkipPattern === 'function') detectors.push(window._detectSkipPattern);
             detectors.forEach(function(fn) {
                 try {
                     var a = fn(activities, refDate);
@@ -30263,6 +30265,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 outerWrap.dataset.sessDate = sess.dateStr;
                 outerWrap.dataset.weekIdx = weekIdx;
 
+                // [v5.5 SKIP · Q9=B] Estado saltado: solo barra lateral + strikethrough + badge, SIN tinte.
+                // Prevalece sobre matched (una sesión saltada no puede estar completada).
+                const _isSkipped = !!sess.skipped;
+                const _skipReasonObj = _isSkipped && typeof window._skipReasonById === 'function'
+                    ? window._skipReasonById(sess.skipReason) : null;
+                const _skipCol = _isSkipped && typeof window._skipReasonColor === 'function'
+                    ? window._skipReasonColor(sess.skipReason) : '#6b7280';
+
                 // ─── Card: fila comprimida ─── (will contain header + collapsable detail)
                 // [Plan HOY V4] Background condicional:
                 //   - HOY: tinta gradient marcado 0.15→0.04→transparent (más notable)
@@ -30276,13 +30286,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const card = document.createElement('div');
                 card.style.cssText = `position:relative;z-index:1;background:${_cardBg};opacity:${_cardOpacity};`;
 
-                // Barra lateral 3px del color de la sesión (navy running / dorado strength / verde si completado)
-                const _sideBarCol = matched
-                    ? '#22c55e'
-                    : (_isStrengthCard
-                        ? 'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)'
-                        : 'linear-gradient(180deg,#1a3055 0%,#12233a 100%)');
-                const _useGradient = !matched;
+                // Barra lateral 3px del color de la sesión (navy running / dorado strength / verde si completado / motivo si skipped)
+                // [v5.5 SKIP] Prioridad: skipped > matched > default
+                const _sideBarCol = _isSkipped
+                    ? _skipCol
+                    : (matched
+                        ? '#22c55e'
+                        : (_isStrengthCard
+                            ? 'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)'
+                            : 'linear-gradient(180deg,#1a3055 0%,#12233a 100%)'));
+                const _useGradient = !matched && !_isSkipped;
 
                 // Day date: solo en la primera sesión del día
                 const _showDate = sessIdx === 0;
@@ -30323,8 +30336,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Chevron (rotará al expandir)
                 const _chev = `<svg class="mr-day-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round" style="flex-shrink:0;transition:transform .2s;"><polyline points="9 18 15 12 9 6"/></svg>`;
 
-                // Check badge (completado)
-                const _checkBadge = matched
+                // Check badge (completado) — oculto si skipped (prioridad al estado saltada)
+                const _checkBadge = (matched && !_isSkipped)
                     ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>`
                     : '';
 
@@ -30332,10 +30345,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _sideBarStyle = `position:absolute;left:0;top:0;bottom:0;width:3px;${_useGradient?'background:'+_sideBarCol:'background:'+_sideBarCol};`;
 
                 // [v6 P.Plan] HTML del detail corto:
+                // - [v5.5 SKIP · Q10=A] Si skipped: badge del motivo (reemplaza al desc/stats)
                 // - Si __REAL__ (completado): stats reales en bold verde con separadores
                 // - Si texto normal: detail estándar
                 let _detailHTML = '';
-                if (_detailShort === '__REAL__') {
+                if (_isSkipped && _skipReasonObj) {
+                    _detailHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:5px;color:${_skipCol};background:${_skipCol}1a;border:1px solid ${_skipCol}47;">`
+                        + `<span style="font-size:10px;">${_skipReasonObj.emoji}</span>${_skipReasonObj.label}`
+                        + `</span>`;
+                } else if (_detailShort === '__REAL__') {
                     _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">`
                         + `<b style="color:#22c55e;font-weight:700;">${_realKm} km</b>`
                         + `<span style="color:var(--tm);">·</span>`
@@ -30360,7 +30378,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   Fila 2: desc/resumen SIEMPRE debajo (aunque quepa en la 1)
                     + `<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;">`
                     +   `<div style="display:flex;align-items:center;gap:7px;">`
-                    +     `<span style="font-size:11px;font-weight:800;color:${_typeCol};text-transform:uppercase;letter-spacing:1px;display:inline-flex;align-items:center;">${_typeLabelText}</span>`
+                    +     `<span style="font-size:11px;font-weight:800;color:${_typeCol};text-transform:uppercase;letter-spacing:1px;display:inline-flex;align-items:center;${_isSkipped?'text-decoration:line-through;text-decoration-color:var(--tm);text-decoration-thickness:1.5px;opacity:.72;':''}">${_typeLabelText}</span>`
                     // [FASE 6 prep · Plan premium] Pill V4 tinted:
                     //   - fondo blanco con sombra interna suave
                     //   - borde fino del color del workout (~40-45% alpha)
@@ -30530,8 +30548,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // vibración háptica al disparar + bloqueo total de selección de texto.
                 // Si el usuario hace gesto horizontal claro → abortar long-press
                 // SIN transición de scale-up para no interferir con swipe entre pestañas.
-                const _canMove = isCurrentWeek && sess.type !== 'race';
-                if (_headerEl && _canMove) {
+                // [v5.5 SKIP · Q5=B] Long-press activo en todas las semanas (no solo actual).
+                // El sheet decide qué acciones exponer según estado (matched/skipped/futura).
+                // Race sigue excluida: no se salta, no se mueve, no se edita.
+                const _canOpenActions = sess.type !== 'race';
+                if (_headerEl && _canOpenActions) {
                     let _lpStartX = 0, _lpStartY = 0, _lpAborted = false;
                     const _startLongPress = (ev) => {
                         _longPressFired = false;
@@ -30769,6 +30790,82 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         modal.id = 'plan-session-actions-modal';
         modal.style.cssText = 'position:fixed;inset:0;z-index:50000;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s ease-out;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
 
+        // [v5.5 SKIP] Detectar estado de la sesión para exponer acciones contextuales:
+        //   - Editar RPE: solo si running (no strength) && matched (hay activity) && !skipped
+        //   - Saltar / Reactivar: exclusivos (uno u otro según sess.skipped)
+        //   - Mover: no aparece si skipped (primero reactivar)
+        var _sessMatched = false;
+        try {
+            if (typeof activities !== 'undefined' && Array.isArray(activities)) {
+                _sessMatched = activities.some(function(a) {
+                    return a && a.dateStr === sessDate && a.type === sess.type;
+                });
+            }
+        } catch(_){}
+        var _sessSkipped = !!sess.skipped;
+        var _canEditRpe  = !isMovingStrength && _sessMatched && !_sessSkipped;
+        var _canMove     = !_sessSkipped;
+        var _btnEditRpe = _canEditRpe ? (''
+            + '<button id="plan-sa-rpe" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(139,92,246,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:var(--tw);">Editar RPE</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Puntúa esfuerzo de esta sesión</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>'
+        ) : '';
+        var _btnMove = _canMove ? (''
+            + '<button id="plan-sa-move" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 13 3 17 7 21"/><line x1="3" y1="17" x2="15" y2="17"/></svg>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:var(--tw);">Mover a otro día</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Dentro de esta misma semana</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>'
+        ) : '';
+        var _btnSkip = _sessSkipped ? (''
+            // Reactivar (verde) — la sesión estaba saltada, volver a activar
+            + '<button id="plan-sa-unskip" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(34,197,94,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:#22c55e;">Reactivar sesión</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Quitar el estado de saltada</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>'
+        ) : (''
+            // Saltar (naranja) — la sesión está activa, marcarla como saltada con motivo
+            + '<button id="plan-sa-skip" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(234,88,12,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(234,88,12,.14);border:1px solid rgba(234,88,12,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="5" y1="19" x2="19" y2="5"/></svg>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:#ea580c;">Saltar sesión</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Regístra por qué no la haces</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>'
+        );
+        var _btnDelete = ''
+            + '<button id="plan-sa-delete" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(239,68,68,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:#ef4444;">Eliminar del plan</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">No se puede deshacer</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>';
+
         modal.innerHTML = ''
             + '<div id="plan-session-actions-inner" style="background:var(--bg);width:100%;max-width:500px;border-radius:22px 22px 0 0;padding:0 0 calc(20px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 32px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .32s cubic-bezier(.16,1,.3,1);">'
             +   '<div style="padding:18px 20px 14px;border-bottom:1px solid var(--bsoft);text-align:center;">'
@@ -30777,26 +30874,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +     '<div style="font-size:11px;color:var(--ts);margin-top:3px;">' + dLabel + '</div>'
             +   '</div>'
             +   '<div style="padding:14px 16px 4px;display:flex;flex-direction:column;gap:8px;">'
-            +     '<button id="plan-sa-move" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
-            +       '<div style="width:38px;height:38px;border-radius:50%;background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-            +         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 13 3 17 7 21"/><line x1="3" y1="17" x2="15" y2="17"/></svg>'
-            +       '</div>'
-            +       '<div style="flex:1;text-align:left;">'
-            +         '<div style="font-size:14px;font-weight:800;color:var(--tw);">Mover a otro día</div>'
-            +         '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Dentro de esta misma semana</div>'
-            +       '</div>'
-            +       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
-            +     '</button>'
-            +     '<button id="plan-sa-delete" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(239,68,68,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
-            +       '<div style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-            +         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'
-            +       '</div>'
-            +       '<div style="flex:1;text-align:left;">'
-            +         '<div style="font-size:14px;font-weight:800;color:#ef4444;">Eliminar del plan</div>'
-            +         '<div style="font-size:11px;color:var(--tm);margin-top:1px;">No se puede deshacer</div>'
-            +       '</div>'
-            +       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
-            +     '</button>'
+            +     _btnEditRpe
+            +     _btnMove
+            +     _btnSkip
+            +     _btnDelete
             +     '<button id="plan-sa-cancel" style="width:100%;margin-top:6px;padding:13px 16px;background:transparent;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);">Cancelar</button>'
             +   '</div>'
             + '</div>';
@@ -30821,11 +30902,60 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         document.getElementById('plan-sa-cancel').onclick = closeModal;
 
         // Mover → cerrar este modal y abrir el modal de selección de día
-        document.getElementById('plan-sa-move').onclick = function() {
+        // [v5.5 SKIP] Sólo bindear si el botón existe (skipped no lo pinta).
+        var _moveBtn = document.getElementById('plan-sa-move');
+        if (_moveBtn) _moveBtn.onclick = function() {
             closeModal();
             setTimeout(function() {
                 try { openMoveDay({stopPropagation:function(){}}, sessDate, weekIdx, isStrengthHint); } catch(_){}
             }, 280);
+        };
+
+        // [v5.5 SKIP] Editar RPE → reutilizar showRpeQuickSheet + _saveRpeToActivity del GAP 4.
+        // Solo bindear si el botón existe (running matched no skipped).
+        var _rpeBtn = document.getElementById('plan-sa-rpe');
+        if (_rpeBtn) _rpeBtn.onclick = function() {
+            closeModal();
+            setTimeout(function() {
+                try {
+                    if (typeof activities === 'undefined' || !Array.isArray(activities)) return;
+                    var act = activities.find(function(a) { return a && a.dateStr === sessDate && a.type === sess.type; });
+                    if (!act) return;
+                    var ctx = (typeof window._getRpeContext === 'function') ? (window._getRpeContext(act) || {}) : {};
+                    if (typeof window.showRpeQuickSheet === 'function') {
+                        Promise.resolve(window.showRpeQuickSheet(ctx)).then(function(rpeVal) {
+                            if (rpeVal != null && typeof window._saveRpeToActivity === 'function') {
+                                try { window._saveRpeToActivity(act, rpeVal, ctx); } catch(_){}
+                            }
+                        }).catch(function(){});
+                    }
+                } catch(e) { console.warn('[MR][SKIP] rpe edit:', e); }
+            }, 280);
+        };
+
+        // [v5.5 SKIP] Saltar → abrir sub-sheet de motivo
+        var _skipBtn = document.getElementById('plan-sa-skip');
+        if (_skipBtn) _skipBtn.onclick = function() {
+            closeModal();
+            setTimeout(function() {
+                try {
+                    if (typeof window.openSkipReasonSheet === 'function') {
+                        window.openSkipReasonSheet(sessDate, weekIdx, isStrengthHint);
+                    }
+                } catch(e) { console.warn('[MR][SKIP] skip open:', e); }
+            }, 280);
+        };
+
+        // [v5.5 SKIP] Reactivar → limpiar campos skip* y re-render (sin sheet intermedio)
+        var _unskipBtn = document.getElementById('plan-sa-unskip');
+        if (_unskipBtn) _unskipBtn.onclick = function() {
+            try {
+                if (typeof window._planUnskipSession === 'function') {
+                    window._planUnskipSession(weekIdx, sessDate, isStrengthHint);
+                    if (navigator.vibrate) try { navigator.vibrate(20); } catch(_){}
+                }
+            } catch(e) { console.warn('[MR][SKIP] unskip:', e); }
+            closeModal();
         };
 
         // Eliminar → confirmar inline (modal anidado) y borrar
@@ -34483,14 +34613,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         polarized:   '80/20 roto',
                         acwr:        'ACWR',
                         // [v4.3 GAP 1] Regresión post-test/carrera
-                        regression:  'Regresión'
+                        regression:  'Regresión',
+                        // [v5.5 SKIP] Patrón de sesiones saltadas (long_streak / quality_streak)
+                        skip_pattern:'Sesiones saltadas'
                     };
                     var alertCard = document.createElement('div');
                     alertCard.style.cssText = 'background:var(--card);border-radius:14px;padding:12px 14px;border:1px solid var(--border);display:flex;flex-direction:column;gap:10px;';
-                    var _rowsHtml = _allAlerts.map(function(al) {
+                    var _rowsHtml = _allAlerts.map(function(al, _idx) {
                         var col = _sevColor[al.severity] || '#8f8f95';
                         var ico = _sevIcon[al.severity] || '';
                         var lbl = _typeLabel[al.type] || 'Alerta';
+                        // [v5.5 SKIP · Q6=B] CTA "Ajustar semana" solo para skip_pattern con last_sess_date
+                        var _cta = '';
+                        if (al.type === 'skip_pattern' && al.data && al.data.last_sess_date) {
+                            _cta = ''
+                                + '<button data-mr-skip-adjust="' + _idx + '" '
+                                +   'style="margin-top:8px;display:inline-flex;align-items:center;gap:5px;background:var(--tw);color:var(--bg);border:none;border-radius:9px;padding:7px 12px;font-family:var(--f);font-size:11px;font-weight:800;cursor:pointer;letter-spacing:.2px;">'
+                                +   'Ajustar semana '
+                                +   '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                                + '</button>';
+                        }
                         return ''
                             + '<div style="display:flex;align-items:flex-start;gap:12px;padding:2px 0;">'
                             +   '<div style="width:34px;height:34px;border-radius:50%;background:' + col + '1a;border:1px solid ' + col + '55;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
@@ -34501,11 +34643,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             +       '<span style="font-size:9.5px;color:' + col + ';text-transform:uppercase;letter-spacing:1.2px;font-weight:800;">' + lbl + '</span>'
                             +     '</div>'
                             +     '<div style="font-size:12px;color:var(--tw);line-height:1.4;">' + al.message + '</div>'
+                            +     _cta
                             +   '</div>'
                             + '</div>';
                     }).join('<div style="height:1px;background:var(--border);opacity:.5;margin:2px 0;"></div>');
                     alertCard.innerHTML = _rowsHtml;
                     container.appendChild(alertCard);
+
+                    // [v5.5 SKIP · Q6=B] Bindear CTAs "Ajustar semana" a _skipAlertAdjust
+                    try {
+                        var _ctaBtns = alertCard.querySelectorAll('[data-mr-skip-adjust]');
+                        _ctaBtns.forEach(function(btn) {
+                            var idx = parseInt(btn.getAttribute('data-mr-skip-adjust'), 10);
+                            var al = _allAlerts[idx];
+                            if (al && al.data && typeof window._skipAlertAdjust === 'function') {
+                                btn.onclick = function(ev) {
+                                    ev.stopPropagation();
+                                    window._skipAlertAdjust(al.data);
+                                };
+                            }
+                        });
+                    } catch(_){}
 
                     // Toast crítica (con guard por día para no re-mostrar en cada render)
                     var _crit = _allAlerts.find(function(a) { return a.severity === 'critical'; });
@@ -43217,7 +43375,9 @@ window.addEventListener('DOMContentLoaded', function() {
         // [v4.3 GAP 1] Grupo VDOT — recalibración automática + capa UI
         vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions],
         // [v5.3 Long tiempo] Derivación por tiempo + invariante D3A
-        long:    [_testLongTimeDerivation]
+        long:    [_testLongTimeDerivation],
+        // [v5.5 SKIP] Saltar sesión + detector de patrones (long_streak + quality_streak)
+        skip:    [window._testSkipDetection]
     };
 
     window.__mrSmoke = function(group) {
@@ -43571,6 +43731,387 @@ window.addEventListener('DOMContentLoaded', function() {
         }
     })();
     </script>
+
+    <!-- ═════════════════════════════════════════════════════════════════
+         [v5.5 SKIP] Saltar sesión + motivos + detector de patrones
+         ─────────────────────────────────────────────────────────────────
+         Data model en sess: { skipped:true, skipReason, skipNote, skippedAt }
+         Persiste vía savePlanToStorage() (localStorage, coherente con plan).
+         Reglas:
+           R1: 2 quality (interval/threshold/tempo/repeats/test) skipped consecutivas → medium
+           R2: 2 long consecutivos skipped → critical
+         Ambas se cuelan como 7ª y 8ª alerta en analyzeTrainingPatterns (GAP 3).
+         Q7=A: motivo también en futuras. Q5=B: long-press activo en todas las semanas.
+    ═════════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ═══ Definición de motivos ═══════════════════════════════════════
+        // Coherente con preview Q3=A: 6 pills grandes iOS Health.
+        // Colores adaptados light/dark: el UI usa CSS vars ya definidas.
+        var SKIP_REASONS = [
+            { id: 'illness', emoji: '🤒', label: 'Enfermedad',        sub: 'Gripe, resfriado, malestar', hex: '#f59e0b', hexDark: '#fbbf24' },
+            { id: 'injury',  emoji: '🩹', label: 'Molestia o lesión', sub: 'Dolor, tirón, precaución',    hex: '#dc2626', hexDark: '#f87171' },
+            { id: 'fatigue', emoji: '😴', label: 'Cansancio',         sub: 'Mala sensación, sin fuerzas', hex: '#8b5cf6', hexDark: '#a78bfa' },
+            { id: 'busy',    emoji: '📅', label: 'Ocupación',         sub: 'Curro, viaje, familia',      hex: '#3b82f6', hexDark: '#60a5fa' },
+            { id: 'weather', emoji: '🌡️', label: 'Clima extremo',     sub: 'Calor, tormenta, seguridad', hex: '#14b8a6', hexDark: '#2dd4bf' },
+            { id: 'other',   emoji: '✏️', label: 'Otro motivo',       sub: 'Describe brevemente',        hex: '#6b7280', hexDark: '#9ca3af' }
+        ];
+        function _skipReasonById(id) {
+            for (var i = 0; i < SKIP_REASONS.length; i++) if (SKIP_REASONS[i].id === id) return SKIP_REASONS[i];
+            return null;
+        }
+        function _skipReasonColor(id) {
+            var r = _skipReasonById(id); if (!r) return '#6b7280';
+            var isDark = document.body && document.body.classList.contains('dark-mode');
+            return isDark ? r.hexDark : r.hex;
+        }
+        window._SKIP_REASONS = SKIP_REASONS;
+        window._skipReasonById = _skipReasonById;
+        window._skipReasonColor = _skipReasonColor;
+
+        // ═══ Localizar la sesión en el plan (idéntico patrón que openSessionActions) ══
+        function _findSessInPlan(weekIdx, sessDate, isStrengthHint) {
+            var ap = (typeof activePlan !== 'undefined') ? activePlan : (window.activePlan || null);
+            var sp = (typeof activeStrengthPlan !== 'undefined') ? activeStrengthPlan : (window.activeStrengthPlan || null);
+            var wk = ap && ap.weeks ? ap.weeks[weekIdx] : null;
+            var sess = null;
+            if (wk) {
+                if (typeof isStrengthHint === 'boolean') {
+                    sess = wk.sessions.find(function(s) {
+                        if (s.dateStr !== sessDate) return false;
+                        var sIsStr = !!(s.isStrength || s.type === 'strength');
+                        return sIsStr === isStrengthHint;
+                    });
+                } else {
+                    sess = wk.sessions.find(function(s) { return s.dateStr === sessDate; });
+                }
+            }
+            var strWk = sp && sp.weeks ? sp.weeks[weekIdx] : null;
+            if (!sess && strWk) sess = strWk.sessions.find(function(s) { return s.dateStr === sessDate; });
+            return sess || null;
+        }
+
+        // ═══ Persistencia · marcar skipped ══════════════════════════════
+        function _planMarkSessionSkipped(weekIdx, sessDate, reason, note, isStrengthHint) {
+            try {
+                var sess = _findSessInPlan(weekIdx, sessDate, isStrengthHint);
+                if (!sess) return false;
+                sess.skipped = true;
+                sess.skipReason = reason || 'other';
+                sess.skipNote = (typeof note === 'string' ? note.slice(0, 200) : '');
+                sess.skippedAt = new Date().toISOString();
+                if (typeof savePlanToStorage === 'function') savePlanToStorage();
+                if (typeof saveStrengthPlanToStorage === 'function' && (sess.isStrength || sess.type === 'strength')) {
+                    try { saveStrengthPlanToStorage(); } catch(_){}
+                }
+                if (typeof renderPlanWeek === 'function' && typeof planCurrentWeek !== 'undefined') {
+                    try { renderPlanWeek(planCurrentWeek); } catch(_){}
+                }
+                // Refresh Home (alertas + planCard preview) — best-effort
+                if (typeof renderHomeView === 'function') try { renderHomeView(); } catch(_){}
+                return true;
+            } catch(e) { console.warn('[MR][SKIP] mark:', e); return false; }
+        }
+        function _planUnskipSession(weekIdx, sessDate, isStrengthHint) {
+            try {
+                var sess = _findSessInPlan(weekIdx, sessDate, isStrengthHint);
+                if (!sess) return false;
+                delete sess.skipped;
+                delete sess.skipReason;
+                delete sess.skipNote;
+                delete sess.skippedAt;
+                if (typeof savePlanToStorage === 'function') savePlanToStorage();
+                if (typeof saveStrengthPlanToStorage === 'function' && (sess.isStrength || sess.type === 'strength')) {
+                    try { saveStrengthPlanToStorage(); } catch(_){}
+                }
+                if (typeof renderPlanWeek === 'function' && typeof planCurrentWeek !== 'undefined') {
+                    try { renderPlanWeek(planCurrentWeek); } catch(_){}
+                }
+                if (typeof renderHomeView === 'function') try { renderHomeView(); } catch(_){}
+                return true;
+            } catch(e) { console.warn('[MR][SKIP] unskip:', e); return false; }
+        }
+        window._planMarkSessionSkipped = _planMarkSessionSkipped;
+        window._planUnskipSession = _planUnskipSession;
+
+        // ═══ Sub-sheet motivo (Q3=A pills grandes iOS Health) ═══════════
+        function openSkipReasonSheet(sessDate, weekIdx, isStrengthHint) {
+            var sess = _findSessInPlan(weekIdx, sessDate, isStrengthHint);
+            if (!sess) return;
+            var isStr = !!(sess.isStrength || sess.type === 'strength');
+            var sessLabel = isStr ? '💪 Fuerza' : ((typeof getTypeLabel === 'function' ? getTypeLabel(sess.type) : sess.type) + ' · ' + (sess.dist || '?') + 'km');
+            var dObj = new Date(sessDate + 'T12:00:00');
+            var dLabel = isNaN(dObj) ? sessDate : dObj.toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long' });
+
+            var existing = document.getElementById('plan-skip-reason-modal');
+            if (existing) existing.remove();
+            var modal = document.createElement('div');
+            modal.id = 'plan-skip-reason-modal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:50000;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s ease-out;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+            // Pills HTML
+            var pillsHtml = '';
+            SKIP_REASONS.forEach(function(r) {
+                var col = _skipReasonColor(r.id);
+                pillsHtml += ''
+                    + '<button class="mr-skip-pill" data-reason="' + r.id + '" '
+                    +   'style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1.5px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);transition:border-color .18s,background .18s,transform .12s;">'
+                    +   '<div style="width:42px;height:42px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;background:' + col + '19;border:1px solid ' + col + '47;">' + r.emoji + '</div>'
+                    +   '<div style="flex:1;text-align:left;">'
+                    +     '<div style="font-size:14px;font-weight:800;color:var(--tw);">' + r.label + '</div>'
+                    +     '<div style="font-size:11px;color:var(--tm);margin-top:2px;">' + r.sub + '</div>'
+                    +   '</div>'
+                    +   '<div class="mr-skip-radio" style="width:24px;height:24px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .18s,background .18s;"></div>'
+                    + '</button>';
+            });
+
+            modal.innerHTML = ''
+                + '<div id="plan-skip-reason-inner" style="background:var(--bg);width:100%;max-width:500px;border-radius:22px 22px 0 0;padding:0 0 calc(20px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 32px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .32s cubic-bezier(.16,1,.3,1);max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;">'
+                +   '<div style="padding:18px 20px 14px;border-bottom:1px solid var(--bsoft);text-align:center;position:sticky;top:0;background:var(--bg);z-index:2;">'
+                +     '<div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 14px;"></div>'
+                +     '<div style="font-size:13px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;">¿Por qué saltas esta sesión?</div>'
+                +     '<div style="font-size:11px;color:var(--ts);margin-top:3px;">' + sessLabel + ' · ' + dLabel + '</div>'
+                +   '</div>'
+                +   '<div style="padding:14px 16px 4px;display:flex;flex-direction:column;gap:8px;">'
+                +     pillsHtml
+                +     '<textarea id="plan-skip-note" placeholder="Cuenta brevemente..." maxlength="200" style="display:none;width:100%;margin-top:2px;background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;font-family:var(--f);font-size:12px;color:var(--tw);resize:none;min-height:62px;box-sizing:border-box;"></textarea>'
+                +     '<button id="plan-skip-confirm" disabled style="width:100%;margin-top:12px;padding:14px;background:var(--tw);border:none;border-radius:14px;font-family:var(--f);font-size:13px;font-weight:800;color:var(--bg);cursor:pointer;letter-spacing:.3px;box-shadow:0 3px 12px rgba(0,0,0,.15);transition:transform .12s,opacity .18s;opacity:.35;">Confirmar salto</button>'
+                +     '<button id="plan-skip-cancel" style="width:100%;margin-top:6px;padding:13px 16px;background:transparent;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);">Cancelar</button>'
+                +   '</div>'
+                + '</div>';
+            document.body.appendChild(modal);
+
+            requestAnimationFrame(function() { requestAnimationFrame(function() {
+                modal.style.opacity = '1';
+                var inner = document.getElementById('plan-skip-reason-inner');
+                if (inner) inner.style.transform = 'translateY(0)';
+            }); });
+
+            var closeModal = function() {
+                modal.style.opacity = '0';
+                var inner = document.getElementById('plan-skip-reason-inner');
+                if (inner) inner.style.transform = 'translateY(100%)';
+                setTimeout(function() { if (modal.parentNode) modal.remove(); }, 320);
+            };
+            modal.addEventListener('click', function(ev) { if (ev.target === modal) closeModal(); });
+            document.getElementById('plan-skip-cancel').onclick = closeModal;
+
+            // Selección
+            var selectedId = null;
+            var pills = modal.querySelectorAll('.mr-skip-pill');
+            var confirm = document.getElementById('plan-skip-confirm');
+            var noteEl = document.getElementById('plan-skip-note');
+            pills.forEach(function(p) {
+                p.onclick = function() {
+                    selectedId = p.getAttribute('data-reason');
+                    var col = _skipReasonColor(selectedId);
+                    // Reset todas
+                    pills.forEach(function(q) {
+                        q.style.borderColor = 'var(--border)';
+                        q.style.background = 'var(--card)';
+                        var rd = q.querySelector('.mr-skip-radio');
+                        if (rd) { rd.style.borderColor = 'var(--border)'; rd.style.background = 'transparent'; rd.innerHTML = ''; }
+                    });
+                    // Marcar seleccionada
+                    p.style.borderColor = col;
+                    p.style.background = col + '14';
+                    var radio = p.querySelector('.mr-skip-radio');
+                    if (radio) {
+                        radio.style.borderColor = col;
+                        radio.style.background = col;
+                        radio.innerHTML = '<div style="width:10px;height:10px;border-radius:50%;background:#fff;"></div>';
+                    }
+                    // Textarea si "otro"
+                    if (selectedId === 'other') {
+                        noteEl.style.display = 'block';
+                        setTimeout(function(){ noteEl.focus(); }, 100);
+                    } else {
+                        noteEl.style.display = 'none';
+                        noteEl.value = '';
+                    }
+                    confirm.disabled = false;
+                    confirm.style.opacity = '1';
+                    if (navigator.vibrate) try { navigator.vibrate(12); } catch(_){}
+                };
+            });
+
+            confirm.onclick = function() {
+                if (!selectedId) return;
+                var note = (selectedId === 'other') ? (noteEl.value || '').trim() : '';
+                var ok = _planMarkSessionSkipped(weekIdx, sessDate, selectedId, note, isStrengthHint);
+                if (!ok) { closeModal(); return; }
+                if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
+                closeModal();
+                // Si lesión → proponer rehab (best-effort · sin bloquear si no está el flow)
+                if (selectedId === 'injury') {
+                    setTimeout(function() {
+                        try {
+                            // Reutilizar el CTA de rehab existente (banner de Home lo cogerá al siguiente render).
+                            // Si hay un modal específico, se puede enganchar aquí en el futuro.
+                            console.log('[MR][SKIP] injury reported — rehab CTA available on Home');
+                        } catch(_){}
+                    }, 400);
+                }
+            };
+        }
+        window.openSkipReasonSheet = openSkipReasonSheet;
+
+        // ═══ Detector para hub sobrecarga (GAP 3) ═══════════════════════
+        // Recibe activities (para firma consistente con los otros detectores)
+        // pero opera sobre activePlan.weeks[*].sessions[*].skipped.
+        // R1: 2 quality consecutivas skipped en últimas 3 semanas → medium
+        // R2: 2 long consecutivos skipped en últimas 5 semanas → critical
+        var QUALITY_TYPES = ['interval', 'threshold', 'tempo', 'repeats', 'series', 'test'];
+        function _isQualityType(t) { return QUALITY_TYPES.indexOf(t) >= 0; }
+        function _detectSkipPattern(activities, refDate) {
+            try {
+                var ap = (typeof activePlan !== 'undefined') ? activePlan : (window.activePlan || null);
+                if (!ap || !Array.isArray(ap.weeks)) return null;
+                var refMs = refDate ? new Date(refDate + 'T12:00:00').getTime() : Date.now();
+                // Aplanar todas las sesiones ordenadas por fecha ascendente
+                var all = [];
+                ap.weeks.forEach(function(wk, wkIdx) {
+                    if (!wk || !Array.isArray(wk.sessions)) return;
+                    wk.sessions.forEach(function(s) {
+                        if (!s || !s.dateStr) return;
+                        var ms = new Date(s.dateStr + 'T12:00:00').getTime();
+                        // Ignoramos sesiones futuras (>refDate + 7d) para no contaminar
+                        if (ms > refMs + 7 * 86400000) return;
+                        all.push({ sess: s, ms: ms, wkIdx: wkIdx });
+                    });
+                });
+                all.sort(function(a, b) { return a.ms - b.ms; });
+
+                // R1: quality streak
+                var qualitySeq = all.filter(function(x) { return _isQualityType(x.sess.type); });
+                var qualityRecent = qualitySeq.filter(function(x) { return (refMs - x.ms) <= 21 * 86400000; });
+                var qStreakSkip = 0, qStreakMax = 0, lastQSkipped = null;
+                qualityRecent.forEach(function(x) {
+                    if (x.sess.skipped) {
+                        qStreakSkip++;
+                        if (qStreakSkip > qStreakMax) { qStreakMax = qStreakSkip; lastQSkipped = x; }
+                    } else {
+                        qStreakSkip = 0;
+                    }
+                });
+
+                // R2: long streak
+                var longSeq = all.filter(function(x) { return x.sess.type === 'long'; });
+                var longRecent = longSeq.filter(function(x) { return (refMs - x.ms) <= 35 * 86400000; });
+                var lStreakSkip = 0, lStreakMax = 0, lastLSkipped = null;
+                longRecent.forEach(function(x) {
+                    if (x.sess.skipped) {
+                        lStreakSkip++;
+                        if (lStreakSkip > lStreakMax) { lStreakMax = lStreakSkip; lastLSkipped = x; }
+                    } else {
+                        lStreakSkip = 0;
+                    }
+                });
+
+                // Priorizar R2 (critical) > R1 (medium) — solo devolvemos una alerta a la vez
+                if (lStreakMax >= 2 && lastLSkipped) {
+                    return {
+                        type: 'skip_pattern',
+                        severity: 'critical',
+                        message: '2 long runs seguidos saltados. El long run es la piedra angular — comprometen la adaptación aeróbica.',
+                        data: {
+                            rule: 'long_streak',
+                            streak: lStreakMax,
+                            last_sess_date: lastLSkipped.sess.dateStr,
+                            last_sess_week_idx: lastLSkipped.wkIdx,
+                            last_sess_is_strength: !!(lastLSkipped.sess.isStrength || lastLSkipped.sess.type === 'strength')
+                        }
+                    };
+                }
+                if (qStreakMax >= 2 && lastQSkipped) {
+                    return {
+                        type: 'skip_pattern',
+                        severity: 'medium',
+                        message: '2 sesiones de calidad seguidas saltadas. Perderás especificidad para tu objetivo.',
+                        data: {
+                            rule: 'quality_streak',
+                            streak: qStreakMax,
+                            last_sess_date: lastQSkipped.sess.dateStr,
+                            last_sess_week_idx: lastQSkipped.wkIdx,
+                            last_sess_is_strength: !!(lastQSkipped.sess.isStrength || lastQSkipped.sess.type === 'strength')
+                        }
+                    };
+                }
+                return null;
+            } catch(e) { console.warn('[MR][SKIP] detect:', e); return null; }
+        }
+        window._detectSkipPattern = _detectSkipPattern;
+
+        // ═══ CTA "Ajustar semana" · abre openMoveDay sobre la última skipped ══
+        function _skipAlertAdjust(alertData) {
+            try {
+                if (!alertData || !alertData.last_sess_date) return;
+                if (typeof openMoveDay === 'function') {
+                    openMoveDay(
+                        { stopPropagation: function(){} },
+                        alertData.last_sess_date,
+                        alertData.last_sess_week_idx,
+                        alertData.last_sess_is_strength
+                    );
+                }
+            } catch(e) { console.warn('[MR][SKIP] adjust:', e); }
+        }
+        window._skipAlertAdjust = _skipAlertAdjust;
+
+        // ═══ Smoke: _testSkipDetection ═════════════════════════════════
+        function _testSkipDetection() {
+            // Guardar estado real
+            var origPlan = window.activePlan;
+            try {
+                // Mock plan con 2 long consecutivos saltados
+                var today = new Date();
+                var mkDate = function(daysAgo) {
+                    var d = new Date(today.getTime() - daysAgo * 86400000);
+                    return d.toISOString().slice(0, 10);
+                };
+                window.activePlan = {
+                    weeks: [
+                        { sessions: [
+                            { dateStr: mkDate(21), type: 'long',      dist: 22, skipped: true, skipReason: 'busy' },
+                            { dateStr: mkDate(14), type: 'long',      dist: 24, skipped: true, skipReason: 'illness' },
+                            { dateStr: mkDate(20), type: 'threshold', dist: 8,  skipped: true, skipReason: 'fatigue' },
+                            { dateStr: mkDate(17), type: 'interval',  dist: 8,  skipped: true, skipReason: 'busy' }
+                        ]}
+                    ]
+                };
+                var alert1 = window._detectSkipPattern(null, mkDate(0));
+                if (!alert1 || alert1.type !== 'skip_pattern') return { ok: false, msg: 'Alerta no generada' };
+                if (alert1.severity !== 'critical') return { ok: false, msg: 'Priorizar long critical falló, obtuvo ' + alert1.severity };
+                if (alert1.data.rule !== 'long_streak') return { ok: false, msg: 'Regla esperada long_streak, obtuvo ' + alert1.data.rule };
+                if (alert1.data.streak < 2) return { ok: false, msg: 'Streak esperado ≥2' };
+
+                // Sin long streak → cae a quality streak
+                window.activePlan.weeks[0].sessions[1].skipped = false;
+                var alert2 = window._detectSkipPattern(null, mkDate(0));
+                if (!alert2 || alert2.data.rule !== 'quality_streak') return { ok: false, msg: 'Quality streak no detectado, obtuvo ' + (alert2 && alert2.data && alert2.data.rule) };
+                if (alert2.severity !== 'medium') return { ok: false, msg: 'Quality debería ser medium' };
+
+                // Sin ninguna streak → null
+                window.activePlan.weeks[0].sessions[0].skipped = false;
+                window.activePlan.weeks[0].sessions[2].skipped = false;
+                var alert3 = window._detectSkipPattern(null, mkDate(0));
+                if (alert3 !== null) return { ok: false, msg: 'Debería devolver null cuando no hay streak' };
+
+                return { ok: true, msg: 'Detector skip patterns OK · long critical + quality medium + null' };
+            } catch(e) {
+                return { ok: false, msg: 'Excepción: ' + e.message };
+            } finally {
+                window.activePlan = origPlan;
+            }
+        }
+        window._testSkipDetection = _testSkipDetection;
+
+        console.log('%c[MR][v5.5 SKIP] Skip session module ready', 'color:#ea580c;font-style:italic;');
+    })();
+    </script>
+
 
 </body>
 
