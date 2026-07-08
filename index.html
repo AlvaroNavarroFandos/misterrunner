@@ -26499,6 +26499,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             (w.sessions || []).forEach(function(s) {
                 if (!s.dateStr || s.dateStr <= fromDate) return;
                 if (s.type === 'test' || s.type === 'race') return;
+                // [v5.3 Long tiempo · D3A] Long por tiempo → re-derivar entero desde
+                // targetSec + nuevos ritmos (mantiene el tiempo en pie; km se recalculan).
+                if (s.type === 'long' && s.long && typeof window._buildLongSession === 'function') {
+                    try {
+                        var rebuilt = window._buildLongSession(s.long, newPaces);
+                        if (rebuilt) {
+                            s.dist = rebuilt.dist; s.pace = rebuilt.pace; s.fc = rebuilt.fc;
+                            s.blocks = rebuilt.blocks; s.desc = rebuilt.desc;
+                            s.longSec = rebuilt.longSec; s.durStr = rebuilt.durStr; s.long = rebuilt.long;
+                            updated++; wt = true;
+                            return;
+                        }
+                    } catch(e) { console.warn('[MR][Long] re-derive:', e); }
+                }
                 if (s.pace && paceValueMap[s.pace]) s.pace = paceValueMap[s.pace];
                 s.desc = replaceInString(s.desc);
                 (s.blocks || []).forEach(updateBlock);
@@ -27450,6 +27464,66 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return h + 'h' + String(m).padStart(2,'0');
     }
 
+    // [v5.3 Long tiempo] Duración de bloque: "N min" si <1h, si no "Xh MM".
+    function _fmtBlockDur(sec) {
+        sec = Math.round(sec);
+        var m = Math.round(sec / 60);
+        if (m < 60) return m + ' min';
+        return fmtLongDur(sec);
+    }
+
+    // [v5.3 Long tiempo · D3A] Construye la sesión de long por TIEMPO desde metadatos
+    // + ritmos. El tiempo objetivo (targetSec) y la variante son el invariante; los km
+    // se derivan de los ritmos. Reutilizado por longSession (inicial) y por la
+    // recalibración VDOT (_updateFuturePlanPaces) para mantener el tiempo en pie al
+    // cambiar ritmos. Porción fácil en morado (#7c3aed); empuje (MP/progresivo) en gold.
+    function _buildLongSession(meta, paces) {
+        if (!meta || !paces) return null;
+        var P = '#7c3aed', G = '#C9A84C';
+        var targetSec = meta.targetSec, v = meta.variant;
+        if (v === 'taper' || v === 'base') {
+            var km = Math.max(1, Math.round(targetSec / paces.easy));
+            var sec = km * paces.easy;
+            var lbl = (v === 'taper') ? 'Long suave' : 'Long run aeróbico';
+            var det = easyRange(paces) + '/km · FC ' + meta.fcE + (v === 'base' ? ' ppm' : '');
+            return {
+                type:'long', dist:km, pace:paces.easy, fc:meta.fcE, longSec:sec, durStr:fmtLongDur(sec), long:meta,
+                blocks:[{ label:lbl, detail:det, color:P, km:km, durStr:_fmtBlockDur(sec) }],
+                desc:(v === 'taper' ? 'Long suave ' : 'Long run ') + fmtLongDur(sec) + ' · ' + km + 'km a ' + fmtPace(paces.easy) + '/km'
+            };
+        }
+        if (v === 'mpFinish') {
+            var mpRatio = meta.mpRatio || 0.4;
+            var easyKm = Math.max(1, Math.round((targetSec * (1 - mpRatio)) / paces.easy));
+            var mpKm   = Math.max(1, Math.round((targetSec * mpRatio) / paces.marathon));
+            var easySec = easyKm * paces.easy, mpSec = mpKm * paces.marathon;
+            var totalKm = easyKm + mpKm, realSec = easySec + mpSec;
+            return {
+                type:'long', dist:totalKm, pace:paces.marathon, fc:meta.fcM, longSec:realSec, durStr:fmtLongDur(realSec), long:meta,
+                blocks:[
+                    { label:'Entrada fácil', detail:easyRange(paces) + '/km', color:P, km:easyKm, durStr:_fmtBlockDur(easySec) },
+                    { label:'Ritmo Maratón (MP)', detail:marathonRange(paces) + '/km · acostumbrar al cuerpo al ritmo objetivo', color:G, km:mpKm, durStr:_fmtBlockDur(mpSec) }
+                ],
+                desc:'Long ' + fmtLongDur(realSec) + ' · ' + totalKm + 'km · últimos ' + mpKm + 'km a RM ' + fmtPace(paces.marathon) + '/km'
+            };
+        }
+        // progressive
+        var progAvgPace = (paces.easy + paces.marathon) / 2;
+        var pEasyKm = Math.max(1, Math.round((targetSec * 0.75) / paces.easy));
+        var progKm  = Math.max(1, Math.round((targetSec * 0.25) / progAvgPace));
+        var pEasySec = pEasyKm * paces.easy, progSec = progKm * progAvgPace;
+        var pTotalKm = pEasyKm + progKm, pRealSec = pEasySec + progSec;
+        return {
+            type:'long', dist:pTotalKm, pace:paces.easy, fc:meta.fcE, longSec:pRealSec, durStr:fmtLongDur(pRealSec), long:meta,
+            blocks:[
+                { label:'Long fácil', detail:easyRange(paces) + '/km', color:P, km:pEasyKm, durStr:_fmtBlockDur(pEasySec) },
+                { label:'Progresivo final', detail:'hasta ' + marathonRange(paces) + '/km', color:G, km:progKm, durStr:_fmtBlockDur(progSec) }
+            ],
+            desc:'Long ' + fmtLongDur(pRealSec) + ' · ' + pTotalKm + 'km · últimos ' + progKm + 'km progresivos hacia RM'
+        };
+    }
+    window._buildLongSession = _buildLongSession;
+
     // Resuelve tiempo target (min) para un long, aplicando caps fisiológicos.
     // El llamador deriva km según su patrón de bloques (easy/MP/progresivo).
     function resolveLongTargetMin(dist, phase, weekNum, isRaceWeek) {
@@ -27850,56 +27924,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const targetMin = resolveLongTargetMin(_distKey, ph, wn, isRaceWeek);
             if(!targetMin) return null;
             const targetSec = targetMin * 60;
-
-            if(ph==='taper') {
-                // 100% easy
-                const km = Math.max(1, Math.round(targetSec / paces.easy));
-                const realSec = km * paces.easy;
-                return { type:'long', dist:km, pace:paces.easy, fc:fcE,
-                  blocks:[{label:'Long suave',detail:`${km}km · ${easyRange(paces)}/km · FC ${fcE}`,color:'#7c3aed',km}],
-                  desc:`Long suave ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
-            }
-            if(ph==='base') {
-                // 100% easy
-                const km = Math.max(1, Math.round(targetSec / paces.easy));
-                const realSec = km * paces.easy;
-                return { type:'long', dist:km, pace:paces.easy, fc:fcE,
-                  blocks:[{label:'Long run aeróbico',detail:`${km}km · ${easyRange(paces)}/km · FC ${fcE} ppm`,color:'#7c3aed',km}],
-                  desc:`Long run ${km}km · ${fmtLongDur(realSec)} a ${fmtPace(paces.easy)}/km` };
-            }
-            // build/peak: ondulado — alternando easy puro vs MP-finish
-            const mpFinish = (wn % 2 === 1);
-            if(mpFinish) {
-                // Ratios MP dependen de fase: peak 50%, build 40%
-                const mpRatio = ph==='peak' ? 0.5 : 0.4;
-                const easyRatio = 1 - mpRatio;
-                // Ritmo promedio ponderado para derivar km totales
-                const avgPace = easyRatio * paces.easy + mpRatio * paces.marathon;
-                const totalKm = Math.max(1, Math.round(targetSec / avgPace));
-                // Cap absoluto de km MP (evita picos irrealistas si target sube mucho)
-                const mpKmCap = ph==='peak' ? 20 : 15;
-                const mpKm = Math.min(mpKmCap, Math.round(totalKm * mpRatio));
-                const easyKm = Math.max(1, totalKm - mpKm);
-                const realSec = easyKm * paces.easy + mpKm * paces.marathon;
-                return { type:'long', dist:totalKm, pace:paces.marathon, fc:fcM,
-                  blocks:[
-                    {label:'Entrada fácil',detail:`${easyKm}km · ${easyRange(paces)}/km`,color:'#4CAF50',km:easyKm},
-                    {label:'Ritmo Maratón (MP)',detail:`${mpKm}km · ${marathonRange(paces)}/km · acostumbrar al cuerpo al ritmo objetivo`,color:'#C9A84C',km:mpKm}],
-                  desc:`Long ${totalKm}km · ${fmtLongDur(realSec)} · últimos ${mpKm}km a RM ${fmtPace(paces.marathon)}/km` };
-            } else {
-                // Progresivo: 25% del long a ritmo intermedio (easy→MP), promedio (easy+MP)/2
-                const progAvgPace = (paces.easy + paces.marathon) / 2;
-                const avgPace = 0.75 * paces.easy + 0.25 * progAvgPace;
-                const totalKm = Math.max(1, Math.round(targetSec / avgPace));
-                const progKm = Math.max(1, Math.round(totalKm * 0.25));
-                const easyKm2 = Math.max(1, totalKm - progKm);
-                const realSec = easyKm2 * paces.easy + progKm * progAvgPace;
-                return { type:'long', dist:totalKm, pace:paces.easy, fc:fcE,
-                  blocks:[
-                    {label:'Long fácil',detail:`${easyKm2}km · ${easyRange(paces)}/km`,color:'#4CAF50',km:easyKm2},
-                    {label:'Progresivo final',detail:`${progKm}km · hasta ${marathonRange(paces)}/km`,color:'#C9A84C',km:progKm}],
-                  desc:`Long ${totalKm}km · ${fmtLongDur(realSec)} · últimos ${progKm}km progresivos hacia RM` };
-            }
+            // [v5.3 Long tiempo] Variante + metadatos → _buildLongSession deriva km/tiempo.
+            let variant, mpRatio = null;
+            if(ph==='taper')      variant = 'taper';
+            else if(ph==='base')  variant = 'base';
+            else if(wn % 2 === 1) { variant = 'mpFinish'; mpRatio = ph==='peak' ? 0.5 : 0.4; }
+            else                  variant = 'progressive';
+            const meta = { variant, targetSec, ph, wn, mpRatio, fcE, fcM };
+            return _buildLongSession(meta, paces);
         }
 
         // ── EASY / RECOVERY sizes ───────────────────────────────────
@@ -30188,8 +30220,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [FASE 6 prep · Plan premium] Pill V4: pill blanca con
                 // borde y sublabel del color del workout (tinted). Separamos
                 // num + unit para poder estilizar la unidad pequeña en color.
-                const _pillNum  = _isStrengthCard ? '30'  : (sess.dist != null ? String(sess.dist) : '');
-                const _pillUnit = _isStrengthCard ? 'min' : 'km';
+                const _isLongTime = (sess.type === 'long' && sess.durStr);
+                const _pillNum  = _isStrengthCard ? '30'  : (_isLongTime ? sess.durStr : (sess.dist != null ? String(sess.dist) : ''));
+                const _pillUnit = _isStrengthCard ? 'min' : (_isLongTime ? '' : 'km');
                 // [Legacy] _pillValue se mantiene por si alguna otra lógica lo lee
                 const _pillValue = _pillNum + ' ' + _pillUnit;
                 // Color del borde y de la unidad para el tinted (alpha bajo en borde)
@@ -30333,7 +30366,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   - borde fino del color del workout (~40-45% alpha)
                     //   - número en negro 10px tabular
                     //   - unit "KM"/"MIN" mini en color del workout (sublabel)
-                    +     `<span style="background:${_typeGrad};color:var(--det-tw);border-radius:999px;padding:2px 10px 2px 9px;font-size:10px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25);">`
+                    +     `<span style="background:${_isLongTime?'#7c3aed':_typeGrad};color:${_isLongTime?'#fff':'var(--det-tw)'};border-radius:999px;padding:2px 10px 2px 9px;font-size:10px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:${_isLongTime?'0 2px 8px rgba(124,58,237,.3)':'0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25)'};">`
                     +       `<span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span>`
                     +       `<span style="font-size:7.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span>`
                     +     `</span>`
@@ -30632,6 +30665,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 barHTML += '</div>';
                 blocksHTML = barHTML + '<div style="display:flex;flex-direction:column;gap:4px;">';
                 sess.blocks.forEach(b => {
+                    if (b.durStr) {
+                        // [v5.3 Long tiempo] Bloque SÓLIDO del color del tramo · texto blanco ·
+                        // tiempo sin chip + km pequeño. (Solo longs; resto de sesiones sin cambios.)
+                        blocksHTML += `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:${b.color};border-radius:8px;">`
+                            +`<span style="font-size:11.5px;font-weight:800;color:#fff;flex-shrink:0;">${b.label}</span>`
+                            +`<span style="font-size:11px;color:rgba(255,255,255,.9);flex:1;line-height:1.4;font-variant-numeric:tabular-nums;">${b.detail}</span>`
+                            +`<span style="display:flex;align-items:baseline;gap:6px;flex-shrink:0;"><span style="font-size:13px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">${b.durStr}</span>`
+                            +(b.km?`<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,.62);font-variant-numeric:tabular-nums;">${b.km}km</span>`:'')+`</span></div>`;
+                        return;
+                    }
                     blocksHTML += `<div style="display:flex;align-items:center;gap:8px;padding:7px 11px;background:${b.color}${_blockBgAlpha};border-left:3px solid ${b.color};border-radius:0 8px 8px 0;">`
                         +`<span style="font-size:11px;font-weight:800;color:${b.color};flex-shrink:0;">${b.label}</span>`
                         +`<span style="font-size:11px;color:${_blockDetailTxt};flex:1;line-height:1.4;">${b.detail}</span>`
@@ -43108,6 +43151,39 @@ window.addEventListener('DOMContentLoaded', function() {
         } catch(e){ return { name:'vdot.predictions', ok:false, info:'EXCEPCIÓN: '+e.message }; }
     }
 
+    function _testLongTimeDerivation() {
+        try {
+            if (typeof window._buildLongSession !== 'function') {
+                return { name:'long.derive', ok:false, info:'_buildLongSession no en window' };
+            }
+            var paces = { easy:334, marathon:290, threshold:277, interval:250, repeat:235, race:270 };
+            var meta = { variant:'progressive', targetSec:9180, ph:'build', wn:2, fcE:'132-150', fcM:'150-158' };
+            var s1 = window._buildLongSession(meta, paces);
+            var failures = [];
+            if (!s1) { failures.push('build null'); }
+            else {
+                if (!s1.durStr || s1.durStr.indexOf('h') < 0) failures.push('durStr sesión inválido');
+                if (!Array.isArray(s1.blocks) || s1.blocks.length !== 2) failures.push('bloques != 2');
+                if (s1.blocks[0] && s1.blocks[0].color !== '#7c3aed') failures.push('porción fácil no morada');
+                if (s1.blocks[0] && !s1.blocks[0].durStr) failures.push('bloque sin durStr');
+                if (s1.desc && s1.desc.indexOf('Long ' + s1.durStr) !== 0) failures.push('desc no lidera con tiempo');
+                var s2 = window._buildLongSession(s1.long, { easy:315, marathon:272 });
+                if (!s2) failures.push('re-derive null');
+                else {
+                    if (Math.abs(s1.longSec - s2.longSec) > 200) failures.push('tiempo no invariante (' + Math.round(s1.longSec) + '->' + Math.round(s2.longSec) + ')');
+                    if (!(s2.dist > s1.dist)) failures.push('km no suben con ritmo más rápido');
+                }
+            }
+            return {
+                name:'long.derive',
+                ok: failures.length === 0,
+                info: failures.length === 0
+                    ? ('OK · ' + s1.durStr + ' · tiempo invariante · easy morado · desc tiempo-first')
+                    : failures.join(' · ')
+            };
+        } catch(e) { return { name:'long.derive', ok:false, info:'EXCEPCIÓN: ' + e.message }; }
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent, _testStravaAutoImportRealtimePresent],
@@ -43131,7 +43207,9 @@ window.addEventListener('DOMContentLoaded', function() {
         // [v4.2 GAP 3] Grupo Overload — 5 patrones sobrecarga + hub unificado
         overload:[_testOverloadHelpersPresent, _testOverloadLogic, _testOverloadHubIntegration],
         // [v4.3 GAP 1] Grupo VDOT — recalibración automática + capa UI
-        vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions]
+        vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions],
+        // [v5.3 Long tiempo] Derivación por tiempo + invariante D3A
+        long:    [_testLongTimeDerivation]
     };
 
     window.__mrSmoke = function(group) {
