@@ -43971,11 +43971,13 @@ window.addEventListener('DOMContentLoaded', function() {
         // pero opera sobre activePlan.weeks[*].sessions[*].skipped.
         // R1: 2 quality consecutivas skipped en últimas 3 semanas → medium
         // R2: 2 long consecutivos skipped en últimas 5 semanas → critical
+        // planOverride: opcional, inyecta un plan mock (para tests aislados sin tocar activePlan real)
         var QUALITY_TYPES = ['interval', 'threshold', 'tempo', 'repeats', 'series', 'test'];
         function _isQualityType(t) { return QUALITY_TYPES.indexOf(t) >= 0; }
-        function _detectSkipPattern(activities, refDate) {
+        function _detectSkipPattern(activities, refDate, planOverride) {
             try {
-                var ap = (typeof activePlan !== 'undefined') ? activePlan : (window.activePlan || null);
+                var ap = planOverride
+                    || ((typeof activePlan !== 'undefined') ? activePlan : (window.activePlan || null));
                 if (!ap || !Array.isArray(ap.weeks)) return null;
                 var refMs = refDate ? new Date(refDate + 'T12:00:00').getTime() : Date.now();
                 // Aplanar todas las sesiones ordenadas por fecha ascendente
@@ -44071,17 +44073,16 @@ window.addEventListener('DOMContentLoaded', function() {
         // ═══ Smoke: _testSkipDetection ═════════════════════════════════
         function _testSkipDetection() {
             // Return shape consistente con otros tests: { name, ok, info }
+            // Usa planOverride para aislarse del activePlan real del usuario.
             var TEST_NAME = 'skip.detect';
-            // Guardar estado real
-            var origPlan = window.activePlan;
             try {
-                // Mock plan con 2 long consecutivos saltados
                 var today = new Date();
                 var mkDate = function(daysAgo) {
                     var d = new Date(today.getTime() - daysAgo * 86400000);
                     return d.toISOString().slice(0, 10);
                 };
-                window.activePlan = {
+                // Mock plan 1: 2 longs consecutivos skipped + 2 quality skipped
+                var mockPlan1 = {
                     weeks: [
                         { sessions: [
                             { dateStr: mkDate(21), type: 'long',      dist: 22, skipped: true, skipReason: 'busy' },
@@ -44091,29 +44092,44 @@ window.addEventListener('DOMContentLoaded', function() {
                         ]}
                     ]
                 };
-                var alert1 = window._detectSkipPattern(null, mkDate(0));
+                var alert1 = window._detectSkipPattern(null, mkDate(0), mockPlan1);
                 if (!alert1 || alert1.type !== 'skip_pattern') return { name:TEST_NAME, ok:false, info:'Alerta no generada' };
                 if (alert1.severity !== 'critical') return { name:TEST_NAME, ok:false, info:'Priorizar long critical falló, obtuvo ' + alert1.severity };
                 if (alert1.data.rule !== 'long_streak') return { name:TEST_NAME, ok:false, info:'Regla esperada long_streak, obtuvo ' + alert1.data.rule };
                 if (alert1.data.streak < 2) return { name:TEST_NAME, ok:false, info:'Streak esperado ≥2' };
 
-                // Sin long streak → cae a quality streak
-                window.activePlan.weeks[0].sessions[1].skipped = false;
-                var alert2 = window._detectSkipPattern(null, mkDate(0));
+                // Mock plan 2: sin long streak (1 solo saltado) + quality streak intacto → medium
+                var mockPlan2 = {
+                    weeks: [
+                        { sessions: [
+                            { dateStr: mkDate(21), type: 'long',      dist: 22, skipped: true },
+                            { dateStr: mkDate(14), type: 'long',      dist: 24, skipped: false },
+                            { dateStr: mkDate(20), type: 'threshold', dist: 8,  skipped: true },
+                            { dateStr: mkDate(17), type: 'interval',  dist: 8,  skipped: true }
+                        ]}
+                    ]
+                };
+                var alert2 = window._detectSkipPattern(null, mkDate(0), mockPlan2);
                 if (!alert2 || alert2.data.rule !== 'quality_streak') return { name:TEST_NAME, ok:false, info:'Quality streak no detectado, obtuvo ' + (alert2 && alert2.data && alert2.data.rule) };
                 if (alert2.severity !== 'medium') return { name:TEST_NAME, ok:false, info:'Quality debería ser medium' };
 
-                // Sin ninguna streak → null
-                window.activePlan.weeks[0].sessions[0].skipped = false;
-                window.activePlan.weeks[0].sessions[2].skipped = false;
-                var alert3 = window._detectSkipPattern(null, mkDate(0));
-                if (alert3 !== null) return { name:TEST_NAME, ok:false, info:'Debería devolver null cuando no hay streak' };
+                // Mock plan 3: sin ninguna streak → null
+                var mockPlan3 = {
+                    weeks: [
+                        { sessions: [
+                            { dateStr: mkDate(21), type: 'long',      dist: 22, skipped: false },
+                            { dateStr: mkDate(14), type: 'long',      dist: 24, skipped: true },
+                            { dateStr: mkDate(20), type: 'threshold', dist: 8,  skipped: false },
+                            { dateStr: mkDate(17), type: 'interval',  dist: 8,  skipped: true }
+                        ]}
+                    ]
+                };
+                var alert3 = window._detectSkipPattern(null, mkDate(0), mockPlan3);
+                if (alert3 !== null) return { name:TEST_NAME, ok:false, info:'Debería devolver null cuando no hay streak, obtuvo ' + (alert3 && alert3.data && alert3.data.rule) };
 
                 return { name:TEST_NAME, ok:true, info:'long critical + quality medium + null all OK' };
             } catch(e) {
                 return { name:TEST_NAME, ok:false, info:'Excepción: ' + e.message };
-            } finally {
-                window.activePlan = origPlan;
             }
         }
         window._testSkipDetection = _testSkipDetection;
