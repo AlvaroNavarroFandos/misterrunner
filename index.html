@@ -43377,7 +43377,15 @@ window.addEventListener('DOMContentLoaded', function() {
         // [v5.3 Long tiempo] Derivación por tiempo + invariante D3A
         long:    [_testLongTimeDerivation],
         // [v5.5 SKIP] Saltar sesión + detector de patrones (long_streak + quality_streak)
-        skip:    [window._testSkipDetection]
+        // Wrapper lazy porque window._testSkipDetection se registra en un script POSTERIOR
+        // (el bloque SKIP va después del smoke runner). Pasar la referencia directa aquí
+        // guardaba `undefined` en el array y crasheaba el runner al hacer t() y t.name.
+        skip:    [function _testSkipDetection() {
+            if (typeof window._testSkipDetection !== 'function') {
+                return { name:'_testSkipDetection', ok:false, info:'skip module not loaded yet' };
+            }
+            return window._testSkipDetection();
+        }]
     };
 
     window.__mrSmoke = function(group) {
@@ -44062,6 +44070,8 @@ window.addEventListener('DOMContentLoaded', function() {
 
         // ═══ Smoke: _testSkipDetection ═════════════════════════════════
         function _testSkipDetection() {
+            // Return shape consistente con otros tests: { name, ok, info }
+            var TEST_NAME = 'skip.detect';
             // Guardar estado real
             var origPlan = window.activePlan;
             try {
@@ -44082,26 +44092,26 @@ window.addEventListener('DOMContentLoaded', function() {
                     ]
                 };
                 var alert1 = window._detectSkipPattern(null, mkDate(0));
-                if (!alert1 || alert1.type !== 'skip_pattern') return { ok: false, msg: 'Alerta no generada' };
-                if (alert1.severity !== 'critical') return { ok: false, msg: 'Priorizar long critical falló, obtuvo ' + alert1.severity };
-                if (alert1.data.rule !== 'long_streak') return { ok: false, msg: 'Regla esperada long_streak, obtuvo ' + alert1.data.rule };
-                if (alert1.data.streak < 2) return { ok: false, msg: 'Streak esperado ≥2' };
+                if (!alert1 || alert1.type !== 'skip_pattern') return { name:TEST_NAME, ok:false, info:'Alerta no generada' };
+                if (alert1.severity !== 'critical') return { name:TEST_NAME, ok:false, info:'Priorizar long critical falló, obtuvo ' + alert1.severity };
+                if (alert1.data.rule !== 'long_streak') return { name:TEST_NAME, ok:false, info:'Regla esperada long_streak, obtuvo ' + alert1.data.rule };
+                if (alert1.data.streak < 2) return { name:TEST_NAME, ok:false, info:'Streak esperado ≥2' };
 
                 // Sin long streak → cae a quality streak
                 window.activePlan.weeks[0].sessions[1].skipped = false;
                 var alert2 = window._detectSkipPattern(null, mkDate(0));
-                if (!alert2 || alert2.data.rule !== 'quality_streak') return { ok: false, msg: 'Quality streak no detectado, obtuvo ' + (alert2 && alert2.data && alert2.data.rule) };
-                if (alert2.severity !== 'medium') return { ok: false, msg: 'Quality debería ser medium' };
+                if (!alert2 || alert2.data.rule !== 'quality_streak') return { name:TEST_NAME, ok:false, info:'Quality streak no detectado, obtuvo ' + (alert2 && alert2.data && alert2.data.rule) };
+                if (alert2.severity !== 'medium') return { name:TEST_NAME, ok:false, info:'Quality debería ser medium' };
 
                 // Sin ninguna streak → null
                 window.activePlan.weeks[0].sessions[0].skipped = false;
                 window.activePlan.weeks[0].sessions[2].skipped = false;
                 var alert3 = window._detectSkipPattern(null, mkDate(0));
-                if (alert3 !== null) return { ok: false, msg: 'Debería devolver null cuando no hay streak' };
+                if (alert3 !== null) return { name:TEST_NAME, ok:false, info:'Debería devolver null cuando no hay streak' };
 
-                return { ok: true, msg: 'Detector skip patterns OK · long critical + quality medium + null' };
+                return { name:TEST_NAME, ok:true, info:'long critical + quality medium + null all OK' };
             } catch(e) {
-                return { ok: false, msg: 'Excepción: ' + e.message };
+                return { name:TEST_NAME, ok:false, info:'Excepción: ' + e.message };
             } finally {
                 window.activePlan = origPlan;
             }
