@@ -43758,13 +43758,16 @@ window.addEventListener('DOMContentLoaded', function() {
         // ═══ Definición de motivos ═══════════════════════════════════════
         // Coherente con preview Q3=A: 6 pills grandes iOS Health.
         // Colores adaptados light/dark: el UI usa CSS vars ya definidas.
+        // [v5.5.1 SKIP] Split 'injury' (lesión → rehab wizard) vs 'discomfort' (molestia → skip normal)
+        // injury dispara openRehabForm() tras confirmar. discomfort es skip sin acción especial.
         var SKIP_REASONS = [
-            { id: 'illness', emoji: '🤒', label: 'Enfermedad',        sub: 'Gripe, resfriado, malestar', hex: '#f59e0b', hexDark: '#fbbf24' },
-            { id: 'injury',  emoji: '🩹', label: 'Molestia o lesión', sub: 'Dolor, tirón, precaución',    hex: '#dc2626', hexDark: '#f87171' },
-            { id: 'fatigue', emoji: '😴', label: 'Cansancio',         sub: 'Mala sensación, sin fuerzas', hex: '#8b5cf6', hexDark: '#a78bfa' },
-            { id: 'busy',    emoji: '📅', label: 'Ocupación',         sub: 'Curro, viaje, familia',      hex: '#3b82f6', hexDark: '#60a5fa' },
-            { id: 'weather', emoji: '🌡️', label: 'Clima extremo',     sub: 'Calor, tormenta, seguridad', hex: '#14b8a6', hexDark: '#2dd4bf' },
-            { id: 'other',   emoji: '✏️', label: 'Otro motivo',       sub: 'Describe brevemente',        hex: '#6b7280', hexDark: '#9ca3af' }
+            { id: 'illness',    emoji: '🤒', label: 'Enfermedad',    sub: 'Gripe, resfriado, malestar',  hex: '#f59e0b', hexDark: '#fbbf24' },
+            { id: 'injury',     emoji: '🚑', label: 'Lesión',         sub: 'Iniciar plan de rehab',        hex: '#dc2626', hexDark: '#f87171' },
+            { id: 'discomfort', emoji: '🩹', label: 'Molestia',       sub: 'Aviso corporal, precaución',   hex: '#f97316', hexDark: '#fb923c' },
+            { id: 'fatigue',    emoji: '😴', label: 'Cansancio',      sub: 'Mala sensación, sin fuerzas',  hex: '#8b5cf6', hexDark: '#a78bfa' },
+            { id: 'busy',       emoji: '📅', label: 'Ocupación',      sub: 'Curro, viaje, familia',        hex: '#3b82f6', hexDark: '#60a5fa' },
+            { id: 'weather',    emoji: '🌡️', label: 'Clima extremo',  sub: 'Calor, tormenta, seguridad',   hex: '#14b8a6', hexDark: '#2dd4bf' },
+            { id: 'other',      emoji: '✏️', label: 'Otro motivo',    sub: 'Describe brevemente',          hex: '#6b7280', hexDark: '#9ca3af' }
         ];
         function _skipReasonById(id) {
             for (var i = 0; i < SKIP_REASONS.length; i++) if (SKIP_REASONS[i].id === id) return SKIP_REASONS[i];
@@ -43952,14 +43955,35 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!ok) { closeModal(); return; }
                 if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
                 closeModal();
-                // Si lesión → proponer rehab (best-effort · sin bloquear si no está el flow)
+                // [v5.5.1 SKIP] Si lesión → auto-launch flow rehab:
+                //   1) navegar al tab Runner (contiene rehab-main-card)
+                //   2) expandir la card si está colapsada (rehabCardOpen)
+                //   3) scroll a la card
+                //   4) si NO hay rehab activo, abrir openRehabForm() para crear uno nuevo
+                //   Si YA hay rehab activo, solo navegar (no re-crear).
                 if (selectedId === 'injury') {
                     setTimeout(function() {
                         try {
-                            // Reutilizar el CTA de rehab existente (banner de Home lo cogerá al siguiente render).
-                            // Si hay un modal específico, se puede enganchar aquí en el futuro.
-                            console.log('[MR][SKIP] injury reported — rehab CTA available on Home');
-                        } catch(_){}
+                            var isActive = (typeof activeRehabPlan !== 'undefined' && activeRehabPlan && activeRehabPlan.status === 'active');
+                            var runnerBtn = document.querySelector('#nav .nb[data-target="runner"]') || document.querySelector('[data-target="runner"]');
+                            if (runnerBtn) runnerBtn.click();
+                            setTimeout(function() {
+                                try {
+                                    if (typeof toggleRehabCard === 'function' && typeof rehabCardOpen !== 'undefined' && !rehabCardOpen) {
+                                        toggleRehabCard();
+                                    }
+                                    setTimeout(function() {
+                                        try {
+                                            var rehabCard = document.getElementById('rehab-main-card');
+                                            if (rehabCard) rehabCard.scrollIntoView({behavior:'smooth', block:'start'});
+                                            if (!isActive && typeof openRehabForm === 'function') {
+                                                setTimeout(function() { try { openRehabForm(); } catch(_){} }, 400);
+                                            }
+                                        } catch(_){}
+                                    }, 250);
+                                } catch(_){}
+                            }, 320);
+                        } catch(e) { console.warn('[MR][SKIP] injury rehab launch:', e); }
                     }, 400);
                 }
             };
