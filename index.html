@@ -3881,16 +3881,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>
 
-                <!-- 6. PREDICTOR DE MARCA -->
-                <div id="row-predictor" onclick="openSheet('predictor-sheet')" style="padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
-                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                    </div>
-                    <div style="flex:1;min-width:0;">
-                        <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Predictor de marca</div>
-                    </div>
-                    <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
-                </div>
+                <!-- [v5.3] Predictor de marca consolidado en la fila "Evolución VDOT" (abajo) -->
 
                 <!-- [v4.3 GAP 1 UI] Evolución VDOT — fila Coros, siempre visible, abre sheet histórico -->
                 <div id="row-vdot-evolution" onclick="if(window._renderVdotHistorySheet)window._renderVdotHistorySheet();openSheet('vdot-history-sheet')" style="padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
@@ -3963,30 +3954,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 <!-- ========== TODOS LOS SHEETS DEL GRUPO ========== -->
 
-                <!-- PREDICTOR SHEET -->
-                <div id="predictor-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('predictor-sheet')">
-                    <div class="sheet">
-                        <div class="sheet-handle-wrap">
-                            <div class="sheet-handle"></div>
-                            <div style="display:flex;align-items:center;justify-content:space-between;">
-                                <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                                    Predictor de marca
-                                </div>
-                                <button onclick="closeSheet('predictor-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
-                            </div>
-                        </div>
-                        <div class="sheet-body">
-                            <div id="marathon-predictor" style="display:none;">
-                                <div id="predictor-content"></div>
-                            </div>
-                            <div id="predictor-empty" style="text-align:center;padding:30px 16px;color:var(--ts);font-size:12px;line-height:1.5;">
-                                Sin datos suficientes para predecir tu marca.<br>
-                                <span style="color:var(--tm);font-size:11px;">Registra una marca personal en 5K, 10K, Media o Maratón para obtener predicciones basadas en las fórmulas Riegel + Daniels.</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <!-- [v5.3] Predictor sheet eliminado → predicciones ahora dentro de vdot-history-sheet -->
 
                 <!-- CALENTAMIENTO SHEET -->
                 <div id="warmup-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('warmup-sheet')">
@@ -26856,21 +26824,79 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._applyVdotFromSheet = _applyVdotFromSheet;
 
-    // ── Fila Runner "Evolución VDOT": valor (siempre visible) ──────────
+    // ── Predicción de marcas desde un VDOT (Daniels LUT + Riegel) ──────
+    // Reusa el MISMO motor que los ritmos del plan (_goalSecsFromVDOT →
+    // _riegelProject) para que no haya discordancia entre ritmos y marcas.
+    function _vdotPredictRaces(vdot) {
+        try {
+            if (!vdot || typeof window._goalSecsFromVDOT !== 'function' || typeof window._riegelProject !== 'function') return null;
+            var mSecs = window._goalSecsFromVDOT(vdot, 'marathon');
+            if (!mSecs || mSecs <= 0) return null;
+            return {
+                '5k':  window._riegelProject(mSecs, 42195, 5000),
+                '10k': window._riegelProject(mSecs, 42195, 10000),
+                'hm':  window._riegelProject(mSecs, 42195, 21097),
+                'm':   mSecs
+            };
+        } catch(e){ console.warn('[MR][GAP1] predictRaces:', e); return null; }
+    }
+    window._vdotPredictRaces = _vdotPredictRaces;
+
+    // ── VDOT actual: plan.vdot o (fallback D-a=2) test/carrera más reciente ──
+    function _vdotCurrent() {
+        var plan = _vdotActivePlan();
+        if (plan && plan.vdot != null) return { vdot: plan.vdot, source:'plan', plan:plan };
+        try {
+            var acts = (typeof window._getActivities === 'function') ? (window._getActivities() || []) : [];
+            var cand = acts.filter(function(a){
+                if (!a) return false;
+                if (a.type !== 'test' && a.type !== 'race') return false;
+                if (!a.dateStr || !Number(a.distKm) || !Number(a.durationSec)) return false;
+                return Number(a.distKm) >= 2;
+            }).sort(function(x,y){ return (y.dateStr||'').localeCompare(x.dateStr||''); });
+            if (cand.length && typeof window.vdotFromResult === 'function') {
+                var a = cand[0];
+                var v = window.vdotFromResult(Number(a.durationSec), Number(a.distKm)*1000);
+                if (v && v > 0) return { vdot: Math.round(v), source:'activity', activity:a };
+            }
+        } catch(_){}
+        return null;
+    }
+    window._vdotCurrent = _vdotCurrent;
+
+    // ── Fila Runner "Evolución VDOT": valor (plan o fallback) ──────────
     function _updateVdotEvolutionRow() {
         try {
             var el = document.getElementById('vdot-evolution-value');
             if (!el) return;
-            var plan = _vdotActivePlan();
-            el.textContent = (plan && plan.vdot != null) ? plan.vdot : '\u2014';
+            var cur = _vdotCurrent();
+            el.textContent = (cur && cur.vdot != null) ? cur.vdot : '\u2014';
         } catch(_){}
     }
     window._updateVdotEvolutionRow = _updateVdotEvolutionRow;
 
-    // ── Sheet histórico VDOT (chart SVG generado + eventos) ────────────
+    // ── Bloque "Predicción de marcas" (HTML) desde un vdot ─────────────
+    function _vdotPredBlockHTML(vdot) {
+        var preds = _vdotPredictRaces(vdot);
+        if (!preds) return '';
+        var rows = [['5K',preds['5k']],['10K',preds['10k']],['Media maratón',preds['hm']],['Maratón',preds['m']]];
+        var rowsHtml = rows.map(function(p, i){
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;'+(i>0?'border-top:1px solid var(--border);':'')+'">'
+                 + '<span style="font-size:12.5px;color:var(--tw);font-weight:600;">'+p[0]+'</span>'
+                 + '<span style="font-size:14px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'+_vdotFmtHMS(p[1])+'</span>'
+                 + '</div>';
+        }).join('');
+        return '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:4px 16px;margin-bottom:18px;">'
+             + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 8px;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;">Predicción de marcas</span><span style="font-size:9px;color:var(--tm);letter-spacing:.3px;">Daniels · Riegel</span></div>'
+             + rowsHtml
+             + '</div>';
+    }
+
+    // ── Sheet VDOT: VDOT actual + predicción de marcas + chart/eventos ──
     function _renderVdotHistorySheet() {
         var body = document.getElementById('vdot-history-sheet-body');
         if (!body) return;
+        var cur = _vdotCurrent();
         var plan = _vdotActivePlan();
         var hist = (plan && Array.isArray(plan.vdotHistory)) ? plan.vdotHistory.slice() : [];
         var cardBg = '';
@@ -26878,97 +26904,110 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!cardBg) cardBg = document.body.classList.contains('dark-mode') ? '#0f0f11' : '#ffffff';
         var closeBtn = '<button onclick="closeSheet(\'vdot-history-sheet\')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;position:absolute;top:0;right:0;">\u2715</button>';
         var header = '<div style="position:relative;margin-bottom:6px;"><div style="font-size:21px;font-weight:800;color:var(--tw);text-align:center;letter-spacing:-.6px;padding:0 42px;">Evolución de tu VDOT</div>'+closeBtn+'</div>'
-                   + '<div style="font-size:12px;color:var(--ts);text-align:center;margin-bottom:24px;line-height:1.5;">Cada test o carrera refina tu VDOT<br>y ajusta los ritmos del plan</div>';
-        if (!plan || plan.vdot == null) {
+                   + '<div style="font-size:12px;color:var(--ts);text-align:center;margin-bottom:24px;line-height:1.5;">Tu forma actual en un número · ritmos y<br>marcas estimadas con Daniels + Riegel</div>';
+
+        // Sin nada: ni plan ni test/carrera reciente
+        if (!cur) {
             body.innerHTML = header
               + '<div style="padding:16px 16px 32px;text-align:center;">'
-              +   '<div style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">Sin plan activo.</div>'
-              +   '<div style="font-size:12.5px;color:var(--ts);line-height:1.6;">Crea un plan con el generador para ver aquí la evolución de tu VDOT tras cada test o carrera.</div>'
+              +   '<div style="font-size:15px;font-weight:800;color:var(--tw);margin-bottom:8px;">Sin datos suficientes.</div>'
+              +   '<div style="font-size:12.5px;color:var(--ts);line-height:1.6;">Crea un plan con el generador o registra un <b style="color:var(--tw);">test</b>/<b style="color:var(--tw);">carrera</b> para estimar tu VDOT, tus ritmos y tus marcas.</div>'
               + '</div>';
             return;
         }
-        if (hist.length === 0) {
-            body.innerHTML = header
-              + '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:8px;">'
-              +   '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
-              +   '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
-              +   '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+plan.vdot+'</div>'
-              + '</div>'
-              + '<div style="padding:20px 16px 8px;text-align:center;font-size:12.5px;color:var(--ts);line-height:1.6;">Aún no hay recalibraciones.<br>Registra un <b style="color:var(--tw);">test</b> o una <b style="color:var(--tw);">carrera</b> y tu VDOT se refinará automáticamente, apareciendo aquí su evolución.</div>';
+
+        var current = cur.vdot;
+        var predBlock = _vdotPredBlockHTML(current);
+
+        // Caso plan + historial → hero con tendencia + chart + eventos
+        if (cur.source === 'plan' && hist.length > 0) {
+            var series = [Number(hist[0].oldVdot) || Number(hist[0].vdot)];
+            hist.forEach(function(h){ series.push(Number(h.vdot)); });
+            var baseline = series[0];
+            var trend = current - baseline;
+            var W = 320, H = 148, padL = 10, padR = 22, padT = 14, padB = 22;
+            var n = series.length;
+            var minV = Math.min.apply(null, series), maxV = Math.max.apply(null, series);
+            if (maxV === minV) { maxV = minV + 1; minV = minV - 1; }
+            function xAt(i){ return padL + (W - padL - padR) * (n>1 ? i/(n-1) : 0); }
+            function yAt(v){ return padT + (H - padT - padB) * (1 - (v - minV)/(maxV - minV)); }
+            var pts = series.map(function(v,i){ return xAt(i).toFixed(1)+','+yAt(v).toFixed(1); });
+            var lineStr = pts.join(' ');
+            var areaStr = 'M'+pts[0]+' L'+pts.slice(1).join(' L')+' L'+xAt(n-1).toFixed(1)+','+(H-padB+10)+' L'+xAt(0).toFixed(1)+','+(H-padB+10)+' Z';
+            var dots = series.map(function(v,i){
+                var cx = xAt(i).toFixed(1), cy = yAt(v).toFixed(1);
+                if (i === n-1) {
+                    return '<circle cx="'+cx+'" cy="'+cy+'" r="9" fill="#C9A84C" fill-opacity="0.18"/>'
+                         + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="#C9A84C"/>'
+                         + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="none" stroke="'+cardBg+'" stroke-width="2"/>';
+                }
+                return '<circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="#C9A84C"/>';
+            }).join('');
+            var lx = xAt(n-1), ly = yAt(series[n-1]);
+            var bw = 40;
+            var bubbleX = Math.max(2, Math.min(lx - bw/2, W - bw - 2));
+            var bubbleY = Math.max(2, ly - 30);
+            var chart = '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:16px 14px 10px;margin-bottom:20px;">'
+                      + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin-bottom:10px;padding-left:2px;">Progresión</div>'
+                      + '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:148px;display:block;overflow:visible;">'
+                      +   '<defs><linearGradient id="vdotAreaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#C9A84C" stop-opacity="0.28"/><stop offset="100%" stop-color="#C9A84C" stop-opacity="0"/></linearGradient>'
+                      +   '<filter id="vdotLineGlow" x="-20%" y="-40%" width="140%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#C9A84C" flood-opacity="0.45"/></filter></defs>'
+                      +   '<line x1="0" y1="'+padT+'" x2="'+W+'" y2="'+padT+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                      +   '<line x1="0" y1="'+((padT+H-padB)/2).toFixed(0)+'" x2="'+W+'" y2="'+((padT+H-padB)/2).toFixed(0)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                      +   '<line x1="0" y1="'+(H-padB)+'" x2="'+W+'" y2="'+(H-padB)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
+                      +   '<path d="'+areaStr+'" fill="url(#vdotAreaGrad)"/>'
+                      +   '<polyline points="'+lineStr+'" fill="none" stroke="#C9A84C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#vdotLineGlow)"/>'
+                      +   dots
+                      +   '<g><rect x="'+bubbleX.toFixed(1)+'" y="'+bubbleY.toFixed(1)+'" width="'+bw+'" height="21" rx="10.5" fill="'+cardBg+'" stroke="rgba(201,168,76,.5)" stroke-width="1"/><text x="'+(bubbleX+bw/2).toFixed(1)+'" y="'+(bubbleY+14.5).toFixed(1)+'" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12" font-weight="800" fill="#C9A84C">'+current+'</text></g>'
+                      + '</svg></div>';
+            var trendColor = trend >= 0 ? '#22c55e' : '#f59e0b';
+            var trendIcon = trend >= 0
+                ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>'
+                : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>';
+            var hero = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
+                     + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
+                     + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
+                     + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
+                     + '<div style="position:relative;z-index:1;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:'+trendColor+';font-weight:700;margin-top:8px;font-variant-numeric:tabular-nums;">'+trendIcon+(trend>=0?'+':'')+trend+' vs. inicio del plan</div>'
+                     + '</div>';
+            var evHtml = hist.slice().reverse().map(function(h){
+                var d = Number(h.vdot) - Number(h.oldVdot);
+                var up = d >= 0;
+                var col = up ? '#22c55e' : '#f59e0b';
+                var colDark = up ? '#16a34a' : '#d97706';
+                var dateTxt = (h.activityDate ? new Date(h.activityDate+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}) : '') + ' \u00b7 ' + _vdotSourceLabel(h.source);
+                var titleTxt = _vdotDistLabel(h.distKm) + ' ' + _vdotFmtHMS(h.durationSec);
+                return '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
+                     + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(135deg,'+col+','+colDark+');"></div>'
+                     + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;font-variant-numeric:tabular-nums;">'+titleTxt+'</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">'+dateTxt+'</div></div>'
+                     + '<div style="font-size:14px;font-weight:800;color:'+col+';font-variant-numeric:tabular-nums;">'+(up?'+':'')+d+'</div>'
+                     + '</div>';
+            }).join('');
+            var baseRow = '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
+                        + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:rgba(128,128,128,.35);"></div>'
+                        + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;">VDOT inicial</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">Inicio del plan</div></div>'
+                        + '<div style="font-size:10px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:1px;font-variant-numeric:tabular-nums;">Base '+baseline+'</div>'
+                        + '</div>';
+            body.innerHTML = header + hero + predBlock + chart
+                           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin:8px 4px 12px;">Eventos</div>'
+                           + evHtml + baseRow;
             return;
         }
-        // Serie: baseline (oldVdot del primer evento) + vdot de cada evento
-        var series = [Number(hist[0].oldVdot) || Number(hist[0].vdot)];
-        hist.forEach(function(h){ series.push(Number(h.vdot)); });
-        var baseline = series[0];
-        var current = plan.vdot;
-        var trend = current - baseline;
-        var W = 320, H = 148, padL = 10, padR = 22, padT = 14, padB = 22;
-        var n = series.length;
-        var minV = Math.min.apply(null, series), maxV = Math.max.apply(null, series);
-        if (maxV === minV) { maxV = minV + 1; minV = minV - 1; }
-        function xAt(i){ return padL + (W - padL - padR) * (n>1 ? i/(n-1) : 0); }
-        function yAt(v){ return padT + (H - padT - padB) * (1 - (v - minV)/(maxV - minV)); }
-        var pts = series.map(function(v,i){ return xAt(i).toFixed(1)+','+yAt(v).toFixed(1); });
-        var lineStr = pts.join(' ');
-        var areaStr = 'M'+pts[0]+' L'+pts.slice(1).join(' L')+' L'+xAt(n-1).toFixed(1)+','+(H-padB+10)+' L'+xAt(0).toFixed(1)+','+(H-padB+10)+' Z';
-        var dots = series.map(function(v,i){
-            var cx = xAt(i).toFixed(1), cy = yAt(v).toFixed(1);
-            if (i === n-1) {
-                return '<circle cx="'+cx+'" cy="'+cy+'" r="9" fill="#C9A84C" fill-opacity="0.18"/>'
-                     + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="#C9A84C"/>'
-                     + '<circle cx="'+cx+'" cy="'+cy+'" r="4.5" fill="none" stroke="'+cardBg+'" stroke-width="2"/>';
-            }
-            return '<circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="#C9A84C"/>';
-        }).join('');
-        var lx = xAt(n-1), ly = yAt(series[n-1]);
-        var bw = 40;
-        var bubbleX = Math.max(2, Math.min(lx - bw/2, W - bw - 2));
-        var bubbleY = Math.max(2, ly - 30);
-        var chart = '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:16px 14px 10px;margin-bottom:20px;">'
-                  + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin-bottom:10px;padding-left:2px;">Progresión</div>'
-                  + '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:148px;display:block;overflow:visible;">'
-                  +   '<defs><linearGradient id="vdotAreaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#C9A84C" stop-opacity="0.28"/><stop offset="100%" stop-color="#C9A84C" stop-opacity="0"/></linearGradient>'
-                  +   '<filter id="vdotLineGlow" x="-20%" y="-40%" width="140%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#C9A84C" flood-opacity="0.45"/></filter></defs>'
-                  +   '<line x1="0" y1="'+padT+'" x2="'+W+'" y2="'+padT+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
-                  +   '<line x1="0" y1="'+((padT+H-padB)/2).toFixed(0)+'" x2="'+W+'" y2="'+((padT+H-padB)/2).toFixed(0)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
-                  +   '<line x1="0" y1="'+(H-padB)+'" x2="'+W+'" y2="'+(H-padB)+'" stroke="rgba(128,128,128,0.14)" stroke-width="1" stroke-dasharray="2 5"/>'
-                  +   '<path d="'+areaStr+'" fill="url(#vdotAreaGrad)"/>'
-                  +   '<polyline points="'+lineStr+'" fill="none" stroke="#C9A84C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#vdotLineGlow)"/>'
-                  +   dots
-                  +   '<g><rect x="'+bubbleX.toFixed(1)+'" y="'+bubbleY.toFixed(1)+'" width="'+bw+'" height="21" rx="10.5" fill="'+cardBg+'" stroke="rgba(201,168,76,.5)" stroke-width="1"/><text x="'+(bubbleX+bw/2).toFixed(1)+'" y="'+(bubbleY+14.5).toFixed(1)+'" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="12" font-weight="800" fill="#C9A84C">'+current+'</text></g>'
-                  + '</svg></div>';
-        var trendColor = trend >= 0 ? '#22c55e' : '#f59e0b';
-        var trendIcon = trend >= 0
-            ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>'
-            : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>';
-        var hero = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
-                 + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
-                 + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
-                 + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
-                 + '<div style="position:relative;z-index:1;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:'+trendColor+';font-weight:700;margin-top:8px;font-variant-numeric:tabular-nums;">'+trendIcon+(trend>=0?'+':'')+trend+' vs. inicio del plan</div>'
-                 + '</div>';
-        var evHtml = hist.slice().reverse().map(function(h){
-            var d = Number(h.vdot) - Number(h.oldVdot);
-            var up = d >= 0;
-            var col = up ? '#22c55e' : '#f59e0b';
-            var colDark = up ? '#16a34a' : '#d97706';
-            var dateTxt = (h.activityDate ? new Date(h.activityDate+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}) : '') + ' \u00b7 ' + _vdotSourceLabel(h.source);
-            var titleTxt = _vdotDistLabel(h.distKm) + ' ' + _vdotFmtHMS(h.durationSec);
-            return '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
-                 + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(135deg,'+col+','+colDark+');"></div>'
-                 + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;font-variant-numeric:tabular-nums;">'+titleTxt+'</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">'+dateTxt+'</div></div>'
-                 + '<div style="font-size:14px;font-weight:800;color:'+col+';font-variant-numeric:tabular-nums;">'+(up?'+':'')+d+'</div>'
-                 + '</div>';
-        }).join('');
-        var baseRow = '<div style="position:relative;overflow:hidden;background:var(--card2);border:1px solid var(--border);border-radius:13px;padding:12px 14px 12px 15px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">'
-                    + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:rgba(128,128,128,.35);"></div>'
-                    + '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--tw);font-weight:700;letter-spacing:-.2px;">VDOT inicial</div><div style="font-size:11px;color:var(--ts);margin-top:1px;">Inicio del plan</div></div>'
-                    + '<div style="font-size:10px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:1px;font-variant-numeric:tabular-nums;">Base '+baseline+'</div>'
-                    + '</div>';
-        body.innerHTML = header + hero + chart
-                       + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;margin:8px 4px 12px;">Eventos</div>'
-                       + evHtml + baseRow;
+
+        // Caso plan sin historial, o fallback desde actividad → hero simple + predicciones
+        var sub = (cur.source === 'activity' && cur.activity)
+            ? ('Desde tu ' + _vdotDistLabel(cur.activity.distKm) + ' ' + _vdotFmtHMS(cur.activity.durationSec) + (cur.activity.dateStr ? (' \u00b7 ' + new Date(cur.activity.dateStr+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'})) : ''))
+            : 'Se refinará tras cada test o carrera';
+        var heroSimple = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
+                       + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
+                       + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
+                       + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
+                       + '<div style="position:relative;z-index:1;font-size:11px;color:var(--ts);margin-top:8px;">'+sub+'</div>'
+                       + '</div>';
+        var note = (cur.source === 'activity')
+            ? '<div style="padding:6px 16px 8px;text-align:center;font-size:11.5px;color:var(--ts);line-height:1.6;">Crea un plan para ver la <b style="color:var(--tw);">evolución</b> y que los ritmos se <b style="color:var(--tw);">recalibren solos</b> tras cada test.</div>'
+            : '<div style="padding:6px 16px 8px;text-align:center;font-size:11.5px;color:var(--ts);line-height:1.6;">Aún no hay recalibraciones. Registra un <b style="color:var(--tw);">test</b> o <b style="color:var(--tw);">carrera</b> y tu VDOT se refinará automáticamente.</div>';
+        body.innerHTML = header + heroSimple + predBlock + note;
     }
     window._renderVdotHistorySheet = _renderVdotHistorySheet;
     // ═══════════════ fin [v4.3 GAP 1 UI] ═══════════════
@@ -27192,10 +27231,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!goalSecs || goalSecs <= 0) return null;
         if (!Array.isArray(activities) || activities.length === 0) return null;
 
+        // [v5.3 GAP 10 fix] RUNNING_TYPES vive en otro <script> block → puede quedar
+        // fuera de scope aquí (lanzaría y el try/catch ocultaría el badge). Fallback local.
+        const _runTypes = (typeof RUNNING_TYPES !== 'undefined')
+            ? RUNNING_TYPES : new Set(['easy','recovery','series','long','race']);
         const now = Date.now();
         const running = activities.filter(a => {
-            if (!RUNNING_TYPES.has(String(a.type||'').toLowerCase())) return false;
-            const t = a.duration || a.movingTime || 0;
+            if (!_runTypes.has(String(a.type||'').toLowerCase())) return false;
+            const t = a.durationSec || a.duration || a.movingTime || 0;
             if (t <= 0) return false;
             if (!a.dateStr) return false;
             const dms = new Date(a.dateStr+'T12:00:00').getTime();
@@ -27208,7 +27251,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         for (const band of RIEGEL_BANDS) {
             const inBand = running.filter(a => a.distKm >= band.min && a.distKm <= band.max);
             if (inBand.length === 0) continue;
-            const bestT = Math.min(...inBand.map(a => a.duration || a.movingTime));
+            const bestT = Math.min(...inBand.map(a => a.durationSec || a.duration || a.movingTime));
             bestByBand[band.name] = { secs: bestT, distKm: band.distKm, bandName: band.name };
         }
         if (Object.keys(bestByBand).length === 0) return null;
@@ -30922,7 +30965,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!btn) return;
         if(btn.dataset.target==='home')    setTimeout(renderHome, 50);
         if(btn.dataset.target==='mister')  setTimeout(()=>{initEvalSelect();renderMisterPlanCard();updateStrengthActiveBanner();updateRehabUI();try{refreshStrengthSyncToggle();}catch(_){}},50);
-        if(btn.dataset.target==='runner')  setTimeout(()=>{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); renderMarathonPredictor(); renderMedallero(); showThresholdValidation(); },50);
+        if(btn.dataset.target==='runner')  setTimeout(()=>{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); (window._updateVdotEvolutionRow&&window._updateVdotEvolutionRow()); renderMedallero(); showThresholdValidation(); },50);
         if(btn.dataset.target==='cal') setTimeout(()=>{
             // Jump to current rehab week if only rehab plan active
             var _rp   = activeRehabPlan && activeRehabPlan.status==='active';
@@ -33138,9 +33181,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '</div>' +
                     // Centro
                     '<div style="flex:1;min-width:0;">' +
-                        // [VO2 V4] "VO2 MAX" más grande (11px, w800, sin corchetes, color texto principal)
-                        // vs "Capacidad aeróbica" (9px, w700, terciario) → jerarquía visual clara
-                        '<div style="font-size:9px;color:var(--ts);text-transform:uppercase;letter-spacing:1.3px;font-weight:700;">Capacidad aeróbica <span style="font-size:11px;color:var(--tw);font-weight:800;letter-spacing:.8px;margin-left:2px;">VO2 MAX</span></div>' +
+                        // [v5.3] Solo "VO2 MAX" como label (quitado "Capacidad aeróbica")
+                        '<div style="font-size:11px;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">VO2 MAX</div>' +
                         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:3px;flex-wrap:wrap;">' +
                             '<span style="font-size:26px;font-weight:900;color:var(--tw);line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
                             '<span style="font-size:10px;color:var(--tm);">ml/kg/min</span>' +
@@ -43025,8 +43067,8 @@ window.addEventListener('DOMContentLoaded', function() {
             if (!r1 || r1.shouldUpdate !== true || r1.reason !== 'improved') failures.push('mejora no detectada (' + JSON.stringify(r1) + ')');
             if (r1 && (typeof r1.newVdot !== 'number' || r1.newVdot <= 50)) failures.push('newVdot no coherente');
             // (b) findPending con activity reciente no procesada → objeto
-            var today = new Date().toISOString().slice(0,10);
-            var acts = [{ id:'a2', type:'race', distKm:21.097, durationSec:5100, dateStr: today }];
+            var recent = new Date(Date.now() - 2*86400000).toISOString().slice(0,10);
+            var acts = [{ id:'a2', type:'race', distKm:21.097, durationSec:5100, dateStr: recent }];
             var pending = window._findPendingVdotRecalibration(acts, plan);
             if (!pending || !pending.activity || !pending.result) failures.push('findPending no devuelve pendiente para test fresco');
             // (c) guard: misma activity ya en vdotHistory → null
@@ -43041,6 +43083,29 @@ window.addEventListener('DOMContentLoaded', function() {
                     : failures.join(' · ')
             };
         } catch(e) { return { name:'vdot.orchestrator', ok:false, info:'EXCEPCIÓN: ' + e.message }; }
+    }
+
+    function _testVdotPredictions() {
+        try {
+            if (typeof window._vdotPredictRaces !== 'function' || typeof window._vdotCurrent !== 'function') {
+                return { name:'vdot.predictions', ok:false, info:'_vdotPredictRaces/_vdotCurrent no en window' };
+            }
+            var preds = window._vdotPredictRaces(50);
+            var failures = [];
+            if (!preds) failures.push('predictRaces(50) null');
+            else {
+                ['5k','10k','hm','m'].forEach(function(k){ if(!(preds[k] > 0)) failures.push(k+' no positivo'); });
+                if (preds['5k'] && preds['10k'] && !(preds['10k'] > preds['5k'])) failures.push('10K no > 5K');
+                if (preds['hm'] && preds['m'] && !(preds['m'] > preds['hm'])) failures.push('M no > HM');
+            }
+            return {
+                name:'vdot.predictions',
+                ok: failures.length === 0,
+                info: failures.length === 0
+                    ? ('OK · monótono 5K<10K<HM<M (5K '+Math.round(preds['5k'])+'s · M '+Math.round(preds['m'])+'s)')
+                    : failures.join(' · ')
+            };
+        } catch(e){ return { name:'vdot.predictions', ok:false, info:'EXCEPCIÓN: '+e.message }; }
     }
 
     var GROUPS = {
@@ -43066,7 +43131,7 @@ window.addEventListener('DOMContentLoaded', function() {
         // [v4.2 GAP 3] Grupo Overload — 5 patrones sobrecarga + hub unificado
         overload:[_testOverloadHelpersPresent, _testOverloadLogic, _testOverloadHubIntegration],
         // [v4.3 GAP 1] Grupo VDOT — recalibración automática + capa UI
-        vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator]
+        vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions]
     };
 
     window.__mrSmoke = function(group) {
