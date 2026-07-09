@@ -2504,6 +2504,88 @@
     body:not(.dark-mode) .mr-lib-card .mr-lib-stat-sep      { color: var(--tm); }
     body:not(.dark-mode) .mr-lib-card .mr-lib-date-inline   { color: var(--crimson); font-weight: 800; }
 
+    /* [v5.9.3 lib month] Cajón mensual · agrupa minicards por año-mes con
+       header estilo Coros (nombre mes + km hero + entrenos + horas).
+       Card oscura contenedora + minicards interiores un pelín más claras
+       para contraste sutil. Sin !important: selector 4-clases sobrescribe
+       el 3-clases del bg base de la minicard en dark. */
+    .mr-lib-month-wrap {
+        background: #131318;
+        border: 1px solid rgba(255,255,255,.05);
+        border-radius: 24px;
+        padding: 12px 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    body:not(.dark-mode) .mr-lib-month-wrap {
+        background: #ececee;
+        border: 1px solid rgba(0,0,0,.055);
+    }
+    .mr-lib-month-hdr {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        padding: 4px 12px 10px;
+        gap: 12px;
+        border-bottom: 1px solid rgba(255,255,255,.05);
+    }
+    body:not(.dark-mode) .mr-lib-month-hdr {
+        border-bottom-color: rgba(0,0,0,.055);
+    }
+    .mr-lib-month-name {
+        font-size: 26px;
+        font-weight: 800;
+        color: var(--tw);
+        letter-spacing: -.8px;
+        line-height: 1;
+        font-family: var(--f);
+    }
+    .mr-lib-month-stats {
+        text-align: right;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 5px;
+        min-width: 0;
+    }
+    .mr-lib-month-km {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--tw);
+        letter-spacing: -.5px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        font-family: var(--f);
+        display: inline-flex;
+        align-items: baseline;
+        gap: 3px;
+    }
+    .mr-lib-month-km-unit {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--tw);
+        opacity: .85;
+    }
+    .mr-lib-month-sub {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--ts);
+        letter-spacing: .1px;
+        display: flex;
+        gap: 14px;
+        line-height: 1.1;
+    }
+    .mr-lib-month-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    /* Clarear minicards dentro del cajón mensual (solo dark; light ya es blanca) */
+    body.dark-mode .mr-lib-month-body .mr-lib-card .mr-lib-card-inner {
+        background: #22222a;
+    }
+
     /* [FASE 6 · Badge foto V4 · Light Apple] Indica que la activity tiene foto.
        Diseño: punto minimalista 6×6 con glow suave (dorado en dark, crimson en
        light), sin icono interno. Posicionado en esquina sup. IZQ de la card
@@ -23039,6 +23121,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const _mrLibSorted = [...filtered].sort((a, b) => new Date(b.dateStr + "T12:00:00") - new Date(a.dateStr + "T12:00:00"));
         const _mrLibTotal  = _mrLibSorted.length;
 
+        // [v5.9.3 lib month] Pre-cálculo de totales por año-mes ("YYYY-MM") en una
+        // sola pasada sobre los resultados filtrados. El helper crea/recupera
+        // el cajón mensual bajo demanda; cada minicard se cuelga del body de
+        // su mes en lugar de directamente en #activities-list. Sin regresión
+        // en skeletons ni IO: skels van a `list` como antes (se limpian pre-render),
+        // y el observer sigue observando canvas donde estén.
+        const _monthTotals = {};
+        _mrLibSorted.forEach(function(_a) {
+            const _ym = (_a.dateStr || '').slice(0, 7);
+            if (!_ym) return;
+            if (!_monthTotals[_ym]) _monthTotals[_ym] = { km: 0, count: 0, sec: 0 };
+            _monthTotals[_ym].km    += (_a.distKm || 0);
+            _monthTotals[_ym].count += 1;
+            _monthTotals[_ym].sec   += (_a.durationSec || 0);
+        });
+        function _mrLibGetOrCreateMonthGroup(act) {
+            const _ym = (act.dateStr || '').slice(0, 7);
+            if (!_ym) return list;
+            let _wrap = list.querySelector('.mr-lib-month-wrap[data-ym="' + _ym + '"]');
+            if (_wrap) return _wrap.querySelector('.mr-lib-month-body');
+            const _tot = _monthTotals[_ym] || { km: 0, count: 0, sec: 0 };
+            const _d = new Date(_ym + '-01T12:00:00');
+            const _monthName = isNaN(_d)
+                ? _ym
+                : _d.toLocaleDateString('es-ES', { month: 'short' }).replace('.', '');
+            const _kmStr  = _tot.km.toFixed(2);
+            const _cntStr = _tot.count + ' Entrenamiento' + (_tot.count === 1 ? '' : 's');
+            const _hrStr  = (_tot.sec / 3600).toFixed(1) + ' Horas';
+            _wrap = document.createElement('div');
+            _wrap.className = 'mr-lib-month-wrap';
+            _wrap.setAttribute('data-ym', _ym);
+            _wrap.innerHTML = ''
+                + '<div class="mr-lib-month-hdr">'
+                +   '<div class="mr-lib-month-name">' + _monthName + '</div>'
+                +   '<div class="mr-lib-month-stats">'
+                +     '<div class="mr-lib-month-km">' + _kmStr + '<span class="mr-lib-month-km-unit">km</span></div>'
+                +     '<div class="mr-lib-month-sub"><span>' + _cntStr + '</span><span>' + _hrStr + '</span></div>'
+                +   '</div>'
+                + '</div>'
+                + '<div class="mr-lib-month-body"></div>';
+            list.appendChild(_wrap);
+            return _wrap.querySelector('.mr-lib-month-body');
+        }
+
         // [v8 P.Lib retoques · Pieza 2] Skeleton placeholders + chunked rendering
         // para no bloquear main thread con muchas actividades. Si hay >15, mostramos
         // 6 cards fantasma ESTRUCTURADAS (forma de card real + shimmer dorado) y
@@ -23425,7 +23551,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             });
 
             wrap.appendChild(sliding);
-            list.appendChild(wrap);
+            _mrLibGetOrCreateMonthGroup(act).appendChild(wrap);
 
             // [FASE 6 · Fix tracks vacíos] Diferir el draw al observer.
             // Antes: rAF inmediato → si la card está fuera de viewport con
