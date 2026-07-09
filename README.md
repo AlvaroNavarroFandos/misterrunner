@@ -1,2 +1,2 @@
 # misterrunner
-APP oficial para runners
+APP oficial para runners.
