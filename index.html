@@ -14129,6 +14129,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._mrLibMountSkeleton = _mrLibMountSkeleton;
 
+    // [v5.9.4.1 lib loader fix] Comprueba si las cards ya están montadas en
+    // el DOM (caso normal en 2ª+ entradas a Biblioteca: bootApp llamó a
+    // renderActivities una vez y las cards persisten). En ese caso dispara
+    // el fade del overlay skeleton inmediatamente en delayMs (default 200ms).
+    // Sin este check, el overlay esperaba al safety net de 3s porque
+    // renderActivities NO vuelve a correr si los datos no cambiaron.
+    //
+    // Regla: si NO hay cards → renderActivities corre → el fade lo dispara
+    // el fin del chunk final (Camino 1). Si SÍ hay cards → aquí (Camino 2).
+    function _mrLibFastFadeIfReady(delayMs) {
+        try {
+            var _actList = document.getElementById('activities-list');
+            var _hasCards = !!(_actList && _actList.querySelector('.mr-lib-month-wrap, .mr-lib-card'));
+            if (!_hasCards) return;
+            setTimeout(function() {
+                var _o = document.getElementById('mr-lib-skel-overlay');
+                if (_o && !_o.classList.contains('mr-skel-fadeout')) {
+                    _o.classList.add('mr-skel-fadeout');
+                    setTimeout(function() {
+                        if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
+                    }, 300);
+                }
+            }, (delayMs === undefined ? 200 : delayMs));
+        } catch(_) {}
+    }
+    window._mrLibFastFadeIfReady = _mrLibFastFadeIfReady;
+
     document.querySelectorAll('.nb').forEach(btn => {
         btn.addEventListener('click', () => {
             // [FASE 6 · Fix A] Leer swipeDir ANTES de cualquier mutación DOM, dentro
@@ -14222,6 +14249,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             // bloque carrusel), así que no lo duplicamos.
                             if (!_useNavFx) {
                                 try { _mrLibMountSkeleton(v); } catch(_) {}
+                                try { _mrLibFastFadeIfReady(200); } catch(_) {}
                             }
                             // Stagger reveal de las primeras cards reales (debajo)
                             try {
@@ -14315,6 +14343,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // El propio helper lo retira con fade a los ~500ms (tras asentarse).
                 if (_destHeavy) {
                     try { _mrLibMountSkeleton(_newView); } catch(_) {}
+                    try { _mrLibFastFadeIfReady(300); } catch(_) {}
                 }
 
                 // Función de limpieza: quita clases de carrusel, restaura estilos y
