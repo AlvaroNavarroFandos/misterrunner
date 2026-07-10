@@ -315,8 +315,8 @@
        ─────────────────────────────────────────────────────────────── */
     .mr-skel-card {
         display: flex;
-        height: 128px;
-        border-radius: 18px;
+        height: 120px;
+        border-radius: 12px;
         overflow: hidden;
         background: var(--card2);
         border: 1px solid var(--border);
@@ -14109,19 +14109,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             _ov.style.top = _top + 'px';
             _ov.style.bottom = '0';
             var _skelHTML = '';
-            for (var _k = 0; _k < 3; _k++) _skelHTML += _mrSkelCardHTML();
+            for (var _k = 0; _k < 5; _k++) _skelHTML += _mrSkelCardHTML();
             _ov.innerHTML = _skelHTML;
             viewEl.appendChild(_ov);
-            // Fade out + cleanup a los 500ms
+            // [v5.9.4 lib loader] Safety net: si por edge case renderActivities
+            // nunca dispara el fade (no corre, aborta, error silencioso), forzar
+            // fade a los 3s para no dejar el overlay pegado. En flow normal,
+            // el fin del último chunk lo dispara antes.
             setTimeout(function(){
                 var _o = document.getElementById('mr-lib-skel-overlay');
-                if (_o) {
+                if (_o && !_o.classList.contains('mr-skel-fadeout')) {
                     _o.classList.add('mr-skel-fadeout');
                     setTimeout(function(){
                         if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
                     }, 300);
                 }
-            }, 500);
+            }, 3000);
         } catch(_) {}
     }
     window._mrLibMountSkeleton = _mrLibMountSkeleton;
@@ -23227,10 +23230,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function _mrLibRenderChunk() {
             // [FASE 6 · Fix render concurrente] Abortar si llegó un render nuevo
             if (window.__mrLibRenderToken !== _myToken) return;
-            if (_mrLibIdx === 0) {
-                // Quitar skeletons antes del primer chunk real
-                list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
-            }
             const _end = Math.min(_mrLibIdx + _MR_LIB_CHUNK, _mrLibTotal);
             for (; _mrLibIdx < _end; _mrLibIdx++) {
                 const act = _mrLibSorted[_mrLibIdx];
@@ -23239,7 +23238,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (_mrLibIdx < _mrLibTotal) {
                 requestAnimationFrame(_mrLibRenderChunk);
             } else {
-                // Fin del render: si quedó vacío con filtros, mensaje
+                // [v5.9.4 lib loader] Fin del render REAL: quitar skeletons de
+                // ambos caminos SIMULTÁNEAMENTE con las cards ya montadas, para
+                // eliminar el "flash blanco a tirones" que producía el timer
+                // fijo de 500ms del Camino 2 desincronizado con la duración
+                // real del render (>500ms con 291 actividades).
+                // 1) Camino 2 · overlay #mr-lib-skel-overlay: fade + remove
+                var _ov = document.getElementById('mr-lib-skel-overlay');
+                if (_ov && !_ov.classList.contains('mr-skel-fadeout')) {
+                    _ov.classList.add('mr-skel-fadeout');
+                    setTimeout(function(){
+                        if (_ov && _ov.parentNode) _ov.parentNode.removeChild(_ov);
+                    }, 300);
+                }
+                // 2) Camino 1 · flat skels dentro de #activities-list
+                list.querySelectorAll('.mr-lib-skel').forEach(function(s){ s.remove(); });
+                // 3) Mensaje si quedó vacío con filtros
                 if (filtered.length === 0 && activities.length > 0) {
                     const msg = document.createElement('div');
                     msg.style.cssText = 'text-align:center;padding:30px 20px;color:var(--tm);font-size:12px;';
