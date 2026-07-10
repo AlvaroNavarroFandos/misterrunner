@@ -14129,12 +14129,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._mrLibMountSkeleton = _mrLibMountSkeleton;
 
-    // [v5.9.4.1 lib loader fix] Comprueba si las cards ya están montadas en
-    // el DOM (caso normal en 2ª+ entradas a Biblioteca: bootApp llamó a
-    // renderActivities una vez y las cards persisten). En ese caso dispara
-    // el fade del overlay skeleton inmediatamente en delayMs (default 200ms).
-    // Sin este check, el overlay esperaba al safety net de 3s porque
-    // renderActivities NO vuelve a correr si los datos no cambiaron.
+    // [v5.9.4.1 lib loader fix + v5.9.4.2 iOS paint fix] Comprueba si las
+    // cards ya están montadas en el DOM (2ª+ entradas a Biblioteca: bootApp
+    // llamó a renderActivities una vez y persisten). En ese caso dispara
+    // el fade del overlay skeleton.
+    //
+    // iOS Safari: 1000ms de skeleton visible + doble rAF con reflow forzado
+    // antes del fade. Sin esto, iOS posponía el paint de los canvas de
+    // tracks hasta el momento del switch y aparecía tirón al destapar.
+    // Chrome desktop: 200/300ms directos (paint es inmediato, sin problema).
     //
     // Regla: si NO hay cards → renderActivities corre → el fade lo dispara
     // el fin del chunk final (Camino 1). Si SÍ hay cards → aquí (Camino 2).
@@ -14143,15 +14146,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _actList = document.getElementById('activities-list');
             var _hasCards = !!(_actList && _actList.querySelector('.mr-lib-month-wrap, .mr-lib-card'));
             if (!_hasCards) return;
+            var _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            var _actualDelay = _isIOS ? 1000 : (delayMs === undefined ? 200 : delayMs);
             setTimeout(function() {
-                var _o = document.getElementById('mr-lib-skel-overlay');
-                if (_o && !_o.classList.contains('mr-skel-fadeout')) {
-                    _o.classList.add('mr-skel-fadeout');
-                    setTimeout(function() {
-                        if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
-                    }, 300);
-                }
-            }, (delayMs === undefined ? 200 : delayMs));
+                // Forzar reflow del list para que Safari iOS lance el paint
+                // de canvas pending; luego esperar 2 rAFs para asegurar que
+                // el frame se pinte antes de destapar. Barato en Chrome
+                // (paint ya estaba) y crítico en iOS.
+                try { void _actList.offsetHeight; } catch(_) {}
+                requestAnimationFrame(function() {
+                    requestAnimationFrame(function() {
+                        var _o = document.getElementById('mr-lib-skel-overlay');
+                        if (_o && !_o.classList.contains('mr-skel-fadeout')) {
+                            _o.classList.add('mr-skel-fadeout');
+                            setTimeout(function() {
+                                if (_o && _o.parentNode) _o.parentNode.removeChild(_o);
+                            }, 300);
+                        }
+                    });
+                });
+            }, _actualDelay);
         } catch(_) {}
     }
     window._mrLibFastFadeIfReady = _mrLibFastFadeIfReady;
