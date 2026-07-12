@@ -31144,47 +31144,76 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const hCard=document.createElement('div');
         hCard.className = 'mr-plan-week-header';
         hCard.dataset.hScroll = '1';  // Opt-out del swipe global de pestañas
-        hCard.style.cssText='background:var(--card2);border-radius:12px;border:1px solid var(--border);overflow:hidden;margin-bottom:10px;touch-action:pan-y;position:relative;cursor:grab;user-select:none;-webkit-user-select:none;will-change:transform;transition:transform .25s cubic-bezier(.22,.61,.36,1);';
         const wDate=new Date(wk.weekStart+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'});
         // Fecha fin de la semana (7 días después)
         const wEndDate=new Date(new Date(wk.weekStart+'T12:00:00').getTime()+6*86400000)
             .toLocaleDateString('es-ES',{day:'numeric',month:'short'});
         const _phaseCol = PHASE_COLOR[wk.phase] || '#60a5fa';
         // Generar gradient más claro para la barra superior premium
+        // [v6.2 Full-color hero] Ampliado para admitir amt negativo (oscurecer)
+        // y helper _hexRgba para sombras del color de la fase.
         function _lighten(hex,amt) {
             try {
                 let h = hex.replace('#','');
                 if (h.length===3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
-                let r = Math.min(255, parseInt(h.slice(0,2),16) + amt);
-                let g = Math.min(255, parseInt(h.slice(2,4),16) + amt);
-                let b = Math.min(255, parseInt(h.slice(4,6),16) + amt);
+                let r = Math.max(0, Math.min(255, parseInt(h.slice(0,2),16) + amt));
+                let g = Math.max(0, Math.min(255, parseInt(h.slice(2,4),16) + amt));
+                let b = Math.max(0, Math.min(255, parseInt(h.slice(4,6),16) + amt));
                 return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + b.toString(16).padStart(2,'0');
             } catch(_) { return hex; }
         }
-        const _phaseLight = _lighten(_phaseCol, 40);
+        function _hexRgba(hex, a) {
+            try {
+                let h = hex.replace('#','');
+                if (h.length===3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+                return 'rgba('+parseInt(h.slice(0,2),16)+','+parseInt(h.slice(2,4),16)+','+parseInt(h.slice(4,6),16)+','+a+')';
+            } catch(_) { return 'rgba(0,0,0,'+a+')'; }
+        }
+        const _phaseLight  = _lighten(_phaseCol, 40);
+        const _phaseDark   = _lighten(_phaseCol, -50);
+        const _phaseShadow = _hexRgba(_phaseCol, 0.32);
         // Calcular si hay semana anterior/siguiente para mostrar flechitas/dots indicadores
         const _navPlan = (activePlan && activePlan.type !== 'strength') ? activePlan : activeStrengthPlan;
         const _navMax  = _navPlan ? _navPlan.weeks.length - 1
             : (activeRehabPlan && activeRehabPlan.status === 'active' ? activeRehabPlan.totalWeeks - 1 : 0);
         const _hasPrev = weekIdx > 0;
         const _hasNext = weekIdx < _navMax;
+
+        // [v6.2 Full-color hero · Opción C] Cabecera semanal con fondo saturado
+        // del color de la fase (gradient col → dark), texto blanco, KM en pill
+        // blanca con el número tintado del color. Sombra proyectada del color
+        // aporta profundidad. La línea top blanca translúcida remata el borde.
+        hCard.style.cssText = 'background:linear-gradient(135deg,'+_phaseCol+' 0%,'+_phaseDark+' 100%);'
+            + 'border:1px solid '+_phaseCol+';border-radius:14px;padding:12px 14px;margin-bottom:10px;'
+            + 'touch-action:pan-y;position:relative;overflow:hidden;cursor:grab;'
+            + 'user-select:none;-webkit-user-select:none;will-change:transform;'
+            + 'transition:transform .25s cubic-bezier(.22,.61,.36,1);'
+            + 'box-shadow:0 6px 20px '+_phaseShadow+';'
+            + 'display:flex;align-items:center;justify-content:space-between;gap:10px;';
+
         hCard.innerHTML =
-            `<div style="height:2px;background:linear-gradient(90deg,transparent 0%,${_phaseCol} 30%,${_phaseLight} 50%,${_phaseCol} 70%,transparent 100%);"></div>
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;position:relative;">
-                <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;opacity:${_hasPrev?'.55':'.15'};transition:opacity .2s;" aria-hidden="true">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-                </div>
-                <div style="display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;min-width:0;flex:1;justify-content:center;text-align:center;">
-                    <span style="font-size:14px;font-weight:800;color:var(--tw);letter-spacing:-.3px;">Semana ${wk.n}</span>
-                    <span style="font-size:10px;color:var(--tm);">·</span>
-                    <span style="font-size:10px;font-weight:800;color:${_phaseCol};text-transform:uppercase;letter-spacing:1.2px;">${wk.phase}</span>
-                    <span style="font-size:10px;color:var(--tm);">·</span>
-                    <span style="font-size:10px;color:var(--ts);font-weight:500;">${wDate} - ${wEndDate}</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-                    <span style="font-size:16px;font-weight:800;color:var(--tw);letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${totalKm}</span><span style="font-size:9px;color:var(--ts);text-transform:uppercase;letter-spacing:.6px;font-weight:600;">km</span>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.5" stroke-linecap="round" style="opacity:${_hasNext?'.55':'.15'};transition:opacity .2s;margin-left:4px;" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
-                </div>
+            // Línea top blanca translúcida (highlight sutil)
+            `<div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);pointer-events:none;"></div>
+            <!-- Flecha izquierda -->
+            <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasPrev?'.75':'.20'};transition:opacity .2s;" aria-hidden="true">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </div>
+            <!-- Centro: Semana + Phase + Fechas -->
+            <div style="display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;min-width:0;flex:1;justify-content:center;text-align:center;position:relative;">
+                <span style="font-size:15px;font-weight:900;color:#fff;letter-spacing:-.3px;text-shadow:0 1px 2px rgba(0,0,0,.15);">Semana ${wk.n}</span>
+                <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
+                <span style="font-size:10px;font-weight:900;color:rgba(255,255,255,.95);text-transform:uppercase;letter-spacing:1.5px;">${wk.phase}</span>
+                <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
+                <span style="font-size:10px;color:rgba(255,255,255,.75);font-weight:600;">${wDate} - ${wEndDate}</span>
+            </div>
+            <!-- KM pill blanca con número tintado del color de la fase -->
+            <div style="display:inline-flex;align-items:baseline;gap:4px;background:#fff;border-radius:999px;padding:5px 12px;flex-shrink:0;box-shadow:0 3px 10px rgba(0,0,0,.20);position:relative;">
+                <span style="font-size:14px;font-weight:900;color:${_phaseCol};letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${totalKm}</span>
+                <span style="font-size:8.5px;color:#52525b;font-weight:800;letter-spacing:.8px;text-transform:uppercase;">km</span>
+            </div>
+            <!-- Flecha derecha -->
+            <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasNext?'.75':'.20'};transition:opacity .2s;position:relative;" aria-hidden="true">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
             </div>`;
 
         // ── Swipe horizontal para cambiar semana ───────────────────────
@@ -31259,12 +31288,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     _renderActivePlanWeek(planCurrentWeek);
                     if (typeof updatePlanNav === 'function') updatePlanNav();
                     _pulseWeekLabel();
+                    // [Plan · Scroll fix v2] Reset scroll para ver la cabecera nueva
+                    // y garantizar que el usuario puede llegar hasta el último
+                    // entreno abajo (evita "colgarse" en scroll de la semana anterior).
+                    var _vc = document.getElementById('view-cal');
+                    if (_vc) _vc.scrollTop = 0;
                 } else if (_dx > _WTH && _hasPrev) {
                     if (navigator.vibrate) try { navigator.vibrate(15); } catch(_){}
                     planCurrentWeek--;
                     _renderActivePlanWeek(planCurrentWeek);
                     if (typeof updatePlanNav === 'function') updatePlanNav();
                     _pulseWeekLabel();
+                    // [Plan · Scroll fix v2] Reset scroll (mismo motivo).
+                    var _vc2 = document.getElementById('view-cal');
+                    if (_vc2) _vc2.scrollTop = 0;
                 } else {
                     targetEl.style.transform = 'translateX(0)';
                 }
@@ -31767,6 +31804,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _attachWeekSwipeTo(daysCard);
 
         container.appendChild(daysCard);
+
+        // [Plan · Scroll fix v2] Colchón inferior explícito. El padding-bottom
+        // del .view calcula desde nav-h + safe-area, pero en iOS PWA a veces
+        // no rasca el último entreno con el pulgar por completo. Este spacer
+        // de 24px + flex-shrink:0 garantiza espacio suficiente por debajo del
+        // último día para scrollear cómodamente.
+        var _planBottomSpacer = document.createElement('div');
+        _planBottomSpacer.style.cssText = 'height:24px;flex-shrink:0;pointer-events:none;';
+        container.appendChild(_planBottomSpacer);
     }
 
     // ── INIT ───────────────────────────────────────────────────────
