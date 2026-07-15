@@ -36834,7 +36834,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             </div>
                         </div>`;
 
-                // Running: chips 1-line etiquetados (label del bloque + km)
+                // Running: chips resumidos (solo color del bloque + distancia). Detalle en tap → Plan.
                 if (!_isStr && sess.blocks && sess.blocks.length > 0) {
                     const _totalKm = sess.blocks.reduce((a,b)=>a+(b.km||0),0)||1;
                     html += '<div style="display:flex;gap:3px;margin-top:8px;">';
@@ -36843,11 +36843,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const pct = Math.round((bKm/_totalKm)*100);
                         if (pct <= 0) return;
                         const bColor = b.color || '#94a3b8';
-                        const bLbl = String(b.label || '').slice(0, 8);
                         const bKmStr = Number.isInteger(bKm) ? String(bKm) : bKm.toFixed(1);
-                        html += `<div style="flex:${pct};background:${bColor}22;border-left:2px solid ${bColor};border-radius:5px;padding:3px 6px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" title="${b.label||''}">`
-                            + `<span style="font-size:8.5px;font-weight:800;color:${bColor};text-transform:uppercase;letter-spacing:.3px;">${bLbl}</span>`
-                            + ` <span style="font-size:9px;font-weight:600;color:rgba(255,255,255,.85);">${bKmStr}km</span>`
+                        html += `<div style="flex:${pct};background:${bColor}22;border-left:3px solid ${bColor};border-radius:5px;padding:4px 6px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:flex;align-items:center;justify-content:center;" title="${b.label||''}">`
+                            + `<span style="font-size:10.5px;font-weight:700;color:rgba(255,255,255,.94);letter-spacing:-.1px;">${bKmStr}km</span>`
                             + `</div>`;
                     });
                     html += '</div>';
@@ -46007,11 +46005,24 @@ window.addEventListener('DOMContentLoaded', function() {
 
         // ═══ Auto-polling whoami al arranque (event-driven + initial tick) ═══
         // ─── p11: Hidratador de cache syncedKeys (post-whoami connected) ─────
+        //         p13 fix: re-render Home + Plan tras hidratación exitosa
+        //         (renderHome corre ANTES que la cache esté poblada al arranque)
         async function _corosHydrateSyncedKeys() {
             try {
                 var s = await _corosLoadSyncedKeys();
                 if (window.__mrCoros) window.__mrCoros.syncedKeys = s;
                 console.log('[MR x COROS] syncedKeys hidratados · size=' + s.size);
+                // p13 fix badges timing race: refresh renders si la cache trae keys nuevas
+                if (s && s.size > 0) {
+                    try {
+                        if (typeof renderPlanWeek === 'function' && typeof planCurrentWeek !== 'undefined') {
+                            renderPlanWeek(planCurrentWeek);
+                        }
+                    } catch (_) {}
+                    try {
+                        if (typeof renderHome === 'function') renderHome();
+                    } catch (_) {}
+                }
                 return s;
             } catch(e) {
                 console.warn('[MR x COROS] hydrateSyncedKeys err:', e && e.message);
