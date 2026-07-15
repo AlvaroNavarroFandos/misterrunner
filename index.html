@@ -196,7 +196,7 @@
         --det-lbl-accent-bd: rgba(168,45,58,.18);
         --det-map-tint: rgba(0,0,0,.05);
 
-        /* ═══ MR × COROS · v2.0.0-p11 · rojo COROS oficial (bermellón brand · variante A) ═══ */
+        /* ═══ MR × COROS · v2.0.0-p12 · rojo COROS oficial (bermellón brand · variante A) ═══ */
         --coros: #DC2027;
         --coros-fg: #ffffff;
         --coros-deep: #A81820;
@@ -45596,17 +45596,17 @@ window.addEventListener('DOMContentLoaded', function() {
          position:fixed con inset:0 cubre realmente toda la pantalla.
          [v8.1] medallero-sheet ya usa la clase .sheet-backdrop, así que entra en el bucle general. -->
 
-    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p11 ══════════════════════════════════
+    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p12 ══════════════════════════════════
          Frontend integration con Edge Function coros-sync (backend v1.4.0-p1).
          Bloque autocontenido: MD5 → API wrappers → estado global → UI helpers.
          Los pasos siguientes (p2, p3, ...) irán ampliando este mismo bloque.
          Iron rules: smoke count === 5 · node --check pass · md5 verify.
     ═════════════════════════════════════════════════════════════════════════════ -->
     <script>
-    (function initMrCorosPaso11(){
+    (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.0.0-p11';
+        window.__mrCorosVersion = 'v2.0.0-p12';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -45983,7 +45983,7 @@ window.addEventListener('DOMContentLoaded', function() {
         setTimeout(function(){ _reconcileConnCard(window.__mrCoros); }, 0);
 
         // ═══════════════════════════════════════════════════════════════
-        // MR × COROS · v2.0.0-p11 · Paso 7 · Modal batch multi-select
+        // MR × COROS · v2.0.0-p12 · Paso 7 · Modal batch multi-select
         // Reemplaza el stub Paso 5 de openCorosConnectFlow cuando connected.
         // Cuando disconnected, mantiene placeholder para Paso 8.
         //
@@ -46238,6 +46238,22 @@ window.addEventListener('DOMContentLoaded', function() {
             var listEl = document.getElementById('_coros-session-list');
             if (!listEl) return;
 
+            // p12 QP35=A: offline handler antes de intentar query
+            var isOnline = (typeof navigator === 'undefined') || navigator.onLine !== false;
+            if (!isOnline) {
+                listEl.innerHTML = ''
+                    + '<div style="padding:32px 20px;text-align:center;">'
+                    +   '<div style="font-size:26px;margin-bottom:6px;">📶</div>'
+                    +   '<div style="font-size:13px;font-weight:700;color:var(--tw);">Sin conexión</div>'
+                    +   '<div style="font-size:11px;color:var(--tm);margin-top:4px;max-width:280px;margin-left:auto;margin-right:auto;">Verifica tu conexión a Internet para sincronizar workouts.</div>'
+                    +   '<button style="margin-top:14px;padding:9px 18px;background:var(--coros);color:#fff;border:none;border-radius:9px;font-weight:700;cursor:pointer;font-size:12px;box-shadow:0 2px 6px var(--coros-glow);" onclick="window._corosRetryPopulate()">Reintentar</button>'
+                    + '</div>';
+                _corosBatchState.sessions = [];
+                _corosBatchState.selected = new Set();
+                _corosRefreshSelectionUI();
+                return;
+            }
+
             if (sessions.length === 0) {
                 listEl.innerHTML = ''
                     + '<div style="padding:32px 20px;text-align:center;">'
@@ -46441,11 +46457,22 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        // p12 QP36=A: detector de errores de autenticación COROS (401, token expirado)
+        function _corosIsAuthError(r) {
+            if (!r) return false;
+            if (r.status === 401) return true;
+            var code = String((r.error || r.message || '')).toLowerCase();
+            return code.indexOf('unauthorized') >= 0
+                || code.indexOf('token_expired') >= 0
+                || code.indexOf('auth') >= 0 && code.indexOf('expired') >= 0;
+        }
+
         async function _corosRunBatchSend() {
             if (_corosBatchState.running) return;
             if (_corosBatchState.selected.size === 0) return;
 
             _corosBatchState.running = true;
+            _corosBatchState.authRetried = false;  // p12 reset por batch
             var selectedItems = Array.from(_corosBatchState.selected)
                 .sort(function (a, b) { return a - b; })
                 .map(function (idx) { return _corosBatchState.sessions[idx]; });
@@ -46473,6 +46500,16 @@ window.addEventListener('DOMContentLoaded', function() {
 
                     var r = await window.mrCorosSendWorkout(payload);
 
+                    // p12 QP36=A: si 401 auth error → refresh whoami + retry 1 vez
+                    if (r && !r.ok && _corosIsAuthError(r) && !_corosBatchState.authRetried) {
+                        console.warn('[MR x COROS] auth error en batch send, refresh whoami + retry 1x');
+                        _corosBatchState.authRetried = true;
+                        try {
+                            await window.mrCorosWhoami();
+                        } catch (_) {}
+                        r = await window.mrCorosSendWorkout(payload);
+                    }
+
                     if (r && r.ok) {
                         _updateProgressItem(i, 'ok');
                         results.ok++;
@@ -46482,6 +46519,12 @@ window.addEventListener('DOMContentLoaded', function() {
                         // QP18=C: 409 sin force = "ya sincronizado", no cuenta como error.
                         _updateProgressItem(i, 'ok', 'Ya en Pace Pro');
                         results.already++;
+                    } else if (r && _corosIsAuthError(r)) {
+                        // p12 QP36=A: retry ya intentado y sigue 401 → marcar como auth expirada
+                        _updateProgressItem(i, 'err', 'Sesión COROS expirada');
+                        results.err++;
+                        results.authExpired = true;
+                        if (!firstError) firstError = 'auth_expired';
                     } else {
                         var msg = (r && (r.error || r.message)) || 'error';
                         _updateProgressItem(i, 'err', String(msg).slice(0, 40));
@@ -46509,9 +46552,31 @@ window.addEventListener('DOMContentLoaded', function() {
                     if (results.err > 0) parts.push(results.err + ' con error');
                     var summary = parts.join(' · ');
                     var variant = (results.err > 0) ? 'error' : 'success';
+                    // p12 QP36=A: si hubo auth expirada, mensaje específico
+                    if (results.authExpired) {
+                        summary = 'Sesión COROS expirada · reconecta';
+                        variant = 'error';
+                    }
                     window.fxToast(summary || 'Sin cambios', { variant: variant });
                 }
             } catch (_) {}
+
+            // p12 QP36=A: si auth expiró, forzar disconnect estado + reabrir modal connect
+            if (results.authExpired) {
+                try {
+                    if (window.__mrCoros) {
+                        window.__mrCoros.connected = false;
+                        window.__mrCoros.coros_account = null;
+                        window.__mrCoros.lastCheckAt = Date.now();
+                        _corosEmit();
+                    }
+                    setTimeout(function() {
+                        if (typeof _buildCorosConnectModal === 'function') {
+                            _buildCorosConnectModal();
+                        }
+                    }, 3500);  // tras el auto-close del modal batch (3.2s)
+                } catch (_) {}
+            }
 
             _corosBatchState.running = false;
 
@@ -46539,8 +46604,14 @@ window.addEventListener('DOMContentLoaded', function() {
         window._corosRunBatchSend = _corosRunBatchSend;
         window._closeCorosBatchModal = _closeCorosBatchModal;
 
+        // p12 QP35=A: helper retry populate cuando el user recupera conexión
+        function _corosRetryPopulate() {
+            _corosPopulateSessions().catch(function(_){});
+        }
+        window._corosRetryPopulate = _corosRetryPopulate;
+
         // ═══════════════════════════════════════════════════════════════
-        // MR × COROS · v2.0.0-p11 · Paso 11 · Badge pill "✓ COROS"
+        // MR × COROS · v2.0.0-p12 · Paso 11 · Badge pill "✓ COROS"
         // Renderiza <span class="mr-coros-badge-pill"> en workout cards
         // ya sincronizadas. Lee window.__mrCoros.syncedKeys (cache única).
         // Consumido por Home "Próximos entrenamientos" + card HOY.
@@ -46562,7 +46633,7 @@ window.addEventListener('DOMContentLoaded', function() {
         window._corosRenderBadgeIfSynced = _corosRenderBadgeIfSynced;
 
         // ═══════════════════════════════════════════════════════════════
-        // MR × COROS · v2.0.0-p11 · Paso 8 · Modal connect inline
+        // MR × COROS · v2.0.0-p12 · Paso 8 · Modal connect inline
         // Reemplaza el alert('...pendiente Paso 8') cuando !connected.
         // Reutiliza shell .mr-coros-modal-* + .mr-coros-connect-* del Paso 7/p6.
         // Reutiliza _closeCorosBatchModal como cerrador genérico.
@@ -46779,6 +46850,11 @@ window.addEventListener('DOMContentLoaded', function() {
 
         // ═══ Reemplazo real del stub Paso 5 (Paso 8 completa disconnected → modal connect) ═══
         window.openCorosConnectFlow = function () {
+            // p12 QP37=A guard doble-tap: si ya hay modal abierto, ignorar
+            if (document.querySelector('.mr-coros-modal-backdrop')) {
+                console.log('[MR x COROS] openCorosConnectFlow ignorado · modal ya abierto');
+                return;
+            }
             if (window.__mrCoros && window.__mrCoros.connected) {
                 _buildCorosBatchModal();
                 _corosPopulateSessions().catch(function (e) {
