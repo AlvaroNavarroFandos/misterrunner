@@ -196,7 +196,7 @@
         --det-lbl-accent-bd: rgba(168,45,58,.18);
         --det-map-tint: rgba(0,0,0,.05);
 
-        /* ═══ MR × COROS · v2.0.0-p7 · rojo COROS oficial (bermellón brand · variante A) ═══ */
+        /* ═══ MR × COROS · v2.0.0-p8 · rojo COROS oficial (bermellón brand · variante A) ═══ */
         --coros: #DC2027;
         --coros-fg: #ffffff;
         --coros-deep: #A81820;
@@ -4456,6 +4456,65 @@
             line-height: 1.5;
             margin: 8px 0 12px;
         }
+
+        /* ─── Paso 8 · Modal connect: toggle pwd + error inline + spinner submit ─── */
+        .mr-coros-connect-input-wrap--pwd { position: relative; }
+        .mr-coros-connect-input.with-toggle { padding-right: 46px; }
+        .mr-coros-connect-toggle-pwd {
+            position: absolute;
+            right: 4px;
+            bottom: 4px;
+            width: 40px;
+            height: 40px;
+            border: none;
+            background: transparent;
+            color: var(--tm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: color .15s, background .15s;
+            padding: 0;
+        }
+        .mr-coros-connect-toggle-pwd:hover { color: var(--tw); background: var(--card2); }
+        .mr-coros-connect-toggle-pwd:active { transform: scale(.92); }
+        .mr-coros-connect-toggle-pwd svg { pointer-events: none; }
+        .mr-coros-connect-error {
+            display: none;
+            background: rgba(239, 68, 68, .10);
+            border: 1px solid rgba(239, 68, 68, .32);
+            color: #ef4444;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.4;
+            margin: 0 20px 12px;
+            text-align: center;
+        }
+        .mr-coros-connect-error.show {
+            display: block;
+            animation: mr-coros-shake .42s cubic-bezier(.36, .07, .19, .97);
+        }
+        @keyframes mr-coros-shake {
+            10%, 90% { transform: translateX(-1px); }
+            20%, 80% { transform: translateX(2px); }
+            30%, 50%, 70% { transform: translateX(-4px); }
+            40%, 60% { transform: translateX(4px); }
+        }
+        .mr-coros-btn-submit__spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, .35);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: mr-coros-spin .7s linear infinite;
+        }
+        .mr-coros-btn-submit.loading .mr-coros-btn-submit__spinner { display: inline-block; }
+        .mr-coros-btn-submit.loading > span,
+        .mr-coros-btn-submit.loading > svg { display: none; }
 
         /* ─── Badge pill "COROS" en workout card (QV3 variante B) ─── */
         .mr-coros-badge-pill {
@@ -45533,17 +45592,17 @@ window.addEventListener('DOMContentLoaded', function() {
          position:fixed con inset:0 cubre realmente toda la pantalla.
          [v8.1] medallero-sheet ya usa la clase .sheet-backdrop, así que entra en el bucle general. -->
 
-    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p7 ══════════════════════════════════
+    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p8 ══════════════════════════════════
          Frontend integration con Edge Function coros-sync (backend v1.4.0-p1).
          Bloque autocontenido: MD5 → API wrappers → estado global → UI helpers.
          Los pasos siguientes (p2, p3, ...) irán ampliando este mismo bloque.
          Iron rules: smoke count === 5 · node --check pass · md5 verify.
     ═════════════════════════════════════════════════════════════════════════════ -->
     <script>
-    (function initMrCorosPaso7(){
+    (function initMrCorosPaso8(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.0.0-p7';
+        window.__mrCorosVersion = 'v2.0.0-p8';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -45901,7 +45960,7 @@ window.addEventListener('DOMContentLoaded', function() {
         setTimeout(function(){ _reconcileConnCard(window.__mrCoros); }, 0);
 
         // ═══════════════════════════════════════════════════════════════
-        // MR × COROS · v2.0.0-p7 · Paso 7 · Modal batch multi-select
+        // MR × COROS · v2.0.0-p8 · Paso 7 · Modal batch multi-select
         // Reemplaza el stub Paso 5 de openCorosConnectFlow cuando connected.
         // Cuando disconnected, mantiene placeholder para Paso 8.
         //
@@ -46441,7 +46500,223 @@ window.addEventListener('DOMContentLoaded', function() {
         window._corosRunBatchSend = _corosRunBatchSend;
         window._closeCorosBatchModal = _closeCorosBatchModal;
 
-        // ═══ Reemplazo real del stub Paso 5 (Paso 8 completará disconnected) ═══
+        // ═══════════════════════════════════════════════════════════════
+        // MR × COROS · v2.0.0-p8 · Paso 8 · Modal connect inline
+        // Reemplaza el alert('...pendiente Paso 8') cuando !connected.
+        // Reutiliza shell .mr-coros-modal-* + .mr-coros-connect-* del Paso 7/p6.
+        // Reutiliza _closeCorosBatchModal como cerrador genérico.
+        //
+        // Contratos:
+        //   · Body /connect vía window.mrCorosConnect({email, pwd})
+        //     (wrapper hace __mrMd5(pwd) internamente antes de POST)
+        //   · QP22=B: toggle 👁/🙈 visibility
+        //   · QP23=B: hint trust builder Supabase Vault
+        //   · QP24=B: error inline + shake animation
+        //   · QP25=A: success → close + toast
+        //   · QP27=A: validate email regex + pwd non-empty
+        // ═══════════════════════════════════════════════════════════════
+
+        var _corosConnectState = { running: false, pwdVisible: false };
+
+        function _corosValidateEmail(email) {
+            if (!email || typeof email !== 'string') return false;
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+        }
+
+        function _corosShowConnectError(msg) {
+            var el = document.getElementById('_coros-connect-err');
+            if (!el) return;
+            el.classList.remove('show');
+            el.textContent = msg;
+            // Reflow trick para poder reset animation shake en errores consecutivos
+            void el.offsetWidth;
+            el.classList.add('show');
+        }
+
+        function _corosClearConnectError() {
+            var el = document.getElementById('_coros-connect-err');
+            if (el) el.classList.remove('show');
+        }
+
+        function _corosTogglePwdVisibility() {
+            var input = document.getElementById('_coros-connect-pwd');
+            var eye = document.getElementById('_coros-pwd-eye');
+            var eyeOff = document.getElementById('_coros-pwd-eye-off');
+            var btn = document.getElementById('_coros-pwd-toggle');
+            if (!input || !eye || !eyeOff) return;
+            _corosConnectState.pwdVisible = !_corosConnectState.pwdVisible;
+            if (_corosConnectState.pwdVisible) {
+                input.type = 'text';
+                eye.style.display = 'none';
+                eyeOff.style.display = '';
+                if (btn) btn.setAttribute('aria-label', 'Ocultar contraseña');
+            } else {
+                input.type = 'password';
+                eye.style.display = '';
+                eyeOff.style.display = 'none';
+                if (btn) btn.setAttribute('aria-label', 'Mostrar contraseña');
+            }
+        }
+
+        function _corosSetConnectSubmitLoading(loading) {
+            var btn = document.getElementById('_coros-connect-submit');
+            if (!btn) return;
+            btn.classList.toggle('loading', loading);
+            btn.disabled = !!loading;
+        }
+
+        async function _corosSubmitConnect() {
+            if (_corosConnectState.running) return;
+            var emailEl = document.getElementById('_coros-connect-email');
+            var pwdEl = document.getElementById('_coros-connect-pwd');
+            if (!emailEl || !pwdEl) return;
+            var email = (emailEl.value || '').trim();
+            var pwd = pwdEl.value || '';
+
+            if (!_corosValidateEmail(email)) {
+                _corosShowConnectError('Introduce un email válido');
+                return;
+            }
+            if (pwd.length < 1) {
+                _corosShowConnectError('Introduce tu contraseña');
+                return;
+            }
+            _corosClearConnectError();
+
+            _corosConnectState.running = true;
+            _corosSetConnectSubmitLoading(true);
+            try {
+                if (typeof window.mrCorosConnect !== 'function') {
+                    _corosShowConnectError('Wrapper mrCorosConnect no disponible');
+                    return;
+                }
+                var r = await window.mrCorosConnect({ email: email, pwd: pwd });
+                if (r && r.ok) {
+                    // QP25=A: cerrar modal + toast success
+                    if (window.fxToast) window.fxToast('Conectado a COROS ✓', { variant: 'success' });
+                    _closeCorosBatchModal();
+                } else {
+                    var code = String((r && r.error) || '').toLowerCase();
+                    var friendly;
+                    if (code === 'invalid_credentials') {
+                        friendly = 'Email o contraseña incorrectos';
+                    } else if (code === 'network' || code === 'timeout') {
+                        friendly = 'Sin conexión con COROS. Reintenta en un momento.';
+                    } else if (code === 'busy') {
+                        friendly = 'Petición en curso, espera unos segundos.';
+                    } else if (code === 'missing_credentials') {
+                        friendly = 'Rellena email y contraseña.';
+                    } else {
+                        var raw = (r && (r.message || r.error)) || 'error_desconocido';
+                        friendly = 'No se pudo conectar (' + String(raw).slice(0, 60) + ')';
+                    }
+                    _corosShowConnectError(friendly);
+                }
+            } catch (e) {
+                _corosShowConnectError('Error inesperado: ' + ((e && e.message) || 'excepción'));
+            } finally {
+                _corosConnectState.running = false;
+                _corosSetConnectSubmitLoading(false);
+            }
+        }
+
+        function _corosOnConnectKeyDown(e) {
+            // Enter en cualquier input del form → submit
+            if (e && (e.key === 'Enter' || e.keyCode === 13)) {
+                e.preventDefault();
+                _corosSubmitConnect();
+            }
+        }
+
+        function _buildCorosConnectModal() {
+            var existing = document.querySelector('.mr-coros-modal-backdrop');
+            if (existing) existing.remove();
+            _corosConnectState.running = false;
+            _corosConnectState.pwdVisible = false;
+
+            var backdrop = document.createElement('div');
+            backdrop.className = 'mr-coros-modal-backdrop';
+            backdrop.addEventListener('click', _corosOnBackdropClick);
+
+            backdrop.innerHTML = ''
+                + '<div class="mr-coros-modal-sheet" role="dialog" aria-modal="true" aria-label="Conectar cuenta COROS">'
+                +   '<div class="mr-coros-modal-header">'
+                +     '<div class="mr-coros-modal-handle"></div>'
+                +     '<div class="mr-coros-modal-hdr-row">'
+                +       '<div class="mr-coros-modal-title-block">'
+                +         '<div class="mr-coros-modal-brand">'
+                +           '<span class="mr-coros-modal-badge">COROS</span>'
+                +           '<div class="mr-coros-modal-title">Conectar cuenta</div>'
+                +         '</div>'
+                +         '<div class="mr-coros-modal-subtitle">Sincroniza tus workouts con Pace Pro</div>'
+                +       '</div>'
+                +       '<button class="mr-coros-modal-close" onclick="window._closeCorosBatchModal()" aria-label="Cerrar">×</button>'
+                +     '</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-connect-empty">'
+                +     '<div class="mr-coros-connect-empty-icon">'
+                +       '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--coros)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                +         '<rect x="3" y="11" width="18" height="11" rx="2"/>'
+                +         '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+                +       '</svg>'
+                +     '</div>'
+                +     '<div class="mr-coros-connect-empty-title">Conectar con COROS</div>'
+                +     '<div class="mr-coros-connect-empty-sub">Introduce las credenciales de tu cuenta COROS.</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-connect-form">'
+                +     '<div class="mr-coros-connect-input-wrap">'
+                +       '<label class="mr-coros-connect-input-label" for="_coros-connect-email">Email</label>'
+                +       '<input type="email" class="mr-coros-connect-input" id="_coros-connect-email" placeholder="tu@email.com" autocomplete="username" inputmode="email" oninput="window._corosClearConnectError()" onkeydown="window._corosOnConnectKeyDown(event)">'
+                +     '</div>'
+                +     '<div class="mr-coros-connect-input-wrap mr-coros-connect-input-wrap--pwd">'
+                +       '<label class="mr-coros-connect-input-label" for="_coros-connect-pwd">Contraseña</label>'
+                +       '<input type="password" class="mr-coros-connect-input with-toggle" id="_coros-connect-pwd" placeholder="••••••••" autocomplete="current-password" oninput="window._corosClearConnectError()" onkeydown="window._corosOnConnectKeyDown(event)">'
+                +       '<button type="button" class="mr-coros-connect-toggle-pwd" id="_coros-pwd-toggle" onclick="window._corosTogglePwdVisibility()" aria-label="Mostrar contraseña">'
+                +         '<svg id="_coros-pwd-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                +           '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>'
+                +           '<circle cx="12" cy="12" r="3"/>'
+                +         '</svg>'
+                +         '<svg id="_coros-pwd-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">'
+                +           '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>'
+                +           '<line x1="1" y1="1" x2="23" y2="23"/>'
+                +         '</svg>'
+                +       '</button>'
+                +     '</div>'
+                +     '<div class="mr-coros-connect-hint">Tus credenciales se cifran en Supabase Vault. Desconecta cuando quieras.</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-connect-error" id="_coros-connect-err"></div>'
+                +   '<div class="mr-coros-modal-footer">'
+                +     '<button class="mr-coros-btn-submit" id="_coros-connect-submit" onclick="window._corosSubmitConnect()">'
+                +       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 5l7 7-7 7"/></svg>'
+                +       '<span>Conectar</span>'
+                +       '<span class="mr-coros-btn-submit__spinner"></span>'
+                +     '</button>'
+                +   '</div>'
+                + '</div>';
+
+            document.body.appendChild(backdrop);
+            requestAnimationFrame(function () { backdrop.classList.add('show'); });
+            document.addEventListener('keydown', _corosOnKeyDown);
+
+            // Auto-focus email input tras completar animación slide-up (280ms)
+            setTimeout(function () {
+                var emailEl = document.getElementById('_coros-connect-email');
+                if (emailEl && typeof emailEl.focus === 'function') {
+                    try { emailEl.focus(); } catch (_) {}
+                }
+            }, 320);
+
+            return backdrop;
+        }
+
+        // ─── Ganchos onclick expuestos (necesarios para onclick inline) ─
+        window._corosSubmitConnect = _corosSubmitConnect;
+        window._corosTogglePwdVisibility = _corosTogglePwdVisibility;
+        window._corosClearConnectError = _corosClearConnectError;
+        window._corosOnConnectKeyDown = _corosOnConnectKeyDown;
+
+
+        // ═══ Reemplazo real del stub Paso 5 (Paso 8 completa disconnected → modal connect) ═══
         window.openCorosConnectFlow = function () {
             if (window.__mrCoros && window.__mrCoros.connected) {
                 _buildCorosBatchModal();
@@ -46449,7 +46724,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     console.warn('[MR x COROS] populate error:', e && e.message);
                 });
             } else {
-                alert('Modal de conexión COROS pendiente de implementar (Paso 8).');
+                _buildCorosConnectModal();
             }
         };
         window.mrCorosPromptDisconnect = window.mrCorosPromptDisconnect || function () {
