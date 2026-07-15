@@ -196,7 +196,7 @@
         --det-lbl-accent-bd: rgba(168,45,58,.18);
         --det-map-tint: rgba(0,0,0,.05);
 
-        /* ═══ MR × COROS · v2.0.0-p6 · rojo COROS oficial (bermellón brand · variante A) ═══ */
+        /* ═══ MR × COROS · v2.0.0-p7 · rojo COROS oficial (bermellón brand · variante A) ═══ */
         --coros: #DC2027;
         --coros-fg: #ffffff;
         --coros-deep: #A81820;
@@ -45533,17 +45533,17 @@ window.addEventListener('DOMContentLoaded', function() {
          position:fixed con inset:0 cubre realmente toda la pantalla.
          [v8.1] medallero-sheet ya usa la clase .sheet-backdrop, así que entra en el bucle general. -->
 
-    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p6 ══════════════════════════════════
+    <!-- ═══ MR × COROS · Sub-bloque 2 · v2.0.0-p7 ══════════════════════════════════
          Frontend integration con Edge Function coros-sync (backend v1.4.0-p1).
          Bloque autocontenido: MD5 → API wrappers → estado global → UI helpers.
          Los pasos siguientes (p2, p3, ...) irán ampliando este mismo bloque.
          Iron rules: smoke count === 5 · node --check pass · md5 verify.
     ═════════════════════════════════════════════════════════════════════════════ -->
     <script>
-    (function initMrCorosPaso6(){
+    (function initMrCorosPaso7(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.0.0-p6';
+        window.__mrCorosVersion = 'v2.0.0-p7';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -45900,19 +45900,561 @@ window.addEventListener('DOMContentLoaded', function() {
         window.mrCorosOnChange(_reconcileConnCard);
         setTimeout(function(){ _reconcileConnCard(window.__mrCoros); }, 0);
 
-        // ═══ Stubs Paso 5 (Paso 7-8 reemplazará con implementación real) ═══
-        window.openCorosConnectFlow = window.openCorosConnectFlow || function() {
-            console.log('[MR x COROS] openCorosConnectFlow · stub (Paso 7-8)');
-            console.log('  Estado actual:', window.__mrCoros);
-            if (!window.__mrCoros.connected) {
-                alert('Modal de conexión COROS pendiente de implementar (Paso 8).');
+        // ═══════════════════════════════════════════════════════════════
+        // MR × COROS · v2.0.0-p7 · Paso 7 · Modal batch multi-select
+        // Reemplaza el stub Paso 5 de openCorosConnectFlow cuando connected.
+        // Cuando disconnected, mantiene placeholder para Paso 8.
+        //
+        // Contratos:
+        //   · Lee sesiones futuras de activePlan.weeks[].sessions[]
+        //   · Excluye isStrength / type='strength' / dateStr < hoy
+        //   · Genera mr_workout_key determinista md5(dateStr|type|dist|paceRange)
+        //   · Body /send-workout: { workout, paces, happen_day:YYYYMMDD,
+        //                           mr_workout_key, workout_title?, force? }
+        //   · Query directa a coros_synced_workouts al abrir (QP17=C)
+        //   · Items already-sent seleccionables (QP18=C: 409 counted as "already")
+        //
+        // Iron rules preservadas: smoke count === 5 · node check pass.
+        // ═══════════════════════════════════════════════════════════════
+
+        // ─── Utilities module-scoped ───────────────────────────────────
+        function _corosTodayYmdIso() {
+            var d = new Date();
+            var m = String(d.getMonth() + 1).padStart(2, '0');
+            var day = String(d.getDate()).padStart(2, '0');
+            return d.getFullYear() + '-' + m + '-' + day;
+        }
+
+        function _corosDateStrToHappenDay(dateStr) {
+            // "YYYY-MM-DD" → "YYYYMMDD"
+            if (!dateStr) return '';
+            return String(dateStr).replace(/-/g, '');
+        }
+
+        function _corosGetActivePlan() {
+            // QP16=A: reutilizar _vdotActivePlan si existe (defensivo, DRY).
+            try {
+                if (typeof window._vdotActivePlan === 'function') {
+                    var p = window._vdotActivePlan();
+                    if (p) return p;
+                }
+            } catch (_) {}
+            try {
+                if (typeof activePlan !== 'undefined' && activePlan) return activePlan;
+            } catch (_) {}
+            return (window.activePlan || null);
+        }
+
+        var _COROS_TYPE_LABELS = {
+            easy: 'Easy Run',
+            recovery: 'Recovery',
+            series: 'Series',
+            long: 'Long Run',
+            race: 'Carrera',
+            tempo: 'Tempo'
+        };
+
+        function _corosSessTitle(sess) {
+            var t = sess && sess.type;
+            return _COROS_TYPE_LABELS[t] || (t ? (t.charAt(0).toUpperCase() + t.slice(1)) : 'Sesión');
+        }
+
+        function _corosSessPillClass(sess) {
+            var t = sess && sess.type;
+            // Solo las 5 variants con CSS definido; el resto usa la base.
+            if (t === 'series' || t === 'easy' || t === 'long' || t === 'recovery' || t === 'tempo') {
+                return 'mr-coros-session-pill mr-coros-session-pill--' + t;
+            }
+            return 'mr-coros-session-pill';
+        }
+
+        function _corosFmtPaceRange(sess) {
+            if (sess && sess.paceRange) return sess.paceRange;
+            return '—';
+        }
+
+        var _COROS_DAY_ABBR = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        var _COROS_MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+        function _formatHappenDayCoros(happenDay) {
+            // "YYYYMMDD" → "Vie 17 jul"
+            if (!happenDay || happenDay.length !== 8) return happenDay || '';
+            var y = parseInt(happenDay.slice(0, 4), 10);
+            var m = parseInt(happenDay.slice(4, 6), 10);
+            var d = parseInt(happenDay.slice(6, 8), 10);
+            var date = new Date(y, m - 1, d);
+            if (isNaN(date.getTime())) return happenDay;
+            return _COROS_DAY_ABBR[date.getDay()] + ' ' + d + ' ' + _COROS_MONTH_ABBR[m - 1];
+        }
+
+        function _escapeHtmlCoros(s) {
+            if (s == null) return '';
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function _corosBuildWorkoutKey(sess) {
+            // QP20=A: key determinista para dedupe natural via backend UNIQUE(user_id, mr_workout_key).
+            var happen = _corosDateStrToHappenDay(sess.dateStr || '');
+            var parts = [
+                sess.dateStr || '',
+                sess.type || '',
+                (sess.dist != null) ? String(sess.dist) : '',
+                sess.paceRange || ''
+            ].join('|');
+            var hash = (typeof window.__mrMd5 === 'function') ? window.__mrMd5(parts).slice(0, 8) : '00000000';
+            return 'mr_' + happen + '_' + hash;
+        }
+
+        function _corosGetFutureSessionsFromPlan() {
+            // QP19=A: todas las futuras (>= hoy) del plan activo, filtradas y ordenadas asc.
+            var plan = _corosGetActivePlan();
+            if (!plan || !plan.weeks) return [];
+            var today = _corosTodayYmdIso();
+            var out = [];
+            plan.weeks.forEach(function (wk) {
+                (wk && wk.sessions || []).forEach(function (s) {
+                    if (!s) return;
+                    if (s.isStrength) return;
+                    if (s.type === 'strength') return;
+                    if (!s.dateStr) return;
+                    if (s.dateStr < today) return;  // L-1.3-24 guard cliente
+                    out.push(s);
+                });
+            });
+            out.sort(function (a, b) { return a.dateStr < b.dateStr ? -1 : a.dateStr > b.dateStr ? 1 : 0; });
+            return out;
+        }
+
+        async function _corosLoadSyncedKeys() {
+            // QP17=C híbrido: fresh query cada apertura + cache invalidada tras cada send OK.
+            var out = new Set();
+            try {
+                var sb = window._sbClient;
+                if (!sb) return out;
+                var authRes = await sb.auth.getUser();
+                var uid = authRes && authRes.data && authRes.data.user && authRes.data.user.id;
+                if (!uid) return out;
+                var q = await sb.from('coros_synced_workouts')
+                    .select('mr_workout_key,status')
+                    .eq('user_id', uid)
+                    .eq('status', 'sent');
+                if (q.error) {
+                    console.warn('[MR x COROS] loadSyncedKeys error:', q.error.message);
+                    return out;
+                }
+                (q.data || []).forEach(function (r) {
+                    if (r && r.mr_workout_key) out.add(r.mr_workout_key);
+                });
+            } catch (e) {
+                console.warn('[MR x COROS] loadSyncedKeys exception:', e && e.message);
+            }
+            return out;
+        }
+
+        // ─── Estado interno del modal batch ────────────────────────────
+        var _corosBatchState = {
+            sessions: [],       // enriquecidas con {sess, mr_workout_key, happen_day, workout_title, synced}
+            selected: new Set(),
+            force: false,
+            running: false,
+            syncedKeys: new Set()
+        };
+
+        // ─── Cierre + listeners globales ───────────────────────────────
+        function _closeCorosBatchModal() {
+            if (_corosBatchState.running) return;  // no cerrar durante batch send
+            var backdrop = document.querySelector('.mr-coros-modal-backdrop');
+            if (!backdrop) return;
+            backdrop.classList.remove('show');
+            // Sync con CSS transitions: opacity .22s + transform .28s → 300ms buffer.
+            setTimeout(function () {
+                if (backdrop.parentNode) backdrop.remove();
+                document.removeEventListener('keydown', _corosOnKeyDown);
+                _corosBatchState.sessions = [];
+                _corosBatchState.selected = new Set();
+                _corosBatchState.force = false;
+                _corosBatchState.running = false;
+                _corosBatchState.syncedKeys = new Set();
+            }, 300);
+        }
+
+        function _corosOnKeyDown(e) {
+            if (e && (e.key === 'Escape' || e.keyCode === 27)) {
+                _closeCorosBatchModal();
+            }
+        }
+
+        function _corosOnBackdropClick(e) {
+            // Solo cerrar si el click cae en el backdrop directamente (no dentro del sheet).
+            if (e && e.target && e.target.classList && e.target.classList.contains('mr-coros-modal-backdrop')) {
+                _closeCorosBatchModal();
+            }
+        }
+
+        // ─── Builder del modal (crea DOM on-demand y lo mete en body) ──
+        function _buildCorosBatchModal() {
+            var existing = document.querySelector('.mr-coros-modal-backdrop');
+            if (existing) existing.remove();  // safety
+
+            var backdrop = document.createElement('div');
+            backdrop.className = 'mr-coros-modal-backdrop';
+            backdrop.addEventListener('click', _corosOnBackdropClick);
+
+            backdrop.innerHTML = ''
+                + '<div class="mr-coros-modal-sheet" role="dialog" aria-modal="true" aria-label="Exportar entrenamientos a COROS">'
+                +   '<div class="mr-coros-modal-header">'
+                +     '<div class="mr-coros-modal-handle"></div>'
+                +     '<div class="mr-coros-modal-hdr-row">'
+                +       '<div class="mr-coros-modal-title-block">'
+                +         '<div class="mr-coros-modal-brand">'
+                +           '<span class="mr-coros-modal-badge">COROS</span>'
+                +           '<div class="mr-coros-modal-title">Exportar entrenamientos</div>'
+                +         '</div>'
+                +         '<div class="mr-coros-modal-subtitle">Selecciona qué workouts sincronizar con tu Pace Pro</div>'
+                +       '</div>'
+                +       '<button class="mr-coros-modal-close" onclick="window._closeCorosBatchModal()" aria-label="Cerrar">×</button>'
+                +     '</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-modal-toolbar">'
+                +     '<div class="mr-coros-modal-counter">'
+                +       '<b id="_coros-counter-sel">0</b> de <b id="_coros-counter-tot">0</b> seleccionados'
+                +     '</div>'
+                +     '<button class="mr-coros-modal-select-all" onclick="window._corosToggleSelectAll()">Seleccionar todos</button>'
+                +   '</div>'
+                +   '<div class="mr-coros-session-list" id="_coros-session-list">'
+                +     '<div style="padding:24px;text-align:center;color:var(--tm);font-size:12px;">Cargando sesiones…</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-force-row">'
+                +     '<div class="mr-coros-force-label-block">'
+                +       '<div class="mr-coros-force-label">Forzar reenvío</div>'
+                +       '<div class="mr-coros-force-help">Sobrescribe workouts ya sincronizados</div>'
+                +     '</div>'
+                +     '<button class="mr-coros-toggle" id="_coros-force-toggle" onclick="window._corosToggleForce()" aria-pressed="false" aria-label="Forzar reenvío"></button>'
+                +   '</div>'
+                +   '<div class="mr-coros-modal-footer">'
+                +     '<button class="mr-coros-btn-submit" id="_coros-submit-btn" onclick="window._corosRunBatchSend()" disabled>'
+                +       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>'
+                +       '<span>Enviar a COROS</span>'
+                +       '<span class="mr-coros-btn-submit__count" id="_coros-submit-count">0</span>'
+                +     '</button>'
+                +   '</div>'
+                + '</div>';
+
+            document.body.appendChild(backdrop);
+            requestAnimationFrame(function () { backdrop.classList.add('show'); });
+            document.addEventListener('keydown', _corosOnKeyDown);
+            return backdrop;
+        }
+
+        // ─── Poblar lista + reconciliar synced ─────────────────────────
+        async function _corosPopulateSessions() {
+            var sessions = _corosGetFutureSessionsFromPlan();
+            var listEl = document.getElementById('_coros-session-list');
+            if (!listEl) return;
+
+            if (sessions.length === 0) {
+                listEl.innerHTML = ''
+                    + '<div style="padding:32px 20px;text-align:center;">'
+                    +   '<div style="font-size:26px;margin-bottom:6px;">🗓️</div>'
+                    +   '<div style="font-size:13px;font-weight:700;color:var(--tw);">No hay sesiones futuras</div>'
+                    +   '<div style="font-size:11px;color:var(--tm);margin-top:4px;">Genera un plan de running desde Míster para poder exportar.</div>'
+                    + '</div>';
+                _corosBatchState.sessions = [];
+                _corosBatchState.selected = new Set();
+                _corosRefreshSelectionUI();
+                return;
+            }
+
+            var synced = await _corosLoadSyncedKeys();
+            _corosBatchState.syncedKeys = synced;
+
+            _corosBatchState.sessions = sessions.map(function (s) {
+                var key = _corosBuildWorkoutKey(s);
+                return {
+                    sess: s,
+                    mr_workout_key: key,
+                    happen_day: _corosDateStrToHappenDay(s.dateStr),
+                    workout_title: _corosSessTitle(s),
+                    synced: synced.has(key)
+                };
+            });
+            _corosBatchState.selected = new Set();
+
+            listEl.innerHTML = _corosBatchState.sessions.map(function (item, idx) {
+                var s = item.sess;
+                var title = _escapeHtmlCoros(_corosSessTitle(s));
+                var pillCls = _corosSessPillClass(s);
+                var type = _escapeHtmlCoros(s.type || '');
+                var dateFmt = _escapeHtmlCoros(_formatHappenDayCoros(item.happen_day));
+                var distFmt = (s.dist != null) ? (s.dist + ' km') : '—';
+                var paceFmt = _escapeHtmlCoros(_corosFmtPaceRange(s));
+                var syncedCls = item.synced ? ' already-sent' : '';
+                var syncedTag = item.synced
+                    ? '<div class="mr-coros-session-status">✓ Ya en Pace Pro</div>'
+                    : '';
+                return ''
+                    + '<div class="mr-coros-session-item' + syncedCls + '" data-idx="' + idx + '" data-key="' + _escapeHtmlCoros(item.mr_workout_key) + '" onclick="window._corosToggleSession(' + idx + ')">'
+                    +   '<div class="mr-coros-session-checkbox"></div>'
+                    +   '<div class="mr-coros-session-info">'
+                    +     '<div class="mr-coros-session-title-row">'
+                    +       '<div class="mr-coros-session-title">' + title + '</div>'
+                    +       '<span class="' + pillCls + '">' + (type || '—') + '</span>'
+                    +     '</div>'
+                    +     '<div class="mr-coros-session-meta">'
+                    +       '<span><b>' + dateFmt + '</b></span>'
+                    +       '<span>·</span>'
+                    +       '<span>' + _escapeHtmlCoros(distFmt) + '</span>'
+                    +       '<span>·</span>'
+                    +       '<span>' + paceFmt + '</span>'
+                    +     '</div>'
+                    +     syncedTag
+                    +   '</div>'
+                    + '</div>';
+            }).join('');
+
+            var totEl = document.getElementById('_coros-counter-tot');
+            if (totEl) totEl.textContent = String(_corosBatchState.sessions.length);
+            _corosRefreshSelectionUI();
+        }
+
+        // ─── Handlers de selección ─────────────────────────────────────
+        function _corosToggleSession(idx) {
+            if (_corosBatchState.running) return;
+            if (idx == null || idx < 0 || idx >= _corosBatchState.sessions.length) return;
+            if (_corosBatchState.selected.has(idx)) {
+                _corosBatchState.selected.delete(idx);
             } else {
-                alert('Modal batch multi-select pendiente de implementar (Paso 7).');
+                _corosBatchState.selected.add(idx);
+            }
+            _corosRefreshSelectionUI();
+        }
+
+        function _corosToggleSelectAll() {
+            if (_corosBatchState.running) return;
+            if (_corosBatchState.sessions.length === 0) return;
+            if (_corosBatchState.selected.size === _corosBatchState.sessions.length) {
+                _corosBatchState.selected.clear();
+            } else {
+                _corosBatchState.sessions.forEach(function (_, idx) {
+                    _corosBatchState.selected.add(idx);
+                });
+            }
+            _corosRefreshSelectionUI();
+        }
+
+        function _corosToggleForce() {
+            if (_corosBatchState.running) return;
+            _corosBatchState.force = !_corosBatchState.force;
+            var btn = document.getElementById('_coros-force-toggle');
+            if (btn) {
+                btn.classList.toggle('active', _corosBatchState.force);
+                btn.setAttribute('aria-pressed', _corosBatchState.force ? 'true' : 'false');
+            }
+        }
+
+        function _corosRefreshSelectionUI() {
+            document.querySelectorAll('.mr-coros-session-item').forEach(function (el) {
+                var idx = parseInt(el.dataset.idx, 10);
+                el.classList.toggle('selected', _corosBatchState.selected.has(idx));
+            });
+            var n = _corosBatchState.selected.size;
+            var selEl = document.getElementById('_coros-counter-sel');
+            var cntEl = document.getElementById('_coros-submit-count');
+            var btn = document.getElementById('_coros-submit-btn');
+            if (selEl) selEl.textContent = String(n);
+            if (cntEl) cntEl.textContent = String(n);
+            if (btn) btn.disabled = (n === 0);
+
+            var selAllBtn = document.querySelector('.mr-coros-modal-select-all');
+            if (selAllBtn) {
+                var allSel = (_corosBatchState.sessions.length > 0 && n === _corosBatchState.sessions.length);
+                selAllBtn.textContent = allSel ? 'Deseleccionar todos' : 'Seleccionar todos';
+            }
+        }
+
+        // ─── Progress overlay + orquestación batch ─────────────────────
+        function _swapModalToProgress(selectedItems) {
+            var sheet = document.querySelector('.mr-coros-modal-sheet');
+            if (!sheet) return;
+
+            var itemsHtml = selectedItems.map(function (item, i) {
+                var title = _escapeHtmlCoros(item.workout_title || '—');
+                var dateFmt = _escapeHtmlCoros(_formatHappenDayCoros(item.happen_day));
+                return ''
+                    + '<div class="mr-coros-progress-item queued" data-progress-idx="' + i + '">'
+                    +   '<div class="mr-coros-progress-item__status mr-coros-progress-item__status--queued"></div>'
+                    +   '<div class="mr-coros-progress-item__title">' + title + '</div>'
+                    +   '<div class="mr-coros-progress-item__date">' + dateFmt + '</div>'
+                    + '</div>';
+            }).join('');
+
+            sheet.innerHTML = ''
+                + '<div class="mr-coros-modal-header">'
+                +   '<div class="mr-coros-modal-handle"></div>'
+                +   '<div class="mr-coros-modal-hdr-row">'
+                +     '<div class="mr-coros-modal-title-block">'
+                +       '<div class="mr-coros-modal-brand">'
+                +         '<span class="mr-coros-modal-badge">COROS</span>'
+                +         '<div class="mr-coros-modal-title">Enviando…</div>'
+                +       '</div>'
+                +       '<div class="mr-coros-modal-subtitle">No cierres esta ventana mientras se sincroniza</div>'
+                +     '</div>'
+                +   '</div>'
+                + '</div>'
+                + '<div class="mr-coros-progress">'
+                +   '<div class="mr-coros-progress-hdr">'
+                +     '<div class="mr-coros-progress-title" id="_coros-prog-title">Sincronizando <b id="_coros-prog-cur">0</b> / <b id="_coros-prog-tot">' + selectedItems.length + '</b></div>'
+                +     '<div class="mr-coros-progress-sub" id="_coros-prog-sub">Preparando…</div>'
+                +   '</div>'
+                +   '<div class="mr-coros-progress-bar-wrap">'
+                +     '<div class="mr-coros-progress-bar" id="_coros-prog-bar"></div>'
+                +   '</div>'
+                +   '<div id="_coros-prog-list">' + itemsHtml + '</div>'
+                + '</div>';
+        }
+
+        function _updateProgressItem(i, status, msgOpt) {
+            var el = document.querySelector('[data-progress-idx="' + i + '"]');
+            if (!el) return;
+            el.classList.remove('queued');
+            var statusEl = el.querySelector('.mr-coros-progress-item__status');
+            if (!statusEl) return;
+            statusEl.className = 'mr-coros-progress-item__status';
+            if (status === 'pending') {
+                statusEl.classList.add('mr-coros-progress-item__status--pending');
+                statusEl.textContent = '';
+            } else if (status === 'ok') {
+                statusEl.classList.add('mr-coros-progress-item__status--ok');
+                statusEl.textContent = '✓';
+                if (msgOpt) {
+                    var d = el.querySelector('.mr-coros-progress-item__date');
+                    if (d) d.textContent = msgOpt;
+                }
+            } else if (status === 'err') {
+                statusEl.classList.add('mr-coros-progress-item__status--err');
+                statusEl.textContent = '✕';
+                if (msgOpt) {
+                    var d2 = el.querySelector('.mr-coros-progress-item__date');
+                    if (d2) { d2.textContent = msgOpt; d2.title = msgOpt; }
+                }
+            }
+        }
+
+        function _updateProgressBar(pct, curIdx, total) {
+            var bar = document.getElementById('_coros-prog-bar');
+            if (bar) bar.style.width = Math.round(pct * 100) + '%';
+            var cur = document.getElementById('_coros-prog-cur');
+            if (cur && curIdx != null) cur.textContent = String(curIdx);
+            var sub = document.getElementById('_coros-prog-sub');
+            if (sub && curIdx != null && total != null) {
+                sub.textContent = curIdx >= total ? 'Completado' : ('Enviando ' + (curIdx + 1) + ' de ' + total);
+            }
+        }
+
+        async function _corosRunBatchSend() {
+            if (_corosBatchState.running) return;
+            if (_corosBatchState.selected.size === 0) return;
+
+            _corosBatchState.running = true;
+            var selectedItems = Array.from(_corosBatchState.selected)
+                .sort(function (a, b) { return a - b; })
+                .map(function (idx) { return _corosBatchState.sessions[idx]; });
+
+            _swapModalToProgress(selectedItems);
+            _updateProgressBar(0, 0, selectedItems.length);
+
+            var results = { ok: 0, err: 0, already: 0 };
+            var firstError = null;
+
+            for (var i = 0; i < selectedItems.length; i++) {
+                var item = selectedItems[i];
+                _updateProgressItem(i, 'pending');
+                _updateProgressBar(i / selectedItems.length, i, selectedItems.length);
+
+                try {
+                    var payload = {
+                        workout: item.sess,
+                        paces: (_corosGetActivePlan() || {}).paces || {},
+                        happen_day: item.happen_day,
+                        mr_workout_key: item.mr_workout_key,
+                        workout_title: item.workout_title
+                    };
+                    if (_corosBatchState.force) payload.force = true;
+
+                    var r = await window.mrCorosSendWorkout(payload);
+
+                    if (r && r.ok) {
+                        _updateProgressItem(i, 'ok');
+                        results.ok++;
+                        _corosBatchState.syncedKeys.add(item.mr_workout_key);
+                    } else if (r && r.status === 409 && !_corosBatchState.force) {
+                        // QP18=C: 409 sin force = "ya sincronizado", no cuenta como error.
+                        _updateProgressItem(i, 'ok', 'Ya en Pace Pro');
+                        results.already++;
+                    } else {
+                        var msg = (r && (r.error || r.message)) || 'error';
+                        _updateProgressItem(i, 'err', String(msg).slice(0, 40));
+                        results.err++;
+                        if (!firstError) firstError = msg;
+                    }
+                } catch (e) {
+                    var em = (e && e.message) || 'excepción';
+                    _updateProgressItem(i, 'err', em.slice(0, 40));
+                    results.err++;
+                    if (!firstError) firstError = em;
+                }
+
+                _updateProgressBar((i + 1) / selectedItems.length, i + 1, selectedItems.length);
+            }
+
+            _updateProgressBar(1, selectedItems.length, selectedItems.length);
+
+            // Toast agregado
+            try {
+                if (window.fxToast) {
+                    var parts = [];
+                    if (results.ok > 0) parts.push(results.ok + ' enviados');
+                    if (results.already > 0) parts.push(results.already + ' ya sincronizados');
+                    if (results.err > 0) parts.push(results.err + ' con error');
+                    var summary = parts.join(' · ');
+                    var variant = (results.err > 0) ? 'error' : 'success';
+                    window.fxToast(summary || 'Sin cambios', { variant: variant });
+                }
+            } catch (_) {}
+
+            _corosBatchState.running = false;
+
+            // Auto-cierre: 1.4s si todo OK, 3.2s si hubo errores (dar tiempo a leer).
+            var closeDelay = (results.err > 0) ? 3200 : 1400;
+            setTimeout(_closeCorosBatchModal, closeDelay);
+        }
+
+        // ─── Ganchos onclick expuestos (necesarios: onclick inline en innerHTML se ejecuta en global scope) ─
+        window._corosToggleSession = _corosToggleSession;
+        window._corosToggleSelectAll = _corosToggleSelectAll;
+        window._corosToggleForce = _corosToggleForce;
+        window._corosRunBatchSend = _corosRunBatchSend;
+        window._closeCorosBatchModal = _closeCorosBatchModal;
+
+        // ═══ Reemplazo real del stub Paso 5 (Paso 8 completará disconnected) ═══
+        window.openCorosConnectFlow = function () {
+            if (window.__mrCoros && window.__mrCoros.connected) {
+                _buildCorosBatchModal();
+                _corosPopulateSessions().catch(function (e) {
+                    console.warn('[MR x COROS] populate error:', e && e.message);
+                });
+            } else {
+                alert('Modal de conexión COROS pendiente de implementar (Paso 8).');
             }
         };
-        window.mrCorosPromptDisconnect = window.mrCorosPromptDisconnect || function() {
+        window.mrCorosPromptDisconnect = window.mrCorosPromptDisconnect || function () {
             if (!confirm('¿Desconectar tu cuenta de COROS?\n\nLos workouts ya sincronizados en tu Pace Pro se conservan; solo eliminas las credenciales de MR.')) return;
-            window.mrCorosDisconnect().then(function(r) {
+            window.mrCorosDisconnect().then(function (r) {
                 if (r.ok) {
                     if (window.fxToast) window.fxToast('Cuenta COROS desconectada', { variant: 'success' });
                 } else {
