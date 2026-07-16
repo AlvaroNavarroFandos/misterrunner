@@ -31308,6 +31308,90 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         showToast('Plan eliminado');
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // [Sub-bloque 4 Frontend · Paso 3.3] Delete Plan Modal
+    // Reemplaza el window.confirm previo por un bottom-sheet custom con
+    // 2 variantes en fase choose (A simple / B con toggle COROS). Prepara
+    // las fases progress (Paso 3.4) y summary (Paso 3.5) sin activarlas aún.
+    // ═══════════════════════════════════════════════════════════════
+    var _dpState = { phase: 'choose', corosDeleteEnabled: false, syncedCount: 0 };
+
+    function _showDeletePlanModal() {
+        var connected = !!(window.__mrCoros && window.__mrCoros.connected);
+        var syncedKeys = (window.__mrCoros && window.__mrCoros.syncedKeys) || null;
+        var syncedCount = (connected && syncedKeys && typeof syncedKeys.size === 'number') ? syncedKeys.size : 0;
+        var enriched = connected && syncedCount > 0;
+
+        _dpState.phase = 'choose';
+        _dpState.corosDeleteEnabled = enriched; // default ON en variante B
+        _dpState.syncedCount = syncedCount;
+
+        _dpRenderChoose(enriched, syncedCount);
+        if (typeof openSheet === 'function') openSheet('delete-plan-modal');
+    }
+    window._showDeletePlanModal = _showDeletePlanModal;
+
+    function _dpRenderChoose(enriched, syncedCount) {
+        // Mostrar solo fase choose (Paso 3.3 · variante A o B)
+        var vChoose   = document.getElementById('dp-choose-view');
+        var vProgress = document.getElementById('dp-progress-view');
+        var vSummary  = document.getElementById('dp-summary-view');
+        if (vChoose)   vChoose.style.display   = '';
+        if (vProgress) vProgress.style.display = 'none';
+        if (vSummary)  vSummary.style.display  = 'none';
+
+        // Título sheet
+        var title = document.getElementById('dp-sheet-title');
+        if (title) title.textContent = 'Eliminar plan';
+
+        // Card COROS visible solo en variante B
+        var card = document.getElementById('dp-coros-card');
+        if (card) card.style.display = enriched ? '' : 'none';
+
+        if (enriched) {
+            // Sublabel pluralizado (1 vs N)
+            var n = syncedCount;
+            var txt = n + ' workout' + (n === 1 ? '' : 's')
+                    + ' sincronizado' + (n === 1 ? '' : 's')
+                    + ' será' + (n === 1 ? '' : 'n')
+                    + ' borrado' + (n === 1 ? '' : 's');
+            var sub = document.getElementById('dp-coros-count');
+            if (sub) sub.textContent = txt;
+
+            // Toggle default ON en variante B
+            var toggle = document.getElementById('dp-toggle');
+            if (toggle) {
+                if (_dpState.corosDeleteEnabled) toggle.classList.add('on');
+                else toggle.classList.remove('on');
+            }
+        }
+    }
+
+    function _dpToggleCorosSwitch() {
+        _dpState.corosDeleteEnabled = !_dpState.corosDeleteEnabled;
+        var toggle = document.getElementById('dp-toggle');
+        if (toggle) {
+            if (_dpState.corosDeleteEnabled) toggle.classList.add('on');
+            else toggle.classList.remove('on');
+        }
+    }
+    window._dpToggleCorosSwitch = _dpToggleCorosSwitch;
+
+    function _dpCancel() {
+        if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+    }
+    window._dpCancel = _dpCancel;
+
+    function _dpConfirmDelete() {
+        // Paso 3.3 · Handler minimal: cierra sheet + delete local + toast.
+        // Paso 3.4 (siguiente) · Si _dpState.corosDeleteEnabled, mutará a fase
+        // progress + arrancará batch delete antes del delete local.
+        if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+        _executeDeletePlanLocal();
+        showToast('Plan eliminado');
+    }
+    window._dpConfirmDelete = _dpConfirmDelete;
+
     // ── PLAN VIEW TOGGLE (weekly / monthly) ───────────────────────
     let planViewMode = 'week'; // 'week' | 'month'
     function togglePlanView() {
@@ -42030,6 +42114,321 @@ window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
                 <div class="dup-buttons">
                     <button type="button" class="dup-btn dup-btn-cancel" onclick="_dismissDuplicateModal()">Cancelar</button>
                     <button type="button" class="dup-btn dup-btn-force" onclick="_forceImportDuplicate()">Importar igualmente</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- [Sub-bloque 4 Frontend · Paso 3.3] Modal Eliminar plan de carrera.
+         Sheet con 3 fases (choose visible por defecto, progress y summary hidden):
+         - dp-choose-view: variante A (simple) o B (con toggle COROS) según estado.
+         - dp-progress-view: batch delete de workouts en COROS (activada en Paso 3.4).
+         - dp-summary-view: resumen mixto post-batch con fallos (activada en Paso 3.5).
+         Se abre desde deleteActivePlan() via window._showDeletePlanModal(). -->
+    <div id="delete-plan-modal" class="sheet-backdrop">
+        <style>
+            #delete-plan-modal .dp-body { padding: 18px 18px 24px; }
+            #delete-plan-modal .dp-hero {
+                display: flex; align-items: center; gap: 14px;
+                margin-bottom: 16px;
+            }
+            #delete-plan-modal .dp-icon {
+                flex-shrink: 0;
+                width: 50px; height: 50px;
+                border-radius: 14px;
+                background: rgba(176, 32, 32, .12);
+                color: var(--danger);
+                display: flex; align-items: center; justify-content: center;
+            }
+            body.dark-mode #delete-plan-modal .dp-icon {
+                background: rgba(248, 113, 113, .16);
+            }
+            #delete-plan-modal .dp-icon.dp-icon-warn {
+                background: rgba(176, 96, 32, .15);
+                color: var(--warn);
+            }
+            body.dark-mode #delete-plan-modal .dp-icon.dp-icon-warn {
+                background: rgba(251, 191, 36, .15);
+            }
+            #delete-plan-modal .dp-title {
+                font-size: 16px; font-weight: 700; color: var(--tw);
+                letter-spacing: -.2px;
+            }
+            #delete-plan-modal .dp-subtitle {
+                font-size: 11px; color: var(--ts); margin-top: 2px;
+            }
+            #delete-plan-modal .dp-explain {
+                font-size: 12.5px; color: var(--ts);
+                line-height: 1.55;
+                margin-bottom: 18px;
+            }
+            #delete-plan-modal .dp-explain strong { color: var(--tp); font-weight: 700; }
+
+            /* Card acento COROS · variante B */
+            #delete-plan-modal .dp-coros-card {
+                background: var(--coros-lt);
+                border: 1px solid var(--coros-bd);
+                border-radius: 14px;
+                padding: 14px 14px;
+                margin-bottom: 16px;
+                display: flex; align-items: center; gap: 12px;
+                cursor: pointer;
+                transition: background .18s;
+            }
+            #delete-plan-modal .dp-coros-card:active { background: rgba(220, 32, 39, .18); }
+            body.dark-mode #delete-plan-modal .dp-coros-card:active { background: rgba(220, 32, 39, .26); }
+            #delete-plan-modal .dp-coros-icon {
+                flex-shrink: 0;
+                width: 34px; height: 34px;
+                border-radius: 10px;
+                background: var(--coros);
+                color: var(--coros-fg);
+                display: flex; align-items: center; justify-content: center;
+                box-shadow: 0 2px 8px var(--coros-glow);
+            }
+            #delete-plan-modal .dp-coros-text { flex: 1 1 auto; min-width: 0; }
+            #delete-plan-modal .dp-coros-label {
+                font-size: 12.5px; font-weight: 700; color: var(--tw);
+                line-height: 1.35;
+            }
+            #delete-plan-modal .dp-coros-sublabel {
+                font-size: 10.5px; color: var(--ts);
+                margin-top: 2px; line-height: 1.35;
+            }
+
+            /* Toggle switch iOS-style con acento COROS */
+            #delete-plan-modal .dp-toggle {
+                flex-shrink: 0;
+                position: relative;
+                width: 46px; height: 26px;
+                border-radius: 999px;
+                background: var(--tm);
+                transition: background .22s;
+                cursor: pointer;
+            }
+            #delete-plan-modal .dp-toggle::after {
+                content: '';
+                position: absolute; top: 2px; left: 2px;
+                width: 22px; height: 22px;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 1px 3px rgba(0,0,0,.28);
+                transition: transform .22s cubic-bezier(.25,1.20,.4,1);
+            }
+            #delete-plan-modal .dp-toggle.on { background: var(--coros); }
+            #delete-plan-modal .dp-toggle.on::after { transform: translateX(20px); }
+
+            /* Progress · variante C (Paso 3.4) */
+            #delete-plan-modal .dp-progress-header {
+                font-size: 12px; color: var(--ts);
+                line-height: 1.5; margin-bottom: 12px;
+            }
+            #delete-plan-modal .dp-progress-header strong { color: var(--tw); font-weight: 700; }
+            #delete-plan-modal .dp-progress-bar {
+                width: 100%; height: 8px;
+                background: var(--bsoft);
+                border-radius: 999px;
+                overflow: hidden;
+                margin-bottom: 6px;
+            }
+            #delete-plan-modal .dp-progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, var(--coros) 0%, var(--coros-deep) 100%);
+                border-radius: 999px;
+                transition: width .35s cubic-bezier(.4,0,.2,1);
+                box-shadow: 0 0 8px var(--coros-glow);
+            }
+            #delete-plan-modal .dp-progress-count {
+                font-size: 10.5px; color: var(--tm);
+                font-weight: 700; text-align: right;
+                letter-spacing: .3px; margin-bottom: 14px;
+            }
+
+            /* Item list · variantes C y D (Pasos 3.4 y 3.5) */
+            #delete-plan-modal .dp-item-list {
+                display: flex; flex-direction: column;
+                gap: 6px;
+                margin-bottom: 18px;
+                max-height: 200px;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-right: 4px;
+            }
+            #delete-plan-modal .dp-item {
+                display: flex; align-items: center; gap: 10px;
+                padding: 8px 12px;
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                font-size: 12px; color: var(--tp);
+                line-height: 1.3;
+                transition: opacity .2s, background .2s;
+            }
+            #delete-plan-modal .dp-item.pending { opacity: .55; }
+            #delete-plan-modal .dp-item.current {
+                background: var(--coros-lt);
+                border-color: var(--coros-bd);
+            }
+            #delete-plan-modal .dp-item.err {
+                background: rgba(176, 32, 32, .06);
+                border-color: rgba(176, 32, 32, .18);
+            }
+            body.dark-mode #delete-plan-modal .dp-item.err {
+                background: rgba(248, 113, 113, .10);
+                border-color: rgba(248, 113, 113, .25);
+            }
+            #delete-plan-modal .dp-item-icon {
+                flex-shrink: 0;
+                width: 20px; height: 20px;
+                border-radius: 50%;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 12px; font-weight: 800;
+            }
+            #delete-plan-modal .dp-item-icon.ok   { background: rgba(46, 138, 96, .16); color: var(--ok); }
+            #delete-plan-modal .dp-item-icon.pend { background: var(--bsoft); color: var(--tm); }
+            #delete-plan-modal .dp-item-icon.curr { background: var(--coros); color: var(--coros-fg); animation: dp-spin 1s linear infinite; }
+            #delete-plan-modal .dp-item-icon.err  { background: rgba(176, 32, 32, .16); color: var(--danger); }
+            body.dark-mode #delete-plan-modal .dp-item-icon.ok  { background: rgba(74, 222, 128, .18); color: #4ade80; }
+            body.dark-mode #delete-plan-modal .dp-item-icon.err { background: rgba(248, 113, 113, .22); color: #f87171; }
+            @keyframes dp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+            #delete-plan-modal .dp-item-name {
+                flex: 1 1 auto; min-width: 0;
+                font-weight: 600;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            }
+            #delete-plan-modal .dp-item-err-reason {
+                font-size: 10px; color: var(--danger);
+                font-weight: 700;
+                text-transform: uppercase; letter-spacing: .4px;
+                flex-shrink: 0;
+            }
+
+            /* Summary card · variante D (Paso 3.5) */
+            #delete-plan-modal .dp-summary-card {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 12px 16px;
+                margin-bottom: 14px;
+                display: flex; justify-content: space-around; gap: 12px;
+            }
+            #delete-plan-modal .dp-summary-stat {
+                display: flex; flex-direction: column; align-items: center;
+                gap: 2px; flex: 1 1 0;
+            }
+            #delete-plan-modal .dp-summary-stat-value {
+                font-size: 22px; font-weight: 800;
+                line-height: 1; letter-spacing: -.5px;
+            }
+            #delete-plan-modal .dp-summary-stat-value.ok  { color: var(--ok); }
+            #delete-plan-modal .dp-summary-stat-value.err { color: var(--danger); }
+            #delete-plan-modal .dp-summary-stat-label {
+                font-size: 9.5px; font-weight: 700;
+                color: var(--tm);
+                text-transform: uppercase; letter-spacing: .8px;
+            }
+
+            /* Buttons */
+            #delete-plan-modal .dp-buttons { display: flex; gap: 10px; margin-top: 4px; }
+            #delete-plan-modal .dp-btn {
+                flex: 1;
+                border-radius: 12px;
+                padding: 13px;
+                font-family: var(--f);
+                font-size: 13px; font-weight: 800;
+                letter-spacing: .3px;
+                cursor: pointer; border: none;
+                transition: transform .12s;
+            }
+            #delete-plan-modal .dp-btn:active { transform: scale(.97); }
+            #delete-plan-modal .dp-btn-cancel {
+                background: var(--card2);
+                color: var(--tw);
+                border: 1px solid var(--border);
+            }
+            #delete-plan-modal .dp-btn-danger {
+                background: var(--crimson);
+                color: #fff;
+                box-shadow: 0 2px 8px rgba(143,26,40,.30);
+            }
+        </style>
+        <div class="sheet">
+            <div class="sheet-handle-wrap">
+                <div class="sheet-handle"></div>
+                <div class="sheet-title" id="dp-sheet-title">Eliminar plan</div>
+            </div>
+            <div class="sheet-body dp-body">
+                <!-- Fase CHOOSE · variante A (simple) o B (con toggle COROS) -->
+                <div id="dp-choose-view">
+                    <div class="dp-hero">
+                        <div class="dp-icon">
+                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        </div>
+                        <div>
+                            <div class="dp-title">Eliminar plan de carrera</div>
+                            <div class="dp-subtitle">Acción irreversible</div>
+                        </div>
+                    </div>
+                    <div class="dp-explain">
+                        Se eliminará el <strong>plan de carrera</strong> completo, incluyendo semanas generadas y ajustes personalizados.<br><br>
+                        El plan de <strong>fuerza</strong> se mantiene aparte y no se ve afectado.
+                    </div>
+                    <div class="dp-coros-card" id="dp-coros-card" onclick="_dpToggleCorosSwitch()" style="display:none;">
+                        <div class="dp-coros-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path></svg>
+                        </div>
+                        <div class="dp-coros-text">
+                            <div class="dp-coros-label">Eliminar también del reloj COROS</div>
+                            <div class="dp-coros-sublabel" id="dp-coros-count">—</div>
+                        </div>
+                        <div class="dp-toggle on" id="dp-toggle"></div>
+                    </div>
+                    <div class="dp-buttons">
+                        <button type="button" class="dp-btn dp-btn-cancel" onclick="_dpCancel()">Cancelar</button>
+                        <button type="button" class="dp-btn dp-btn-danger" onclick="_dpConfirmDelete()">Eliminar</button>
+                    </div>
+                </div>
+                <!-- Fase PROGRESS · batch delete en curso (activada en Paso 3.4) -->
+                <div id="dp-progress-view" style="display:none;">
+                    <div class="dp-progress-header">
+                        Eliminando workouts sincronizados del reloj <strong>COROS</strong>. No cierres la app.
+                    </div>
+                    <div class="dp-progress-bar">
+                        <div class="dp-progress-fill" id="dp-progress-fill" style="width:0%"></div>
+                    </div>
+                    <div class="dp-progress-count" id="dp-progress-count">0 / 0</div>
+                    <div class="dp-item-list" id="dp-progress-list"></div>
+                </div>
+                <!-- Fase SUMMARY · resumen mixto post-batch (activada en Paso 3.5) -->
+                <div id="dp-summary-view" style="display:none;">
+                    <div class="dp-hero">
+                        <div class="dp-icon dp-icon-warn">
+                            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        </div>
+                        <div>
+                            <div class="dp-title">Sincronización parcial</div>
+                            <div class="dp-subtitle">Algunos workouts no se pudieron eliminar</div>
+                        </div>
+                    </div>
+                    <div class="dp-summary-card">
+                        <div class="dp-summary-stat">
+                            <div class="dp-summary-stat-value ok" id="dp-summary-ok">0</div>
+                            <div class="dp-summary-stat-label">Eliminados</div>
+                        </div>
+                        <div class="dp-summary-stat">
+                            <div class="dp-summary-stat-value err" id="dp-summary-err">0</div>
+                            <div class="dp-summary-stat-label">Con error</div>
+                        </div>
+                    </div>
+                    <div class="dp-item-list" id="dp-summary-list"></div>
+                    <div class="dp-explain">
+                        Los workouts con error seguirán en el reloj hasta que puedas reintentar. Puedes <strong>eliminar el plan de la app igualmente</strong> o cancelar.
+                    </div>
+                    <div class="dp-buttons">
+                        <button type="button" class="dp-btn dp-btn-cancel" onclick="_dpCancel()">Cancelar</button>
+                        <button type="button" class="dp-btn dp-btn-danger" onclick="_dpForceDeleteFromSummary()">Eliminar plan igualmente</button>
+                    </div>
                 </div>
             </div>
         </div>
