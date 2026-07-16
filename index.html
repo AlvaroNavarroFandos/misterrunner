@@ -31278,8 +31278,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // The plan stays in activePlan — it is only replaced when acceptPlan() is called
     }
 
-    function deleteActivePlan() {
-        if(!window.confirm('¿Eliminar el plan de carrera? El plan de fuerza se mantiene independiente.')) return;
+    // Worker puro: ejecuta delete local sin gate ni toast. Reutilizable por modal 3.3.
+    function _executeDeletePlanLocal() {
         activePlan=null;
         generatedPlanData=null;
         try{ localStorage.removeItem(_uk('mr_plan')); }catch(e){}
@@ -31293,6 +31293,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const lbl=document.getElementById('plan-sub-bar');
         if(lbl)lbl.textContent='Sin plan activo';
         saveAppState();
+    }
+
+    function deleteActivePlan() {
+        // Gate: SIEMPRE abre modal custom (Sub-bloque 4 Frontend · opción B).
+        // Modal decide internamente su variante (simple sin COROS vs enriquecida con toggle).
+        if (typeof _showDeletePlanModal === 'function') {
+            _showDeletePlanModal();
+            return;
+        }
+        // Fallback defensivo (Paso 3.2 sin 3.3 aún): mantiene comportamiento previo.
+        if(!window.confirm('¿Eliminar el plan de carrera? El plan de fuerza se mantiene independiente.')) return;
+        _executeDeletePlanLocal();
         showToast('Plan eliminado');
     }
 
@@ -46335,6 +46347,20 @@ window.addEventListener('DOMContentLoaded', function() {
             };
             if (opts.workout_title) body.workout_title = opts.workout_title;
             if (opts.force === true) body.force = true;
+            return _corosFetch('POST', '/send-workout', body);
+        };
+
+        window.mrCorosDeleteWorkout = async function(opts) {
+            opts = opts || {};
+            if (!opts.happen_day || !opts.mr_workout_key) {
+                return { ok:false, status:0, error:'missing_fields' };
+            }
+            var body = {
+                action: 'delete',
+                happen_day: opts.happen_day,
+                mr_workout_key: opts.mr_workout_key
+            };
+            if (opts.workout_title) body.workout_title = opts.workout_title;
             return _corosFetch('POST', '/send-workout', body);
         };
 
