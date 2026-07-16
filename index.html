@@ -31382,15 +31382,152 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._dpCancel = _dpCancel;
 
-    function _dpConfirmDelete() {
-        // Paso 3.3 · Handler minimal: cierra sheet + delete local + toast.
-        // Paso 3.4 (siguiente) · Si _dpState.corosDeleteEnabled, mutará a fase
-        // progress + arrancará batch delete antes del delete local.
-        if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
-        _executeDeletePlanLocal();
-        showToast('Plan eliminado');
+    async function _dpConfirmDelete() {
+        if (!_dpState.corosDeleteEnabled) {
+            // Path simple (variante A o toggle OFF): cierra + delete local + toast.
+            if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+            _executeDeletePlanLocal();
+            showToast('Plan eliminado');
+            return;
+        }
+        // Path batch (variante B con toggle ON · Paso 3.3.1): mutar a fase
+        // progress + iterar mrCorosDeleteWorkout por cada key + cerrar + delete local.
+        await _dpRunBatchDelete();
     }
     window._dpConfirmDelete = _dpConfirmDelete;
+
+    // ─── Helpers UI de fase progress (Paso 3.3.1) ──────────────
+    function _dpFormatDayLabel(happen_day) {
+        // "20260716" → "16 jul"
+        if (!happen_day || happen_day.length !== 8) return happen_day || '—';
+        var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        var mi = parseInt(happen_day.substr(4, 2), 10) - 1;
+        var d  = parseInt(happen_day.substr(6, 2), 10);
+        if (mi < 0 || mi > 11 || isNaN(d)) return happen_day;
+        return d + ' ' + months[mi];
+    }
+    function _dpEscapeHtml(s) {
+        if (s == null) return '';
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+        });
+    }
+
+    function _dpRenderProgress(items, currentIdx) {
+        // Mostrar solo fase progress
+        var vChoose   = document.getElementById('dp-choose-view');
+        var vProgress = document.getElementById('dp-progress-view');
+        var vSummary  = document.getElementById('dp-summary-view');
+        if (vChoose)   vChoose.style.display   = 'none';
+        if (vProgress) vProgress.style.display = '';
+        if (vSummary)  vSummary.style.display  = 'none';
+
+        // Título sheet
+        var title = document.getElementById('dp-sheet-title');
+        if (title) title.textContent = 'Eliminando…';
+
+        // Progress bar + count (basado en items done = ok|err)
+        var total = items.length;
+        var done  = 0;
+        for (var i = 0; i < total; i++) {
+            if (items[i].status === 'ok' || items[i].status === 'err') done++;
+        }
+        var pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        var fill = document.getElementById('dp-progress-fill');
+        if (fill) fill.style.width = pct + '%';
+        var cnt = document.getElementById('dp-progress-count');
+        if (cnt) cnt.textContent = done + ' / ' + total;
+
+        // Item list
+        var list = document.getElementById('dp-progress-list');
+        if (!list) return;
+        var html = '';
+        for (var j = 0; j < total; j++) {
+            var it = items[j];
+            var iconClass, iconChar, itemClass;
+            if (it.status === 'ok')       { iconClass = 'ok';   iconChar = '✓'; itemClass = ''; }
+            else if (it.status === 'err') { iconClass = 'err';  iconChar = '✗'; itemClass = 'err'; }
+            else if (j === currentIdx)    { iconClass = 'curr'; iconChar = '↻'; itemClass = 'current'; }
+            else                          { iconClass = 'pend'; iconChar = '○'; itemClass = 'pending'; }
+            html += '<div class="dp-item ' + itemClass + '">';
+            html +=   '<div class="dp-item-icon ' + iconClass + '">' + iconChar + '</div>';
+            html +=   '<div class="dp-item-name">' + _dpEscapeHtml(it.label) + '</div>';
+            if (it.status === 'err' && it.err_reason) {
+                html += '<div class="dp-item-err-reason">' + _dpEscapeHtml(it.err_reason) + '</div>';
+            }
+            html += '</div>';
+        }
+        list.innerHTML = html;
+    }
+
+    async function _dpRunBatchDelete() {
+        // Snapshot de keys (evita mutación durante iteración)
+        var keys = [];
+        var syncedKeys = (window.__mrCoros && window.__mrCoros.syncedKeys) || null;
+        if (syncedKeys && typeof syncedKeys.forEach === 'function') {
+            syncedKeys.forEach(function(k) { keys.push(k); });
+        }
+        if (keys.length === 0) {
+            // Nada que borrar (edge race): tratar como path simple
+            if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+            _executeDeletePlanLocal();
+            showToast('Plan eliminado');
+            return;
+        }
+        // Construir items con happen_day extraído de la key + label display
+        var items = keys.map(function(k) {
+            var m = /^mr_(\d{8})_/.exec(k);
+            var hd = m ? m[1] : '';
+            return { key: k, happen_day: hd, label: _dpFormatDayLabel(hd), status: 'pending', err_reason: null };
+        });
+        // Render inicial + iterar secuencialmente
+        _dpRenderProgress(items, 0);
+        var okCount = 0, errCount = 0;
+        for (var i = 0; i < items.length; i++) {
+            _dpRenderProgress(items, i);
+            try {
+                var r = await window.mrCorosDeleteWorkout({
+                    happen_day: items[i].happen_day,
+                    mr_workout_key: items[i].key
+                });
+                if (r && r.ok) {
+                    items[i].status = 'ok';
+                    okCount++;
+                    // Cache update inline: quitar key del Set global (best-effort)
+                    try {
+                        if (syncedKeys && typeof syncedKeys.delete === 'function') {
+                            syncedKeys.delete(items[i].key);
+                        }
+                    } catch (_) {}
+                } else {
+                    items[i].status = 'err';
+                    items[i].err_reason = (r && r.error) ? String(r.error).slice(0, 24) : 'error';
+                    errCount++;
+                    try { console.warn('[dp-batch] delete failed for', items[i].key, r); } catch(_){}
+                }
+            } catch (e) {
+                items[i].status = 'err';
+                items[i].err_reason = 'exception';
+                errCount++;
+                try { console.error('[dp-batch] exception for', items[i].key, e); } catch(_){}
+            }
+            _dpRenderProgress(items, i + 1);
+        }
+        // Post-batch: cerrar modal + delete local + toast contextual
+        if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+        _executeDeletePlanLocal();
+        var toastMsg;
+        if (errCount === 0) {
+            toastMsg = okCount + ' workout' + (okCount === 1 ? '' : 's')
+                     + ' eliminado' + (okCount === 1 ? '' : 's')
+                     + ' del reloj · plan eliminado';
+        } else if (okCount === 0) {
+            toastMsg = 'Plan eliminado (workouts no se pudieron borrar del reloj)';
+        } else {
+            toastMsg = 'Plan eliminado (' + okCount + ' del reloj, ' + errCount + ' fallaron)';
+        }
+        showToast(toastMsg);
+    }
 
     // ── PLAN VIEW TOGGLE (weekly / monthly) ───────────────────────
     let planViewMode = 'week'; // 'week' | 'month'
