@@ -31484,6 +31484,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var hd = m ? m[1] : '';
             return { key: k, happen_day: hd, label: _dpFormatDayLabel(hd), status: 'pending', err_reason: null };
         });
+        // [Sub-bloque 4 Frontend · Paso 3.8] Safety guard · excluir workouts con
+        // happen_day < hoy para proteger el histórico de actividades completadas
+        // en el reloj COROS. Fix intermedio hasta hydration guard + completed_at
+        // tracking en Sub-bloque 5. Comportamiento COROS pendiente de test empírico.
+        var _dpToday = (function() {
+            var d = new Date();
+            return '' + d.getFullYear()
+                     + String(d.getMonth() + 1).padStart(2, '0')
+                     + String(d.getDate()).padStart(2, '0');
+        })();
+        var totalBefore = items.length;
+        items = items.filter(function(it) {
+            return it.happen_day && it.happen_day >= _dpToday;
+        });
+        var skippedCount = totalBefore - items.length;
+        if (items.length === 0) {
+            // Todos los sincronizados eran de fechas pasadas · exit temprano safe.
+            // Se mantienen en el reloj para no arriesgar el histórico.
+            if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
+            _executeDeletePlanLocal();
+            showToast('Plan eliminado · ' + skippedCount + ' pasado'
+                    + (skippedCount === 1 ? '' : 's')
+                    + ' se mantien' + (skippedCount === 1 ? 'e' : 'en') + ' en el reloj');
+            return;
+        }
         // Render inicial + iterar secuencialmente
         _dpRenderProgress(items, 0);
         var okCount = 0, errCount = 0;
@@ -31521,14 +31546,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (typeof closeSheet === 'function') closeSheet('delete-plan-modal');
         _executeDeletePlanLocal();
         var toastMsg;
+        var skippedSuffix = skippedCount > 0
+            ? ' · ' + skippedCount + ' pasado' + (skippedCount === 1 ? '' : 's')
+            + ' omitido' + (skippedCount === 1 ? '' : 's')
+            : '';
         if (errCount === 0) {
             toastMsg = okCount + ' workout' + (okCount === 1 ? '' : 's')
                      + ' eliminado' + (okCount === 1 ? '' : 's')
-                     + ' del reloj · plan eliminado';
+                     + ' del reloj · plan eliminado' + skippedSuffix;
         } else if (okCount === 0) {
-            toastMsg = 'Plan eliminado (workouts no se pudieron borrar del reloj)';
+            toastMsg = 'Plan eliminado (workouts no se pudieron borrar del reloj)' + skippedSuffix;
         } else {
-            toastMsg = 'Plan eliminado (' + okCount + ' del reloj, ' + errCount + ' fallaron)';
+            toastMsg = 'Plan eliminado (' + okCount + ' del reloj, ' + errCount + ' fallaron)' + skippedSuffix;
         }
         showToast(toastMsg);
     }
@@ -46596,7 +46625,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.2.0-p1';
+        window.__mrCorosVersion = 'v2.2.0-p2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
