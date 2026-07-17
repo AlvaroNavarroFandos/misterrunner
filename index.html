@@ -31293,6 +31293,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const lbl=document.getElementById('plan-sub-bar');
         if(lbl)lbl.textContent='Sin plan activo';
         saveAppState();
+        // [Sub-bloque 4 Frontend · Paso 3.6] Reset tracking COROS del plan
+        // eliminado (hash + syncedKeys + banner). Zero side-effects si COROS
+        // desconectado o si _corosResetPlanHash no existe (defensiva).
+        try { if (typeof window._corosResetPlanHash === 'function') window._corosResetPlanHash(); } catch(_){}
     }
 
     function deleteActivePlan() {
@@ -46592,7 +46596,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.1.0-p2';
+        window.__mrCorosVersion = 'v2.2.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -47691,6 +47695,24 @@ window.addEventListener('DOMContentLoaded', function() {
             if (window.__mrCoros) window.__mrCoros.lastKnownPlanHash = hash;
         }
 
+        function _corosResetPlanHash() {
+            // [Sub-bloque 4 Frontend · Paso 3.6] Limpia tracking COROS asociado
+            // al plan actual. Se llama desde _executeDeletePlanLocal() al eliminar
+            // el plan. Idempotente y seguro incluso con COROS desconectado.
+            // NOTA: cache in-memory; al reload re-hidrata desde BD. Orphans persistentes
+            // requieren batch delete via toggle B ON (3.3.1) o hydration guard futuro.
+            try { localStorage.removeItem(_corosPlanHashKey()); } catch (_) {}
+            if (window.__mrCoros) {
+                window.__mrCoros.lastKnownPlanHash = null;
+                try {
+                    if (window.__mrCoros.syncedKeys && typeof window.__mrCoros.syncedKeys.clear === 'function') {
+                        window.__mrCoros.syncedKeys.clear();
+                    }
+                } catch (_) {}
+            }
+            _corosHideResyncBanner();
+        }
+
         // 2c · Check trigger (guards: connected + syncedKeys.size > 0)
         function _corosCheckPlanChanged() {
             if (!window.__mrCoros || !window.__mrCoros.connected) {
@@ -47785,6 +47807,7 @@ window.addEventListener('DOMContentLoaded', function() {
         // Exponer al global scope (onclick inline requiere window.*)
         window._corosComputePlanHash = _corosComputePlanHash;
         window._corosSetPlanHashKnown = _corosSetPlanHashKnown;
+        window._corosResetPlanHash = _corosResetPlanHash;
         window._corosCheckPlanChanged = _corosCheckPlanChanged;
         window._corosShowResyncBanner = _corosShowResyncBanner;
         window._corosHideResyncBanner = _corosHideResyncBanner;
