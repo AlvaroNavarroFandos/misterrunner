@@ -5281,7 +5281,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div class="row2">
                             <div>
                                 <div class="field-label">Inicio del plan</div>
-                                <input id="plan-start" type="date" style="font-size:16px;font-weight:600;color:var(--tw);padding:11px 10px;">
+                                <input id="plan-start" type="date" oninput="if(typeof planDist!=='undefined'&&planDist==='first_5k'&&this.value){var _r=document.getElementById('plan-race');if(_r){var _ms=new Date(this.value+'T00:00:00').getTime();if(!isNaN(_ms))_r.value=localDateStr(new Date(_ms+42*86400000));}}" style="font-size:16px;font-weight:600;color:var(--tw);padding:11px 10px;">
                             </div>
                             <div>
                                 <div class="field-label" id="plan-race-label">Día del maratón</div>
@@ -5332,6 +5332,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                  Se muestra automáticamente cuando hay goalSecs válido y
                                  existen actividades running en los últimos 12 meses. -->
                             <div id="plan-realism-badge" style="display:none;margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid transparent;transition:background .15s, border-color .15s;"></div>
+                        </div>
+                        <!-- v2.4.0-p2 · Panel informativo específico para first_5k · reemplaza el widget tiempo/ritmo -->
+                        <div id="plan-5k-info-panel" style="display:none;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.30);border-radius:12px;padding:12px 14px;">
+                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                                <span style="font-size:14px;">🌱</span>
+                                <div style="font-size:9px;color:#4ade80;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;">Objetivo automático</div>
+                            </div>
+                            <div id="plan-5k-info-line" style="font-size:13px;color:var(--tw);line-height:1.5;font-weight:600;">Ritmo objetivo del 5K: <b>—</b></div>
+                            <div style="font-size:10px;color:var(--tm);margin-top:8px;line-height:1.5;">
+                                La fecha de tu 5K se calcula automáticamente 6 semanas después del inicio.<br>
+                                Los ritmos se derivan de tu perfil MR (marcas 5K/10K si las tienes, o valor por defecto para principiante).
+                            </div>
                         </div>
                         <!-- Training days -->
                         <div>
@@ -29086,6 +29098,60 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // Re-sync paces preview with new distance context
         if(timeEl && timeEl.value) syncGoalPace('time');
+
+        // v2.4.0-p3 · Formulario adaptativo para first_5k:
+        // - Con marca 5K/10K/HM en perfil → mostrar panel info verde + ocultar widget tiempo/ritmo
+        // - Sin marca → mostrar widget tiempo/ritmo normal (con defaults 30:00/6:00) + ocultar panel
+        // - raceDate SIEMPRE readonly y auto = start + 42d (spec Álvaro)
+        const objPanel  = document.getElementById('plan-objective-panel');
+        const infoPanel = document.getElementById('plan-5k-info-panel');
+        const raceInput = document.getElementById('plan-race');
+        const startInput = document.getElementById('plan-start');
+        if (dist === 'first_5k') {
+            // raceDate readonly + auto-calc
+            if (raceInput) {
+                raceInput.setAttribute('readonly', 'readonly');
+                raceInput.style.opacity = '.6';
+                raceInput.style.cursor = 'not-allowed';
+            }
+            if (startInput && startInput.value && raceInput) {
+                const startMs = new Date(startInput.value + 'T00:00:00').getTime();
+                if (!isNaN(startMs)) {
+                    raceInput.value = localDateStr(new Date(startMs + 42 * 86400000));
+                }
+            }
+            // Toggle widget vs panel según hay marca en perfil
+            const hasMark = _hasProfileMarkForFirstFivek();
+            if (hasMark) {
+                if (objPanel)  objPanel.style.display  = 'none';
+                if (infoPanel) infoPanel.style.display = '';
+                try {
+                    const gSecs = _deriveFirstFivekGoal();
+                    const paceSec = Math.round(gSecs / 5);
+                    const min = Math.floor(paceSec / 60);
+                    const sec = String(paceSec % 60).padStart(2, '0');
+                    const line = document.getElementById('plan-5k-info-line');
+                    if (line) {
+                        const mm = Math.floor(gSecs / 60);
+                        const ss = String(gSecs % 60).padStart(2, '0');
+                        line.innerHTML = 'Ritmo objetivo del 5K: <b>' + min + "'" + sec + '"/km</b> · tiempo objetivo <b>' + mm + ':' + ss + '</b>';
+                    }
+                } catch(_) {}
+            } else {
+                // Sin marca → widget visible con defaults (30:00 / 6:00 ya aplicados arriba por setPlanDist)
+                if (objPanel)  objPanel.style.display  = '';
+                if (infoPanel) infoPanel.style.display = 'none';
+            }
+        } else {
+            // Otro plan: reset todo a normal
+            if (objPanel)  objPanel.style.display  = '';
+            if (infoPanel) infoPanel.style.display = 'none';
+            if (raceInput) {
+                raceInput.removeAttribute('readonly');
+                raceInput.style.opacity = '';
+                raceInput.style.cursor = '';
+            }
+        }
     }
     
     let imMode = 'exact'; // 'exact' | 'range'
@@ -29250,7 +29316,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function updateRealismBadge(goalSecs) {
         const badge = document.getElementById('plan-realism-badge');
         if (!badge) return;
-        const distKm = { '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[planDist] || 42.195;
+        const distKm = { 'first_5k': 5, '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[planDist] || 42.195;
         const result = computeRiegelValidation(goalSecs, distKm);
         if (!result) {
             badge.style.display = 'none';
@@ -29272,7 +29338,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function syncGoalPace(source) {
         const timeEl = document.getElementById('plan-goal-time');
         const paceEl = document.getElementById('plan-goal-pace');
-        const distKm = { '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[planDist] || 42.195;
+        const distKm = { 'first_5k': 5, '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[planDist] || 42.195;
         let goalSecs = 0;
         if (source === 'time') {
             const parts = timeEl.value.trim().split(':').map(Number);
@@ -29299,11 +29365,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const prev = document.getElementById('plan-paces-preview');
             if (row && prev) {
                 const is10k = planDist === '10k';
-                const pills = is10k ? [
+                const is5k  = planDist === 'first_5k';
+                const pills = (is10k || is5k) ? [
                     ['Fácil',    p.easy,      '#4CAF50'],
                     ['Umbral',   p.threshold, '#FF9800'],
                     ['Intervalo',p.interval,  '#F44336'],
-                    ['RC 10K',   p.race,      '#e879f9'],
+                    [is5k ? 'RC 5K' : 'RC 10K', p.race, '#e879f9'],
                 ] : [
                     ['Easy',     p.easy,      '#4CAF50'],
                     ['Maratón',  p.marathon,  '#C9A84C'],
@@ -30408,6 +30475,51 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Metodología: base (sem 1-2) → build (sem 3-4) → peak (sem 5) → taper + race (sem 6).
         // Devuelve objeto plan con schema estándar (compatible con acceptPlan/renderPlanPreview).
         // ═══════════════════════════════════════════════════════════════
+        function _hasProfileMarkForFirstFivek() {
+            // Retorna true si el perfil tiene alguna marca útil (5K/10K/HM) para derivar goal 5K.
+            try {
+                const marcas = (typeof profileData !== 'undefined' && profileData && profileData.marcas) || {};
+                const parse = function(s) {
+                    if (!s) return null;
+                    const p = String(s).trim().split(':').map(Number);
+                    if (p.some(isNaN)) return null;
+                    if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+                    if (p.length === 2) return p[0]*60 + p[1];
+                    return null;
+                };
+                if (parse(marcas['5k']) > 600)   return true;
+                if (parse(marcas['10k']) > 1200) return true;
+                if (parse(marcas['hm']) > 3600)  return true;
+            } catch(_) {}
+            return false;
+        }
+
+        function _deriveFirstFivekGoal() {
+            // Retorna goalSecs (tiempo objetivo del 5K en segundos) derivado del perfil MR.
+            // Prioridad: 1) marca 5K explícita · 2) marca 10K vía Riegel · 3) marca HM vía Riegel · 4) default 30:00 (6:00/km)
+            const parseHMS = function(str) {
+                if (!str) return null;
+                const p = String(str).trim().split(':').map(Number);
+                if (p.some(isNaN)) return null;
+                if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+                if (p.length === 2) return p[0]*60 + p[1];
+                return null;
+            };
+            try {
+                const marcas = (typeof profileData !== 'undefined' && profileData && profileData.marcas) || {};
+                // 1) Marca 5K directa
+                const t5k = parseHMS(marcas['5k']);
+                if (t5k && t5k > 600) return t5k;  // sanity: >10' en 5K (evita valores absurdos)
+                // 2) Marca 10K vía Riegel: T5 = T10 * (5/10)^1.06
+                const t10k = parseHMS(marcas['10k']);
+                if (t10k && t10k > 1200) return Math.round(t10k * Math.pow(0.5, 1.06));
+                // 3) Marca HM vía Riegel: T5 = THM * (5/21.097)^1.06
+                const thm = parseHMS(marcas['hm']);
+                if (thm && thm > 3600) return Math.round(thm * Math.pow(5/21.097, 1.06));
+            } catch(_) {}
+            return 1800; // default 30:00 (6:00/km) — razonable para principiante
+        }
+
         function generateFirst5kPlan(opts) {
             const { startDate, raceDate, name, paces, checkedDays, vdot } = opts;
             const lt = (typeof ltValue !== 'undefined') ? ltValue : 170;
@@ -30624,13 +30736,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Delega en generateFirst5kPlan (definida arriba), setea generatedPlanData y hace preview.
         // acceptPlan existente consume generatedPlanData igual que cualquier otro plan.
         if (planDist === 'first_5k') {
+            // v2.4.0-p3 · Prioridad: goalStr del widget si el user lo metió; sino _deriveFirstFivekGoal (perfil o default).
+            let goalSecs5k = 0;
+            if (goalStr) {
+                const gp = goalStr.split(':').map(Number);
+                if (gp.length === 3 && !gp.some(isNaN)) goalSecs5k = gp[0]*3600 + gp[1]*60 + gp[2];
+                else if (gp.length === 2 && !gp.some(isNaN)) goalSecs5k = gp[0]*60 + gp[1];
+            }
+            if (!goalSecs5k || goalSecs5k < 600) goalSecs5k = _deriveFirstFivekGoal();
+            const paces5k = pacesFromGoal(goalSecs5k, 'first_5k');
+            const vdot5k  = estimateVDOT(goalSecs5k);
             const p5k = generateFirst5kPlan({
                 startDate: startDate,
                 raceDate: raceDate,
                 name: name,
-                paces: paces,
+                paces: paces5k,
                 checkedDays: checkedDays,
-                vdot: vdot,
+                vdot: vdot5k,
             });
             if (!p5k) {
                 if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}
@@ -46911,7 +47033,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.4.0-p1';
+        window.__mrCorosVersion = 'v2.4.0-p3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
