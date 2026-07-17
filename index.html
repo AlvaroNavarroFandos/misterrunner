@@ -5253,6 +5253,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div>
                             <div class="field-label">Distancia objetivo</div>
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;" id="plan-dist-selector">
+                                <button type="button" onclick="setPlanDist('first_5k')" id="pd-first_5k"
+                                    style="padding:10px 4px;border-radius:10px;border:2px solid var(--border);background:var(--surface);color:var(--tw);font-family:var(--f);font-size:10px;font-weight:700;cursor:pointer;line-height:1.3;">
+                                    🌱 5K sin Miedo<br><span style="font-weight:400;font-size:9px;opacity:.7;">Primer 5K · 6 semanas</span>
+                                </button>
                                 <button type="button" onclick="setPlanDist('10k')" id="pd-10k"
                                     style="padding:10px 4px;border-radius:10px;border:2px solid var(--border);background:var(--surface);color:var(--tw);font-family:var(--f);font-size:10px;font-weight:700;cursor:pointer;line-height:1.3;">
                                     🎯 10K<br><span style="font-weight:400;font-size:9px;opacity:.7;">Objetivo PB</span>
@@ -5264,10 +5268,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 <button type="button" onclick="setPlanDist('marathon')" id="pd-marathon"
                                     style="padding:10px 4px;border-radius:10px;border:2px solid var(--crimson);background:var(--crimson);color:#fff;font-family:var(--f);font-size:10px;font-weight:700;cursor:pointer;line-height:1.3;">
                                     🏅 Maratón<br><span style="font-weight:400;font-size:9px;opacity:.8;">42.195km</span>
-                                </button>
-                                <button type="button" onclick="setPlanDist('marathon_intermediate')" id="pd-marathon_intermediate"
-                                    style="padding:10px 4px;border-radius:10px;border:2px solid var(--border);background:var(--surface);color:var(--tw);font-family:var(--f);font-size:10px;font-weight:700;cursor:pointer;line-height:1.3;">
-                                    🏁 Maratón+<br><span style="font-weight:400;font-size:9px;opacity:.7;">prueba media</span>
                                 </button>
                             </div>
                             <div id="plan-dist-note" style="font-size:10px;color:var(--tm);margin-top:6px;padding:6px 8px;background:var(--bsoft);border-radius:8px;display:none;"></div>
@@ -28958,11 +28958,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function pacesFromGoal(goalSecs, dist) {
         dist = dist || (typeof planDist !== 'undefined' ? planDist : 'marathon');
         // Race distance in km
-        const distKm = { '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[dist] || 42.195;
+        const distKm = { 'first_5k': 5, '10k': 10, 'half': 21.097, 'marathon': 42.195, 'marathon_intermediate': 42.195 }[dist] || 42.195;
         const raceP = goalSecs / distKm;  // race pace s/km
         // Equivalency factors from Jack Daniels VDOT tables (relative to race pace)
         // Easy ~20-30% slower, Threshold ~5-8% faster, Interval ~10-15% faster
+        // first_5k: factores adaptados a principiante (easy más generoso, threshold suave por encima del race pace de 5K)
         const factors = {
+            'first_5k':             { easy: 1.33, marathon: 1.20, threshold: 1.05, interval: 1.00, race: 1.00 },
             '10k':                  { easy: 1.30, marathon: 1.15, threshold: 1.00, interval: 0.94, race: 1.00 },
             'half':                 { easy: 1.27, marathon: 1.10, threshold: 0.97, interval: 0.91, race: 1.00 },
             'marathon':             { easy: 1.26, marathon: 1.00, threshold: 0.93, interval: 0.85, race: 1.00 },
@@ -29002,6 +29004,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // ── PLAN DISTANCE SELECTOR ────────────────────────────────────
     let planDist = 'marathon'; // 'marathon' | 'half' | 'marathon_intermediate' | '10k'
     const PLAN_DIST_CONFIG = {
+        first_5k: {
+            label:'5K sin Miedo', km:5, defaultTime:'30:00', defaultPace:'6:00',
+            raceDateLabel:'Día de tu primer 5K',
+            note:'Plan de 6 semanas para preparar tu primer 5K sin miedo. Progresión suave con sesiones variadas.',
+            nameDefault:'Mi plan 5K sin Miedo',
+        },
         '10k': {
             label:'10K', km:10, defaultTime:'48:00', defaultPace:'4:48',
             raceDateLabel:'Día de la carrera 10K',
@@ -29020,19 +29028,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             note:'Plan especializado en umbral de lactato y velocidad de carrera para 21K.',
             nameDefault:'Mi plan media maratón',
         },
-        marathon_intermediate: {
-            label:'Maratón con prueba intermedia', km:42.195, defaultTime:'3:30:00', defaultPace:'4:58',
-            raceDateLabel:'Día del maratón (prueba final)',
-            note:'Plan largo: bloque HM a mitad del ciclo para testear forma y recalibrar paces antes del maratón.',
-            nameDefault:'Mi plan maratón + prueba',
-        },
     };
 
     function setPlanDist(dist) {
         planDist = dist;
         const cfg = PLAN_DIST_CONFIG[dist];
         // Update button styles
-        ['10k','marathon','half','marathon_intermediate'].forEach(d => {
+        ['first_5k','10k','half','marathon'].forEach(d => {
             const btn = document.getElementById('pd-'+d);
             if(!btn) return;
             if(d === dist) {
@@ -30400,6 +30402,174 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return true;
     }
 
+        // ═══════════════════════════════════════════════════════════════
+        // "5K sin Miedo" (first_5k) · plan fijo 6 semanas · 3 sesiones/semana
+        // Target: runner en desarrollo (puede correr 15-20' seguidos) que quiere estructura.
+        // Metodología: base (sem 1-2) → build (sem 3-4) → peak (sem 5) → taper + race (sem 6).
+        // Devuelve objeto plan con schema estándar (compatible con acceptPlan/renderPlanPreview).
+        // ═══════════════════════════════════════════════════════════════
+        function generateFirst5kPlan(opts) {
+            const { startDate, raceDate, name, paces, checkedDays, vdot } = opts;
+            const lt = (typeof ltValue !== 'undefined') ? ltValue : 170;
+            const fcE = Math.round(lt * 0.85);  // zona easy
+            const fcM = Math.round(lt * 0.92);  // zona MP/tempo
+            const fcT = lt;                     // zona umbral
+            const pace5k = paces.race || paces.interval;
+            const fmt5k = fmtPace(pace5k);
+
+            // km desde minutos según pace (redondeo a 0.1 km)
+            const kmMin = (min, paceSec) => Math.max(0.5, Math.round(min * 60 / paceSec * 10) / 10);
+            const kmEasy = min => kmMin(min, paces.easy);
+
+            // WU/CD adaptados a principiante (más cortos que los del generador principal)
+            const WU_S = {label:"Calentamiento 5'", detail:'trote muy suave · progresivo', color:'#60a5fa', km:0.6};
+            const WU_M = {label:"Calentamiento 8'", detail:'trote suave · 4 movilidades al final', color:'#60a5fa', km:1};
+            const WU_L = {label:"Calentamiento 10'", detail:'trote suave · 4 movilidades al final', color:'#60a5fa', km:1.3};
+            const CD_S = {label:"Vuelta a la calma 5'", detail:'trote muy suave · estiramientos', color:'#60a5fa', km:0.6};
+            const CD_M = {label:"Vuelta a la calma 8'", detail:'trote muy suave · estiramientos', color:'#60a5fa', km:1};
+            const CD_L = {label:"Vuelta a la calma 10'", detail:'trote muy suave · estiramientos', color:'#60a5fa', km:1.3};
+
+            const WEEKS_TPL = [
+                // ─── Semana 1 · base · Ritmo base ────────────────────
+                { n:1, phase:'base', sessions:[
+                    { type:'easy', dist:kmEasy(20), pace:paces.easy, fc:fcE, longSec:1200, durStr:'20 min',
+                      blocks:[{label:'20 min easy', detail:'conversacional · '+easyRange(paces)+'/km · debes poder hablar', color:'#60a5fa', km:kmEasy(20)}],
+                      desc:'20 min easy conversacional · construyendo base' },
+                    { type:'series', dist:0.6+2.5+0.6, pace:paces.easy, fc:fcE,
+                      blocks:[WU_S,
+                        {label:'6 × 20" strides', detail:'aceleraciones suaves 85% esfuerzo · 90" trote entre reps · velocidad segura', color:'#a78bfa', km:2.5},
+                        CD_S],
+                      desc:'WU + 6×20" strides + CD · aprendes a acelerar sin lesionarte' },
+                    { type:'long', dist:kmEasy(25), pace:paces.easy, fc:fcE, longSec:1500, durStr:'25 min',
+                      blocks:[{label:'25 min long easy', detail:'conversacional · '+easyRange(paces)+'/km · el corazón se adapta', color:'#7c3aed', km:kmEasy(25)}],
+                      desc:'25 min easy · la más larga de la semana' }
+                ]},
+                // ─── Semana 2 · base · Fartlek suave ─────────────────
+                { n:2, phase:'base', sessions:[
+                    { type:'easy', dist:kmEasy(22)+0.8, pace:paces.easy, fc:fcE, longSec:1320, durStr:'22 min',
+                      blocks:[{label:'22 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(22)},
+                        {label:'4 strides al final', detail:'20" aceleración suave · 60" trote easy entre reps', color:'#a78bfa', km:0.8}],
+                      desc:'22 min easy + 4 strides finales · añades gramos de velocidad' },
+                    { type:'series', dist:1+2.5+1, pace:paces.threshold, fc:fcM,
+                      blocks:[WU_M,
+                        {label:"Fartlek 4 × (1' fuerte / 2' easy)", detail:'esfuerzo firme cómodo · trote conversacional entre reps · sin cronómetro estricto', color:'#fb923c', km:2.5},
+                        CD_M],
+                      desc:"WU + Fartlek 4×(1' fuerte / 2' easy) + CD · primer contacto con calidad" },
+                    { type:'long', dist:kmEasy(30), pace:paces.easy, fc:fcE, longSec:1800, durStr:'30 min',
+                      blocks:[{label:'30 min long easy', detail:'conversacional · '+easyRange(paces)+"/km · aumento de 5' vs sem 1", color:'#7c3aed', km:kmEasy(30)}],
+                      desc:'30 min easy · nuevo tope de kilómetros' }
+                ]},
+                // ─── Semana 3 · build · Primeras series ──────────────
+                { n:3, phase:'build', sessions:[
+                    { type:'easy', dist:kmEasy(25), pace:paces.easy, fc:fcE, longSec:1500, durStr:'25 min',
+                      blocks:[{label:'25 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(25)}],
+                      desc:'25 min easy suave · recuperando bien del sábado' },
+                    { type:'series', dist:1+2.4+1, pace:pace5k, fc:fcT,
+                      blocks:[WU_M,
+                        {label:'6 × 200m a ritmo 5K', detail:fmt5k+'/km · 200m trote easy entre reps (~90")', color:'#C9A84C', km:2.4},
+                        CD_M],
+                      desc:'WU + 6×200m a ritmo 5K + CD · primer sabor del pace objetivo' },
+                    { type:'long', dist:kmEasy(32), pace:paces.easy, fc:fcE, longSec:1920, durStr:'32 min',
+                      blocks:[{label:'32 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(32)}],
+                      desc:'32 min easy · seguimos construyendo resistencia' }
+                ]},
+                // ─── Semana 4 · build · Umbral corto ─────────────────
+                { n:4, phase:'build', sessions:[
+                    { type:'easy', dist:kmEasy(28)+0.8, pace:paces.easy, fc:fcE, longSec:1680, durStr:'28 min',
+                      blocks:[{label:'28 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(28)},
+                        {label:'6 strides al final', detail:'20" aceleración suave · 60" trote easy entre reps', color:'#a78bfa', km:0.8}],
+                      desc:'28 min easy + 6 strides · consolidando velocidad segura' },
+                    { type:'series', dist:1.3+2.0+1.3, pace:pace5k, fc:fcT,
+                      blocks:[WU_L,
+                        {label:'4 × 400m a ritmo 5K', detail:fmt5k+'/km · 90" trote easy entre reps · 1.6km al ritmo objetivo', color:'#C9A84C', km:2.0},
+                        CD_L],
+                      desc:'WU + 4×400m a ritmo 5K + CD · más volumen al pace de carrera' },
+                    { type:'long', dist:kmEasy(38), pace:paces.easy, fc:fcE, longSec:2280, durStr:'38 min',
+                      blocks:[{label:'38 min long easy', detail:'conversacional · '+easyRange(paces)+'/km · ya cerca de 5km continuos', color:'#7c3aed', km:kmEasy(38)}],
+                      desc:'38 min easy · muy cerca de correr 5km continuos' }
+                ]},
+                // ─── Semana 5 · peak · Especificidad ─────────────────
+                { n:5, phase:'peak', sessions:[
+                    { type:'easy', dist:kmEasy(30), pace:paces.easy, fc:fcE, longSec:1800, durStr:'30 min',
+                      blocks:[{label:'30 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(30)}],
+                      desc:'30 min easy · piernas frescas para la sesión clave' },
+                    { type:'series', dist:1.3+2.4+1.3, pace:pace5k, fc:fcT,
+                      blocks:[WU_L,
+                        {label:'3 × 800m a ritmo 5K', detail:fmt5k+"/km · 2' trote easy entre reps · 2.4km al ritmo objetivo", color:'#C9A84C', km:2.4},
+                        CD_L],
+                      desc:'WU + 3×800m a ritmo 5K + CD · pico de especificidad' },
+                    { type:'long', dist:kmEasy(40), pace:paces.easy, fc:fcE, longSec:2400, durStr:'40 min',
+                      blocks:[{label:'40 min long easy', detail:'conversacional · '+easyRange(paces)+'/km · tope de km del plan', color:'#7c3aed', km:kmEasy(40)}],
+                      desc:"40 min easy · la más larga · si aguantas 40' aguantas 5K" }
+                ]},
+                // ─── Semana 6 · taper + race ────────────────────────
+                { n:6, phase:'taper', sessions:[
+                    { type:'easy', dist:kmEasy(20), pace:paces.easy, fc:fcE, longSec:1200, durStr:'20 min',
+                      blocks:[{label:'20 min easy activación', detail:'conversacional · '+easyRange(paces)+'/km · piernas frescas para el race day', color:'#60a5fa', km:kmEasy(20)}],
+                      desc:'20 min easy activación · descarga hacia la carrera' },
+                    { type:'easy', dist:kmEasy(15)+0.8, pace:paces.easy, fc:fcE, longSec:900, durStr:'15 min',
+                      blocks:[{label:'15 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(15)},
+                        {label:'4 × 20" strides', detail:'aceleraciones suaves 85% · 60" trote easy entre reps · activar mecánica', color:'#a78bfa', km:0.8}],
+                      desc:'15 min easy + 4 strides · último toque antes del 5K' },
+                    { type:'race', dist:5, pace:pace5k, fc:fcT,
+                      blocks:[{label:'🏁 Tu primer 5K', detail:'objetivo: '+fmt5k+'/km · o simplemente terminar cómoda · disfruta el momento', color:'#e879f9', km:5}],
+                      desc:'🏁 Tu primer 5K · el día que has estado esperando', isRace:true }
+                ]},
+            ];
+
+            // ── Distribución en fechas según checkedDays (v1: exigir 3 días) ──
+            // checkedDays: 0=Dom, 1=Lun, ..., 6=Sáb
+            const days = [...checkedDays].sort((a,b) => a - b);
+            const useDays = days.slice(0, 3);
+            if (useDays.length < 3) {
+                alert('El plan "5K sin Miedo" requiere 3 días marcados por semana. Marca al menos 3 días.');
+                return null;
+            }
+
+            // Lunes de la semana que contiene startDate
+            const startDow = startDate.getDay();
+            const daysToMonday = (startDow === 0) ? -6 : (1 - startDow);
+            const monday1 = new Date(startDate);
+            monday1.setDate(startDate.getDate() + daysToMonday);
+
+            const weeks = [];
+            for (let wi = 0; wi < WEEKS_TPL.length; wi++) {
+                const tpl = WEEKS_TPL[wi];
+                const weekStart = new Date(monday1);
+                weekStart.setDate(monday1.getDate() + wi * 7);
+                const weekStartStr = localDateStr(weekStart);
+
+                const sessions = tpl.sessions.map((s, si) => {
+                    const dow = useDays[si];
+                    const dowOffset = (dow === 0) ? 6 : (dow - 1); // Lun=0, Mar=1, ..., Dom=6 desde weekStart(Lun)
+                    const sessDate = new Date(weekStart);
+                    sessDate.setDate(weekStart.getDate() + dowOffset);
+                    return Object.assign({}, s, { dateStr: localDateStr(sessDate) });
+                });
+
+                weeks.push({
+                    n: tpl.n,
+                    weekStart: weekStartStr,
+                    phase: tpl.phase,
+                    sessions: sessions,
+                });
+            }
+
+            return {
+                planDist: 'first_5k',
+                name: name,
+                startDate: localDateStr(startDate),
+                raceDate: localDateStr(raceDate),
+                goalSecs: Math.round(pace5k * 5),
+                paces: paces,
+                vdot: vdot,
+                lt: lt,
+                weeks: weeks,
+                totalWeeks: 6,
+                createdAt: new Date().toISOString(),
+            };
+        }
+
         async function generatePlan() {
         const btn = document.getElementById('gen-plan-btn');
         if(btn){btn.disabled=true;btn.textContent='⏳ Generando...';}
@@ -30449,6 +30619,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const paces = pacesFromGoal(goalSecs, planDist);
         const vdot  = estimateVDOT(goalSecs);
         const lt=(typeof ltValue!=='undefined')?ltValue:170;
+
+        // v2.4.0-p1 · Rama first_5k · plan fijo 6 semanas, sin periodización dinámica.
+        // Delega en generateFirst5kPlan (definida arriba), setea generatedPlanData y hace preview.
+        // acceptPlan existente consume generatedPlanData igual que cualquier otro plan.
+        if (planDist === 'first_5k') {
+            const p5k = generateFirst5kPlan({
+                startDate: startDate,
+                raceDate: raceDate,
+                name: name,
+                paces: paces,
+                checkedDays: checkedDays,
+                vdot: vdot,
+            });
+            if (!p5k) {
+                if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}
+                return;
+            }
+            generatedPlanData = p5k;
+            renderPlanPreview(generatedPlanData);
+            if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}
+            return;
+        }
 
         // ── PLAN DURATION INTELLIGENCE ─────────────────────────────
         // Professional periodization depends on available time
@@ -46719,7 +46911,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.3.0-p2';
+        window.__mrCorosVersion = 'v2.4.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
