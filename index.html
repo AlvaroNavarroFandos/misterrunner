@@ -46719,7 +46719,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.3.0-p1';
+        window.__mrCorosVersion = 'v2.3.0-p2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -47258,6 +47258,9 @@ window.addEventListener('DOMContentLoaded', function() {
 
         async function _corosLoadSyncedKeys() {
             // QP17=C híbrido: fresh query cada apertura + cache invalidada tras cada send OK.
+            // v2.3.0-p2 (Paso 5.3) · Hydration guard: purga fire-and-forget de orphans
+            // (rows status='sent' cuya mr_workout_key ya no existe en el plan local activo).
+            // Fix definitivo de L-3.3-01 (badges fantasma tras regenerar plan sobre mismas fechas).
             var out = new Set();
             try {
                 var sb = window._sbClient;
@@ -47266,16 +47269,55 @@ window.addEventListener('DOMContentLoaded', function() {
                 var uid = authRes && authRes.data && authRes.data.user && authRes.data.user.id;
                 if (!uid) return out;
                 var q = await sb.from('coros_synced_workouts')
-                    .select('mr_workout_key,status')
+                    .select('id, mr_workout_key, status')
                     .eq('user_id', uid)
                     .eq('status', 'sent');
                 if (q.error) {
                     console.warn('[MR x COROS] loadSyncedKeys error:', q.error.message);
                     return out;
                 }
+
+                // Recolectar keys del plan local activo para comparar con las de BD.
+                // Si activePlan es null, localKeys queda vacío → TODAS las rows sent son orphans.
+                var localKeys = new Set();
+                try {
+                    var plan = _corosGetActivePlan();
+                    if (plan && plan.weeks) {
+                        plan.weeks.forEach(function (wk) {
+                            (wk && wk.sessions || []).forEach(function (s) {
+                                if (!s || s.isStrength || s.type === 'strength') return;
+                                try {
+                                    var k = _corosBuildWorkoutKey(s);
+                                    if (k) localKeys.add(k);
+                                } catch (_) {}
+                            });
+                        });
+                    }
+                } catch (_) {}
+
+                // Separar in-plan (cargar en cache) vs orphans (marcar para purga).
+                var orphanIds = [];
                 (q.data || []).forEach(function (r) {
-                    if (r && r.mr_workout_key) out.add(r.mr_workout_key);
+                    if (!r || !r.mr_workout_key) return;
+                    if (localKeys.has(r.mr_workout_key)) {
+                        out.add(r.mr_workout_key);
+                    } else {
+                        orphanIds.push(r.id);
+                    }
                 });
+
+                // Purga fire-and-forget (no bloquea la hidratación · next reload rehidrata limpio).
+                if (orphanIds.length > 0) {
+                    console.log('[MR x COROS] Hydration guard · purgando ' + orphanIds.length + ' orphans (L-3.3-01)');
+                    sb.from('coros_synced_workouts')
+                        .update({ status: 'stale', updated_at: new Date().toISOString() })
+                        .in('id', orphanIds)
+                        .then(function (r2) {
+                            if (r2 && r2.error) {
+                                console.warn('[MR x COROS] orphan purge failed:', r2.error.message);
+                            }
+                        });
+                }
             } catch (e) {
                 console.warn('[MR x COROS] loadSyncedKeys exception:', e && e.message);
             }
