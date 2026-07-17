@@ -33051,6 +33051,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var _sessSkipped = !!sess.skipped;
         var _canEditRpe  = !isMovingStrength && _sessMatched && !_sessSkipped;
         var _canMove     = !_sessSkipped;
+        // v2.3.0-p1 · Individual delete COROS: solo running + workout ya sincronizado en reloj.
+        // No restringimos por _sessSkipped: si un workout está en el reloj y quieres quitarlo,
+        // ese estado de skipped en el plan es independiente.
+        var _canRemoveCoros = false;
+        var _corosKey = '';
+        try {
+            if (!isMovingStrength
+                && window.__mrCoros && window.__mrCoros.syncedKeys
+                && typeof window._corosBuildWorkoutKey === 'function') {
+                _corosKey = window._corosBuildWorkoutKey(sess);
+                _canRemoveCoros = window.__mrCoros.syncedKeys.has(_corosKey);
+            }
+        } catch (_) {}
         var _btnEditRpe = _canEditRpe ? (''
             + '<button id="plan-sa-rpe" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(139,92,246,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
             +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
@@ -33100,6 +33113,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
             + '</button>'
         );
+        // v2.3.0-p1 · Individual delete COROS (Variante B: acento neutro grafito + dot rojo COROS)
+        // Semántica: quitar el workout del reloj sin borrarlo del plan. Confirm view inline.
+        var _btnRemoveCoros = _canRemoveCoros ? (''
+            + '<button id="plan-sa-remove-coros" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(120,120,130,.28);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+            +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(120,120,130,.14);border:1px solid rgba(120,120,130,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;">'
+            +     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--tp)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3l1 3M14 3l1 3M9 21l1-3M14 21l1-3"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="9.5" x2="9.5" y2="14.5"/></svg>'
+            +     '<span style="position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:var(--coros);border:2px solid var(--bg);"></span>'
+            +   '</div>'
+            +   '<div style="flex:1;text-align:left;">'
+            +     '<div style="font-size:14px;font-weight:800;color:var(--tw);">Quitar del reloj</div>'
+            +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Se borrará del COROS Pace Pro</div>'
+            +   '</div>'
+            +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+            + '</button>'
+        ) : '';
+
         var _btnDelete = ''
             + '<button id="plan-sa-delete" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(239,68,68,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
             +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
@@ -33123,6 +33152,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +     _btnEditRpe
             +     _btnMove
             +     _btnSkip
+            +     _btnRemoveCoros
             +     _btnDelete
             +     '<button id="plan-sa-cancel" style="width:100%;margin-top:6px;padding:13px 16px;background:transparent;border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);">Cancelar</button>'
             +   '</div>'
@@ -33202,6 +33232,70 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } catch(e) { console.warn('[MR][SKIP] unskip:', e); }
             closeModal();
+        };
+
+        // v2.3.0-p1 · Quitar del reloj (individual delete COROS)
+        // Fase 1: confirm view (acento COROS) · Fase 2: progress view (spinner) · Fase 3: toast + cache update + re-render
+        var _removeCorosBtn = document.getElementById('plan-sa-remove-coros');
+        if (_removeCorosBtn) _removeCorosBtn.onclick = function() {
+            var inner = document.getElementById('plan-session-actions-inner');
+            if (!inner) return;
+            inner.innerHTML = ''
+                + '<div style="padding:22px 22px 18px;text-align:center;">'
+                +   '<div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 18px;"></div>'
+                +   '<div style="width:54px;height:54px;border-radius:50%;background:var(--coros-lt);border:1.5px solid var(--coros-bd);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">'
+                +     '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--coros)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3l1 3M14 3l1 3M9 21l1-3M14 21l1-3"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5"/><line x1="14.5" y1="9.5" x2="9.5" y2="14.5"/></svg>'
+                +   '</div>'
+                +   '<div style="font-size:16px;font-weight:800;color:var(--tw);margin-bottom:6px;">¿Quitar del reloj?</div>'
+                +   '<div style="font-size:12px;color:var(--ts);line-height:1.5;margin-bottom:18px;">' + sessLabel + ' del ' + dLabel + '<br>Se borrará del COROS Pace Pro. El entrenamiento seguirá en tu plan.</div>'
+                +   '<div style="display:flex;gap:10px;">'
+                +     '<button id="plan-sa-rc-cancel" style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:13px;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);cursor:pointer;">Cancelar</button>'
+                +     '<button id="plan-sa-rc-ok" style="flex:1;background:var(--coros);border:none;border-radius:13px;padding:13px;font-family:var(--f);font-size:13px;font-weight:800;color:#fff;cursor:pointer;box-shadow:0 2px 8px var(--coros-glow);">Quitar del reloj</button>'
+                +   '</div>'
+                + '</div>';
+            document.getElementById('plan-sa-rc-cancel').onclick = closeModal;
+            document.getElementById('plan-sa-rc-ok').onclick = async function() {
+                var innerP = document.getElementById('plan-session-actions-inner');
+                if (innerP) {
+                    innerP.innerHTML = ''
+                        + '<div style="padding:30px 24px 30px;text-align:center;">'
+                        +   '<div style="width:36px;height:4px;background:var(--border);border-radius:999px;margin:0 auto 22px;"></div>'
+                        +   '<div style="width:44px;height:44px;margin:0 auto 16px;border:3px solid var(--coros-lt);border-top-color:var(--coros);border-radius:50%;animation:spin 800ms linear infinite;"></div>'
+                        +   '<div style="font-size:14px;font-weight:700;color:var(--tw);">Quitando del reloj…</div>'
+                        +   '<div style="font-size:11px;color:var(--tm);margin-top:4px;">Conectando con COROS Pace Pro</div>'
+                        + '</div>';
+                }
+                var happen = (typeof window._corosDateStrToHappenDay === 'function')
+                    ? window._corosDateStrToHappenDay(sessDate) : '';
+                var toastMsg = 'No se pudo quitar del reloj · reintenta';
+                try {
+                    var r = await window.mrCorosDeleteWorkout({
+                        happen_day: happen,
+                        mr_workout_key: _corosKey
+                    });
+                    if (r && r.ok) {
+                        try {
+                            if (window.__mrCoros && window.__mrCoros.syncedKeys) {
+                                window.__mrCoros.syncedKeys.delete(_corosKey);
+                            }
+                        } catch(_){}
+                        var reason = r.data && r.data.reason;
+                        if (r.data && r.data.noop) {
+                            if (reason === 'no_id_in_plan')      toastMsg = 'Quitado · el reloj no lo tenía indexado';
+                            else if (reason === 'already_deleted') toastMsg = 'Ya estaba fuera del reloj';
+                            else if (reason === 'never_sent')      toastMsg = 'Quitado del registro';
+                            else                                    toastMsg = 'Quitado del reloj';
+                        } else {
+                            toastMsg = 'Entrenamiento quitado del reloj';
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[MR x COROS] remove individual failed:', e && e.message);
+                }
+                closeModal();
+                try { showToast(toastMsg, 3500); } catch(_){}
+                try { if (typeof renderPlanWeek === 'function') renderPlanWeek(weekIdx); } catch(_){}
+            };
         };
 
         // Eliminar → confirmar inline (modal anidado) y borrar
@@ -46625,7 +46719,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.2.0-p2';
+        window.__mrCorosVersion = 'v2.3.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -47060,6 +47154,7 @@ window.addEventListener('DOMContentLoaded', function() {
             if (!dateStr) return '';
             return String(dateStr).replace(/-/g, '');
         }
+        window._corosDateStrToHappenDay = _corosDateStrToHappenDay;  // v2.3.0-p1 · usado por openSessionActions (IIFE app) para individual delete
 
         function _corosGetActivePlan() {
             // QP16=A: reutilizar _vdotActivePlan si existe (defensivo, DRY).
@@ -47139,6 +47234,7 @@ window.addEventListener('DOMContentLoaded', function() {
             var hash = (typeof window.__mrMd5 === 'function') ? window.__mrMd5(parts).slice(0, 8) : '00000000';
             return 'mr_' + happen + '_' + hash;
         }
+        window._corosBuildWorkoutKey = _corosBuildWorkoutKey;  // v2.3.0-p1 · usado por openSessionActions (IIFE app) para individual delete
 
         function _corosGetFutureSessionsFromPlan() {
             // QP19=A: todas las futuras (>= hoy) del plan activo, filtradas y ordenadas asc.
