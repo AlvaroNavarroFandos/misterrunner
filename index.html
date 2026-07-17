@@ -5281,7 +5281,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div class="row2">
                             <div>
                                 <div class="field-label">Inicio del plan</div>
-                                <input id="plan-start" type="date" oninput="if(typeof planDist!=='undefined'&&planDist==='first_5k'&&this.value){var _r=document.getElementById('plan-race');if(_r){var _ms=new Date(this.value+'T00:00:00').getTime();if(!isNaN(_ms))_r.value=localDateStr(new Date(_ms+42*86400000));}}" style="font-size:16px;font-weight:600;color:var(--tw);padding:11px 10px;">
+                                <input id="plan-start" type="date" oninput="if(typeof planDist!=='undefined'&&planDist==='first_5k'&&this.value){var _r=document.getElementById('plan-race');if(_r){var _nchk=(document.querySelectorAll('#plan-days-row input:checked')||[]).length;var _off=(_nchk===2?56:42);var _ms=new Date(this.value+'T00:00:00').getTime();if(!isNaN(_ms))_r.value=localDateStr(new Date(_ms+_off*86400000));}}" style="font-size:16px;font-weight:600;color:var(--tw);padding:11px 10px;">
                             </div>
                             <div>
                                 <div class="field-label" id="plan-race-label">Día del maratón</div>
@@ -5348,7 +5348,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <!-- Training days -->
                         <div>
                             <div class="field-label">Días de entrenamiento</div>
-                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;" id="plan-days-row">
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;" id="plan-days-row" onchange="if(typeof planDist!=='undefined'&&planDist==='first_5k')setPlanDist('first_5k');">
                                 <label class="day-check"><input type="checkbox" value="1"><span>L</span></label>
                                 <label class="day-check"><input type="checkbox" value="2"><span>M</span></label>
                                 <label class="day-check"><input type="checkbox" value="3"><span>X</span></label>
@@ -29117,7 +29117,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (startInput && startInput.value && raceInput) {
                 const startMs = new Date(startInput.value + 'T00:00:00').getTime();
                 if (!isNaN(startMs)) {
-                    raceInput.value = localDateStr(new Date(startMs + 42 * 86400000));
+                    const nChk = (document.querySelectorAll('#plan-days-row input:checked') || []).length;
+                    const offDays = (nChk === 2) ? 56 : 42;
+                    raceInput.value = localDateStr(new Date(startMs + offDays * 86400000));
                 }
             }
             // Toggle widget vs panel según hay marca en perfil
@@ -30541,7 +30543,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const CD_M = {label:"Vuelta a la calma 8'", detail:'trote muy suave · estiramientos', color:'#60a5fa', km:1};
             const CD_L = {label:"Vuelta a la calma 10'", detail:'trote muy suave · estiramientos', color:'#60a5fa', km:1.3};
 
-            const WEEKS_TPL = [
+            const WEEKS_TPL_3 = [
                 // ─── Semana 1 · base · Ritmo base ────────────────────
                 { n:1, phase:'base', sessions:[
                     { type:'easy', dist:kmEasy(20), pace:paces.easy, fc:fcE, longSec:1200, durStr:'20 min',
@@ -30629,12 +30631,108 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ]},
             ];
 
-            // ── Distribución en fechas según checkedDays (v1: exigir 3 días) ──
-            // checkedDays: 0=Dom, 1=Lun, ..., 6=Sáb
+            // ═══ Variante 2 sesiones/semana × 8 semanas · progresión más suave ═══
+            const WEEKS_TPL_2 = [
+                // ─── Semana 1 · base ────────────────────────────────
+                { n:1, phase:'base', sessions:[
+                    { type:'easy', dist:kmEasy(18), pace:paces.easy, fc:fcE, longSec:1080, durStr:'18 min',
+                      blocks:[{label:'18 min easy', detail:'conversacional · '+easyRange(paces)+'/km · empezamos suave', color:'#60a5fa', km:kmEasy(18)}],
+                      desc:'18 min easy · primer contacto con el plan' },
+                    { type:'long', dist:kmEasy(22), pace:paces.easy, fc:fcE, longSec:1320, durStr:'22 min',
+                      blocks:[{label:'22 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(22)}],
+                      desc:'22 min easy · la más larga de la semana' }
+                ]},
+                // ─── Semana 2 · base ────────────────────────────────
+                { n:2, phase:'base', sessions:[
+                    { type:'easy', dist:kmEasy(20)+0.8, pace:paces.easy, fc:fcE, longSec:1200, durStr:'20 min',
+                      blocks:[{label:'20 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(20)},
+                        {label:'4 strides al final', detail:'20" aceleración suave · 60" trote easy entre reps', color:'#a78bfa', km:0.8}],
+                      desc:'20 min easy + 4 strides · añadimos velocidad segura' },
+                    { type:'long', dist:kmEasy(25), pace:paces.easy, fc:fcE, longSec:1500, durStr:'25 min',
+                      blocks:[{label:'25 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(25)}],
+                      desc:'25 min easy · construyendo resistencia' }
+                ]},
+                // ─── Semana 3 · base · strides ───────────────────────
+                { n:3, phase:'base', sessions:[
+                    { type:'series', dist:0.6+2.5+0.6, pace:paces.easy, fc:fcE,
+                      blocks:[WU_S,
+                        {label:'6 × 20" strides', detail:'aceleraciones suaves 85% esfuerzo · 90" trote entre reps', color:'#a78bfa', km:2.5},
+                        CD_S],
+                      desc:'WU + 6×20" strides + CD · aprendes a acelerar sin lesionarte' },
+                    { type:'long', dist:kmEasy(28), pace:paces.easy, fc:fcE, longSec:1680, durStr:'28 min',
+                      blocks:[{label:'28 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(28)}],
+                      desc:'28 min easy · seguimos construyendo' }
+                ]},
+                // ─── Semana 4 · build · fartlek suave ────────────────
+                { n:4, phase:'build', sessions:[
+                    { type:'series', dist:1+2.5+1, pace:paces.threshold, fc:fcM,
+                      blocks:[WU_M,
+                        {label:"Fartlek 4 × (1' fuerte / 2' easy)", detail:'esfuerzo firme cómodo · trote conversacional entre reps · sin cronómetro estricto', color:'#fb923c', km:2.5},
+                        CD_M],
+                      desc:"WU + Fartlek 4×(1' fuerte / 2' easy) + CD · primer contacto con calidad" },
+                    { type:'long', dist:kmEasy(30), pace:paces.easy, fc:fcE, longSec:1800, durStr:'30 min',
+                      blocks:[{label:'30 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(30)}],
+                      desc:'30 min easy · nuevo tope' }
+                ]},
+                // ─── Semana 5 · build · primeras series ──────────────
+                { n:5, phase:'build', sessions:[
+                    { type:'series', dist:1+2.4+1, pace:pace5k, fc:fcT,
+                      blocks:[WU_M,
+                        {label:'6 × 200m a ritmo 5K', detail:fmt5k+'/km · 200m trote easy entre reps (~90")', color:'#C9A84C', km:2.4},
+                        CD_M],
+                      desc:'WU + 6×200m a ritmo 5K + CD · primer sabor del pace objetivo' },
+                    { type:'long', dist:kmEasy(32), pace:paces.easy, fc:fcE, longSec:1920, durStr:'32 min',
+                      blocks:[{label:'32 min long easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#7c3aed', km:kmEasy(32)}],
+                      desc:'32 min easy · aeróbico consolidado' }
+                ]},
+                // ─── Semana 6 · peak · umbral corto ──────────────────
+                { n:6, phase:'peak', sessions:[
+                    { type:'series', dist:1.3+2.0+1.3, pace:pace5k, fc:fcT,
+                      blocks:[WU_L,
+                        {label:'4 × 400m a ritmo 5K', detail:fmt5k+'/km · 90" trote easy entre reps · 1.6km al ritmo objetivo', color:'#C9A84C', km:2.0},
+                        CD_L],
+                      desc:'WU + 4×400m a ritmo 5K + CD · volumen al pace de carrera' },
+                    { type:'long', dist:kmEasy(35), pace:paces.easy, fc:fcE, longSec:2100, durStr:'35 min',
+                      blocks:[{label:'35 min long easy', detail:'conversacional · '+easyRange(paces)+'/km · a un paso de 5km continuos', color:'#7c3aed', km:kmEasy(35)}],
+                      desc:'35 min easy · muy cerca de 5km continuos' }
+                ]},
+                // ─── Semana 7 · peak · especificidad ─────────────────
+                { n:7, phase:'peak', sessions:[
+                    { type:'series', dist:1.3+2.4+1.3, pace:pace5k, fc:fcT,
+                      blocks:[WU_L,
+                        {label:'3 × 800m a ritmo 5K', detail:fmt5k+"/km · 2' trote easy entre reps · 2.4km al ritmo objetivo", color:'#C9A84C', km:2.4},
+                        CD_L],
+                      desc:'WU + 3×800m a ritmo 5K + CD · pico de especificidad' },
+                    { type:'long', dist:kmEasy(40), pace:paces.easy, fc:fcE, longSec:2400, durStr:'40 min',
+                      blocks:[{label:'40 min long easy', detail:'conversacional · '+easyRange(paces)+"/km · tope de km · si aguantas 40' aguantas 5K", color:'#7c3aed', km:kmEasy(40)}],
+                      desc:"40 min easy · la más larga · si aguantas 40' aguantas 5K" }
+                ]},
+                // ─── Semana 8 · taper + race ────────────────────────
+                { n:8, phase:'taper', sessions:[
+                    { type:'easy', dist:kmEasy(15)+0.8, pace:paces.easy, fc:fcE, longSec:900, durStr:'15 min',
+                      blocks:[{label:'15 min easy', detail:'conversacional · '+easyRange(paces)+'/km', color:'#60a5fa', km:kmEasy(15)},
+                        {label:'4 × 20" strides', detail:'aceleraciones suaves 85% · 60" trote easy entre reps · activar mecánica', color:'#a78bfa', km:0.8}],
+                      desc:'15 min easy + 4 strides · último toque antes del 5K' },
+                    { type:'race', dist:5, pace:pace5k, fc:fcT,
+                      blocks:[{label:'🏁 Tu primer 5K', detail:'objetivo: '+fmt5k+'/km · o simplemente terminar cómoda · disfruta el momento', color:'#e879f9', km:5}],
+                      desc:'🏁 Tu primer 5K · el día que has estado esperando', isRace:true }
+                ]},
+            ];
+
+            // ── Distribución en fechas según checkedDays ──
+            // Variante adaptativa: 3 días → 6 semanas · 2 días → 8 semanas (progresión más suave)
             const days = [...checkedDays].sort((a,b) => a - b);
-            const useDays = days.slice(0, 3);
-            if (useDays.length < 3) {
-                alert('El plan "5K sin Miedo" requiere 3 días marcados por semana. Marca al menos 3 días.');
+            let useDays, WEEKS_TPL, totalWeeks;
+            if (days.length >= 3) {
+                useDays = days.slice(0, 3);
+                WEEKS_TPL = WEEKS_TPL_3;
+                totalWeeks = 6;
+            } else if (days.length === 2) {
+                useDays = days;
+                WEEKS_TPL = WEEKS_TPL_2;
+                totalWeeks = 8;
+            } else {
+                alert('El plan "5K sin Miedo" necesita al menos 2 días marcados por semana.');
                 return null;
             }
 
@@ -30643,6 +30741,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const daysToMonday = (startDow === 0) ? -6 : (1 - startDow);
             const monday1 = new Date(startDate);
             monday1.setDate(startDate.getDate() + daysToMonday);
+
+            // Helper: redondeo km a 0.1 para evitar float garbage (3.5999999999999996 → 3.6)
+            const kmR = (x) => Math.round((x || 0) * 10) / 10;
+            const DAY_LBLS = ['D','L','M','X','J','V','S'];
 
             const weeks = [];
             for (let wi = 0; wi < WEEKS_TPL.length; wi++) {
@@ -30656,7 +30758,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     const dowOffset = (dow === 0) ? 6 : (dow - 1); // Lun=0, Mar=1, ..., Dom=6 desde weekStart(Lun)
                     const sessDate = new Date(weekStart);
                     sessDate.setDate(weekStart.getDate() + dowOffset);
-                    return Object.assign({}, s, { dateStr: localDateStr(sessDate) });
+                    return Object.assign({}, s, {
+                        dateStr: localDateStr(sessDate),
+                        dayOfWeek: dow,           // v2.4.0-p4 · evita UNDEFINED en el preview render
+                        dayName: DAY_LBLS[dow],   // v2.4.0-p4 · label día de semana (D/L/M/X/J/V/S)
+                        dist: kmR(s.dist),        // v2.4.0-p4 · redondeo a 0.1 km
+                    });
                 });
 
                 weeks.push({
@@ -30677,7 +30784,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 vdot: vdot,
                 lt: lt,
                 weeks: weeks,
-                totalWeeks: 6,
+                totalWeeks: totalWeeks,
                 createdAt: new Date().toISOString(),
             };
         }
@@ -31171,7 +31278,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         pc.innerHTML='';
         plan.weeks.forEach(wk=>{
-            const totalKm=wk.sessions.reduce((a,s)=>a+s.dist,0);
+            const totalKm=Math.round(wk.sessions.reduce((a,s)=>a+s.dist,0)*10)/10;
             const wDiv=document.createElement('div');
             wDiv.style.cssText='background:var(--surface);border-radius:12px;border:1px solid var(--border);overflow:hidden;margin-bottom:8px;';
 
@@ -47033,7 +47140,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.4.0-p3';
+        window.__mrCorosVersion = 'v2.4.0-p4';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
