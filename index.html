@@ -30500,16 +30500,72 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const fcE = Math.round(lt * 0.85);
             const days = [...checkedDays].sort((a,b) => a - b);
             if (days.length < 3) return [];
-            const useDays = days.slice(0, 4); // hasta 4 días/semana en fase base
+            const useDays = days.slice(0, 5); // hasta 5 sesiones/semana
             const DAY_LBLS = ['D','L','M','X','J','V','S'];
             const kmR = (x) => Math.round((x || 0) * 10) / 10;
             const kmMin = (min, paceSec) => Math.max(0.5, Math.round(min * 60 / paceSec * 10) / 10);
             const kmEasy = min => kmMin(min, paces.easy);
 
+            // v2.4.0-p7b · Volúmenes escalados por VDOT (adapta el plan al nivel del runner)
+            // VDOT 40 (principiante-medio): easys ~30-45 min · long ~75-90 min
+            // VDOT 50 (intermedio):         easys ~50-60 min · long ~100-110 min
+            // VDOT 60 (avanzado):           easys ~65-75 min · long ~130-140 min
+            const v = vdot || 45;
+            const recoveryMin = Math.max(25, Math.min(50, Math.round(25 + (v - 40) * 1.0)));
+            const easyMedMin  = Math.max(45, Math.min(75, Math.round(45 + (v - 40) * 1.5)));
+            const easyLongMin = Math.max(55, Math.min(85, Math.round(55 + (v - 40) * 1.8)));
+            const longMinMax  = Math.max(75, Math.min(140, Math.round(75 + (v - 40) * 3.0)));
+
             const startDow = startDate.getDay();
             const daysToMonday = (startDow === 0) ? -6 : (1 - startDow);
             const monday1 = new Date(startDate);
             monday1.setDate(startDate.getDate() + daysToMonday);
+
+            // Templates internos por tipo de sesión
+            function _mkRecovery(minutes) {
+                return {
+                    type:'easy', dist: kmEasy(minutes), pace: paces.easy, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: [{ label: minutes + ' min recovery', detail: 'MUY suave · ' + easyRange(paces) + '/km · asimilar la carga del long', color:'#7dd3fc', km: kmEasy(minutes) }],
+                    desc: minutes + ' min recovery · piernas frescas para el resto de la semana'
+                };
+            }
+            function _mkEasyMed(minutes) {
+                return {
+                    type:'easy', dist: kmEasy(minutes), pace: paces.easy, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: [{ label: minutes + ' min easy', detail: 'conversacional · ' + easyRange(paces) + '/km · volumen aeróbico', color:'#60a5fa', km: kmEasy(minutes) }],
+                    desc: minutes + ' min easy · construyendo motor aeróbico'
+                };
+            }
+            function _mkEasyLong(minutes, strides, mpProgression) {
+                const blocks = [{ label: minutes + ' min easy', detail: 'conversacional · ' + easyRange(paces) + '/km · sesión larga entre-semana', color:'#60a5fa', km: kmEasy(minutes) }];
+                let totalKm = kmEasy(minutes);
+                let extras = [];
+                if (mpProgression) {
+                    blocks.push({ label: 'último tercio a ritmo maratón', detail: fmtPace(paces.marathon) + '/km · 10-15 min al final · especificidad', color:'#C9A84C', km: 0 });
+                    extras.push('progresión MP final');
+                }
+                if (strides) {
+                    blocks.push({ label: '4 × 20" strides', detail: 'aceleraciones suaves 85% · 60" trote easy · velocidad segura', color:'#a78bfa', km: 0.8 });
+                    totalKm += 0.8;
+                    extras.push('strides finales');
+                }
+                return {
+                    type:'easy', dist: totalKm, pace: paces.easy, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: blocks,
+                    desc: minutes + ' min easy' + (extras.length ? ' + ' + extras.join(' + ') : '') + ' · sesión clave semi-larga'
+                };
+            }
+            function _mkLong(minutes) {
+                return {
+                    type:'long', dist: kmEasy(minutes), pace: paces.easy, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: [{ label: minutes + ' min long easy', detail: 'conversacional · ' + easyRange(paces) + '/km · pieza clave de la base', color:'#7c3aed', km: kmEasy(minutes) }],
+                    desc: minutes + ' min long run · construyendo resistencia'
+                };
+            }
 
             const weeks = [];
             for (let wi = 0; wi < numWeeks; wi++) {
@@ -30517,34 +30573,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 weekStart.setDate(monday1.getDate() + wi * 7);
                 const weekStartStr = localDateStr(weekStart);
 
-                // Volumen crescendo lineal: easy 25→~55 min, long 45→~110 min
-                const easyMin = Math.min(55, 25 + wi * 3);
-                const longMin = Math.min(110, 45 + wi * 6);
-                const nEasy = useDays.length - 1;
-                const sessions = [];
-                for (let si = 0; si < nEasy; si++) {
-                    const isLast = si === nEasy - 1;
-                    const withStrides = wi >= 4 && isLast;
-                    sessions.push({
-                        type:'easy',
-                        dist: kmEasy(easyMin) + (withStrides ? 0.8 : 0),
-                        pace: paces.easy, fc: fcE,
-                        longSec: easyMin * 60, durStr: easyMin + ' min',
-                        blocks: [
-                            { label: easyMin + " min easy", detail: 'conversacional · ' + easyRange(paces) + '/km · base aeróbica', color:'#60a5fa', km: kmEasy(easyMin) }
-                        ].concat(withStrides ? [{ label:'4 × 20" strides', detail:'aceleraciones suaves 85% · 60" trote easy · velocidad segura', color:'#a78bfa', km:0.8 }] : []),
-                        desc: easyMin + ' min easy' + (withStrides ? ' + strides' : '') + ' · construyendo motor aeróbico'
-                    });
-                }
-                sessions.push({
-                    type:'long',
-                    dist: kmEasy(longMin), pace: paces.easy, fc: fcE,
-                    longSec: longMin * 60, durStr: longMin + ' min',
-                    blocks: [{ label: longMin + ' min long easy', detail: 'conversacional · ' + easyRange(paces) + '/km · pieza clave de la base', color:'#7c3aed', km: kmEasy(longMin) }],
-                    desc: longMin + ' min easy · long run de la semana'
-                });
+                // Ramp factor: sem 1 al 85%, crece 3%/sem hasta 110%
+                const rampFactor = Math.min(1.10, 0.85 + wi * 0.03);
+                // Descarga cada 4 semanas: reducir volumen -20% (sem 4, 8, 12...)
+                const isDescarga = (wi > 2 && wi % 4 === 3);
+                const finalFactor = rampFactor * (isDescarga ? 0.80 : 1.00);
+                const withStrides = wi >= 4 && !isDescarga;
+                const withMpProg  = wi >= 6 && !isDescarga; // progresión MP en easy largo desde sem 7
 
-                for (let si = 0; si < sessions.length; si++) {
+                const recMin  = Math.round(recoveryMin * finalFactor);
+                const emedMin = Math.round(easyMedMin  * finalFactor);
+                const elonMin = Math.round(easyLongMin * finalFactor);
+                const lonMin  = Math.round(longMinMax  * finalFactor);
+
+                // Sesiones por nº de días marcados
+                const nSessions = useDays.length;
+                const sessions = [];
+                if (nSessions === 3) {
+                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
+                    sessions.push(_mkLong(lonMin));
+                } else if (nSessions === 4) {
+                    sessions.push(_mkRecovery(recMin));
+                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
+                    sessions.push(_mkLong(lonMin));
+                } else {
+                    sessions.push(_mkRecovery(recMin));
+                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkEasyMed(Math.round(emedMin * 1.1)));
+                    sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
+                    sessions.push(_mkLong(lonMin));
+                }
+
+                for (let si = 0; si < sessions.length && si < useDays.length; si++) {
                     const dow = useDays[si];
                     const dowOffset = (dow === 0) ? 6 : (dow - 1);
                     const sessDate = new Date(weekStart);
@@ -30560,7 +30622,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 weeks.push({
                     n: wi + 1,
                     weekStart: weekStartStr,
-                    phase: 'base',
+                    phase: 'base',  // mantener 'base' siempre (descarga es una variante interna, no un color de fase distinto)
                     sessions: sessions,
                 });
             }
@@ -32165,7 +32227,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // Detect which weeks are "load" vs "recovery"
         const weekLoads = activePlan.weeks.map(wk=>({
-            wk, km: wk.sessions.reduce((a,s)=>a+(s.dist||0),0)
+            wk, km: Math.round(wk.sessions.reduce((a,s)=>a+(s.dist||0),0)*10)/10
         }));
         const avgLoad = weekLoads.reduce((a,b)=>a+b.km,0)/(weekLoads.length||1);
 
@@ -32727,7 +32789,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return null;
         }
 
-        const totalKm=wk.sessions.reduce((a,s)=>a+(s.dist||0),0);
+        const totalKm=Math.round(wk.sessions.reduce((a,s)=>a+(s.dist||0),0)*10)/10;
         container.innerHTML='';
 
         // Week header card [v6 P.Plan compacto]
@@ -47264,7 +47326,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.4.0-p6';
+        window.__mrCorosVersion = 'v2.4.0-p7';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
