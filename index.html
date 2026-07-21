@@ -31258,11 +31258,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 };
             }
             function _mkLong(minutes) {
+                // v2.4.1-p1 · QM4: nutrición hint cuando long ≥90 min (asimila carbs endógeno-exógeno)
+                const withNutrition = minutes >= 90;
+                const nutritionNote = withNutrition ? ' · practicar nutrición: 30-60g carbs/h' : '';
                 return {
                     type:'long', dist: kmEasy(minutes), pace: paces.easy, fc: fcE,
                     longSec: minutes * 60, durStr: minutes + ' min',
-                    blocks: [{ label: minutes + ' min long easy', detail: 'conversacional · ' + easyRange(paces) + '/km · pieza clave de la base', color:'#7c3aed', km: kmEasy(minutes) }],
-                    desc: minutes + ' min long run · construyendo resistencia'
+                    blocks: [{ label: minutes + ' min long easy', detail: 'conversacional · ' + easyRange(paces) + '/km · pieza clave de la base' + nutritionNote, color:'#7c3aed', km: kmEasy(minutes) }],
+                    desc: minutes + ' min long run · construyendo resistencia' + nutritionNote
+                };
+            }
+            // v2.4.1-p1 · QM1: Fartlek aeróbico 6×1' a MP · mantiene mecha aeróbica sin estrés fisiológico
+            // Substituye un easy medio cada 3 semanas desde sem 5 (saltando descargas)
+            function _mkFartlekAerobic(minutes) {
+                const wuMin = Math.max(10, Math.round(minutes * 0.35));
+                const cdMin = Math.max(5, Math.round(minutes * 0.15));
+                const fartlekMin = Math.max(12, minutes - wuMin - cdMin);
+                const totalKm = Math.round((kmEasy(wuMin + cdMin) + kmMin(fartlekMin, paces.marathon)) * 10) / 10;
+                return {
+                    type:'easy', dist: totalKm, pace: paces.marathon, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: [
+                        { label: wuMin + " min WU", detail: 'trote suave · ' + easyRange(paces) + '/km', color:'#60a5fa', km: kmEasy(wuMin) },
+                        { label: "6 × 1' a ritmo maratón", detail: fmtPace(paces.marathon) + "/km · rec 1' trote easy · mantiene mecha aeróbica sin estrés", color:'#C9A84C', km: kmMin(fartlekMin, paces.marathon) },
+                        { label: cdMin + " min CD", detail: 'trote muy suave · asimilar', color:'#60a5fa', km: kmEasy(cdMin) }
+                    ],
+                    desc: minutes + " min con fartlek 6×1' a MP · toque aeróbico sin fatiga"
+                };
+            }
+            // v2.4.1-p1 · QM2: Cuestas cortas 6×20" · fuerza neuromuscular específica sin coste fisiológico
+            // Alternado con fartlek cada 3 semanas desde sem 6
+            function _mkHillsShort(minutes) {
+                const wuMin = Math.max(10, Math.round(minutes * 0.40));
+                const cdMin = Math.max(5, Math.round(minutes * 0.20));
+                const hillsMin = Math.max(8, minutes - wuMin - cdMin);
+                const totalKm = kmEasy(wuMin + cdMin + hillsMin);
+                return {
+                    type:'easy', dist: totalKm, pace: paces.easy, fc: fcE,
+                    longSec: minutes * 60, durStr: minutes + ' min',
+                    blocks: [
+                        { label: wuMin + " min WU", detail: 'trote suave · ' + easyRange(paces) + '/km', color:'#60a5fa', km: kmEasy(wuMin) },
+                        { label: "6 × 20\" cuestas suaves", detail: 'subida 85-90% esfuerzo · bajada trote easy · pendiente 4-6% · fuerza neuromuscular', color:'#f97316', km: kmEasy(hillsMin) },
+                        { label: cdMin + " min CD", detail: 'trote muy suave · terreno llano', color:'#60a5fa', km: kmEasy(cdMin) }
+                    ],
+                    desc: minutes + " min con 6×20\" cuestas · fuerza neuromuscular sin coste fisiológico"
                 };
             }
 
@@ -31279,27 +31318,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const finalFactor = rampFactor * (isDescarga ? 0.80 : 1.00);
                 const withStrides = wi >= 4 && !isDescarga;
                 const withMpProg  = wi >= 6 && !isDescarga; // progresión MP en easy largo desde sem 7
+                // v2.4.1-p1 · QM1+QM2: fartlek/cuestas alternadas cada 3 semanas
+                // fartlek en wi = 4,7,10,13,16,19... (semanas 5,8,11,14,17,20)
+                // hills   en wi = 5,8,11,14,17,20... (semanas 6,9,12,15,18,21)
+                // Skip en descarga · si ambos flags true por casualidad, gana fartlek
+                const withFartlek = wi >= 4 && ((wi - 4) % 3 === 0) && !isDescarga;
+                const withHills   = wi >= 5 && ((wi - 5) % 3 === 0) && !isDescarga && !withFartlek;
 
                 const recMin  = Math.round(recoveryMin * finalFactor);
                 const emedMin = Math.round(easyMedMin  * finalFactor);
                 const elonMin = Math.round(easyLongMin * finalFactor);
                 const lonMin  = Math.round(longMinMax  * finalFactor);
 
+                // v2.4.1-p1 · Swap del primer easy medio por fartlek o hills según flag activo
+                const _mkFirstMid = () => {
+                    if (withFartlek) return _mkFartlekAerobic(emedMin);
+                    if (withHills)   return _mkHillsShort(emedMin);
+                    return _mkEasyMed(emedMin);
+                };
+
                 // Sesiones por nº de días marcados
                 const nSessions = useDays.length;
                 const sessions = [];
                 if (nSessions === 3) {
-                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkFirstMid());
                     sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
                     sessions.push(_mkLong(lonMin));
                 } else if (nSessions === 4) {
                     sessions.push(_mkRecovery(recMin));
-                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkFirstMid());
                     sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
                     sessions.push(_mkLong(lonMin));
                 } else {
                     sessions.push(_mkRecovery(recMin));
-                    sessions.push(_mkEasyMed(emedMin));
+                    sessions.push(_mkFirstMid());
                     sessions.push(_mkEasyMed(Math.round(emedMin * 1.1)));
                     sessions.push(_mkEasyLong(elonMin, withStrides, withMpProg));
                     sessions.push(_mkLong(lonMin));
@@ -48025,7 +48077,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.4.0-p9';
+        window.__mrCorosVersion = 'v2.4.1-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
