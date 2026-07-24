@@ -33339,7 +33339,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 html2 += '<div style="display:flex;align-items:flex-start;gap:5px;padding:4px 8px;background:'+b.color+';border-left:3px solid rgba(0,0,0,.35);border-radius:0 5px 5px 0;margin-bottom:3px;">'
                     +'<div style="min-width:0;flex:1;">'
                     +'<span style="font-size:9.5px;font-weight:800;color:#000;">'+b.label+'</span>'
-                    +'<span style="font-size:9.5px;color:var(--det-tw);font-weight:600;margin-left:5px;line-height:1.4;">'+b.detail+'</span>'
+                    +'<span style="font-size:9.5px;color:var(--det-tw);font-weight:600;margin-left:5px;line-height:1.4;">'+(b.detailHtml||b.detail)+'</span>'
                     +'</div></div>';
             });
             html2 += '</div></div></div>';
@@ -34064,7 +34064,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             + `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;">`
                             +   `<div style="flex:1;min-width:0;">`
                             +     `<div style="font-size:11.5px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${b.label}</div>`
-                            +     `<div style="font-size:10px;color:var(--ts);font-weight:500;line-height:1.35;margin-top:1px;">${b.detail||''}</div>`
+                            +     `<div style="font-size:10px;color:var(--ts);font-weight:500;line-height:1.35;margin-top:1px;">${b.detailHtml||b.detail||''}</div>`
                             +   `</div>`
                             +   (_hasReps ? `<span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#06b6d4 0%,#0891b2 100%);flex-shrink:0;letter-spacing:.3px;box-shadow:0 1px 3px rgba(6,182,212,.35);">${b.repeat}×</span>` : '')
                             + `</div>`
@@ -34289,7 +34289,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 sess.blocks.forEach(b => {
                     blocksHTML += `<div style="display:flex;gap:8px;align-items:flex-start;padding:9px 12px;background:${b.color};border-left:3px solid rgba(0,0,0,.35);border-radius:0 8px 8px 0;">`
                         +`<div><div style="font-size:12.5px;font-weight:800;color:#000;margin-bottom:2px;">${b.label}</div>`
-                        +`<div style="font-size:11.5px;color:var(--det-tw);font-weight:600;line-height:1.5;">${b.detail}</div></div></div>`;
+                        +`<div style="font-size:11.5px;color:var(--det-tw);font-weight:600;line-height:1.5;">${b.detailHtml||b.detail}</div></div></div>`;
                 });
                 blocksHTML += '</div>';
             } else {
@@ -40292,6 +40292,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
     })();
 
+    // ─── [v2.5.0-p3] Helper: HTML con botón ▶ inline por ejercicio ──────
+    // Devuelve el mismo formato que la version plana (nombre sets×reps · nombre sets×reps),
+    // pero cada nombre lleva un botón ▶ 18px inline si el ejercicio tiene videoUrl.
+    // Usado en detailHtml del block. La versión plana (detail) queda intacta para export ICS.
+    function _mrBuildStrengthDetailHtml(exs) {
+        var _esc = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+        return exs.map(function(e){
+            var _vBtn = '';
+            if (e.videoUrl) {
+                _vBtn = ' <button data-vurl="'+_esc(e.videoUrl)+'" data-vname="'+_esc(e.name)+'" data-vmeta="'+_esc(e.sets+'x'+e.reps)+'" data-vcue="'+_esc(e.cue)+'" onclick="event.stopPropagation();window._openMrVideoDemo(this.dataset.vname,this.dataset.vmeta,this.dataset.vcue,this.dataset.vurl)" aria-label="Ver demo del ejercicio" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.25);padding:0;cursor:pointer;margin-left:3px;vertical-align:middle;flex-shrink:0;-webkit-tap-highlight-color:transparent;"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" style="margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></button>';
+            }
+            return _esc(e.name)+' '+_esc(e.sets+'x'+e.reps)+_vBtn;
+        }).join(' · ');
+    }
+    window._mrBuildStrengthDetailHtml = _mrBuildStrengthDetailHtml;
+
     var STRENGTH_GYM = [
         {name:'Hip Thrust con barra',         sets:'4',reps:'8 reps',   cue:'Pausa 1 seg arriba, aprieta gluteos, espalda en banco',              phase:'A',videoUrl:MR_VIDEO_BASE+'wx_1409.gif'},
         {name:'Romanian Deadlift (RDL)',       sets:'3',reps:'10 reps',  cue:'Bisagra de cadera, espalda recta, peso moderado',                    phase:'A',videoUrl:MR_VIDEO_BASE+'wx_0085.gif'},
@@ -40483,7 +40499,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var bd  = BLOCK_DESC[ph];
                     var exs = adjustedSession.filter(function(e){ return e.phase===ph; });
                     return { label: bd.label, color: bd.color, km: 0,
-                        detail: exs.map(function(e){ return e.name+' '+e.sets+'x'+e.reps; }).join(' · ') };
+                        detail: exs.map(function(e){ return e.name+' '+e.sets+'x'+e.reps; }).join(' · '),
+                        detailHtml: _mrBuildStrengthDetailHtml(exs) };
                 });
 
                 // Cabecera del desc
@@ -40641,7 +40658,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var sessDOW  = sessDate.getDay();
                     var blocks = ['A','B','C','D','E'].map(function(ph) {
                         var bd=BLOCK_DESC[ph], exs=session.filter(function(e){return e.phase===ph;});
-                        return {label:bd.label,color:bd.color,km:0,detail:exs.map(function(e){return e.name+' '+e.sets+'x'+e.reps;}).join(' · ')};
+                        return {label:bd.label,color:bd.color,km:0,detail:exs.map(function(e){return e.name+' '+e.sets+'x'+e.reps;}).join(' · '),detailHtml:_mrBuildStrengthDetailHtml(exs)};
                     });
                     var descLines=['💪 Fuerza runner 30min · '+equipLbl];
                     session.forEach(function(e,i){descLines.push((i+1)+'. '+e.name+' '+e.sets+'x'+e.reps+' — '+e.cue);});
@@ -48215,7 +48232,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.5.0-p2';
+        window.__mrCorosVersion = 'v2.5.0-p3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
