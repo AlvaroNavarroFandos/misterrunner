@@ -31227,7 +31227,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     type:'easy', dist: kmEasy(minutes), pace: paces.easy, fc: fcE,
                     longSec: minutes * 60, durStr: minutes + ' min',
                     blocks: [{ label: minutes + ' min recovery', detail: 'MUY suave · ' + easyRange(paces) + '/km · asimilar la carga del long', color:'#7dd3fc', km: kmEasy(minutes) }],
-                    desc: minutes + ' min recovery · piernas frescas para el resto de la semana'
+                    desc: minutes + ' min recovery · piernas ligeras'
                 };
             }
             function _mkEasyMed(minutes) {
@@ -31255,7 +31255,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     type:'easy', dist: totalKm, pace: paces.easy, fc: fcE,
                     longSec: minutes * 60, durStr: minutes + ' min',
                     blocks: blocks,
-                    desc: minutes + ' min easy' + (extras.length ? ' + ' + extras.join(' + ') : '') + ' · sesión clave semi-larga'
+                    desc: minutes + ' min easy' + (extras.length ? ' + ' + extras.join(' + ') : '') + ' · sesión clave'
                 };
             }
             function _mkLong(minutes) {
@@ -37260,7 +37260,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 html += '</div>';
             }
 
-            if (sess.desc) {
+            // [v2.5.0-p5] Modal HOME: si strength con blocks, renderizamos los bloques
+            // con label + detailHtml (mismos GIFs y botones que en el plan expandido).
+            if (isStr && sess.blocks && sess.blocks.length > 0) {
+                html += '<div style="font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;margin-top:20px;margin-bottom:8px;">Bloques del entrenamiento</div>';
+                html += '<div style="display:flex;flex-direction:column;gap:5px;">';
+                sess.blocks.forEach(function(b) {
+                    var bColor = b.color || '#94a3b8';
+                    var bLabel = b.label || 'Bloque';
+                    var bDetailHtml = b.detailHtml || b.detail || '';
+                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:8px;padding:8px 11px;">';
+                    html += '<div style="font-size:11.5px;font-weight:800;color:var(--tw);letter-spacing:-.1px;">' + bLabel + '</div>';
+                    html += bDetailHtml;
+                    html += '</div>';
+                });
+                html += '</div>';
+            } else if (sess.desc) {
+                // Fallback: no strength, o strength sin blocks → desc plana
                 html += '<div style="font-size:11px;color:var(--ts);line-height:1.5;margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:10px;border:1px solid var(--border);">' + sess.desc + '</div>';
             }
 
@@ -40165,13 +40181,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     var MR_VIDEO_BASE = 'https://wlvtxmqjteswatndovji.supabase.co/storage/v1/object/public/exercise-demos/';
 
-    // ─── [v2.5.0-p2] Modal video demo ejercicios ────────────────────────
-    // Setup lazy: crea CSS + DOM del modal la 1ª vez que se invoca.
+    // ─── [v2.5.0-p5] Modal video demo ejercicios ────────────────────────
+    // CSS eager (inyectado al cargar), DOM del modal lazy (creado al 1er openDemo).
     // Expone window._openMrVideoDemo(name, meta, cue, url) y window._closeMrVideoDemo().
     (function _mrVideoDemoSetup() {
-        function _init() {
-            if (document.getElementById('mrVideoBackdrop')) return; // idempotente
-
+        function _injectCss() {
+            if (document.querySelector('style[data-mr-video-css]')) return; // idempotente
             var css = document.createElement('style');
             css.setAttribute('data-mr-video-css', '1');
             css.textContent =
@@ -40214,6 +40229,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 'transition:transform .12s ease, box-shadow .15s ease;}' +
                 '.mr-ex-play:hover,.mr-ex-play:active{transform:scale(.92);box-shadow:0 1px 5px rgba(220,38,38,.45);}';
             document.head.appendChild(css);
+        }
+
+        function _ensureModal() {
+            if (document.getElementById('mrVideoBackdrop')) return; // idempotente
+            _injectCss(); // safety net por si alguien llama openDemo antes del setup
 
             var modal = document.createElement('div');
             modal.className = 'mr-video-backdrop';
@@ -40277,7 +40297,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         window._openMrVideoDemo = function(name, meta, cue, url) {
-            _init();
+            _ensureModal();
             document.getElementById('mrVideoTitle').textContent = name || '–';
             document.getElementById('mrVideoMeta').textContent  = meta || '–';
             document.getElementById('mrVideoCue').textContent   = cue  || '';
@@ -40300,6 +40320,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (img) img.src = '';
             }, 300);
         };
+
+        // [v2.5.0-p5] Inyectar CSS eager al cargar (no al primer openDemo)
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _injectCss);
+        } else {
+            _injectCss();
+        }
     })();
 
     // ─── [v2.5.0-p4] Helper: HTML con 1 fila por ejercicio + botón rojo ──
@@ -48243,7 +48270,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.5.0-p4';
+        window.__mrCorosVersion = 'v2.5.0-p5';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
