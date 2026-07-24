@@ -33967,7 +33967,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     ? `<div style="position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,#4ade80 0%,#22c55e 100%);box-shadow:0 0 8px rgba(74,222,128,.45);z-index:2;pointer-events:none;"></div>`
                     : '';
 
-                let html = _todaySidebar + `<div class="mr-day-header" style="display:flex;align-items:center;padding:10px 10px 10px 14px;gap:9px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
+                let html = _todaySidebar + `<div class="mr-day-header" style="display:flex;align-items:center;padding:7px 10px 7px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
                     + _dateHTML
                     // [P.Plan Coherencia] Estructura columna con 2 filas fijas:
                     //   Fila 1: tipo label + pill km (horizontal)
@@ -34057,9 +34057,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const _hasReps = Array.isArray(b.reps) && b.reps.length > 0 && b.repeat > 0;
                         const _blockKm = _computeBlockKm(b);
                         // Contenedor externo (padre + sub-cuadro) sin margin bottom si tiene reps (se aplica al sub-cuadro)
-                        detail += `<div style="margin-bottom:6px;">`;
-                        // Fila del bloque padre
-                        detail += `<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;background:var(--card);border-radius:${_hasReps?'10px 10px 0 0':'10px'};border:1px solid var(--border);${_hasReps?'border-bottom:0;':''}">`
+                        detail += `<div style="margin-bottom:4px;">`;
+                        // Fila del bloque padre [v2.5.0-p4] compactado 9px 11px → 7px 10px
+                        detail += `<div style="display:flex;align-items:flex-start;gap:9px;padding:7px 10px;background:var(--card);border-radius:${_hasReps?'10px 10px 0 0':'10px'};border:1px solid var(--border);${_hasReps?'border-bottom:0;':''}">`
                             + `<div style="width:26px;height:26px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_blkIcon}</div>`
                             + `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;">`
                             +   `<div style="flex:1;min-width:0;">`
@@ -40202,7 +40202,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 '.mr-video-pill{background:#c4881e;color:#000;padding:3px 10px;' +
                 'border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.3px;}' +
                 '.mr-video-cue{font-size:12.5px;color:var(--ts);line-height:1.5;margin:0;}' +
-                '.mr-video-loading{color:var(--tm);font-size:12px;text-align:center;}';
+                '.mr-video-loading{color:var(--tm);font-size:12px;text-align:center;}' +
+                /* [v2.5.0-p4] filas de ejercicios en bloques strength */
+                '.mr-ex-lines{display:flex;flex-direction:column;gap:0;margin-top:3px;}' +
+                '.mr-ex-line{display:flex;align-items:center;gap:8px;padding:2px 0;}' +
+                '.mr-ex-line + .mr-ex-line{border-top:1px dotted var(--border);padding-top:4px;margin-top:2px;}' +
+                '.mr-ex-text{flex:1;min-width:0;font-size:10px;color:var(--ts);font-weight:500;line-height:1.35;}' +
+                '.mr-ex-play{width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;border:0;' +
+                'display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;padding:0;' +
+                'box-shadow:0 1px 3px rgba(220,38,38,.35);-webkit-tap-highlight-color:transparent;' +
+                'transition:transform .12s ease, box-shadow .15s ease;}' +
+                '.mr-ex-play:hover,.mr-ex-play:active{transform:scale(.92);box-shadow:0 1px 5px rgba(220,38,38,.45);}';
             document.head.appendChild(css);
 
             var modal = document.createElement('div');
@@ -40292,19 +40302,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
     })();
 
-    // ─── [v2.5.0-p3] Helper: HTML con botón ▶ inline por ejercicio ──────
-    // Devuelve el mismo formato que la version plana (nombre sets×reps · nombre sets×reps),
-    // pero cada nombre lleva un botón ▶ 18px inline si el ejercicio tiene videoUrl.
-    // Usado en detailHtml del block. La versión plana (detail) queda intacta para export ICS.
+    // ─── [v2.5.0-p4] Helper: HTML con 1 fila por ejercicio + botón rojo ──
+    // Devuelve <div class="mr-ex-lines"> con <div class="mr-ex-line"> por ejercicio.
+    // Cada fila: texto (flex:1) + botón rojo #dc2626 26px con play blanco al final.
+    // Estilos definidos en la inyección CSS del bloque modal (mr-ex-* classes).
+    // La versión plana (b.detail) queda intacta para export ICS.
     function _mrBuildStrengthDetailHtml(exs) {
         var _esc = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
-        return exs.map(function(e){
+        return '<div class="mr-ex-lines">' + exs.map(function(e){
             var _vBtn = '';
             if (e.videoUrl) {
-                _vBtn = ' <button data-vurl="'+_esc(e.videoUrl)+'" data-vname="'+_esc(e.name)+'" data-vmeta="'+_esc(e.sets+'x'+e.reps)+'" data-vcue="'+_esc(e.cue)+'" onclick="event.stopPropagation();window._openMrVideoDemo(this.dataset.vname,this.dataset.vmeta,this.dataset.vcue,this.dataset.vurl)" aria-label="Ver demo del ejercicio" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.25);padding:0;cursor:pointer;margin-left:3px;vertical-align:middle;flex-shrink:0;-webkit-tap-highlight-color:transparent;"><svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" style="margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></button>';
+                _vBtn = '<button class="mr-ex-play" data-vurl="'+_esc(e.videoUrl)+'" data-vname="'+_esc(e.name)+'" data-vmeta="'+_esc(e.sets+'x'+e.reps)+'" data-vcue="'+_esc(e.cue)+'" onclick="event.stopPropagation();window._openMrVideoDemo(this.dataset.vname,this.dataset.vmeta,this.dataset.vcue,this.dataset.vurl)" aria-label="Ver demo del ejercicio"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></button>';
             }
-            return _esc(e.name)+' '+_esc(e.sets+'x'+e.reps)+_vBtn;
-        }).join(' · ');
+            return '<div class="mr-ex-line"><div class="mr-ex-text">'+_esc(e.name)+' '+_esc(e.sets+'x'+e.reps)+'</div>'+_vBtn+'</div>';
+        }).join('') + '</div>';
     }
     window._mrBuildStrengthDetailHtml = _mrBuildStrengthDetailHtml;
 
@@ -48232,7 +48243,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.5.0-p3';
+        window.__mrCorosVersion = 'v2.5.0-p4';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
