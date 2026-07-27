@@ -5317,8 +5317,68 @@ window._openTagRunnersModal = _openTagRunnersModal;
 // Helper: inserta el mismo post en N destinos. Si toPublic es true, se
 // crea una fila con crew_id NULL. Por cada crewId, otra fila con ese
 // crew_id. Devuelve { ok: number, errors: any[] }.
+// ── Mapa estático del post (reemplazo del Mapbox static) ────────────────────
+// Genera un PNG de calles con MapLibre (offscreen, vía index.html) y lo sube a
+// Storage `media`; guarda la URL en act_data._mapImg. El feed la pinta como <img>.
+// Muta act_data IN PLACE → todos los inserts de destino comparten la referencia.
+// Nunca lanza: cualquier fallo deja el post sin _mapImg → el feed cae a drawTrack.
+async function _ensurePostMapImage(basePost) {
+    var sb = window._sbClient;
+    var ad = basePost && basePost.act_data;
+    if (!ad || ad._mapImg) return;                                  // ya tiene o sin datos
+    if (!Array.isArray(ad.records) || ad.records.length <= 10) return; // igual que hasT
+    if (typeof window._mrMapSnapshotDataURL !== 'function') return;    // index.html no cargado aún
+    // 1) Snapshot MapLibre → dataURL PNG (600×400 neutro; el feed hace cover-fit)
+    var dataUrl = await window._mrMapSnapshotDataURL(ad.records, ad.shoeColor || null, 600, 400);
+    if (!dataUrl || dataUrl.indexOf('data:image') !== 0) return;
+    // 2) Subir a Storage bucket 'media' (mismo bucket que las fotos del post)
+    var sess = (await sb.auth.getSession()).data.session;
+    if (!sess) return;
+    var myId = sess.user.id;
+    var blob = await (await fetch(dataUrl)).blob();
+    var pth = myId + '/map-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.png';
+    var up = await sb.storage.from('media').upload(pth, blob, { contentType: 'image/png' });
+    if (up.error) return;
+    var pub = sb.storage.from('media').getPublicUrl(pth);
+    if (pub && pub.data && pub.data.publicUrl) ad._mapImg = pub.data.publicUrl;
+}
+
+// Pinta el mapa del post en su canvas: si el post trae act_data._mapImg (posts
+// nuevos) dibuja la imagen de calles; si no (posts antiguos) cae a la silueta
+// plana window.drawTrack — igual que antes. Imagen cover-fit al tamaño del canvas.
+function _renderPostMap(cv, actData, shoeColor) {
+    if (!cv) return;
+    var url = actData && actData._mapImg;
+    function fallback() {
+        try {
+            if (typeof window.drawTrack === 'function')
+                window.drawTrack(cv, (actData && actData.records) || [], shoeColor || '');
+        } catch (e) {}
+    }
+    if (!url) { fallback(); return; }
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function () {
+        try {
+            var ctx = cv.getContext('2d');
+            var cw = cv.width, ch = cv.height;
+            var iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+            var s = Math.max(cw / iw, ch / ih);          // cover-fit (recorta, no deforma)
+            var dw = iw * s, dh = ih * s;
+            ctx.clearRect(0, 0, cw, ch);
+            ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+        } catch (e) { fallback(); }
+    };
+    img.onerror = fallback;                              // 404 / offline → silueta
+    img.src = url;
+}
+window._renderPostMap = _renderPostMap;
+
 async function _insertPostToDestinations(basePost, destinations) {
     var sb = window._sbClient;
+    // [MapLibre] Hornear la imagen estática del mapa ANTES de construir los inserts,
+    // así todos los destinos (público + crews) comparten la misma _mapImg en act_data.
+    try { await _ensurePostMapImage(basePost); } catch (e) {}
     var ok = 0, errors = [];
     var inserts = [];
     // Si hay etiquetados, los añadimos a basePost (array de UUIDs)
@@ -7755,10 +7815,8 @@ async function openUserProfile(userId, username, avatarUrl) {
             cv.width  = pw;
             cv.height = ph;
             try {
-                if (typeof window.drawTrackFromCacheOrFallback === 'function') {
-                    // cacheKey uses act.id/dateStr — same key drawTrackWithMapbox uses in detail view
-                    var ck = actData.id || actData.dateStr || ('post-' + p.id);
-                    window.drawTrackFromCacheOrFallback(cv, actData.records, actData.shoeColor || '', ck);
+                if (typeof window._renderPostMap === 'function') {
+                    window._renderPostMap(cv, actData, actData.shoeColor || '');
                 } else {
                     window.drawTrack(cv, actData.records, actData.shoeColor || '');
                 }
@@ -8300,10 +8358,8 @@ async function renderClubFeed(opts) {
                         cv.width = pw;
                         cv.height = ph;
                         try {
-                            if (typeof window.drawTrackFromCacheOrFallback === 'function') {
-                                // Same cacheKey as detail view → reuses Mapbox image from localStorage if user has seen it
-                                const ck = actData.id || actData.dateStr || ('post-' + post.id);
-                                window.drawTrackFromCacheOrFallback(cv, actData.records, actData.shoeColor || '', ck);
+                            if (typeof window._renderPostMap === 'function') {
+                                window._renderPostMap(cv, actData, actData.shoeColor || '');
                             } else {
                                 window.drawTrack(cv, actData.records, actData.shoeColor || '');
                             }
