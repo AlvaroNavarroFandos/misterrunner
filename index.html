@@ -25567,10 +25567,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (!document.getElementById('mr-maplibre-tweaks')) {
                     var st = document.createElement('style');
                     st.id = 'mr-maplibre-tweaks';
-                    st.textContent = '.maplibregl-ctrl-attrib{font-size:9px!important;background:rgba(0,0,0,.35)!important;}'
-                        + '.maplibregl-ctrl-attrib a{color:rgba(255,255,255,.85)!important;}'
-                        + '.maplibregl-ctrl-attrib.maplibregl-compact{background:rgba(0,0,0,.45)!important;border-radius:11px!important;}'
-                        + '.maplibregl-ctrl-attrib-button{filter:invert(1);opacity:.85;}';
+                    st.textContent = '.maplibregl-ctrl-attrib{font-size:8.5px!important;background:rgba(0,0,0,.28)!important;}'
+                        + '.maplibregl-ctrl-attrib a{color:rgba(255,255,255,.72)!important;}'
+                        + '.maplibregl-ctrl-attrib.maplibregl-compact{min-height:20px!important;background:rgba(0,0,0,.30)!important;border-radius:10px!important;box-shadow:none!important;}'
+                        + '.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show){background:transparent!important;}'
+                        + '.maplibregl-ctrl-attrib-button{width:20px!important;height:20px!important;filter:invert(1);opacity:.5!important;}'
+                        + '.maplibregl-ctrl-top-right .maplibregl-ctrl,.maplibregl-ctrl-bottom-right .maplibregl-ctrl{margin:6px!important;}';
                     document.head.appendChild(st);
                 }
                 var s = document.createElement('script');
@@ -25673,6 +25675,59 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             map.on('error', function(){ /* swallow transient tile errors */ });
         }).catch(function(){ if (opts.onFail) opts.onFail(); });
         return { remove:function(){ ref.dead = true; if (ref.map){ try{ ref.map.remove(); }catch(_){}; ref.map=null; } } };
+    }
+
+    // Render the run map to a static PNG dataURL. Needed because html2canvas cannot
+    // capture live WebGL canvases (the share card would otherwise show a black map).
+    // Uses an offscreen MapLibre map with preserveDrawingBuffer; on any failure/timeout
+    // it falls back to a flat drawTrack canvas so the share image always shows a track.
+    // Always resolves (never rejects); resolves null only if there are <2 GPS points.
+    function _mrMapSnapshotDataURL(records, shoeColor, wCss, hCss) {
+        return new Promise(function(resolve){
+            var td = _mrTrackData(records);
+            if (!td) { resolve(null); return; }
+            var W = Math.max(2, Math.round(wCss || 300));
+            var H = Math.max(2, Math.round(hCss || 220));
+            var dpr = Math.min(window.devicePixelRatio || 1, 2);
+            var holder = null, map = null, settled = false, to = null;
+            function flatFallback(){
+                try {
+                    var cv = document.createElement('canvas');
+                    cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+                    if (typeof drawTrack === 'function') drawTrack(cv, records, shoeColor||null);
+                    resolve(cv.toDataURL('image/png'));
+                } catch(_) { resolve(null); }
+            }
+            function cleanup(){
+                if (to){ clearTimeout(to); to=null; }
+                try { if (map) map.remove(); } catch(_){}
+                try { if (holder && holder.parentNode) holder.parentNode.removeChild(holder); } catch(_){}
+            }
+            _mrEnsureMapLibre().then(function(maplibregl){
+                if (settled) return;
+                holder = document.createElement('div');
+                holder.style.cssText = 'position:fixed;left:-100000px;top:0;width:'+W+'px;height:'+H+'px;pointer-events:none;opacity:0;';
+                document.body.appendChild(holder);
+                map = new maplibregl.Map({
+                    container: holder, style: _MR_MAP_STYLE, interactive:false,
+                    attributionControl:false, preserveDrawingBuffer:true, fadeDuration:0
+                });
+                map.on('error', function(){});
+                map.on('load', function(){
+                    try { _mrAddTrackLayers(map, td, shoeColor); } catch(_){}
+                    try { map.fitBounds(td.bounds, { padding:34, duration:0, maxZoom:16 }); } catch(_){}
+                    map.once('idle', function(){
+                        if (settled) return; settled = true;
+                        var url = null;
+                        try { url = map.getCanvas().toDataURL('image/png'); } catch(_){ url = null; }
+                        cleanup();
+                        if (url) resolve(url); else flatFallback();
+                    });
+                });
+            }).catch(function(){ if(!settled){ settled=true; cleanup(); flatFallback(); } });
+            // Safety timeout: if the map never goes idle (offline/slow tiles), fall back.
+            to = setTimeout(function(){ if(!settled){ settled=true; cleanup(); flatFallback(); } }, 6000);
+        });
     }
 
     // One-time cleanup of the legacy Mapbox static-image localStorage cache (mb_img:* / mb_idx).
@@ -37933,11 +37988,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const sg = card1.querySelector('[data-stats]');
             return sg ? sg.offsetTop + sg.offsetHeight : Math.min(card1.scrollHeight, 680);
         }
-        function doCapture() {
+        async function doCapture() {
+            // html2canvas can't capture the live WebGL map → snapshot it to a static
+            // PNG and swap it into the clone (onclone) so the card image shows the map.
+            var mapEl = card1.querySelector('#det-map-root');
+            var mapImg = null;
+            if (mapEl && act.records && act.records.length >= 2) {
+                try { mapImg = await _mrMapSnapshotDataURL(act.records, act.shoeColor||null, mapEl.offsetWidth, mapEl.offsetHeight); } catch(_) { mapImg = null; }
+            }
             html2canvas(card1, {
                 backgroundColor:'#0d1520', scale:2, useCORS:true, allowTaint:true,
                 logging:false, width:card1.offsetWidth, height:getCaptureHeight(),
                 windowWidth:card1.offsetWidth, scrollY:0, y:0,
+                onclone: function(cdoc){
+                    try {
+                        var mr = cdoc.getElementById('det-map-root');
+                        if (mr) {
+                            if (mapImg) {
+                                mr.innerHTML = '<img src="'+mapImg+'" style="width:100%;height:100%;display:block;" crossorigin="anonymous">';
+                            } else {
+                                mr.innerHTML = ''; mr.style.background = '#0d1520';
+                            }
+                        }
+                    } catch(_){}
+                },
             }).then(canvas => {
                 // Remove title bar after capture
                 const tb = document.getElementById('__share-title-bar__');
@@ -48343,7 +48417,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.13.0-p1';
+        window.__mrCorosVersion = 'v2.13.0-p2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
