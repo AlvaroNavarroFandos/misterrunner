@@ -25777,24 +25777,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
             }
 
-            // Neon glow layers — same look as drawTrack
+            // [Visor track] Plano y grueso, SIN halo ni neón. Gradiente térmico
+            // "por ritmo" (paleta B: rojo→ámbar→teal→azul) a lo largo de la ruta.
+            // Finísimo borde oscuro solo para legibilidad sobre mapa claro/oscuro.
             ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-            const trackColor = shoeColor || '#00ffff';
-            ctx.strokeStyle = trackColor;
-            ctx.shadowColor = trackColor;
-            ctx.shadowBlur = 14;
-            ctx.lineWidth = 4.5;
+            ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+            var _gx0 = tx(pts[0].lon), _gy0 = ty(pts[0].lat);
+            var _gx1 = tx(pts[pts.length-1].lon), _gy1 = ty(pts[pts.length-1].lat);
+            if (_gx0 === _gx1 && _gy0 === _gy1) { _gx1 = _gx0 + 1; }
+            var _grad = ctx.createLinearGradient(_gx0, _gy0, _gx1, _gy1);
+            _grad.addColorStop(0,    '#c56b6b');
+            _grad.addColorStop(0.40, '#cfa15c');
+            _grad.addColorStop(0.72, '#6fa88f');
+            _grad.addColorStop(1,    '#5f8bb0');
+            ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+            ctx.lineWidth = 6.5;
             ctx.stroke();
-
-            ctx.shadowBlur = 7;
-            ctx.lineWidth = 3.2;
-            ctx.stroke();
-
-            // Core bright line
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
-            ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = _grad;
+            ctx.lineWidth = 5;
             ctx.stroke();
 
             // Start / end dots
@@ -26400,6 +26400,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [FASE 5.6.1] Para bulk, fallback del título es '—' (no getTypeLabel)
         // si no hubiera name. En la práctica Strava siempre rellena name.
         const _detTitleFallback = (act._source === 'bulk') ? '—' : getTypeLabel(act.type);
+        // [Visor reorg] Temperatura resuelta aquí (antes del header) para el chip
+        // a la derecha del título. Misma lógica que el antiguo cell tempDisplay.
+        const _detTemp = (function(){
+            if (act.avgTemp != null && act.avgTemp > 0) return act.avgTemp + '°';
+            var blocks = act.csvBlocks || [];
+            if (!blocks.length) return '—';
+            var temps = blocks.filter(function(b){return b.temperature > 0;}).map(function(b){return b.temperature;});
+            if (!temps.length) return '—';
+            return Math.round(temps.reduce(function(a,b){return a+b;},0)/temps.length) + '°';
+        })();
         // [FASE 5.7.4-d] Brand logo del reloj: lo predeclaramos aquí para
         // poder mostrarlo en el header (al lado de la fecha) cuando es una
         // actividad manual con deviceBrand. En bulk de Strava no hay deviceBrand
@@ -26422,7 +26432,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + '</div>'
             + '<div style="text-align:center;flex:1;padding:0 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;">'
             + '<div style="font-size:10px;color:var(--det-lbl-accent);opacity:.8;font-family:var(--f);text-transform:uppercase;letter-spacing:1.2px;">'+ dfS +'</div>'
-            + '<div style="font-size:13px;color:var(--det-tw);font-family:var(--f);font-weight:600;margin-top:1px;">'+ (act.name||_detTitleFallback) +'</div></div>'
+            + '<div style="display:flex;align-items:center;justify-content:center;gap:7px;margin-top:1px;">'
+            +   '<span style="font-size:13px;color:var(--det-tw);font-family:var(--f);font-weight:600;">'+ (act.name||_detTitleFallback) +'</span>'
+            +   ((_detTemp && _detTemp!=='—') ? '<span style="display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--det-ts);background:var(--det-elev);border-radius:999px;padding:2px 8px;font-family:var(--f);white-space:nowrap;line-height:1.2;">🌡 '+_detTemp+'</span>' : '')
+            + '</div></div>'
 
             + '<button id="det-share-btn" style="width:34px;height:34px;background:var(--det-elev-hover);border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--det-tw)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>';
         ov.appendChild(hdr);
@@ -26557,9 +26570,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)+' cm' : '—';
         })();
 
-        const sg = document.createElement('div');
-        // [FASE 5.7.4-c] separadores más sutiles (era .06) sobre fondo #000
-        sg.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--det-elev-lo2);margin-top:1px;';
+        // [Visor reorg] Grid uniforme 4×3 sustituido por: fila héroe
+        // (Distancia·Tiempo·Ritmo) + secciones Corazón / Mecánica con eyebrow
+        // + barra de Eficiencia. Construcción al final del bloque de cómputos.
 
         // ── Equilibrio I/D ──────────────────────────────────────────
         const balDisplay = (() => {
@@ -26634,82 +26647,108 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return (avgEf * 100).toFixed(2);
         })();
 
-        // ── Temperature ──────────────────────────────────────────
-        const tempDisplay = (() => {
-            if (act.avgTemp != null && act.avgTemp > 0) return act.avgTemp + '°C';
-            // Try from csvBlocks
-            const blocks = act.csvBlocks || [];
-            if (!blocks.length) return '—';
-            const temps = blocks.filter(b => b.temperature > 0).map(b => b.temperature);
-            if (!temps.length) return '—';
-            return Math.round(temps.reduce((a,b)=>a+b,0)/temps.length) + '°C';
-        })();
+        // [Visor reorg] Temperatura → chip del header (_detTemp). El grid 4×3
+        // se reemplaza por fila héroe + Corazón + Mecánica + barra Eficiencia.
 
-        const sData = [
-            // Row 1: Tiempo · Ritmo · FC media
-            {v: act.durationSec>0?secsToHMS(act.durationSec):'—',  u:'',           l:'Tiempo'},
-            {v: pace,                                                u:'/km',        l:'Ritmo medio'},
-            {v: act.avgHr>0?act.avgHr:'—', u:act.avgHr>0?'ppm':'', l:'FC media'},
-            // Row 2: FC máx · Ascenso · Calorías
-            {v: act.maxHr>0?act.maxHr:'—', u:act.maxHr>0?'ppm':'', l:'FC máxima'},
-            {v: act.ascentM>0?act.ascentM:'—', u:act.ascentM>0?'m':'', l:'Ascenso'},
-            {v: act.calories>0?act.calories:'—', u:act.calories>0?'kcal':'', l:'Calorías'},
-            // Row 3: Cadencia · Zancada · Equilibrio I/D
-            {v: avgCadDisplay,  u:'', l:'Cadencia'},
-            {v: avgStrideDisplay, u:'', l:'Zancada'},
-            {v: balDisplay,     u: balDisplay!=='—'?'%':'', l:'Eq. I/D'},
-            // Row 4: Desacople · Eficiencia · Temperatura  ([FASE 6.2 · S20] EF reemplaza a TRIMP — TRIMP se mueve al strip fino bajo el grid)
-            {v: decouplingDisplay, u:'', l:'Desacople'},
-            {v: efDisplay,         u:'', l:'Eficiencia'},
-            {v: tempDisplay,       u:'', l:'Temperatura'},
-        ];
-        sData.forEach((s,i) => {
-            const cell = document.createElement('div');
-            cell.className = 'det-stat-cell';
-            // Middle column (indices 1,4,7,10) gets side borders
-            // [FASE 5.7.4-c] fondo a #000 + bordes laterales sutiles
-            if (i%3===1) cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;padding:8px 4px;background:var(--det-bg);border-left:1px solid var(--det-border-lo);border-right:1px solid var(--det-border-lo);';
-            // Rows 3-4 (indices 6-11) smaller padding + font
-            if (i>=6) cell.style.padding = '7px 4px';
-            // Row 4 (decoupling, EF, temp): add colour hints
-            let valColor = '';
-            if (i===9 && s.v!=='—') {
-                // Decoupling: green <5%, orange 5-10%, red >10%
-                const dcNum = parseFloat(s.v);
-                valColor = Math.abs(dcNum)<5?'#4CAF50':Math.abs(dcNum)<10?'#FF9500':'#F44336';
-            }
-            // [FASE 6.2 · S20] EF reemplaza a TRIMP — color azul cyan (es ratio spd/hr, neutro)
-            // [S26.C+] EF escalable a 4 colores SOLO en running (otros tipos
-            // mantienen azul neutro). Umbrales calibrados para EF = spd/hr × 100:
-            // ≥2.20 excelente (azul) · 1.90-2.19 buena (verde) · 1.65-1.89
-            // regular (amarillo) · <1.65 mala (rojo). RUNNING_TYPES se replica
-            // localmente porque el set canónico vive en otro IIFE closure
-            // (línea 29622) y no está expuesto a window.
-            if (i===10 && s.v!=='—') {
-                var _isRun_EF = (function(t){
-                    t = String(t || '').toLowerCase();
-                    return t==='easy' || t==='recovery' || t==='series' || t==='long' || t==='race';
-                })(act.type);
-                if (_isRun_EF) {
-                    var efNum = parseFloat(s.v);
-                    if (efNum >= 2.20)      valColor = '#60a5fa';  // Excelente: blue
-                    else if (efNum >= 1.90) valColor = '#4ade80';  // Buena: green
-                    else if (efNum >= 1.65) valColor = '#facc15';  // Regular: yellow
-                    else                    valColor = '#f87171';  // Mala: red
-                } else {
-                    valColor = '#7aaff5';  // Otros tipos: azul neutro (legacy)
-                }
-            }
-            if (i===11 && s.v!=='—') {
-                // Temperature: cool=blue, warm=orange, hot=red
-                const tempNum = parseInt(s.v);
-                valColor = tempNum<18?'#60a5fa':tempNum<25?'#4CAF50':tempNum<30?'#FF9500':'#F44336';
-            }
-            const fontSize = i>=6 ? '15' : '19';
-            cell.innerHTML = '<div class="det-val" style="font-size:'+fontSize+'px;'+(valColor?'color:'+valColor+';':'')+'">'+s.v+(s.u?'<span class="det-unit" style="font-size:9px;"> '+s.u+'</span>':'')+'</div><div class="det-lbl">'+s.l+'</div>';
-            sg.appendChild(cell);
-        });
-        c1.appendChild(sg);
+        // ── Color del desacople (verde<5 · naranja<10 · rojo) ──────────
+        var _dcColor = '';
+        if (decouplingDisplay !== '—') {
+            var _dcN = Math.abs(parseFloat(decouplingDisplay));
+            _dcColor = _dcN < 5 ? '#4CAF50' : (_dcN < 10 ? '#FF9500' : '#F44336');
+        }
+
+        // Helper celda de sección (valor + unidad + label)
+        function _detSectCell(val, unit, label, color) {
+            return '<div style="display:flex;flex-direction:column;align-items:center;">'
+                + '<div style="font-size:17px;font-weight:700;letter-spacing:-.4px;line-height:1.1;color:'+(color||'var(--det-tw)')+';font-family:var(--f);">'
+                +   val + (unit ? '<span style="font-size:9px;font-weight:400;opacity:.5;"> '+unit+'</span>' : '')
+                + '</div>'
+                + '<div style="font-size:7.5px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);margin-top:2px;text-align:center;font-family:var(--f);">'+label+'</div>'
+                + '</div>';
+        }
+        // Helper eyebrow de sección (título + hairline + chip opcional a la derecha)
+        function _detEyebrow(name, rightHtml) {
+            return '<div style="display:flex;align-items:center;gap:9px;margin-bottom:6px;">'
+                + '<span style="font-size:8.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;white-space:nowrap;font-family:var(--f);">'+name+'</span>'
+                + '<span style="flex:1;height:1px;background:var(--det-border);"></span>'
+                + (rightHtml || '')
+                + '</div>';
+        }
+
+        // ── Fila héroe: Distancia · Tiempo · Ritmo (centrados) ─────────
+        function _heroCell(val, unit, label, withDiv) {
+            return '<div style="display:flex;flex-direction:column;align-items:center;position:relative;">'
+                + (withDiv ? '<div style="position:absolute;left:0;top:12%;height:76%;width:1px;background:var(--det-border);"></div>' : '')
+                + '<div style="font-size:27px;font-weight:800;letter-spacing:-1px;line-height:1;color:var(--det-tw);font-family:var(--f);">'
+                +   val + (unit ? '<span style="font-size:11px;font-weight:500;opacity:.5;letter-spacing:0;"> '+unit+'</span>' : '')
+                + '</div>'
+                + '<div style="font-size:8.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;margin-top:7px;font-family:var(--f);">'+label+'</div>'
+                + '</div>';
+        }
+        var _heroDiv = document.createElement('div');
+        _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:13px 4px 12px;';
+        _heroDiv.innerHTML =
+              _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', false)
+            + _heroCell(act.durationSec>0?secsToHMS(act.durationSec):'—', '', 'Tiempo', true)
+            + _heroCell(pace, '/km', 'Ritmo', true);
+        c1.appendChild(_heroDiv);
+
+        // ── Sección Corazón (+ chip kcal en el eyebrow) ────────────────
+        var _kcalChip = (act.calories > 0)
+            ? '<span style="font-size:10.5px;font-weight:700;color:var(--det-ts);white-space:nowrap;letter-spacing:-.2px;font-family:var(--f);">🔥 <b style="color:var(--det-tw);font-weight:800;">'+act.calories+'</b> kcal</span>'
+            : '';
+        var _heartDiv = document.createElement('div');
+        _heartDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:8px 14px 9px;';
+        _heartDiv.innerHTML =
+              _detEyebrow('Corazón', _kcalChip)
+            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
+            +   _detSectCell(act.avgHr>0?act.avgHr:'—', act.avgHr>0?'ppm':'', 'FC media', null)
+            +   _detSectCell(act.maxHr>0?act.maxHr:'—', act.maxHr>0?'ppm':'', 'FC máx', null)
+            +   _detSectCell(decouplingDisplay, '', 'Desacople', _dcColor||null)
+            + '</div>';
+        c1.appendChild(_heartDiv);
+
+        // ── Sección Mecánica ───────────────────────────────────────────
+        var _mechDiv = document.createElement('div');
+        _mechDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:8px 14px 9px;';
+        _mechDiv.innerHTML =
+              _detEyebrow('Mecánica', '')
+            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
+            +   _detSectCell(avgCadDisplay, '', 'Cadencia', null)
+            +   _detSectCell(avgStrideDisplay, '', 'Zancada', null)
+            +   _detSectCell(balDisplay, balDisplay!=='—'?'%':'', 'Eq. I/D', null)
+            + '</div>';
+        c1.appendChild(_mechDiv);
+
+        // ── Barra de Eficiencia (4 niveles, estilo RPE/TRIMP) ──────────
+        // Umbrales EF = spd/hr × 100 (solo running): ≥2.20 muy buena (azul) ·
+        // 1.90-2.19 buena (verde) · 1.65-1.89 regular (amarillo) · <1.65 mala
+        // (rojo). Otros tipos: azul neutro sin tag.
+        if (efDisplay !== '—') {
+            var _efN = parseFloat(efDisplay);
+            var _isRunEF = (function(t){ t=String(t||'').toLowerCase(); return t==='easy'||t==='recovery'||t==='series'||t==='long'||t==='race'; })(act.type);
+            var _efColor, _efTag;
+            if (_isRunEF) {
+                if      (_efN >= 2.20) { _efColor = '#60a5fa'; _efTag = 'MUY BUENA'; }
+                else if (_efN >= 1.90) { _efColor = '#4ade80'; _efTag = 'BUENA'; }
+                else if (_efN >= 1.65) { _efColor = '#facc15'; _efTag = 'REGULAR'; }
+                else                   { _efColor = '#f87171'; _efTag = 'MALA'; }
+            } else { _efColor = '#7aaff5'; _efTag = ''; }
+            var _efPct = Math.max(2, Math.min(100, Math.round((_efN - 1.5) / 0.9 * 100)));
+            var _efStrip = document.createElement('div');
+            _efStrip.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:6px 14px;';
+            _efStrip.innerHTML =
+                '<div style="display:flex;align-items:center;gap:10px;background:'+_efColor+'1a;border-radius:8px;padding:6px 12px;">'
+                +'<span style="font-size:9px;color:var(--det-lbl-accent);opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">EFIC.</span>'
+                +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
+                +'<div style="flex:1;height:4px;background:var(--det-elev);border-radius:100px;overflow:hidden;">'
+                +'<div style="height:100%;width:'+_efPct+'%;border-radius:100px;background:linear-gradient(90deg,#f87171 0%,#facc15 33%,#4ade80 66%,#60a5fa 100%);"></div>'
+                +'</div>'
+                +'<span style="font-size:13px;font-weight:800;color:'+_efColor+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+efDisplay+'</span>'
+                +(_efTag?'<span style="font-size:10px;color:'+_efColor+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+_efTag+'</span>':'')
+                +'</div></div>';
+            c1.appendChild(_efStrip);
+        }
 
         // ─────────────────────────────────────────────────────────────
         // [FASE 6.2 · S20] Strips finos RPE + TRIMP (~28px cada uno)
@@ -26809,7 +26848,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + eleStatCell('Total', dTotal,             'm', '#FFC107')
                 + eleStatCell('Máx',   eleMax,             'm', 'var(--det-tw)')
                 + eleStatCell('Mín',   eleMin,             'm', 'var(--det-tw)')
-                + eleStatCell('Media', eleMed,             'm', 'var(--det-tw)')
+                + eleStatCell('Ascenso', (act.ascentM>0?act.ascentM:'—'), (act.ascentM>0?'m':''), 'var(--det-tw)')
                 +'</div>';
 
             const eleCanvas = document.createElement('canvas');
@@ -26844,20 +26883,89 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             bW.appendChild(bTbl); c1.appendChild(bW);
         }
 
-        // Km laps (moving time, from GPX)
+        // ── Parciales por km (estilo Strava: Km · Ritmo · barra · Desn. · FC) ──
+        // Ritmo/FC desde act.laps (validados). Desn. NETA (±) y km parcial final
+        // se calculan en render desde streams (eleSeries + distSer) → sin tocar
+        // parser, retroactivo. Barra sólida color de marca, escalada por
+        // velocidad; km completo más rápido resaltado.
         if (act.laps && act.laps.length > 0) {
-            c1.insertAdjacentHTML('beforeend','<div style="padding:10px 14px 4px;font-size:9px;color:var(--det-lbl-accent);opacity:.75;text-transform:uppercase;letter-spacing:1px;font-family:var(--f);">ANÁLISIS POR KM</div>');
-            const tbl = document.createElement('table'); tbl.className = 'laps-table';
-            tbl.innerHTML = '<thead><tr><th>Km</th><th>Ritmo</th><th>FC</th></tr></thead>';
-            const tb = document.createElement('tbody');
-            act.laps.forEach(lap => {
-                const pm=Math.floor((lap.paceS||0)/60), ps=Math.round((lap.paceS||0)%60);
-                const paceStr2 = lap.paceS > 0 ? pm+"'"+String(ps).padStart(2,'0')+'"' : '—';
-                tb.insertAdjacentHTML('beforeend','<tr><td>'+lap.n+'</td><td>'+paceStr2+'</td><td>'+(lap.avgHr||'—')+'</td></tr>');
-            });
-            tbl.appendChild(tb);
-            const tw = document.createElement('div'); tw.style.cssText = 'padding:0 14px 12px;';
-            tw.appendChild(tbl); c1.appendChild(tw);
+            (function renderKmSplits() {
+                var dist = act.distSer, ele = act.eleSeries, hrArr = act.hrSeries;
+                var eleAligned = Array.isArray(ele) && Array.isArray(dist) && ele.length === dist.length && ele.length > 1;
+
+                function _kmNets() {
+                    if (!eleAligned) return null;
+                    var nets = [], kmT = 1000, sEle = ele[0];
+                    for (var i = 0; i < dist.length; i++) {
+                        var m = dist[i].d / 100;
+                        while (m >= kmT) { nets.push(Math.round(ele[i] - sEle)); sEle = ele[i]; kmT += 1000; }
+                    }
+                    return nets;
+                }
+                function _avgHrWin(t0, t1) {
+                    if (!Array.isArray(hrArr) || !hrArr.length) return null;
+                    var s = 0, n = 0;
+                    for (var i = 0; i < hrArr.length; i++) { var p = hrArr[i]; if (p && p.t >= t0 && p.t <= t1) { s += p.v; n++; } }
+                    return n ? Math.round(s / n) : null;
+                }
+                function _partialSplit() {
+                    if (!Array.isArray(dist) || dist.length < 2) return null;
+                    var kmT = 1000, bT = dist[0].t, bE = eleAligned ? ele[0] : null;
+                    for (var i = 0; i < dist.length; i++) {
+                        var m = dist[i].d / 100;
+                        while (m >= kmT) { bT = dist[i].t; if (eleAligned) bE = ele[i]; kmT += 1000; }
+                    }
+                    var last = dist[dist.length - 1], totM = last.d / 100, baseM = kmT - 1000;
+                    var remKm = (totM - baseM) / 1000;
+                    if (remKm <= 0.05) return null;
+                    var durS = Math.round(last.t - bT);
+                    var paceS = remKm > 0 ? Math.round(durS / remKm) : 0;
+                    var net = eleAligned ? Math.round(ele[ele.length - 1] - bE) : null;
+                    return { label: (Math.round(remKm * 10) / 10 + '').replace('.', ','), paceS: paceS, net: net, avgHr: _avgHrWin(bT, last.t), partial: true };
+                }
+                function _fmtPace(s) { if (!s || s <= 0) return '—'; var m = Math.floor(s / 60), ss = Math.round(s % 60); return m + "'" + String(ss).padStart(2, '0') + '"'; }
+
+                var nets = null; try { nets = _kmNets(); } catch (e) { nets = null; }
+                var rows = act.laps.map(function (lap, k) {
+                    return { label: String(lap.n), paceS: lap.paceS || 0, net: (nets && nets[k] != null) ? nets[k] : null, avgHr: lap.avgHr || null, partial: false };
+                });
+                var part = null; try { part = _partialSplit(); } catch (e) { part = null; }
+                if (part && part.paceS > 0) rows.push(part);
+
+                var valid = rows.filter(function (r) { return r.paceS > 0; });
+                if (!valid.length) return;
+                var minP = Math.min.apply(null, valid.map(function (r) { return r.paceS; }));
+                var maxP = Math.max.apply(null, valid.map(function (r) { return r.paceS; }));
+                var fastestFull = null;
+                rows.forEach(function (r) { if (!r.partial && r.paceS > 0 && (fastestFull === null || r.paceS < fastestFull)) fastestFull = r.paceS; });
+
+                var accent = 'var(--det-lbl-accent)';
+                var cols = 'grid-template-columns:26px 46px 1fr 42px 34px;';
+                var html = '<div style="padding:11px 14px 13px;background:var(--det-bg);border-top:1px solid var(--det-border-lo);">';
+                html += '<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;">'
+                     +  '<span style="font-size:8.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:'+accent+';opacity:.85;white-space:nowrap;font-family:var(--f);">Parciales por km</span>'
+                     +  '<span style="flex:1;height:1px;background:var(--det-border);"></span>'
+                     +  '</div>';
+                html += '<div style="display:grid;'+cols+'gap:8px;align-items:center;font-size:8.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:'+accent+';opacity:.8;padding-bottom:7px;margin-bottom:2px;border-bottom:1px solid var(--det-border);font-family:var(--f);">'
+                     +  '<span>Km</span><span>Ritmo</span><span></span><span style="text-align:right;">Desn.</span><span style="text-align:right;">FC</span>'
+                     +  '</div>';
+                rows.forEach(function (r, idx) {
+                    var w = (maxP === minP) ? 100 : (55 + 45 * (maxP - r.paceS) / (maxP - minP));
+                    if (r.paceS <= 0) w = 6;
+                    var isFast = (!r.partial && fastestFull != null && r.paceS === fastestFull);
+                    var desn = (r.net != null) ? ((r.net > 0 ? '+' : '') + r.net) : '—';
+                    var sep = idx > 0 ? 'border-top:1px solid var(--det-border-lo);' : '';
+                    html += '<div style="display:grid;'+cols+'gap:8px;align-items:center;padding:5px 0;'+sep+'">'
+                         +  '<span style="font-size:13px;font-weight:700;color:var(--det-ts);font-family:var(--f);'+(r.partial?'opacity:.7;':'')+'">'+r.label+'</span>'
+                         +  '<span style="font-size:13.5px;font-weight:700;letter-spacing:-.3px;font-family:var(--f);color:'+(isFast?accent:'var(--det-tw)')+';">'+_fmtPace(r.paceS)+'</span>'
+                         +  '<span style="height:15px;display:flex;align-items:center;"><span style="height:15px;border-radius:5px;background:'+accent+';min-width:6px;width:'+w.toFixed(0)+'%;'+(isFast?'box-shadow:0 0 0 1.5px '+accent+';':'')+'"></span></span>'
+                         +  '<span style="font-size:12px;font-weight:600;color:var(--det-ts);text-align:right;font-family:var(--f);">'+desn+'</span>'
+                         +  '<span style="font-size:12.5px;font-weight:700;color:var(--det-tw);text-align:right;font-family:var(--f);">'+(r.avgHr||'—')+'</span>'
+                         +  '</div>';
+                });
+                html += '</div>';
+                c1.insertAdjacentHTML('beforeend', html);
+            })();
         }
 
         // ── Mejores esfuerzos de la sesión ───────────────────────────
@@ -48522,7 +48630,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.11.1-p1';
+        window.__mrCorosVersion = 'v2.12.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
