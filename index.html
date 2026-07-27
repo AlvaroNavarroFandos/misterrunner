@@ -25777,23 +25777,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
             }
 
-            // [Visor track] Plano y grueso, SIN halo ni neón. Gradiente térmico
-            // "por ritmo" (paleta B: rojo→ámbar→teal→azul) a lo largo de la ruta.
-            // Finísimo borde oscuro solo para legibilidad sobre mapa claro/oscuro.
+            // [Visor track] Plano y grueso, SIN halo ni neón. Color sólido
+            // modo-aware = mismo default que las mini cards: color de zapatilla
+            // si contrasta, si no crimson (light) / amarillo (dark). Finísimo
+            // borde oscuro solo para legibilidad sobre río azul o zona verde.
             ctx.lineJoin = 'round'; ctx.lineCap = 'round';
             ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-            var _gx0 = tx(pts[0].lon), _gy0 = ty(pts[0].lat);
-            var _gx1 = tx(pts[pts.length-1].lon), _gy1 = ty(pts[pts.length-1].lat);
-            if (_gx0 === _gx1 && _gy0 === _gy1) { _gx1 = _gx0 + 1; }
-            var _grad = ctx.createLinearGradient(_gx0, _gy0, _gx1, _gy1);
-            _grad.addColorStop(0,    '#c56b6b');
-            _grad.addColorStop(0.40, '#cfa15c');
-            _grad.addColorStop(0.72, '#6fa88f');
-            _grad.addColorStop(1,    '#5f8bb0');
+            var _isDarkTrk = document.body.classList.contains('dark-mode');
+            var _trkCol = _isDarkTrk ? '#FFEA00' : '#8f1a28';
+            (function(){
+                if (!shoeColor || typeof shoeColor !== 'string') return;
+                var h = shoeColor.trim().replace('#','');
+                if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+                if (h.length !== 6 || /[^0-9a-f]/i.test(h)) return;
+                var r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
+                var lum = 0.2126*r + 0.7152*g + 0.0722*b;
+                if (_isDarkTrk ? (lum > 0.18) : (lum < 0.78)) _trkCol = shoeColor;
+            })();
             ctx.strokeStyle = 'rgba(0,0,0,0.22)';
             ctx.lineWidth = 6.5;
             ctx.stroke();
-            ctx.strokeStyle = _grad;
+            ctx.strokeStyle = _trkCol;
             ctx.lineWidth = 5;
             ctx.stroke();
 
@@ -26668,7 +26672,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // Helper eyebrow de sección (título + hairline + chip opcional a la derecha)
         function _detEyebrow(name, rightHtml) {
-            return '<div style="display:flex;align-items:center;gap:9px;margin-bottom:6px;">'
+            return '<div style="display:flex;align-items:center;gap:9px;margin-bottom:4px;">'
                 + '<span style="font-size:8.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;white-space:nowrap;font-family:var(--f);">'+name+'</span>'
                 + '<span style="flex:1;height:1px;background:var(--det-border);"></span>'
                 + (rightHtml || '')
@@ -26685,10 +26689,53 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '<div style="font-size:8.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;margin-top:7px;font-family:var(--f);">'+label+'</div>'
                 + '</div>';
         }
+        // ── Ritmo esfuerzo (GAP) — grade-adjusted pace desde streams ──
+        // Aproximación tipo Strava/TrainingPeaks (modelo Minetti de coste de
+        // carrera por pendiente). NO es el Effort Pace propietario de COROS,
+        // pero da un ritmo ajustado por desnivel con los datos de Strava.
+        // Chunking ~25 m para amortiguar el ruido de altitud GPS. Fallback a
+        // Distancia si no hay elevación alineada.
+        var _effortPaceStr = (function(){
+            try {
+                var ds = act.distSer, el = act.eleSeries;
+                if (!Array.isArray(ds) || ds.length < 3) return null;
+                if (!Array.isArray(el) || el.length !== ds.length) return null;
+                function costRatio(i){
+                    if (i > 0.30) i = 0.30; else if (i < -0.30) i = -0.30;
+                    var C = 155.4*Math.pow(i,5) - 30.4*Math.pow(i,4) - 43.3*Math.pow(i,3) + 46.3*i*i + 19.5*i + 3.6;
+                    var r = C/3.6;
+                    return r < 0.5 ? 0.5 : (r > 2.5 ? 2.5 : r);
+                }
+                var flatEquiv = 0, totalT = 0, accDist = 0, accT = 0, chunkStartEle = el[0];
+                for (var i=1;i<ds.length;i++){
+                    var dd = (ds[i].d - ds[i-1].d)/100, dt = ds[i].t - ds[i-1].t;
+                    if (dd <= 0 || dt <= 0 || dt > 20) continue;
+                    accDist += dd; accT += dt;
+                    if (accDist >= 25) {
+                        var g = (el[i] - chunkStartEle) / accDist; if (!isFinite(g)) g = 0;
+                        flatEquiv += accDist * costRatio(g); totalT += accT;
+                        accDist = 0; accT = 0; chunkStartEle = el[i];
+                    }
+                }
+                if (accDist > 5) {
+                    var g2 = (el[ds.length-1] - chunkStartEle)/accDist; if (!isFinite(g2)) g2 = 0;
+                    flatEquiv += accDist * costRatio(g2); totalT += accT;
+                }
+                if (flatEquiv < 100 || totalT < 30) return null;
+                var paceS = totalT / (flatEquiv/1000);
+                if (!isFinite(paceS) || paceS <= 0) return null;
+                var m = Math.floor(paceS/60), s = Math.round(paceS%60);
+                if (s === 60) { m++; s = 0; }
+                return m + "'" + String(s).padStart(2,'0') + '"';
+            } catch(e){ return null; }
+        })();
+
         var _heroDiv = document.createElement('div');
-        _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:13px 4px 12px;';
+        _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:9px 4px 7px;';
         _heroDiv.innerHTML =
-              _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', false)
+              (_effortPaceStr
+                  ? _heroCell(_effortPaceStr, '/km', 'R. esfuerzo', false)
+                  : _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', false))
             + _heroCell(act.durationSec>0?secsToHMS(act.durationSec):'—', '', 'Tiempo', true)
             + _heroCell(pace, '/km', 'Ritmo', true);
         c1.appendChild(_heroDiv);
@@ -26698,7 +26745,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ? '<span style="font-size:10.5px;font-weight:700;color:var(--det-ts);white-space:nowrap;letter-spacing:-.2px;font-family:var(--f);">🔥 <b style="color:var(--det-tw);font-weight:800;">'+act.calories+'</b> kcal</span>'
             : '';
         var _heartDiv = document.createElement('div');
-        _heartDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:8px 14px 9px;';
+        _heartDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:5px 14px 6px;';
         _heartDiv.innerHTML =
               _detEyebrow('Corazón', _kcalChip)
             + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
@@ -26710,7 +26757,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Sección Mecánica ───────────────────────────────────────────
         var _mechDiv = document.createElement('div');
-        _mechDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:8px 14px 9px;';
+        _mechDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:5px 14px 6px;';
         _mechDiv.innerHTML =
               _detEyebrow('Mecánica', '')
             + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
@@ -48630,7 +48677,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.12.0-p1';
+        window.__mrCorosVersion = 'v2.12.0-p2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
