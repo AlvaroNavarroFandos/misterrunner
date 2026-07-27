@@ -33585,8 +33585,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // eso silenciaba tramos rápidos como "100m rápido · @ 5K pace".
         return !!isChild && !_msPaceSec(b.detail) && !!_MS_REC_COLORS[b.color];
     };
-    const _msBuild = (sx, _isStr) => {
-        if (_isStr) return `<span style="flex-shrink:0;width:48px;text-align:center;font-size:13px;letter-spacing:1px;line-height:1;">\uD83E\uDDB5\uD83D\uDCAA</span>`;
+    // opts.scale: multiplica ancho, alturas y separación. 1 = fila colapsada
+    // (48×16px); 2 = modal de Home, donde una barra de 48px se perdería.
+    const _msBuild = (sx, _isStr, opts) => {
+        const _k = (opts && opts.scale) ? opts.scale : 1;
+        if (_isStr) return `<span style="flex-shrink:0;width:${48*_k}px;text-align:center;font-size:${13*_k}px;letter-spacing:1px;line-height:1;">\uD83E\uDDB5\uD83D\uDCAA</span>`;
         if (!sx.blocks || !sx.blocks.length) return '';
         const segs = [];
         sx.blocks.forEach(b => {
@@ -33619,13 +33622,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         const tot = segs.reduce((a,x)=>a+(x.km||0), 0);
         if (!tot) return '';
-        let out = `<span style="display:flex;gap:1.5px;flex-shrink:0;align-items:flex-end;height:16px;width:48px;">`;
+        let out = `<span style="display:flex;gap:${1.5*_k}px;flex-shrink:0;align-items:flex-end;height:${16*_k}px;width:${48*_k}px;">`;
         let _prevH = 0;
         segs.forEach(x => {
             const pct = (x.km||0)/tot*100;
             if (pct <= 0) return;
             if (x.rec) { out += `<span style="flex:${pct.toFixed(2)};"></span>`; return; }
-            const _h = _msHeight(x.det, x.color);
+            const _h = _msHeight(x.det, x.color) * _k;
             // Bloques progresivos: en vez de un escalón, una rampa que
             // arranca a la altura del tramo anterior y sube hasta la suya.
             const _isRamp = /progres|\u00faltimo tercio/i.test(String(x.lab||''));
@@ -33634,7 +33637,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _y = Math.max(0, Math.min(90, Math.round((1 - _prevH/_h)*100)));
                 _clip = `clip-path:polygon(0% ${_y}%,100% 0%,100% 100%,0% 100%);border-radius:0;`;
             }
-            out += `<span style="flex:${pct.toFixed(2)};min-width:1.5px;height:${_h}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;${_clip}"></span>`;
+            out += `<span style="flex:${pct.toFixed(2)};min-width:${1.5*_k}px;height:${_h}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;${_clip}"></span>`;
             _prevH = _h;
         });
         return out + `</span>`;
@@ -33790,7 +33793,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // blanca con el número tintado del color. Sombra proyectada del color
         // aporta profundidad. La línea top blanca translúcida remata el borde.
         hCard.style.cssText = 'background:linear-gradient(135deg,'+_phaseCol+' 0%,'+_phaseDark+' 100%);'
-            + 'border:1px solid '+_phaseCol+';border-bottom:0;border-radius:14px 14px 0 0;padding:12px 14px;margin-bottom:0;'
+            + 'border:1px solid '+_phaseCol+';border-bottom:0;border-radius:0;padding:12px 14px;margin-bottom:0;'
             + 'touch-action:pan-y;position:relative;overflow:hidden;cursor:grab;'
             + 'user-select:none;-webkit-user-select:none;will-change:transform;'
             + 'transition:transform .25s cubic-bezier(.22,.61,.36,1);'
@@ -33933,7 +33936,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // tap-toggle para expandir detalle. Fuerza apilada bajo running con sangría.
         const daysCard = document.createElement('div');
         daysCard.className = 'mr-plan-days';
-        daysCard.style.cssText = 'background:var(--card2);border-radius:0 0 14px 14px;border:1px solid var(--border);border-top:0;overflow:hidden;touch-action:pan-y;';
+        daysCard.style.cssText = 'background:var(--card2);border-radius:0;border:1px solid var(--border);border-top:0;overflow:hidden;touch-action:pan-y;';
 
         // [FASE 6 prep · Plan premium] Barra superior con gradiente del color
         // de la fase (mismo patrón que la cabecera de semana). Crea cohesión
@@ -34237,7 +34240,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // Fallback si el color no matchea: inicial mayúscula
                         return `<span style="font-size:11px;font-weight:800;">${(b.label||'?').trim().charAt(0).toUpperCase()}</span>`;
                     };
-                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px 12px;background:var(--bsoft);flex-direction:column;gap:0;">`;
+                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 0 12px;background:var(--bsoft);flex-direction:column;gap:0;">`;
                     // [v2.7.0] Barra de perfil eliminada: su función la cumple ahora
                     // la mini-estructura de la fila colapsada.
                     // ── [v2.6.2] Raíl V3-B ──────────────────────────────────────────
@@ -34276,7 +34279,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         return o;
                     };
                     const _MONO = `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;`;
-                    detail += `<div style="padding-top:8px;">`;
+                    detail += `<div>`;
                     sess.blocks.forEach(b => {
                         const _grad = _gradForBlock(b.color);
                         const _blkIcon = _iconForBlock(b);
@@ -34300,21 +34303,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             + `</div>`
                             + (_pct>0 ? `<div style="height:2px;border-radius:2px;margin-top:4px;opacity:.9;background:${_grad};width:${_pct}%;"></div>` : '');
                         if (_hasReps) {
-                            detail += `<div style="margin-top:3px;padding-left:12px;">`;
+                            detail += `<div style="margin-top:3px;">`;
                             b.reps.forEach((r, ri) => {
                                 const _rGrad = _gradForBlock(r.color);
                                 const _rIcon = _iconForBlock(r);
                                 const _isLast = ri === b.reps.length - 1;
                                 const _rp = _parseBlk(r.detail);
                                 detail += `<div style="position:relative;">`
-                                    + `<div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:8px;${_isLast?'':'margin-bottom:3px;'}">`
-                                    +   `<div style="width:18px;height:18px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.12);">${_rIcon.replace(/width="14" height="14"/,'width="11" height="11"')}</div>`
+                                    + `<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--card);border:1px solid var(--border);border-radius:9px;${_isLast?'':'margin-bottom:3px;'}">`
+                                    +   `<div style="width:22px;height:22px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_rIcon}</div>`
                                     +   `<div style="flex:1;min-width:0;">`
-                                    +     `<div style="font-size:10px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${r.label||''}</div>`
-                                    +     (_rp.line ? `<div style="font-size:8.5px;color:var(--ts);font-weight:500;line-height:1.2;">${_rp.line}</div>` : '')
+                                    +     `<div style="font-size:11px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${r.label||''}</div>`
+                                    +     (_rp.line ? `<div style="font-size:9px;color:var(--ts);font-weight:500;line-height:1.25;">${_rp.line}</div>` : '')
                                     +   `</div>`
-                                    +   (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}font-size:9.5px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_rp.pace}</span>` : '')
-                                    +   (r.km ? `<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_rGrad};box-shadow:0 1px 2px rgba(0,0,0,.10);">${r.km}</span>` : '')
+                                    +   (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}font-size:10px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_rp.pace}</span>` : '')
+                                    +   (r.km ? `<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:12px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_rGrad};box-shadow:0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.2);">${r.km} km</span>` : '')
                                     + `</div>`
                                     + `</div>`;
                             });
@@ -37444,6 +37447,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (equipLbl) html += '<span style="font-size:11px;color:var(--tm);">· ' + equipLbl + '</span>';
             html += '</div>';
             html += '</div>';
+            // [v2.11.0] Mini-estructura de la sesión en el hueco de la cabecera,
+            // mismo esquema que la pestaña Plan pero al doble de tamaño.
+            html += (window._mrMiniStruct ? window._mrMiniStruct(sess, isStr, {scale:2}) : '');
             html += '</div>';
 
             html += '<div style="font-size:12px;color:var(--ts);font-style:italic;margin-top:12px;line-height:1.4;">' + motiv + '</div>';
@@ -48504,7 +48510,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.10.0-p1';
+        window.__mrCorosVersion = 'v2.11.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
