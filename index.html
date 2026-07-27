@@ -33753,10 +33753,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // aeróbico…) nunca lleva cifras, así que se puede recortar sin
     // lista de frases. El desc original queda intacto para el modal
     // y los exports.
+    // [v2.16.0-p4] Descripción del día (colapsado) garantizada a UNA línea sin "…":
+    // se recortan primero segmentos finales y, si aún no cabe, por palabra completa.
     const _descOneLine = (txt) => {
-        const parts = String(txt||'').split('\u00b7').map(x => x.trim()).filter(Boolean);
+        let parts = String(txt||'').split('\u00b7').map(x => x.trim()).filter(Boolean);
+        // quita cola descriptiva sin dígitos (frases no clave al final)
         while (parts.length > 1 && !/\d/.test(parts[parts.length-1])) parts.pop();
-        return parts.join(' \u00b7 ');
+        let s = parts.join(' \u00b7 ');
+        // presupuesto de 1 línea: recorta primero segmentos finales; si aún no cabe,
+        // recorta por palabra (nunca a mitad de palabra ni con puntos suspensivos).
+        const _BUDGET = 40;
+        while (parts.length > 1 && s.length > _BUDGET) { parts.pop(); s = parts.join(' \u00b7 '); }
+        if (s.length > _BUDGET) {
+            const _w = s.split(' '); let _o = '';
+            for (const x of _w) { if ((_o + ' ' + x).trim().length > _BUDGET) break; _o = _o ? _o + ' ' + x : x; }
+            s = _o || s.slice(0, _BUDGET);
+        }
+        return s;
     };
     window._mrDescOneLine = _descOneLine;
 
@@ -48727,7 +48740,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.16.0-p3';
+        window.__mrCorosVersion = 'v2.16.0-p4';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
