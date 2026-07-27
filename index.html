@@ -26697,47 +26697,53 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Distancia si no hay elevación alineada.
         var _effortPaceStr = (function(){
             try {
-                var ds = act.distSer, el = act.eleSeries;
+                var ds = act.distSer;
                 if (!Array.isArray(ds) || ds.length < 3) return null;
-                if (!Array.isArray(el) || el.length !== ds.length) return null;
+                var hasEle = false;
+                for (var q = 0; q < ds.length; q++) { if (ds[q].ele != null) { hasEle = true; break; } }
+                if (!hasEle) return null;
                 function costRatio(i){
                     if (i > 0.30) i = 0.30; else if (i < -0.30) i = -0.30;
                     var C = 155.4*Math.pow(i,5) - 30.4*Math.pow(i,4) - 43.3*Math.pow(i,3) + 46.3*i*i + 19.5*i + 3.6;
                     var r = C/3.6;
                     return r < 0.5 ? 0.5 : (r > 2.5 ? 2.5 : r);
                 }
-                var flatEquiv = 0, totalT = 0, accDist = 0, accT = 0, chunkStartEle = el[0];
-                for (var i=1;i<ds.length;i++){
+                var flatEquiv = 0, totalT = 0, accDist = 0, accT = 0, lastEle = null, chunkStartEle = null;
+                for (var i = 0; i < ds.length; i++) {
+                    if (ds[i].ele != null) lastEle = ds[i].ele;
+                    if (i === 0) { chunkStartEle = lastEle; continue; }
                     var dd = (ds[i].d - ds[i-1].d)/100, dt = ds[i].t - ds[i-1].t;
                     if (dd <= 0 || dt <= 0 || dt > 20) continue;
                     accDist += dd; accT += dt;
                     if (accDist >= 25) {
-                        var g = (el[i] - chunkStartEle) / accDist; if (!isFinite(g)) g = 0;
+                        var g = (lastEle != null && chunkStartEle != null) ? (lastEle - chunkStartEle)/accDist : 0;
+                        if (!isFinite(g)) g = 0;
                         flatEquiv += accDist * costRatio(g); totalT += accT;
-                        accDist = 0; accT = 0; chunkStartEle = el[i];
+                        accDist = 0; accT = 0; chunkStartEle = lastEle;
                     }
                 }
                 if (accDist > 5) {
-                    var g2 = (el[ds.length-1] - chunkStartEle)/accDist; if (!isFinite(g2)) g2 = 0;
+                    var g2 = (lastEle != null && chunkStartEle != null) ? (lastEle - chunkStartEle)/accDist : 0;
+                    if (!isFinite(g2)) g2 = 0;
                     flatEquiv += accDist * costRatio(g2); totalT += accT;
                 }
                 if (flatEquiv < 100 || totalT < 30) return null;
                 var paceS = totalT / (flatEquiv/1000);
                 if (!isFinite(paceS) || paceS <= 0) return null;
-                var m = Math.floor(paceS/60), s = Math.round(paceS%60);
-                if (s === 60) { m++; s = 0; }
-                return m + "'" + String(s).padStart(2,'0') + '"';
+                var mm = Math.floor(paceS/60), ss = Math.round(paceS%60);
+                if (ss === 60) { mm++; ss = 0; }
+                return mm + "'" + String(ss).padStart(2,'0') + '"';
             } catch(e){ return null; }
         })();
 
         var _heroDiv = document.createElement('div');
         _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:9px 4px 7px;';
         _heroDiv.innerHTML =
-              (_effortPaceStr
-                  ? _heroCell(_effortPaceStr, '/km', 'R. esfuerzo', false)
-                  : _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', false))
-            + _heroCell(act.durationSec>0?secsToHMS(act.durationSec):'—', '', 'Tiempo', true)
-            + _heroCell(pace, '/km', 'Ritmo', true);
+              _heroCell(act.durationSec>0?secsToHMS(act.durationSec):'—', '', 'Tiempo', false)
+            + _heroCell(pace, '/km', 'Ritmo', true)
+            + (_effortPaceStr
+                  ? _heroCell(_effortPaceStr, '/km', 'R. esfuerzo', true)
+                  : _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', true));
         c1.appendChild(_heroDiv);
 
         // ── Sección Corazón (+ chip kcal en el eyebrow) ────────────────
@@ -26937,15 +26943,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // velocidad; km completo más rápido resaltado.
         if (act.laps && act.laps.length > 0) {
             (function renderKmSplits() {
-                var dist = act.distSer, ele = act.eleSeries, hrArr = act.hrSeries;
-                var eleAligned = Array.isArray(ele) && Array.isArray(dist) && ele.length === dist.length && ele.length > 1;
+                var dist = act.distSer, hrArr = act.hrSeries;
+                var hasDist = Array.isArray(dist) && dist.length > 1;
 
                 function _kmNets() {
-                    if (!eleAligned) return null;
-                    var nets = [], kmT = 1000, sEle = ele[0];
+                    if (!hasDist) return null;
+                    var nets = [], kmT = 1000, prevBoundEle = null, lastEle = null, started = false;
                     for (var i = 0; i < dist.length; i++) {
+                        if (dist[i].ele != null) { lastEle = dist[i].ele; if (!started) { prevBoundEle = dist[i].ele; started = true; } }
                         var m = dist[i].d / 100;
-                        while (m >= kmT) { nets.push(Math.round(ele[i] - sEle)); sEle = ele[i]; kmT += 1000; }
+                        while (m >= kmT) {
+                            var be = (lastEle != null) ? lastEle : prevBoundEle;
+                            nets.push((prevBoundEle != null && be != null) ? Math.round(be - prevBoundEle) : null);
+                            prevBoundEle = be; kmT += 1000;
+                        }
                     }
                     return nets;
                 }
@@ -26956,18 +26967,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     return n ? Math.round(s / n) : null;
                 }
                 function _partialSplit() {
-                    if (!Array.isArray(dist) || dist.length < 2) return null;
-                    var kmT = 1000, bT = dist[0].t, bE = eleAligned ? ele[0] : null;
+                    if (!hasDist) return null;
+                    var kmT = 1000, bT = dist[0].t, bE = null, lastEle = null, started = false;
                     for (var i = 0; i < dist.length; i++) {
+                        if (dist[i].ele != null) { lastEle = dist[i].ele; if (!started) { bE = dist[i].ele; started = true; } }
                         var m = dist[i].d / 100;
-                        while (m >= kmT) { bT = dist[i].t; if (eleAligned) bE = ele[i]; kmT += 1000; }
+                        while (m >= kmT) { bT = dist[i].t; if (lastEle != null) bE = lastEle; kmT += 1000; }
                     }
                     var last = dist[dist.length - 1], totM = last.d / 100, baseM = kmT - 1000;
                     var remKm = (totM - baseM) / 1000;
                     if (remKm <= 0.05) return null;
                     var durS = Math.round(last.t - bT);
                     var paceS = remKm > 0 ? Math.round(durS / remKm) : 0;
-                    var net = eleAligned ? Math.round(ele[ele.length - 1] - bE) : null;
+                    var net = (bE != null && lastEle != null) ? Math.round(lastEle - bE) : null;
                     return { label: (Math.round(remKm * 10) / 10 + '').replace('.', ','), paceS: paceS, net: net, avgHr: _avgHrWin(bT, last.t), partial: true };
                 }
                 function _fmtPace(s) { if (!s || s <= 0) return '—'; var m = Math.floor(s / 60), ss = Math.round(s % 60); return m + "'" + String(ss).padStart(2, '0') + '"'; }
@@ -36492,7 +36504,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var dt = time[m] - time[m-1];
                     if (dt > 0) spd = dd / dt;
                 }
-                act.distSer.push({ t: time[m], d: Math.round(distArr[m] * 100), spd: spd });
+                act.distSer.push({ t: time[m], d: Math.round(distArr[m] * 100), spd: spd, ele: (Array.isArray(s.altitude) && s.altitude[m] != null ? s.altitude[m] : null) });
             }
         } else {
             act.distSer = [];
@@ -48677,7 +48689,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.12.0-p2';
+        window.__mrCorosVersion = 'v2.12.0-p3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
