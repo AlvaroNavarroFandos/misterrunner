@@ -25540,475 +25540,224 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         ctx.restore();
     }
 
-    // ── MAPBOX STATIC API — only used in activity detail (big canvas) ──────────────
-    // Renders the real map (outdoors-v12) as background and overlays the neon track.
-    // Falls back to drawTrack() if offline / fetch fails / no records.
-    const _MAPBOX_TOKEN = 'pk.eyJ1IjoibWlzdGVycnVubmVyb2ZpY2lhbCIsImEiOiJjbXAxYmY5ZG4wM2htMnRzOW1pMHJieDdlIn0.GpKJM9556kj6CLNJATYDLw';
-    const _MAPBOX_STYLE = 'outdoors-v12';
-    // In-memory cache per-actId so navigating back to the same activity doesn't re-download
-    const _mapboxImgCache = {};
+    // ── MAPLIBRE GL — real vector map for the activity detail (card 1 + zoom modal) ──
+    // Replaces the old Mapbox static image. Vector, no token, unlimited, OpenFreeMap
+    // "Bright" style. Loaded lazily (only when a detail with GPS is opened) from jsDelivr,
+    // mirroring the html2canvas lazy pattern. At most one live GL context for the inline
+    // map + one for the modal; both torn down on close (see _detCleanup / modal close),
+    // so the number of activities in the library is irrelevant (library uses 2D canvas).
+    var _MR_MAPLIBRE_VER = '5.3.0';
+    var _MR_MAP_STYLE    = 'https://tiles.openfreemap.org/styles/bright';
+    var _mrMapLibrePromise = null;
 
-    // ── PERSISTENT CACHE (localStorage) ──────────────────────────
-    // Saves Mapbox images as dataURLs so each activity is fetched only once
-    // per device (instead of once per session). Reduces Mapbox quota usage
-    // by ~60% in typical use. LRU eviction when storage fills up.
-    //
-    // To ENABLE: change USE_PERSISTENT_CACHE to true.
-    // When disabled: zero side effects, drawTrackWithMapbox behaves identically
-    // to the in-memory-only version.
-    const USE_PERSISTENT_CACHE = true;
-    const _PC_PREFIX     = 'mb_img:';         // localStorage key per image
-    const _PC_INDEX_KEY  = 'mb_idx';          // localStorage key for the LRU index
-    const _PC_MAX_BYTES  = 2 * 1024 * 1024;   // [B1] bajado de 4MB→2MB tras migrar avatar a IDB. Da +2MB de respiro al resto del estado (localStorage cap 5MB iOS). LRU eviction del propio cache se autorregula.
-    const _PC_MAX_ENTRIES = 80;               // hard cap on number of cached images
+    // Lazy-load MapLibre GL JS (+ its CSS). Resolves with window.maplibregl.
+    function _mrEnsureMapLibre() {
+        if (window.maplibregl) return Promise.resolve(window.maplibregl);
+        if (_mrMapLibrePromise) return _mrMapLibrePromise;
+        _mrMapLibrePromise = new Promise(function(resolve, reject){
+            try {
+                if (!document.getElementById('maplibre-gl-css')) {
+                    var lk = document.createElement('link');
+                    lk.id = 'maplibre-gl-css'; lk.rel = 'stylesheet';
+                    lk.href = 'https://cdn.jsdelivr.net/npm/maplibre-gl@'+_MR_MAPLIBRE_VER+'/dist/maplibre-gl.css';
+                    document.head.appendChild(lk);
+                }
+                // Subtle attribution tweaks — injected as a runtime style element to avoid
+                // touching the main stylesheet block (CSS brace-balance rule, L-VISOR-02).
+                if (!document.getElementById('mr-maplibre-tweaks')) {
+                    var st = document.createElement('style');
+                    st.id = 'mr-maplibre-tweaks';
+                    st.textContent = '.maplibregl-ctrl-attrib{font-size:9px!important;background:rgba(0,0,0,.35)!important;}'
+                        + '.maplibregl-ctrl-attrib a{color:rgba(255,255,255,.85)!important;}'
+                        + '.maplibregl-ctrl-attrib.maplibregl-compact{background:rgba(0,0,0,.45)!important;border-radius:11px!important;}'
+                        + '.maplibregl-ctrl-attrib-button{filter:invert(1);opacity:.85;}';
+                    document.head.appendChild(st);
+                }
+                var s = document.createElement('script');
+                s.src = 'https://cdn.jsdelivr.net/npm/maplibre-gl@'+_MR_MAPLIBRE_VER+'/dist/maplibre-gl.js';
+                s.onload = function(){ window.maplibregl ? resolve(window.maplibregl) : (function(){ _mrMapLibrePromise=null; reject(new Error('maplibre global missing')); })(); };
+                s.onerror = function(){ _mrMapLibrePromise = null; reject(new Error('maplibre load failed')); };
+                document.head.appendChild(s);
+            } catch(e){ _mrMapLibrePromise = null; reject(e); }
+        });
+        return _mrMapLibrePromise;
+    }
 
-    // Read the LRU index. Index shape: [{ k: cacheKey, t: lastUsedTimestamp, s: byteSize }, ...]
-    function _pcReadIndex() {
-        if (!USE_PERSISTENT_CACHE) return [];
-        try {
-            const raw = localStorage.getItem(_PC_INDEX_KEY);
-            if (!raw) return [];
-            const arr = JSON.parse(raw);
-            return Array.isArray(arr) ? arr : [];
-        } catch(e) { return []; }
-    }
-    function _pcWriteIndex(idx) {
-        if (!USE_PERSISTENT_CACHE) return;
-        try { localStorage.setItem(_PC_INDEX_KEY, JSON.stringify(idx)); } catch(e) {}
-    }
-    // Try to get a cached dataURL. Updates lastUsed timestamp on hit.
-    function _pcGet(cacheKey) {
-        if (!USE_PERSISTENT_CACHE || !cacheKey) return null;
-        try {
-            const dataUrl = localStorage.getItem(_PC_PREFIX + cacheKey);
-            if (!dataUrl) return null;
-            // Bump LRU timestamp
-            const idx = _pcReadIndex();
-            const entry = idx.find(e => e.k === cacheKey);
-            if (entry) { entry.t = Date.now(); _pcWriteIndex(idx); }
-            return dataUrl;
-        } catch(e) { return null; }
-    }
-    // Store an Image element as dataURL. Evicts oldest entries if needed.
-    function _pcStore(cacheKey, imgEl) {
-        if (!USE_PERSISTENT_CACHE || !cacheKey || !imgEl) return;
-        try {
-            // Convert image → dataURL via temp canvas. Mapbox sends CORS headers
-            // so this won't taint the canvas (we set crossOrigin='anonymous' on the Image).
-            const tmp = document.createElement('canvas');
-            // Cap size to keep dataURL bytes reasonable; 600px wide is enough for thumb quality.
-            const maxW = 800;
-            const scale = imgEl.naturalWidth > maxW ? maxW / imgEl.naturalWidth : 1;
-            tmp.width  = Math.round(imgEl.naturalWidth  * scale);
-            tmp.height = Math.round(imgEl.naturalHeight * scale);
-            tmp.getContext('2d').drawImage(imgEl, 0, 0, tmp.width, tmp.height);
-            // JPEG @0.82 quality → roughly 40-80KB per image (vs 150-300KB for PNG)
-            const dataUrl = tmp.toDataURL('image/jpeg', 0.82);
-            const sizeBytes = dataUrl.length; // approx (chars ≈ bytes for ASCII)
-
-            // Evict if needed
-            let idx = _pcReadIndex().filter(e => e.k !== cacheKey);
-            // Sort by lastUsed ascending so we can pop oldest from the front
-            idx.sort((a,b) => a.t - b.t);
-            let totalBytes = idx.reduce((s,e) => s + (e.s||0), 0) + sizeBytes;
-            while ((totalBytes > _PC_MAX_BYTES || idx.length >= _PC_MAX_ENTRIES) && idx.length > 0) {
-                const oldest = idx.shift();
-                try { localStorage.removeItem(_PC_PREFIX + oldest.k); } catch(e) {}
-                totalBytes -= (oldest.s || 0);
+    // Mode-aware track color (same contrast rule as the mini cards / old visor track):
+    // shoe color if it contrasts with the basemap, else crimson (light) / yellow (dark).
+    function _mrTrackColor(shoeColor) {
+        var isDark = document.body.classList.contains('dark-mode');
+        var col = isDark ? '#FFEA00' : '#8f1a28';
+        if (shoeColor && typeof shoeColor === 'string') {
+            var h = shoeColor.trim().replace('#','');
+            if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+            if (h.length === 6 && !/[^0-9a-f]/i.test(h)) {
+                var r=parseInt(h.slice(0,2),16)/255, g=parseInt(h.slice(2,4),16)/255, b=parseInt(h.slice(4,6),16)/255;
+                var lum=0.2126*r+0.7152*g+0.0722*b;
+                if (isDark ? (lum>0.18) : (lum<0.78)) col = '#'+h;
             }
-            // Store the new entry
-            localStorage.setItem(_PC_PREFIX + cacheKey, dataUrl);
-            idx.push({ k: cacheKey, t: Date.now(), s: sizeBytes });
-            _pcWriteIndex(idx);
-        } catch(e) {
-            // QuotaExceeded, tainted canvas, or anything else → silently skip.
-            // The in-memory cache still works; we just don't persist this image.
         }
-    }
-    // (Optional, exposed for debugging) — clear all persistent cache.
-    window._clearMapboxPersistentCache = function() {
-        try {
-            const idx = _pcReadIndex();
-            idx.forEach(e => { try { localStorage.removeItem(_PC_PREFIX + e.k); } catch(_) {} });
-            localStorage.removeItem(_PC_INDEX_KEY);
-            return idx.length;
-        } catch(e) { return -1; }
-    };
-
-    // Adds the required "© Mapbox · OSM" attribution as a sibling of the canvas,
-    // bottom-right of the canvas's parent. Idempotent (uses data-attr marker).
-    // Only call this AFTER a Mapbox image successfully loads — never on fallback.
-    function _ensureMapboxAttribution(canvas) {
-        if (!canvas) return;
-        const parent = canvas.parentElement;
-        if (!parent) return;
-        // Avoid duplicates on repaint / cache hit
-        if (parent.querySelector(':scope > [data-mapbox-attr]')) return;
-        // Parent must be positioned for our absolute child to anchor correctly.
-        // mapWrap is already position:relative; clubs cards' canvas parents are too,
-        // but be defensive.
-        const cs = getComputedStyle(parent);
-        if (cs.position === 'static') parent.style.position = 'relative';
-
-        const attr = document.createElement('div');
-        attr.setAttribute('data-mapbox-attr', '1');
-        attr.style.cssText = [
-            'position:absolute',
-            'right:4px',
-            'bottom:3px',
-            'font:600 8.5px/1 var(--f),system-ui,sans-serif',
-            'color:#fff',
-            'text-shadow:0 0 3px rgba(0,0,0,.9),0 1px 2px rgba(0,0,0,.7)',
-            'pointer-events:auto',
-            'opacity:.85',
-            'letter-spacing:.2px',
-            'user-select:none',
-            'z-index:2'
-        ].join(';');
-        attr.innerHTML = '© <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;pointer-events:auto;">Mapbox</a> · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;pointer-events:auto;">OSM</a>';
-        parent.appendChild(attr);
+        return col;
     }
 
-    function drawTrackWithMapbox(canvas, records, shoeColor, cacheKey) {
-        if (!canvas || !records || records.length < 2) {
-            // Nothing we can do — fall back if canvas at least exists
-            if (canvas && typeof drawTrack === 'function') drawTrack(canvas, records, shoeColor);
-            return;
+    // Build GeoJSON line + start/end + bounds from records. Returns null if <2 GPS points.
+    function _mrTrackData(records) {
+        if (!records || records.length < 2) return null;
+        var pts = records.filter(function(r){ return Math.abs(r.lat)>0.01 || Math.abs(r.lon)>0.01; });
+        if (pts.length < 2) return null;
+        var line = [], mnx=180, mny=90, mxx=-180, mxy=-90;
+        for (var i=0;i<pts.length;i++){
+            var lon=pts[i].lon, lat=pts[i].lat;
+            line.push([lon,lat]);
+            if(lon<mnx)mnx=lon; if(lon>mxx)mxx=lon; if(lat<mny)mny=lat; if(lat>mxy)mxy=lat;
         }
-        const ctx = canvas.getContext('2d');
-        const W = canvas.width, H = canvas.height;
-        if (W < 2 || H < 2) return;
+        return { line:line, start:line[0], end:line[line.length-1], bounds:[[mnx,mny],[mxx,mxy]] };
+    }
 
-        const pts = records.filter(r => Math.abs(r.lat) > 0.01 || Math.abs(r.lon) > 0.01);
-        if (pts.length < 2) {
-            // No GPS — fallback (dark bg + nothing, same as drawTrack)
-            drawTrack(canvas, records, shoeColor);
-            return;
-        }
+    // Add the track (casing + solid line + end glow + dots) to a loaded map.
+    function _mrAddTrackLayers(map, td, shoeColor) {
+        var col = _mrTrackColor(shoeColor);
+        map.addSource('mr-trk', { type:'geojson', data:{ type:'Feature', geometry:{ type:'LineString', coordinates:td.line } } });
+        map.addSource('mr-ends', { type:'geojson', data:{ type:'FeatureCollection', features:[
+            { type:'Feature', properties:{k:'s'}, geometry:{type:'Point',coordinates:td.start} },
+            { type:'Feature', properties:{k:'e'}, geometry:{type:'Point',coordinates:td.end} }
+        ]}});
+        map.addLayer({ id:'mr-trk-casing', type:'line', source:'mr-trk',
+            layout:{'line-cap':'round','line-join':'round'},
+            paint:{'line-color':'rgba(0,0,0,0.22)','line-width':6.5} });
+        map.addLayer({ id:'mr-trk-main', type:'line', source:'mr-trk',
+            layout:{'line-cap':'round','line-join':'round'},
+            paint:{'line-color':col,'line-width':5} });
+        map.addLayer({ id:'mr-end-glow', type:'circle', source:'mr-ends',
+            paint:{'circle-radius':11,'circle-blur':0.7,'circle-opacity':0.32,
+                'circle-color':['match',['get','k'],'s','#4CAF50','e','#FF3B30','#000']} });
+        map.addLayer({ id:'mr-end-dot', type:'circle', source:'mr-ends',
+            paint:{'circle-radius':6.5,'circle-stroke-width':2.5,'circle-stroke-color':'#ffffff',
+                'circle-color':['match',['get','k'],'s','#4CAF50','e','#FF3B30','#000']} });
+    }
 
-        const lats = pts.map(r => r.lat), lons = pts.map(r => r.lon);
-        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-        const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-
-        // Add padding (~9% on each side) so the route doesn't touch the edges.
-        // We expand the bbox we send to Mapbox, then the route naturally sits inside.
-        const latRange = (maxLat - minLat) || 0.0005;
-        const lonRange = (maxLon - minLon) || 0.0005;
-        const padLat = latRange * 0.18;
-        const padLon = lonRange * 0.18;
-        let bbMinLon = minLon - padLon;
-        let bbMaxLon = maxLon + padLon;
-        let bbMinLat = minLat - padLat;
-        let bbMaxLat = maxLat + padLat;
-
-        // Mapbox requires the bbox aspect ratio to roughly match the image aspect ratio,
-        // otherwise it distorts or auto-fits. Adjust the larger axis to match canvas ratio.
-        const latCF = Math.cos(((bbMinLat + bbMaxLat) / 2) * Math.PI / 180);
-        const canvasAR = W / H;
-        // Geographic width in "merc-like" degrees = lon range * cos(lat); height = lat range
-        const geoW = (bbMaxLon - bbMinLon) * latCF;
-        const geoH = (bbMaxLat - bbMinLat);
-        const geoAR = geoW / geoH;
-        if (geoAR < canvasAR) {
-            // bbox is too tall — widen lon range
-            const targetGeoW = geoH * canvasAR;
-            const extraLon = (targetGeoW - geoW) / latCF / 2;
-            bbMinLon -= extraLon;
-            bbMaxLon += extraLon;
-        } else if (geoAR > canvasAR) {
-            // bbox is too wide — heighten lat range
-            const targetGeoH = geoW / canvasAR;
-            const extraLat = (targetGeoH - geoH) / 2;
-            bbMinLat -= extraLat;
-            bbMaxLat += extraLat;
-        }
-
-        // Clamp to valid ranges (just in case)
-        bbMinLat = Math.max(-85, bbMinLat);
-        bbMaxLat = Math.min(85, bbMaxLat);
-        bbMinLon = Math.max(-180, bbMinLon);
-        bbMaxLon = Math.min(180, bbMaxLon);
-
-        // Build Mapbox Static API URL.
-        // Cap pixel size: Mapbox max is 1280x1280 @1x, but @2x doubles. We use @2x for retina,
-        // capped at 1280 to stay within free-tier limits.
-        const maxDim = 1280;
-        let reqW = Math.min(W, maxDim), reqH = Math.min(H, maxDim);
-        // Keep canvas aspect ratio
-        if (W > maxDim || H > maxDim) {
-            const r = W / H;
-            if (W >= H) { reqW = maxDim; reqH = Math.round(maxDim / r); }
-            else { reqH = maxDim; reqW = Math.round(maxDim * r); }
-        }
-        const bbox = [bbMinLon, bbMinLat, bbMaxLon, bbMaxLat].map(n => n.toFixed(6)).join(',');
-        const url = 'https://api.mapbox.com/styles/v1/mapbox/' + _MAPBOX_STYLE +
-                    '/static/[' + bbox + ']/' + reqW + 'x' + reqH + '@2x' +
-                    '?access_token=' + _MAPBOX_TOKEN + '&attribution=false&logo=false';
-
-        // Projection: with a Mapbox image sized exactly to our bbox aspect ratio,
-        // we can use linear interpolation from (lon,lat) → (x,y) on the canvas.
-        // For run-distance scales (a few km) the Mercator-vs-linear-lat error is < 1px.
-        const tx = lon => ((lon - bbMinLon) / (bbMaxLon - bbMinLon)) * W;
-        const ty = lat => H - ((lat - bbMinLat) / (bbMaxLat - bbMinLat)) * H;
-
-        function drawOverlay(bgImg) {
-            ctx.clearRect(0, 0, W, H);
-
-            if (bgImg) {
-                // Mapbox image already has the correct aspect ratio (we adjusted bbox),
-                // so we can draw it stretched to the canvas without ugly distortion.
-                ctx.drawImage(bgImg, 0, 0, W, H);
-                // Very light dark overlay for contrast (lighter than satellite watermark version)
-                ctx.fillStyle = 'rgba(0,10,20,0.18)';
-                ctx.fillRect(0, 0, W, H);
-                // Mark canvas as "has real map" so callers (e.g. click-to-zoom) can detect it
-                try { canvas.dataset.mapboxOk = '1'; } catch(e) {}
+    // Build a run map into `container`. opts.interactive controls gestures + controls.
+    // Returns a lightweight handle { remove() } that tears down the GL context (safe to
+    // call even before the async lib/map is ready). If there is no GPS, or the lib fails
+    // to load, opts.onFail() is invoked so the caller can paint a flat drawTrack fallback.
+    function _mrBuildRunMap(container, records, shoeColor, opts) {
+        opts = opts || {};
+        var td = _mrTrackData(records);
+        if (!container || !td) { if (opts.onFail) opts.onFail(); return { remove:function(){} }; }
+        var ref = { map:null, dead:false };
+        _mrEnsureMapLibre().then(function(maplibregl){
+            if (ref.dead || !container.isConnected) return;
+            var pad = opts.interactive ? 56 : 34;
+            var map = new maplibregl.Map({
+                container: container,
+                style: _MR_MAP_STYLE,
+                interactive: !!opts.interactive,
+                attributionControl: false,
+                dragRotate: !!opts.interactive,
+                pitchWithRotate: !!opts.interactive,
+                fadeDuration: 120
+            });
+            ref.map = map;
+            if (opts.interactive) {
+                map.addControl(new maplibregl.NavigationControl({ visualizePitch:true }), 'top-left');
+                map.addControl(new maplibregl.AttributionControl({ compact:true }), 'bottom-right');
             } else {
-                // Fallback bg (same as drawTrack's no-image branch)
-                ctx.fillStyle = '#0d1520';
-                ctx.fillRect(0, 0, W, H);
-                try { delete canvas.dataset.mapboxOk; } catch(e) {}
+                map.addControl(new maplibregl.AttributionControl({ compact:true }), 'top-right');
             }
-
-            // Trace the path
-            ctx.beginPath();
-            ctx.moveTo(tx(pts[0].lon), ty(pts[0].lat));
-            for (let i = 1; i < pts.length; i++) {
-                ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
-            }
-
-            // [Visor track] Plano y grueso, SIN halo ni neón. Color sólido
-            // modo-aware = mismo default que las mini cards: color de zapatilla
-            // si contrasta, si no crimson (light) / amarillo (dark). Finísimo
-            // borde oscuro solo para legibilidad sobre río azul o zona verde.
-            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-            ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-            var _isDarkTrk = document.body.classList.contains('dark-mode');
-            var _trkCol = _isDarkTrk ? '#FFEA00' : '#8f1a28';
-            (function(){
-                if (!shoeColor || typeof shoeColor !== 'string') return;
-                var h = shoeColor.trim().replace('#','');
-                if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
-                if (h.length !== 6 || /[^0-9a-f]/i.test(h)) return;
-                var r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
-                var lum = 0.2126*r + 0.7152*g + 0.0722*b;
-                if (_isDarkTrk ? (lum > 0.18) : (lum < 0.78)) _trkCol = shoeColor;
-            })();
-            ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-            ctx.lineWidth = 6.5;
-            ctx.stroke();
-            ctx.strokeStyle = _trkCol;
-            ctx.lineWidth = 5;
-            ctx.stroke();
-
-            // Start / end dots
-            const r = Math.max(3, Math.round(Math.min(W, H) * 0.018));
-            // Start (green)
-            ctx.beginPath();
-            ctx.arc(tx(pts[0].lon), ty(pts[0].lat), r, 0, Math.PI * 2);
-            ctx.fillStyle = '#4CAF50';
-            ctx.shadowColor = 'rgba(76,175,80,0.85)'; ctx.shadowBlur = 6; ctx.fill();
-            ctx.shadowBlur = 0;
-            // End (red)
-            ctx.beginPath();
-            ctx.arc(tx(pts[pts.length - 1].lon), ty(pts[pts.length - 1].lat), r, 0, Math.PI * 2);
-            ctx.fillStyle = '#FF3B30';
-            ctx.shadowColor = 'rgba(255,59,48,0.85)'; ctx.shadowBlur = 6; ctx.fill();
-            ctx.shadowBlur = 0;
-        }
-
-        // 1. Paint a quick fallback IMMEDIATELY so the user never sees a blank canvas
-        //    while the Mapbox image loads. This is the same dark-bg drawing.
-        drawOverlay(null);
-
-        // 2. Try to load the Mapbox image. On success, repaint with map background.
-        //    On failure (offline / 4xx / timeout), the fallback we just painted stays.
-        const cacheK = cacheKey || (bbox + '|' + reqW + 'x' + reqH);
-        if (_mapboxImgCache[cacheK] && _mapboxImgCache[cacheK].complete && _mapboxImgCache[cacheK].naturalWidth > 0) {
-            drawOverlay(_mapboxImgCache[cacheK]);
-            _ensureMapboxAttribution(canvas);
-            return;
-        }
-
-        // 2b. Persistent cache check (only if enabled). Loads dataURL from localStorage,
-        //     decodes it into an Image, paints, and promotes to in-memory cache.
-        //     If disabled, _pcGet returns null and we skip straight to the network.
-        const persistentDataUrl = _pcGet(cacheK);
-        if (persistentDataUrl) {
-            const cachedImg = new Image();
-            cachedImg.onload = () => {
-                if (canvas.isConnected) {
-                    _mapboxImgCache[cacheK] = cachedImg;
-                    drawOverlay(cachedImg);
-                    _ensureMapboxAttribution(canvas);
-                }
-            };
-            cachedImg.onerror = () => {
-                // Stored dataURL corrupted? Fall back to network.
-                _doNetworkLoad();
-            };
-            cachedImg.src = persistentDataUrl;
-            return;
-        }
-
-        // 3. Network load (last resort).
-        _doNetworkLoad();
-
-        function _doNetworkLoad() {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            let done = false;
-            const finish = (ok) => {
-                if (done) return; done = true;
-                if (ok) {
-                    _mapboxImgCache[cacheK] = img;
-                    // Persist to localStorage for future sessions (no-op if flag is off)
-                    _pcStore(cacheK, img);
-                    // Only repaint if canvas is still in the DOM (user may have closed detail)
-                    if (canvas.isConnected) {
-                        drawOverlay(img);
-                        _ensureMapboxAttribution(canvas);
-                    }
-                }
-                // On fail: fallback is already painted, do nothing.
-            };
-            img.onload = () => finish(true);
-            img.onerror = () => finish(false);
-            // 8s timeout — Mapbox usually responds in <1s, but if there's no connection
-            // we don't want to leave the loading state hanging forever.
-            setTimeout(() => finish(false), 8000);
-            img.src = url;
-        }
+            map.on('load', function(){
+                if (ref.dead) { try{ map.remove(); }catch(_){}; return; }
+                try { _mrAddTrackLayers(map, td, shoeColor); } catch(_){}
+                try { map.fitBounds(td.bounds, { padding:pad, duration:0, maxZoom:16 }); } catch(_){}
+                setTimeout(function(){ try{ if(!ref.dead) map.resize(); }catch(_){} }, 60);
+            });
+            map.on('error', function(){ /* swallow transient tile errors */ });
+        }).catch(function(){ if (opts.onFail) opts.onFail(); });
+        return { remove:function(){ ref.dead = true; if (ref.map){ try{ ref.map.remove(); }catch(_){}; ref.map=null; } } };
     }
 
-    // ── MAP ZOOM MODAL ───────────────────────────────────────
-    // Static fullscreen map. Reuses drawTrackWithMapbox at a larger canvas size,
-    // which causes Mapbox to return a higher-resolution image (more detail).
-    // No pan/zoom — that would need Mapbox GL JS (separate quota + ~230KB).
+    // One-time cleanup of the legacy Mapbox static-image localStorage cache (mb_img:* / mb_idx).
+    // The visor no longer uses it; freeing it gives the rest of the app back ~2MB of headroom.
+    (function _mrPurgeLegacyMapCache(){
+        try {
+            var rm = [];
+            for (var i=0;i<localStorage.length;i++){
+                var k = localStorage.key(i);
+                if (k === 'mb_idx' || (k && k.indexOf('mb_img:')===0)) rm.push(k);
+            }
+            rm.forEach(function(k){ try{ localStorage.removeItem(k); }catch(_){} });
+        } catch(_){}
+    })();
+
+    // ── MAP ZOOM MODAL — interactive MapLibre (pan / zoom / rotate / 3D buildings) ──────
     function openMapZoomModal(act) {
         if (!act || !act.records || act.records.length < 2) return;
-        // Don't stack modals
-        const existing = document.getElementById('map-zoom-modal');
+        var existing = document.getElementById('map-zoom-modal');
         if (existing) existing.remove();
 
-        const overlay = document.createElement('div');
+        var overlay = document.createElement('div');
         overlay.id = 'map-zoom-modal';
         overlay.style.cssText = [
-            'position:fixed',
-            'inset:0',
-            'z-index:99999',
-            'background:rgba(5,10,18,.96)',
-            'display:flex',
-            'align-items:center',
-            'justify-content:center',
+            'position:fixed','inset:0','z-index:99999','background:rgba(5,10,18,.96)',
+            'display:flex','align-items:center','justify-content:center',
             'padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)',
             'animation:mzmFade .18s ease-out'
         ].join(';');
 
-        // Inject keyframes once
         if (!document.getElementById('map-zoom-modal-style')) {
-            const st = document.createElement('style');
-            st.id = 'map-zoom-modal-style';
-            st.textContent = '@keyframes mzmFade{from{opacity:0}to{opacity:1}}';
-            document.head.appendChild(st);
+            var kst = document.createElement('style');
+            kst.id = 'map-zoom-modal-style';
+            kst.textContent = '@keyframes mzmFade{from{opacity:0}to{opacity:1}}';
+            document.head.appendChild(kst);
         }
 
-        // Inner wrap (relative so attribution anchors here, not to the overlay)
-        const inner = document.createElement('div');
-        inner.style.cssText = [
-            'position:relative',
-            'width:100%',
-            'height:100%',
-            'max-width:100vw',
-            'max-height:100vh',
-            'display:flex',
-            'align-items:center',
-            'justify-content:center',
-            'overflow:hidden'
-        ].join(';');
+        var inner = document.createElement('div');
+        inner.style.cssText = ['position:relative','width:100%','height:100%','display:flex','align-items:center','justify-content:center','overflow:hidden'].join(';');
 
-        // Canvas
-        const cvWrap = document.createElement('div');
-        // Aspect ratio: prefer 4:3 on landscape, 3:4 on portrait, capped to viewport
-        const vw = Math.min(window.innerWidth, document.documentElement.clientWidth);
-        const vh = Math.min(window.innerHeight, document.documentElement.clientHeight);
-        // Use ~92% of viewport, leaving room for close button + attribution
-        const pad = 16;
-        let cvW = vw - pad * 2;
-        let cvH = vh - pad * 2 - 40; // room for top close button
-        // Mapbox caps the requested image at 1280px per side; canvas can be larger but
-        // the actual map detail is bound by that. The CSS scale is what the user sees.
-        cvWrap.style.cssText = [
-            'position:relative',
-            'width:' + cvW + 'px',
-            'height:' + cvH + 'px',
-            'background:#0d1520',
-            'border-radius:14px',
-            'overflow:hidden',
-            'box-shadow:0 20px 60px rgba(0,0,0,.6)'
-        ].join(';');
+        var vw = Math.min(window.innerWidth, document.documentElement.clientWidth);
+        var vh = Math.min(window.innerHeight, document.documentElement.clientHeight);
+        var pad = 14;
+        var cvW = vw - pad*2, cvH = vh - pad*2 - 24;
+        var card = document.createElement('div');
+        card.style.cssText = ['position:relative','width:'+cvW+'px','height:'+cvH+'px','background:#0d1520','border-radius:14px','overflow:hidden','box-shadow:0 20px 60px rgba(0,0,0,.6)'].join(';');
+        var mapRoot = document.createElement('div');
+        mapRoot.style.cssText = 'position:absolute;inset:0;';
+        card.appendChild(mapRoot);
 
-        const cv = document.createElement('canvas');
-        // Pixel size — keep around the canvas display size for crispness, but cap to avoid
-        // requesting more than Mapbox can return. drawTrackWithMapbox already caps at 1280.
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        cv.width  = Math.round(cvW * dpr);
-        cv.height = Math.round(cvH * dpr);
-        cv.style.cssText = 'width:100%;height:100%;display:block;';
-        cvWrap.appendChild(cv);
-
-        // Close button (top-right of inner, not cvWrap, so it sits over the safe area)
-        const closeBtn = document.createElement('button');
-        closeBtn.setAttribute('aria-label', 'Cerrar mapa');
+        var closeBtn = document.createElement('button');
+        closeBtn.setAttribute('aria-label','Cerrar mapa');
         closeBtn.textContent = '✕';
-        closeBtn.style.cssText = [
-            'position:absolute',
-            'top:max(12px,env(safe-area-inset-top))',
-            'right:14px',
-            'width:38px',
-            'height:38px',
-            'border-radius:50%',
-            'border:none',
-            'background:rgba(20,28,40,.92)',
-            'color:#fff',
-            'font-size:18px',
-            'font-weight:700',
-            'cursor:pointer',
-            'display:flex',
-            'align-items:center',
-            'justify-content:center',
-            'box-shadow:0 4px 14px rgba(0,0,0,.5)',
-            'z-index:3',
-            'font-family:var(--f),system-ui,sans-serif',
-            '-webkit-tap-highlight-color:transparent'
-        ].join(';');
+        closeBtn.style.cssText = ['position:absolute','top:max(12px,env(safe-area-inset-top))','right:14px','width:38px','height:38px','border-radius:50%','border:none','background:rgba(20,28,40,.92)','color:#fff','font-size:18px','font-weight:700','cursor:pointer','display:flex','align-items:center','justify-content:center','box-shadow:0 4px 14px rgba(0,0,0,.5)','z-index:3','font-family:var(--f),system-ui,sans-serif','-webkit-tap-highlight-color:transparent'].join(';');
 
-        inner.appendChild(cvWrap);
+        inner.appendChild(card);
         inner.appendChild(closeBtn);
         overlay.appendChild(inner);
         document.body.appendChild(overlay);
 
-        // Close handlers
-        const close = () => {
+        var mapHandle = null;
+        var onKey = function(e){ if (e.key === 'Escape') close(); };
+        function close(){
+            if (mapHandle) { try{ mapHandle.remove(); }catch(_){}; mapHandle=null; }   // teardown GL context
             overlay.style.animation = 'mzmFade .14s ease-out reverse';
-            setTimeout(() => { overlay.remove(); document.removeEventListener('keydown', onKey); }, 130);
-        };
-        const onKey = (e) => { if (e.key === 'Escape') close(); };
-        closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
-        overlay.addEventListener('click', (e) => {
-            // Close when clicking the dark background, not the canvas / attribution / button
-            if (e.target === overlay || e.target === inner) close();
-        });
+            setTimeout(function(){ if(overlay.parentNode) overlay.remove(); document.removeEventListener('keydown', onKey); }, 130);
+        }
+        closeBtn.addEventListener('click', function(e){ e.stopPropagation(); close(); });
+        overlay.addEventListener('click', function(e){ if (e.target === overlay || e.target === inner) close(); });
         document.addEventListener('keydown', onKey);
 
-        // Draw — use a different cacheKey so the bigger image is cached separately
-        // from the thumbnail (different bbox aspect ratio + different size).
-        const cacheKey = 'zoom-' + (act.id || act.dateStr || Date.now());
-        try {
-            drawTrackWithMapbox(cv, act.records, act.shoeColor || null, cacheKey);
-        } catch(err) {
-            console.error('[mapZoomModal] draw error:', err);
-        }
+        // Interactive map. On MapLibre load failure → flat static track canvas fallback.
+        mapHandle = _mrBuildRunMap(mapRoot, act.records, act.shoeColor || null, {
+            interactive: true,
+            onFail: function(){
+                try {
+                    var cv = document.createElement('canvas');
+                    var dpr = Math.min(window.devicePixelRatio||1, 2);
+                    cv.width = Math.round(cvW*dpr); cv.height = Math.round(cvH*dpr);
+                    cv.style.cssText = 'width:100%;height:100%;display:block;';
+                    mapRoot.appendChild(cv);
+                    if (typeof drawTrack === 'function') drawTrack(cv, act.records, act.shoeColor || null);
+                } catch(_){}
+            }
+        });
     }
 
     // ── OPEN ACTIVITY EDIT ─────────────────────────────────────
@@ -26399,6 +26148,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Pasado como 3er argumento a cada addEventListener del visor. Pasar undefined
         // es equivalente a omitir el argumento (defaults seguros: bubbling phase).
         var _detSigOpts = _detAbortCtrl ? { signal: _detAbortCtrl.signal } : undefined;
+        // [v2.13.0] Handle del mapa MapLibre inline de la card 1. Se libera en
+        // _detCleanup() al cerrar el visor (destruye el contexto WebGL → sin leaks).
+        var _detInlineMap = null;
 
         // Header
         // [FASE 5.6.1] Para bulk, fallback del título es '—' (no getTypeLabel)
@@ -26453,6 +26205,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             try {
                 if (_detAbortCtrl && !_detAbortCtrl.signal.aborted) _detAbortCtrl.abort();
             } catch(_){}
+            try { if (_detInlineMap) { _detInlineMap.remove(); _detInlineMap = null; } } catch(_){}
             try {
                 ov.querySelectorAll('canvas').forEach(function(c){
                     try { var ctx = c.getContext('2d'); if (ctx) ctx.clearRect(0,0,c.width,c.height); } catch(_){}
@@ -26511,14 +26264,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // GPS map — anchura completa
         const mapWrap = document.createElement('div');
         mapWrap.style.cssText = 'position:relative;overflow:hidden;background:var(--det-bg);flex:1;';
-        const mc = document.createElement('canvas');
-        mc.id = 'det-map-canvas'; mc.style.cssText = 'width:100%;height:100%;display:block;';
+        const mc = document.createElement('div');
+        mc.id = 'det-map-root'; mc.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
         mapWrap.appendChild(mc);
-        // [FASE 5.7.4-c] Overlay oscurecedor sutil encima del mapa Mapbox real
-        // para fundirlo con el #000 de la card sin tocar el render del propio
-        // canvas (mantiene satélite/zoom/track nítidos). 18% de oscurecimiento.
-        mapWrap.insertAdjacentHTML('beforeend',
-            '<div style="position:absolute;inset:0;background:var(--det-map-tint);pointer-events:none;"></div>');
+        // [v2.13.0] Sin overlay oscurecedor: el mapa MapLibre "Bright" ocupa todo el
+        // wrap y va crudo (sin tinte) en light y en dark (decisión 3A). El río/verde
+        // los resuelve el casing oscuro del propio track.
         // [FASE 5.7.4-c] Pill blanca para la distancia (coherente con biblioteca
         // y con la pill de nombre de zapatillas).
         mapWrap.insertAdjacentHTML('beforeend',
@@ -27266,25 +27017,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Draw charts after DOM ready ───────────────────────────
         requestAnimationFrame(() => {
-            // Map
-            const mapC = document.getElementById('det-map-canvas');
-            if (mapC) {
-                mapC.width=mapWrap.offsetWidth; mapC.height=mapWrap.offsetHeight;
-                drawTrackWithMapbox(mapC, act.records, act.shoeColor||null, act.id||act.dateStr);
-                // [FASE 5.5.3] Si la activity es indoor sin polyline, no tiene
-                // sentido el cursor zoom-in (no hay mapa que ampliar). Saltamos
-                // el bind y dejamos cursor default para coherencia visual.
+            // Map — MapLibre "Bright" live map (inline static → tap opens interactive modal).
+            const mapRoot = document.getElementById('det-map-root');
+            if (mapRoot) {
+                // [FASE 5.5.3] Indoor sin polyline → placeholder plano en canvas (sin WebGL,
+                // sin tap-to-zoom, cursor default por coherencia).
                 var _isIndoor = (act._hasPolyline === false) || !act.records || act.records.length < 2;
-                // Click-to-zoom: only when real map is loaded (avoid opening on plain dark fallback)
-                if (!mapWrap.dataset.zoomBound && !_isIndoor) {
-                    mapWrap.dataset.zoomBound = '1';
-                    mapWrap.style.cursor = 'zoom-in';
-                    mapWrap.addEventListener('click', (ev) => {
-                        // Don't intercept clicks on attribution links
-                        if (ev.target && ev.target.closest('[data-mapbox-attr] a')) return;
-                        if (mapC.dataset.mapboxOk !== '1') return; // no real map yet → ignore
-                        openMapZoomModal(act);
-                    }, _detSigOpts);
+                var _mapFlatFallback = function(){
+                    try {
+                        var _fc = document.createElement('canvas');
+                        _fc.style.cssText = 'width:100%;height:100%;display:block;';
+                        _fc.width = mapWrap.offsetWidth || 300; _fc.height = mapWrap.offsetHeight || 220;
+                        mapRoot.appendChild(_fc);
+                        if (typeof drawTrack === 'function') drawTrack(_fc, act.records, act.shoeColor||null);
+                    } catch(_){}
+                };
+                if (_isIndoor) {
+                    _mapFlatFallback();
+                } else {
+                    // Live inline Bright map. Gestos OFF → el swipe del carrusel queda intacto.
+                    // Si falla la carga de la lib (offline), cae a drawTrack plano en el mismo div.
+                    _detInlineMap = _mrBuildRunMap(mapRoot, act.records, act.shoeColor||null, {
+                        interactive: false,
+                        onFail: _mapFlatFallback
+                    });
+                    // Tap en el mapa → modal interactivo (pan/zoom/rotación/3D).
+                    if (!mapWrap.dataset.zoomBound) {
+                        mapWrap.dataset.zoomBound = '1';
+                        mapWrap.style.cursor = 'zoom-in';
+                        mapWrap.addEventListener('click', (ev) => {
+                            if (ev.target && ev.target.closest('.maplibregl-ctrl-attrib a')) return;
+                            openMapZoomModal(act);
+                        }, _detSigOpts);
+                    }
                 }
             }
 
@@ -41572,7 +41337,6 @@ window.switchManualTab = function(id) {
     });
 };
 window.drawTrack = drawTrack;
-window.drawTrackWithMapbox = drawTrackWithMapbox;
 
 /* ── Submuestreo uniforme de records ───────────────────────────────
    Reduce un array de puntos GPS a `max` elementos preservando la
@@ -41595,116 +41359,6 @@ function _downsampleRecords(records, max) {
     return out;
 }
 window._downsampleRecords = _downsampleRecords;
-
-// Smart feed/profile track: reuses Mapbox image from persistent cache if available
-// (saved by drawTrackWithMapbox when the user opens the detail view).
-// If no cache → falls back to drawTrack (decorated, no network).
-// IMPORTANT: never triggers a Mapbox request. Pure cache lookup or local draw.
-function drawTrackFromCacheOrFallback(canvas, records, shoeColor, cacheKey) {
-    if (!canvas || !records || records.length < 2) return;
-    // 1. Try in-memory cache first (instant)
-    if (cacheKey && _mapboxImgCache[cacheKey] &&
-        _mapboxImgCache[cacheKey].complete &&
-        _mapboxImgCache[cacheKey].naturalWidth > 0) {
-        _paintCachedMap(canvas, records, shoeColor, _mapboxImgCache[cacheKey]);
-        return;
-    }
-    // 2. Try persistent (localStorage) cache
-    const dataUrl = cacheKey ? _pcGet(cacheKey) : null;
-    if (dataUrl) {
-        const cachedImg = new Image();
-        cachedImg.onload = () => {
-            if (!canvas.isConnected) return;
-            _mapboxImgCache[cacheKey] = cachedImg; // promote to mem cache
-            _paintCachedMap(canvas, records, shoeColor, cachedImg);
-        };
-        cachedImg.onerror = () => {
-            // Corrupt? Fall back.
-            drawTrack(canvas, records, shoeColor);
-        };
-        cachedImg.src = dataUrl;
-        // While loading, paint the fallback so user sees something immediately.
-        drawTrack(canvas, records, shoeColor);
-        return;
-    }
-    // 3. No cache → decorated fallback
-    drawTrack(canvas, records, shoeColor);
-}
-
-// Helper: paints a cached Mapbox image as background and overlays the neon track.
-// Mirrors drawTrackWithMapbox's logic but works with any pre-loaded image.
-function _paintCachedMap(canvas, records, shoeColor, bgImg) {
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-    const pts = records.filter(r => Math.abs(r.lat) > 0.01 || Math.abs(r.lon) > 0.01);
-    if (pts.length < 2) { drawTrack(canvas, records, shoeColor); return; }
-
-    // Cover-fill the cached image
-    const iAR = bgImg.naturalWidth / bgImg.naturalHeight;
-    const cAR = W / H;
-    let sw, sh, sx, sy;
-    if (iAR > cAR) { sh = bgImg.naturalHeight; sw = sh * cAR; sx = (bgImg.naturalWidth - sw) / 2; sy = 0; }
-    else { sw = bgImg.naturalWidth; sh = sw / cAR; sx = 0; sy = (bgImg.naturalHeight - sh) / 2; }
-    ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
-    // Light contrast overlay
-    ctx.fillStyle = 'rgba(0,10,20,0.22)';
-    ctx.fillRect(0, 0, W, H);
-
-    // Project track onto canvas (same logic as drawTrack)
-    const lats = pts.map(r => r.lat), lons = pts.map(r => r.lon);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-    const pad = Math.round(Math.min(W, H) * 0.09);
-    const ranLat = maxLat - minLat || 0.0001, ranLon = maxLon - minLon || 0.0001;
-    const latCF = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
-    const sc = Math.min((W - pad * 2) / ranLon, (H - pad * 2) / (ranLat / latCF));
-    const drL = ranLon * sc, drA = (ranLat / latCF) * sc;
-    const ox = (W - pad * 2 - drL) / 2, oy = (H - pad * 2 - drA) / 2;
-    const tx = lon => pad + ox + (lon - minLon) * sc;
-    const ty = lat => H - pad - oy - ((lat - minLat) / latCF) * sc;
-
-    // Trace path
-    ctx.beginPath();
-    ctx.moveTo(tx(pts[0].lon), ty(pts[0].lat));
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(tx(pts[i].lon), ty(pts[i].lat));
-
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    // Neon glow (slightly more restrained over a real map to not overwhelm streets)
-    ctx.strokeStyle = shoeColor || '#00ffff';
-    ctx.shadowColor = shoeColor || '#00ffff';
-    ctx.shadowBlur = 12;
-    ctx.lineWidth = 3.5;
-    ctx.stroke();
-    ctx.shadowBlur = 6;
-    ctx.lineWidth = 2.4;
-    ctx.stroke();
-    // White core
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    // Start/end dots
-    const r = Math.max(2, Math.round(Math.min(W, H) * 0.028));
-    ctx.beginPath();
-    ctx.arc(tx(pts[0].lon), ty(pts[0].lat), r, 0, Math.PI * 2);
-    ctx.fillStyle = '#4CAF50';
-    ctx.shadowColor = 'rgba(76,175,80,0.8)'; ctx.shadowBlur = 4; ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(tx(pts[pts.length - 1].lon), ty(pts[pts.length - 1].lat), r, 0, Math.PI * 2);
-    ctx.fillStyle = '#FF3B30';
-    ctx.shadowColor = 'rgba(255,59,48,0.8)'; ctx.shadowBlur = 4; ctx.fill();
-    ctx.shadowBlur = 0;
-
-    // Attribution required when a real Mapbox image is shown
-    _ensureMapboxAttribution(canvas);
-}
-
-window.drawTrackFromCacheOrFallback = drawTrackFromCacheOrFallback;
 
 // ═══════════════════════════════════════════════════════════════════════
 // PASO B — DETECTOR DE RÉCORDS PERSONALES (PRs)
@@ -48689,7 +48343,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.12.0-p3';
+        window.__mrCorosVersion = 'v2.13.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
