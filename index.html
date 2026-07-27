@@ -27188,7 +27188,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (!el.dataset || el.dataset.type === undefined) fixedH += el.offsetHeight;
             });
             // Each chart gets half the remaining space
-            const chartH = Math.min(108, Math.max(80, Math.floor((c2H - fixedH) / 2) - 2));
+            const chartH = Math.max(80, Math.floor((c2H - fixedH) / 2) - 2);
 
             // [Pre-Capacitor TODO-3 · C28] Lazy init de cache memoizado para este act.
             // Hit en reaperturas: no se recrea el array .map(p=>p.v) ni el bucle de paceVals.
@@ -34343,7 +34343,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // Fallback si el color no matchea: inicial mayúscula
                         return `<span style="font-size:11px;font-weight:800;">${(b.label||'?').trim().charAt(0).toUpperCase()}</span>`;
                     };
-                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 0 12px;background:var(--bsoft);flex-direction:column;gap:0;">`;
+                    let detail = `<div class="mr-day-detail" style="display:none;padding:0 8px 8px 8px;background:transparent;flex-direction:column;gap:0;">`;
                     // [v2.7.0] Barra de perfil eliminada: su función la cumple ahora
                     // la mini-estructura de la fila colapsada.
                     // ── [v2.6.2] Raíl V3-B ──────────────────────────────────────────
@@ -34382,53 +34382,83 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         return o;
                     };
                     const _MONO = `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;`;
-                    detail += `<div>`;
-                    sess.blocks.forEach(b => {
+                    // ── [A refinada] Bloques hijos integrados (mismo fondo que el
+                    // día padre, sin mini-cards). Raíl de color + tipografía grande.
+                    // Series con reps UNIFORMES -> una sola línea con el pill Nx a la
+                    // izquierda del icono. Reps NO uniformes -> línea + desglose.
+                    const _icoBig = (b) => _iconForBlock(b).replace('width="14" height="14"', 'width="17" height="17"');
+                    const _icoRep = (b) => _iconForBlock(b).replace('width="14" height="14"', 'width="15" height="15"');
+                    const _repSig = (r) => { const p = _parseBlk(r.detail); return (r.label||'') + '|' + p.pace + '|' + p.line; };
+                    const _nTop = sess.blocks.length;
+                    sess.blocks.forEach((b, _bi) => {
                         const _grad = _gradForBlock(b.color);
-                        const _blkIcon = _iconForBlock(b);
                         const _hasReps = Array.isArray(b.reps) && b.reps.length > 0 && b.repeat > 0;
                         const _blockKm = _computeBlockKm(b);
-                        const _pct = Math.round(_blockKm/totalKmBlocks*100);
                         const _isHtml = !!b.detailHtml;
-                        const _p = _isHtml ? { pace:'', line:'' } : _parseBlk(b.detail);
-                        const _noteHtml = _isHtml ? b.detailHtml : _p.line;
-                        const _showPace = _p.pace && !_hasReps;
-                        detail += `<div style="position:relative;background:var(--card);border:1px solid var(--border);border-radius:9px;padding:5px 9px;margin-bottom:3px;">`
-                            + `<div style="display:flex;align-items:center;gap:8px;">`
-                            +   `<div style="width:22px;height:22px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_blkIcon}</div>`
-                            +   `<div style="flex:1;min-width:0;">`
-                            +     `<div style="font-size:11px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${b.label}</div>`
-                            +     (_noteHtml ? `<div style="font-size:9px;color:var(--ts);font-weight:500;line-height:1.25;">${_noteHtml}</div>` : '')
-                            +   `</div>`
-                            +   (_hasReps ? `<span style="font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#06b6d4 0%,#0891b2 100%);flex-shrink:0;letter-spacing:-.2px;box-shadow:0 1px 3px rgba(6,182,212,.35);">${b.repeat}\u00d7</span>` : '')
-                            +   (_showPace ? `<span class="mr-blk-pace" style="${_paceVars(b.color)}font-size:10px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_p.pace}</span>` : '')
-                            +   (_blockKm ? `<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:12px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_grad};box-shadow:0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.2);">${Math.round(_blockKm*10)/10} km</span>` : '')
-                            + `</div>`
-                            + (_pct>0 ? `<div style="height:2px;border-radius:2px;margin-top:4px;opacity:.9;background:${_grad};width:${_pct}%;"></div>` : '');
+                        const _isLast = _bi === _nTop - 1;
+                        const _bord = (_bi === 0 ? 'border-top:1px solid var(--border);' : '')
+                                    + (_isLast ? '' : 'border-bottom:1px solid var(--border);');
+                        let _uniform = false, _rep0 = null;
                         if (_hasReps) {
-                            detail += `<div style="margin-top:3px;">`;
-                            b.reps.forEach((r, ri) => {
+                            const _s0 = _repSig(b.reps[0]);
+                            _uniform = b.reps.every(r => _repSig(r) === _s0);
+                            _rep0 = b.reps[0];
+                        }
+
+                        if (!_hasReps || _uniform) {
+                            // ── UNA sola línea ──
+                            let _lbl, _note, _pace, _km, _badge = '';
+                            if (_hasReps) {
+                                const _rp = _parseBlk(_rep0.detail);
+                                _lbl  = b.label;
+                                _note = _rp.line;
+                                _pace = _rp.pace;
+                                _km   = (_rep0.km != null && _rep0.km !== '') ? (_rep0.km + ' km')
+                                        : (_blockKm ? (Math.round(_blockKm*10)/10 + ' km') : '');
+                                _badge = `<span style="font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;color:var(--det-tw);background:${_grad};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.18);">${b.repeat}\u00d7</span>`;
+                            } else {
+                                const _p = _isHtml ? { pace:'', line:'' } : _parseBlk(b.detail);
+                                _lbl  = b.label;
+                                _note = _isHtml ? b.detailHtml : _p.line;
+                                _pace = _p.pace;
+                                _km   = _blockKm ? (Math.round(_blockKm*10)/10 + ' km') : '';
+                            }
+                            detail += `<div style="position:relative;padding:12px 10px 12px 16px;${_bord}">`
+                                + `<div style="position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:4px;background:${_grad};"></div>`
+                                + `<div style="display:flex;align-items:center;gap:10px;">`
+                                +   _badge
+                                +   `<div style="width:30px;height:30px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.18);">${_icoBig(b)}</div>`
+                                +   `<div style="flex:1;min-width:0;">`
+                                +     `<div style="font-size:14px;font-weight:750;color:var(--tw);letter-spacing:-.2px;">${_lbl}</div>`
+                                +     (_note ? `<div style="font-size:11.5px;color:var(--ts);font-weight:500;margin-top:1px;line-height:1.3;">${_note}</div>` : '')
+                                +   `</div>`
+                                +   (_pace ? `<span class="mr-blk-pace" style="${_paceVars(b.color)}${_MONO}font-size:12.5px;font-weight:700;color:var(--tw);flex-shrink:0;">${_pace}</span>` : '')
+                                +   (_km ? `<span style="font-size:12px;font-weight:800;padding:3px 11px;border-radius:999px;color:var(--det-tw);flex-shrink:0;background:${_grad};box-shadow:0 1px 3px rgba(0,0,0,.15);">${_km}</span>` : '')
+                                + `</div>`
+                                + `</div>`;
+                        } else {
+                            // ── Reps NO uniformes: línea del bloque + desglose ──
+                            detail += `<div style="position:relative;padding:12px 10px 10px 16px;${_bord}">`
+                                + `<div style="position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:4px;background:${_grad};"></div>`
+                                + `<div style="display:flex;align-items:center;gap:10px;">`
+                                +   `<span style="font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;color:var(--det-tw);background:${_grad};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.18);">${b.repeat}\u00d7</span>`
+                                +   `<div style="width:30px;height:30px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.18);">${_icoBig(b)}</div>`
+                                +   `<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:750;color:var(--tw);letter-spacing:-.2px;">${b.label}</div></div>`
+                                + `</div>`
+                                + `<div style="margin:8px 0 2px 15px;padding-left:16px;border-left:2px dashed var(--border);">`;
+                            b.reps.forEach(r => {
                                 const _rGrad = _gradForBlock(r.color);
-                                const _rIcon = _iconForBlock(r);
-                                const _isLast = ri === b.reps.length - 1;
                                 const _rp = _parseBlk(r.detail);
-                                detail += `<div style="position:relative;">`
-                                    + `<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--card);border:1px solid var(--border);border-radius:9px;${_isLast?'':'margin-bottom:3px;'}">`
-                                    +   `<div style="width:22px;height:22px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_rIcon}</div>`
-                                    +   `<div style="flex:1;min-width:0;">`
-                                    +     `<div style="font-size:11px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${r.label||''}</div>`
-                                    +     (_rp.line ? `<div style="font-size:9px;color:var(--ts);font-weight:500;line-height:1.25;">${_rp.line}</div>` : '')
-                                    +   `</div>`
-                                    +   (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}font-size:10px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_rp.pace}</span>` : '')
-                                    +   (r.km ? `<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:12px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_rGrad};box-shadow:0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.2);">${r.km} km</span>` : '')
-                                    + `</div>`
+                                detail += `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;">`
+                                    + `<div style="width:26px;height:26px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.15);">${_icoRep(r)}</div>`
+                                    + `<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;color:var(--tw);">${r.label||''}</div>${_rp.line ? `<div style="font-size:11px;color:var(--ts);margin-top:1px;">${_rp.line}</div>` : ''}</div>`
+                                    + (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}${_MONO}font-size:12px;font-weight:700;color:var(--tw);flex-shrink:0;">${_rp.pace}</span>` : '')
+                                    + (r.km ? `<span style="font-size:11.5px;font-weight:800;padding:2px 10px;border-radius:999px;color:var(--det-tw);flex-shrink:0;background:${_rGrad};">${r.km} km</span>` : '')
                                     + `</div>`;
                             });
-                            detail += `</div>`;
+                            detail += `</div></div>`;
                         }
-                        detail += `</div>`;
                     });
-                    detail += `</div>`;
                     detail += `</div>`;
                     html += detail;
                 } else if (sess.exercises && sess.exercises.length > 0) {
@@ -48682,7 +48712,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.15.0-p1';
+        window.__mrCorosVersion = 'v2.16.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
