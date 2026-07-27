@@ -31203,9 +31203,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ═══════════════════════════════════════════════════════════════
         function _generateXlBaseWeeks(numWeeks, startDate, paces, checkedDays, vdot, lt) {
             const fcE = Math.round(lt * 0.85);
-            const days = [...checkedDays].sort((a,b) => a - b);
-            if (days.length < 3) return [];
-            const useDays = days.slice(0, 5); // hasta 5 sesiones/semana
+            // ── [v2.8.0] Reparto de días · fix ──────────────────────────────
+            // getDay() devuelve 0 para el domingo, así que el sort numérico plano
+            // lo colocaba como PRIMER día de la semana y desplazaba todo el
+            // reparto por índice. Con L·M·X·V·D el array quedaba [0,1,2,3,5] y el
+            // long run (siempre la última sesión) acababa en VIERNES.
+            // Ahora: semana empezando en lunes + long run anclado al fin de
+            // semana, igual que ya hace buildWeekSessions en el motor de maratón.
+            const _wOrd = (d) => (d === 0 ? 7 : d);
+            const _daysMonFirst = [...checkedDays].sort((a,b) => _wOrd(a) - _wOrd(b));
+            if (_daysMonFirst.length < 3) return [];
+            const _longDay = _daysMonFirst.includes(6) ? 6
+                           : (_daysMonFirst.includes(0) ? 0
+                           : _daysMonFirst[_daysMonFirst.length - 1]);
+            const _restDays = _daysMonFirst.filter(d => d !== _longDay);
+            const days = _restDays.concat([_longDay]);
+            // El long run debe sobrevivir al recorte a 5 sesiones: se recortan
+            // los días intermedios, nunca el del long.
+            const useDays = _restDays.slice(0, 4).concat([_longDay]);
             const DAY_LBLS = ['D','L','M','X','J','V','S'];
             const kmR = (x) => Math.round((x || 0) * 10) / 10;
             const kmMin = (min, paceSec) => Math.max(0.5, Math.round(min * 60 / paceSec * 10) / 10);
@@ -34072,7 +34087,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     sx.blocks.forEach(b => {
                         if (Array.isArray(b.reps) && b.reps.length && b.repeat > 0) {
                             for (let i = 0; i < b.repeat; i++) {
-                                b.reps.forEach(r => segs.push({ km:(r.km||0), det:r.detail, rec:_msIsRec(r, true), color:r.color }));
+                                b.reps.forEach(r => segs.push({ km:(r.km||0), det:r.detail, lab:r.label, rec:_msIsRec(r, true), color:r.color }));
                             }
                         } else {
                             // Muchos bloques declaran la repetición solo en la
@@ -34083,9 +34098,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             const _km = _computeBlockKm(b);
                             const _isRec = _msIsRec(b, false);
                             if (_n > 1 && !_isRec && _km > 0) {
-                                for (let k = 0; k < _n; k++) segs.push({ km:_km/_n, det:b.detail, rec:false, color:b.color });
+                                for (let k = 0; k < _n; k++) segs.push({ km:_km/_n, det:b.detail, lab:b.label, rec:false, color:b.color });
                             } else {
-                                segs.push({ km:_km, det:b.detail, rec:_isRec, color:b.color });
+                                segs.push({ km:_km, det:b.detail, lab:b.label, rec:_isRec, color:b.color });
                             }
                         }
                     });
@@ -34100,11 +34115,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     const tot = segs.reduce((a,x)=>a+(x.km||0), 0);
                     if (!tot) return '';
                     let out = `<span style="display:flex;gap:1.5px;flex-shrink:0;align-items:flex-end;height:16px;width:48px;">`;
+                    let _prevH = 0;
                     segs.forEach(x => {
                         const pct = (x.km||0)/tot*100;
                         if (pct <= 0) return;
                         if (x.rec) { out += `<span style="flex:${pct.toFixed(2)};"></span>`; return; }
-                        out += `<span style="flex:${pct.toFixed(2)};min-width:1.5px;height:${_msHeight(x.det, x.color)}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;"></span>`;
+                        const _h = _msHeight(x.det, x.color);
+                        // Bloques progresivos: en vez de un escalón, una rampa que
+                        // arranca a la altura del tramo anterior y sube hasta la suya.
+                        const _isRamp = /progres|\u00faltimo tercio/i.test(String(x.lab||''));
+                        let _clip = '';
+                        if (_isRamp && _prevH > 0 && _prevH < _h) {
+                            const _y = Math.max(0, Math.min(90, Math.round((1 - _prevH/_h)*100)));
+                            _clip = `clip-path:polygon(0% ${_y}%,100% 0%,100% 100%,0% 100%);border-radius:0;`;
+                        }
+                        out += `<span style="flex:${pct.toFixed(2)};min-width:1.5px;height:${_h}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;${_clip}"></span>`;
+                        _prevH = _h;
                     });
                     return out + `</span>`;
                 };
@@ -48451,7 +48477,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.7.2-p1';
+        window.__mrCorosVersion = 'v2.8.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
