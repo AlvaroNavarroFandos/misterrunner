@@ -33957,6 +33957,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // - [v5.5 SKIP · Q10=A] Si skipped: badge del motivo (reemplaza al desc/stats)
                 // - Si __REAL__ (completado): stats reales en bold verde con separadores
                 // - Si texto normal: detail estándar
+                // ── [v2.7.1] Desc a una sola línea en la fila colapsada ─────────
+                // Los desc siguen el patrón "<qué> · <por qué>". El "por qué"
+                // (fuerza neuromuscular, piernas ligeras, construyendo motor
+                // aeróbico…) nunca lleva cifras, así que se puede recortar sin
+                // lista de frases. El desc original queda intacto para el modal
+                // y los exports.
+                const _descOneLine = (txt) => {
+                    const parts = String(txt||'').split('\u00b7').map(x => x.trim()).filter(Boolean);
+                    while (parts.length > 1 && !/\d/.test(parts[parts.length-1])) parts.pop();
+                    return parts.join(' \u00b7 ');
+                };
                 let _detailHTML = '';
                 if (_isSkipped && _skipReasonObj) {
                     _detailHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:5px;color:${_skipCol};background:${_skipCol}1a;border:1px solid ${_skipCol}47;">`
@@ -33970,7 +33981,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         + (_realHr > 0 ? `<span style="color:var(--tm);">·</span><b style="color:#22c55e;font-weight:700;">FC ${_realHr}</b>` : '')
                         + `</span>`;
                 } else if (_detailShort) {
-                    _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;">${_detailShort}</span>`;
+                    _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}</span>`;
                 }
 
                 // [Plan HOY V4] Sidebar 5px verde con glow inyectado como elemento HTML
@@ -33997,19 +34008,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '#e879f9':'linear-gradient(180deg,#e879f9 0%,#a21caf 100%)',
                     '#C9A84C':'linear-gradient(180deg,#C9A84C 0%,#8a7229 100%)',
                     '#FF9800':'linear-gradient(180deg,#FF9800 0%,#cc7a00 100%)',
+                    '#f97316':'linear-gradient(180deg,#fb923c 0%,#c2410c 100%)',
                     '#9ca3af':'linear-gradient(180deg,#9ca3af 0%,#64748b 100%)',
                     '#facc15':'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)',
                     '#fbbf24':'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)'
                 };
                 const _gradForBlockV = (c) => _MS_GRAD[c] || `linear-gradient(180deg, ${c} 0%, ${c} 100%)`;
                 const _MS_MIN = 7, _MS_MAX = 16, _MS_FAST = 230, _MS_SLOW = 360;
+                // Altura de respaldo por intensidad cuando el bloque no expone
+                // un ritmo parseable (cuestas, strides, fuerza…). Sin esto caían
+                // al mínimo y quedaban más bajos que un calentamiento.
+                const _MS_TIER = {
+                    '#60a5fa':7, '#7dd3fc':7, '#9ca3af':7,
+                    '#4ade80':9, '#22c55e':9, '#4CAF50':9,
+                    '#7c3aed':10,
+                    '#C9A84C':13, '#facc15':13, '#fbbf24':13,
+                    '#f97316':15, '#FF9800':15, '#a78bfa':14,
+                    '#f87171':16, '#ef4444':16, '#e879f9':16
+                };
                 const _msPaceSec = (txt) => {
                     const m = String(txt||'').match(/(\d+)['\u2019:](\d{2})/);
                     return m ? (+m[1])*60 + (+m[2]) : null;
                 };
-                const _msHeight = (txt) => {
+                const _msHeight = (txt, color) => {
                     const sec = _msPaceSec(txt);
-                    if (sec == null) return _MS_MIN;
+                    if (sec == null) return _MS_TIER[color] || _MS_MIN;
                     let t = (_MS_SLOW - sec) / (_MS_SLOW - _MS_FAST);
                     t = Math.max(0, Math.min(1, t));
                     return Math.round(_MS_MIN + t*(_MS_MAX - _MS_MIN));
@@ -34029,7 +34052,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 b.reps.forEach(r => segs.push({ km:(r.km||0), det:r.detail, rec:_msIsRec(r, true), color:r.color }));
                             }
                         } else {
-                            segs.push({ km:_computeBlockKm(b), det:b.detail, rec:_msIsRec(b, false), color:b.color });
+                            // Muchos bloques declaran la repetición solo en la
+                            // etiqueta ("6 × 20\" cuestas", "4 × 20\" strides") sin
+                            // array reps[]. Se detecta y se pinta como peine.
+                            const _mRep = String(b.label||'').match(/^\s*(\d{1,2})\s*[\u00d7x]\s/i);
+                            const _n = _mRep ? Math.min(parseInt(_mRep[1],10), 12) : 1;
+                            const _km = _computeBlockKm(b);
+                            const _isRec = _msIsRec(b, false);
+                            if (_n > 1 && !_isRec && _km > 0) {
+                                for (let k = 0; k < _n; k++) segs.push({ km:_km/_n, det:b.detail, rec:false, color:b.color });
+                            } else {
+                                segs.push({ km:_km, det:b.detail, rec:_isRec, color:b.color });
+                            }
                         }
                     });
                     const tot = segs.reduce((a,x)=>a+(x.km||0), 0);
@@ -34039,7 +34073,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const pct = (x.km||0)/tot*100;
                         if (pct <= 0) return;
                         if (x.rec) { out += `<span style="flex:${pct.toFixed(2)};"></span>`; return; }
-                        out += `<span style="flex:${pct.toFixed(2)};min-width:1.5px;height:${_msHeight(x.det)}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;"></span>`;
+                        out += `<span style="flex:${pct.toFixed(2)};min-width:1.5px;height:${_msHeight(x.det, x.color)}px;border-radius:1.5px;background:${_gradForBlockV(x.color)};display:block;"></span>`;
                     });
                     return out + `</span>`;
                 };
@@ -48386,7 +48420,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.7.0-p1';
+        window.__mrCorosVersion = 'v2.7.1-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
