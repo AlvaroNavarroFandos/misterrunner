@@ -34376,9 +34376,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // [v2.16.0-p2] Compactación: descartar conectores sueltos y
                         // omitir la nota descriptiva (no clave) cuando ya hay FC o rec.
                         o.note = o.note.filter(t => !/^(hasta|a|durante|con|de|para|y|en)$/i.test(t));
-                        const _hasKey = !!(o.fc || o.rec);
                         const bits = [];
-                        if (o.note.length && !_hasKey) bits.push(o.note.join(' \u00b7 '));
+                        if (o.note.length) bits.push(o.note.join(' \u00b7 '));
                         if (o.fc)   bits.push('FC ' + o.fc);
                         if (o.rec)  bits.push('rec ' + o.rec);
                         if (!bits.length && o.dist) bits.push(o.dist);
@@ -34395,11 +34394,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     const _icoBig = (b) => _iconForBlock(b).replace('width="14" height="14"', 'width="15" height="15"');
                     const _icoRep = (b) => _iconForBlock(b).replace('width="14" height="14"', 'width="14" height="14"');
                     const _repSig = (r) => { const p = _parseBlk(r.detail); return (r.label||'') + '|' + p.pace + '|' + p.line; };
-                    const _LBL = 'font-size:13px;font-weight:750;color:var(--tw);letter-spacing:-.2px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-                    const _COL = 'flex:1;min-width:0;min-height:30px;display:flex;flex-direction:column;justify-content:center;';
-                    const _noteStyle = (isHtml) => isHtml
-                        ? 'font-size:11px;color:var(--ts);font-weight:500;line-height:1.25;margin-top:1px;'
-                        : 'font-size:11px;color:var(--ts);font-weight:500;line-height:1.2;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                    // [v2.16.0-p3] Acorta palabras largas en el título para que quepa en 2
+                    // líneas sin ellipsis. "Rodaje mantenimiento" -> "Rodaje fácil", etc.
+                    const _LBL_SUBS = [ [/\bmantenimiento\b/gi, 'f\u00e1cil'] ];
+                    const _shortLabel = (s) => { let o = String(s || ''); _LBL_SUBS.forEach(p => o = o.replace(p[0], p[1])); return o; };
+                    // 2 líneas título + 2 líneas texto, columna con altura fija -> todos los
+                    // bloques igual de altos (los básicos quedan con hueco, pero uniformes).
+                    const _CLAMP2 = 'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;';
+                    const _LBL = 'font-size:13px;font-weight:750;color:var(--tw);letter-spacing:-.2px;line-height:1.2;' + _CLAMP2;
+                    const _COL = 'flex:1;min-width:0;min-height:60px;display:flex;flex-direction:column;justify-content:center;';
+                    const _noteStyle = (isHtml) => 'font-size:11px;color:var(--ts);font-weight:500;line-height:1.2;margin-top:2px;' + _CLAMP2;
                     const _nTop = sess.blocks.length;
                     sess.blocks.forEach((b, _bi) => {
                         const _grad = _gradForBlock(b.color);
@@ -34421,7 +34425,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             let _lbl, _note, _pace, _km, _badge = '';
                             if (_hasReps) {
                                 const _rp = _parseBlk(_rep0.detail);
-                                _lbl  = b.label;
+                                _lbl  = _shortLabel(b.label);
                                 _note = _rp.line;
                                 _pace = _rp.pace;
                                 _km   = (_rep0.km != null && _rep0.km !== '') ? (_rep0.km + ' km')
@@ -34429,7 +34433,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 _badge = `<span style="font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:999px;color:var(--det-tw);background:${_grad};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.18);">${b.repeat}\u00d7</span>`;
                             } else {
                                 const _p = _isHtml ? { pace:'', line:'' } : _parseBlk(b.detail);
-                                _lbl  = b.label;
+                                _lbl  = _shortLabel(b.label);
                                 _note = _isHtml ? b.detailHtml : _p.line;
                                 _pace = _p.pace;
                                 _km   = _blockKm ? (Math.round(_blockKm*10)/10 + ' km') : '';
@@ -34454,7 +34458,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 + `<div style="display:flex;align-items:center;gap:9px;min-height:30px;">`
                                 +   `<span style="font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:999px;color:var(--det-tw);background:${_grad};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.18);">${b.repeat}\u00d7</span>`
                                 +   `<div style="width:26px;height:26px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 2px 5px rgba(0,0,0,.18);">${_icoBig(b)}</div>`
-                                +   `<div style="flex:1;min-width:0;"><div style="${_LBL}">${b.label}</div></div>`
+                                +   `<div style="flex:1;min-width:0;"><div style="${_LBL}">${_shortLabel(b.label)}</div></div>`
                                 + `</div>`
                                 + `<div style="margin:6px 0 2px 14px;padding-left:15px;border-left:2px dashed var(--border);">`;
                             b.reps.forEach(r => {
@@ -34462,7 +34466,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 const _rp = _parseBlk(r.detail);
                                 detail += `<div style="display:flex;align-items:center;gap:9px;padding:4px 0;min-height:26px;">`
                                     + `<div style="width:24px;height:24px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.15);">${_icoRep(r)}</div>`
-                                    + `<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.label||''}</div>${_rp.line ? `<div style="font-size:10.5px;color:var(--ts);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_rp.line}</div>` : ''}</div>`
+                                    + `<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:700;color:var(--tw);${_CLAMP2}">${_shortLabel(r.label||'')}</div>${_rp.line ? `<div style="font-size:10.5px;color:var(--ts);${_CLAMP2}">${_rp.line}</div>` : ''}</div>`
                                     + (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}${_MONO}font-size:11px;font-weight:700;color:var(--tw);flex-shrink:0;">${_rp.pace}</span>` : '')
                                     + (r.km ? `<span style="font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px;color:var(--det-tw);flex-shrink:0;background:${_rGrad};">${r.km} km</span>` : '')
                                     + `</div>`;
@@ -48723,7 +48727,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.16.0-p2';
+        window.__mrCorosVersion = 'v2.16.0-p3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
