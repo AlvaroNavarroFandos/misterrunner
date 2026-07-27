@@ -34009,6 +34009,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '#C9A84C':'linear-gradient(180deg,#C9A84C 0%,#8a7229 100%)',
                     '#FF9800':'linear-gradient(180deg,#FF9800 0%,#cc7a00 100%)',
                     '#f97316':'linear-gradient(180deg,#fb923c 0%,#c2410c 100%)',
+                    '#fb923c':'linear-gradient(180deg,#fb923c 0%,#c2410c 100%)',
+                    '#FF9500':'linear-gradient(180deg,#FF9500 0%,#c2410c 100%)',
+                    '#FF5722':'linear-gradient(180deg,#FF5722 0%,#bf360c 100%)',
+                    '#f59e0b':'linear-gradient(180deg,#f59e0b 0%,#b45309 100%)',
+                    '#06b6d4':'linear-gradient(180deg,#22d3ee 0%,#0e7490 100%)',
+                    '#3b82f6':'linear-gradient(180deg,#60a5fa 0%,#2563eb 100%)',
+                    '#10b981':'linear-gradient(180deg,#34d399 0%,#047857 100%)',
+                    '#5DC960':'linear-gradient(180deg,#5DC960 0%,#15803d 100%)',
+                    '#6FD870':'linear-gradient(180deg,#6FD870 0%,#15803d 100%)',
+                    '#8b5cf6':'linear-gradient(180deg,#a78bfa 0%,#6d28d9 100%)',
+                    '#a855f7':'linear-gradient(180deg,#c084fc 0%,#7e22ce 100%)',
+                    '#eab308':'linear-gradient(180deg,#facc15 0%,#a16207 100%)',
+                    '#FFC107':'linear-gradient(180deg,#FFC107 0%,#c4881e 100%)',
+                    '#F44336':'linear-gradient(180deg,#ef4444 0%,#b91c1c 100%)',
+                    '#D32F2F':'linear-gradient(180deg,#ef4444 0%,#991b1b 100%)',
                     '#9ca3af':'linear-gradient(180deg,#9ca3af 0%,#64748b 100%)',
                     '#facc15':'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)',
                     '#fbbf24':'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)'
@@ -34024,7 +34039,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '#7c3aed':10,
                     '#C9A84C':13, '#facc15':13, '#fbbf24':13,
                     '#f97316':15, '#FF9800':15, '#a78bfa':14,
-                    '#f87171':16, '#ef4444':16, '#e879f9':16
+                    '#f87171':16, '#ef4444':16, '#e879f9':16,
+                    '#06b6d4':16, '#F44336':16, '#D32F2F':16,
+                    '#3b82f6':7,  '#10b981':9,  '#5DC960':9, '#6FD870':9,
+                    '#8b5cf6':12, '#a855f7':12, '#eab308':13, '#FFC107':13,
+                    '#f59e0b':14, '#fb923c':15, '#FF9500':15, '#FF5722':15
                 };
                 const _msPaceSec = (txt) => {
                     const m = String(txt||'').match(/(\d+)['\u2019:](\d{2})/);
@@ -34037,10 +34056,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     t = Math.max(0, Math.min(1, t));
                     return Math.round(_MS_MIN + t*(_MS_MAX - _MS_MIN));
                 };
+                const _MS_REC_COLORS = { '#60a5fa':1, '#7dd3fc':1, '#9ca3af':1, '#3b82f6':1 };
                 const _msIsRec = (b, isChild) => {
                     const lab = String(b.label||'');
-                    if (/^recuperaci|^rec\b|^descanso/i.test(lab)) return true;
-                    return !!isChild && !_msPaceSec(b.detail);
+                    if (/^recuperaci|^rec\b|^descanso|^pausa/i.test(lab)) return true;
+                    // Un hijo solo cuenta como recuperación si además viene con
+                    // color de trote suave. Antes bastaba con no exponer ritmo, y
+                    // eso silenciaba tramos rápidos como "100m rápido · @ 5K pace".
+                    return !!isChild && !_msPaceSec(b.detail) && !!_MS_REC_COLORS[b.color];
                 };
                 const _msBuild = (sx) => {
                     if (_isStrengthCard) return `<span style="flex-shrink:0;width:48px;text-align:center;font-size:13px;letter-spacing:1px;line-height:1;">\uD83E\uDDB5\uD83D\uDCAA</span>`;
@@ -34055,7 +34078,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             // Muchos bloques declaran la repetición solo en la
                             // etiqueta ("6 × 20\" cuestas", "4 × 20\" strides") sin
                             // array reps[]. Se detecta y se pinta como peine.
-                            const _mRep = String(b.label||'').match(/^\s*(\d{1,2})\s*[\u00d7x]\s/i);
+                            const _mRep = String(b.label||'').match(/(\d{1,2})\s*[\u00d7x]\s*\d/i);
                             const _n = _mRep ? Math.min(parseInt(_mRep[1],10), 12) : 1;
                             const _km = _computeBlockKm(b);
                             const _isRec = _msIsRec(b, false);
@@ -34066,6 +34089,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             }
                         }
                     });
+                    // Los bloques de progresión (p.ej. "último tercio a ritmo
+                    // maratón") no llevan km propios: sin cuota nominal no
+                    // pintarían nada. Se les da un 10% del total.
+                    let _sum = segs.reduce((a,x)=>a+(x.km||0), 0);
+                    if (_sum > 0) {
+                        const _nom = Math.max(_sum*0.10, 0.3);
+                        segs.forEach(x => { if (!(x.km > 0)) x.km = _nom; });
+                    }
                     const tot = segs.reduce((a,x)=>a+(x.km||0), 0);
                     if (!tot) return '';
                     let out = `<span style="display:flex;gap:1.5px;flex-shrink:0;align-items:flex-end;height:16px;width:48px;">`;
@@ -48420,7 +48451,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.7.1-p1';
+        window.__mrCorosVersion = 'v2.7.2-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
