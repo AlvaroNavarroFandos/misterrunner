@@ -31912,14 +31912,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Snap startDate to the Monday of its week
         const startDOW = startDate.getDay(); // 0=Sun
         const startMondayOffset = startDOW===0 ? -6 : 1-startDOW; // days to reach Mon
-        const planMonday = new Date(startDate.getTime()+startMondayOffset*86400000);
+        // [v2.9.0] Aritmética de CALENDARIO, no de milisegundos. España atrasa
+        // el reloj el último domingo de octubre: ese día dura 25 h, así que
+        // sumar 86400000 ms por día convertía el lunes 00:00 en domingo 23:00 y
+        // todo el plan se desplazaba un día a partir del cambio de hora.
+        const planMonday = new Date(startDate);
+        planMonday.setDate(startDate.getDate()+startMondayOffset);
         planMonday.setHours(0,0,0,0);
 
         for(let w=0;w<totalWeeks;w++){
             const phase=weekPhase(w);
             const pw2=w-maintW; // position within periodization
             const phaseWeekNum=phase==='maintenance'?w:pw2<baseW?pw2:pw2<baseW+buildW?pw2-baseW:pw2<baseW+buildW+peakW?pw2-baseW-buildW:pw2-baseW-buildW-peakW;
-            const weekStart=new Date(planMonday.getTime()+w*7*86400000);
+            const weekStart=new Date(planMonday);
+            weekStart.setDate(planMonday.getDate()+w*7);
+            weekStart.setHours(0,0,0,0);
             const isRaceWeek=(w===totalWeeks-1);
             const isTaper=(phase==='taper');
 
@@ -34060,9 +34067,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '#8b5cf6':12, '#a855f7':12, '#eab308':13, '#FFC107':13,
                     '#f59e0b':14, '#fb923c':15, '#FF9500':15, '#FF5722':15
                 };
+                // Devuelve el ritmo MÁS RÁPIDO del detalle, no el primero. Un
+                // bloque progresivo ("2km 5'25\" → 2km 4'20\" → 1km MP+5\"") arranca
+                // al ritmo del calentamiento: si nos quedábamos con el primero,
+                // salía a la misma altura que el tramo previo y la rampa no se
+                // dibujaba. La exigencia de un bloque la marca su tramo más duro.
                 const _msPaceSec = (txt) => {
-                    const m = String(txt||'').match(/(\d+)['\u2019:](\d{2})/);
-                    return m ? (+m[1])*60 + (+m[2]) : null;
+                    const all = String(txt||'').match(/(\d+)['\u2019:](\d{2})/g);
+                    if (!all || !all.length) return null;
+                    let best = null;
+                    all.forEach(tok => {
+                        const m = tok.match(/(\d+)['\u2019:](\d{2})/);
+                        if (!m) return;
+                        const sec = (+m[1])*60 + (+m[2]);
+                        if (best == null || sec < best) best = sec;
+                    });
+                    return best;
                 };
                 const _msHeight = (txt, color) => {
                     const sec = _msPaceSec(txt);
@@ -40702,23 +40722,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // semana no genera sesiones (skip total). En deload/anti-fatiga, sets se
         // reducen. Si runPlan es null, comportamiento pre-GAP 9 (misma sesión).
         var weeks = [];
-        var startMs = new Date(startDateStr+'T00:00:00').getTime();
-        // Snap to Monday
-        var d0 = new Date(startMs);
-        var dow0 = d0.getDay();
+        // [v2.9.0] Aritmética de calendario: sumar días en milisegundos rompe
+        // en el cambio de hora de octubre (el lunes 00:00 pasa a domingo 23:00).
+        var _d0 = new Date(startDateStr+'T00:00:00');
+        var dow0 = _d0.getDay();
         var toMon = (dow0 === 0) ? -6 : 1 - dow0;
-        startMs += toMon * 86400000;
+        var _planMon = new Date(_d0);
+        _planMon.setDate(_d0.getDate() + toMon);
+        _planMon.setHours(0,0,0,0);
 
         var syncEnabled = !!runPlan && Array.isArray(runPlan.weeks);
 
         for(var w=0; w<numWeeks; w++) {
-            var weekStartMs  = startMs + w*7*86400000;
-            var weekStartStr = localDateStr(new Date(weekStartMs));
+            var _weekStart = new Date(_planMon);
+            _weekStart.setDate(_planMon.getDate() + w*7);
+            _weekStart.setHours(0,0,0,0);
+            var weekStartStr = localDateStr(_weekStart);
             var weekSessions = [];
 
             days.forEach(function(dow) { // dow: 0=Sun, 1=Mon..6=Sat (JS convention)
                 var offset = (dow === 0) ? 6 : dow - 1;
-                var sessDate = new Date(weekStartMs + offset*86400000);
+                var sessDate = new Date(_weekStart);
+                sessDate.setDate(_weekStart.getDate() + offset);
+                sessDate.setHours(0,0,0,0);
                 var dateStr  = localDateStr(sessDate);
                 var sessDOW  = sessDate.getDay();
 
@@ -48477,7 +48503,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.8.0-p1';
+        window.__mrCorosVersion = 'v2.9.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
