@@ -34351,10 +34351,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         '#C9A84C': _ICONS_PLAN_DAY.easy,
                     };
                     const _iconForBlock = (b) => {
+                        const _up14 = (svg) => svg.replace(/width="12" height="12"/, 'width="14" height="14"');
                         const raw = _ICON_FOR_BLOCK_COLOR[b.color];
-                        if (raw) return raw.replace(/width="12" height="12"/, 'width="14" height="14"');
-                        // Fallback si el color no matchea: inicial mayúscula
-                        return `<span style="font-size:11px;font-weight:800;">${(b.label||'?').trim().charAt(0).toUpperCase()}</span>`;
+                        if (raw) return _up14(raw);
+                        // [v2.16.0-p5] Fallback por palabra clave del label -> icono correcto
+                        // (recovery/WU/CD => siempre la ola). Nunca un número ni una letra.
+                        const _s = String(b.label||'').toLowerCase();
+                        let _k = 'easy';
+                        if (/recover|recuper|calentam|\bwu\b|\bcd\b|vuelta a la calma|\bcalma\b|movilidad/.test(_s)) _k = 'recovery';
+                        else if (/serie|cuesta|interv|strid|repetic|fartlek|tempo|umbral|ritmo|progres/.test(_s)) _k = 'series';
+                        else if (/long|tirada|\blarg/.test(_s)) _k = 'long';
+                        else if (/easy|rodaje|trote|f[\u00e1a]cil|suave/.test(_s)) _k = 'easy';
+                        return _up14(_ICONS_PLAN_DAY[_k] || _ICONS_PLAN_DAY.easy || '');
                     };
                     let detail = `<div class="mr-day-detail" style="display:none;padding:0 8px 8px 8px;background:transparent;flex-direction:column;gap:0;">`;
                     // [v2.7.0] Barra de perfil eliminada: su función la cumple ahora
@@ -34411,6 +34419,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // líneas sin ellipsis. "Rodaje mantenimiento" -> "Rodaje fácil", etc.
                     const _LBL_SUBS = [ [/\bmantenimiento\b/gi, 'f\u00e1cil'] ];
                     const _shortLabel = (s) => { let o = String(s || ''); _LBL_SUBS.forEach(p => o = o.replace(p[0], p[1])); return o; };
+                    // [v2.16.0-p5] Recorta la nota para que quepa SIN "…": primero por
+                    // segmentos (·) enteros y luego por palabra completa. El presupuesto
+                    // se adapta al ancho disponible (menos si hay ritmo y/o km a la dcha).
+                    const _clampNote = (txt, budget) => {
+                        let s = String(txt || '');
+                        if (s.length <= budget) return s;
+                        const segs = s.split(' \u00b7 ');
+                        if (segs.length > 1) {
+                            const kept = [];
+                            for (const seg of segs) { if ([...kept, seg].join(' \u00b7 ').length > budget) break; kept.push(seg); }
+                            s = (kept.length ? kept : [segs[0]]).join(' \u00b7 ');
+                        }
+                        if (s.length > budget) {
+                            const _w = s.split(' '); let _o = '';
+                            for (const x of _w) { if ((_o + ' ' + x).trim().length > budget) break; _o = _o ? _o + ' ' + x : x; }
+                            s = _o || s.slice(0, budget);
+                        }
+                        return s;
+                    };
+                    const _noteBudget = (pace, km) => (pace && km) ? 38 : pace ? 44 : km ? 60 : 66;
                     // 2 líneas título + 2 líneas texto, columna con altura fija -> todos los
                     // bloques igual de altos (los básicos quedan con hueco, pero uniformes).
                     const _CLAMP2 = 'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;';
@@ -34451,6 +34479,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 _pace = _p.pace;
                                 _km   = _blockKm ? (Math.round(_blockKm*10)/10 + ' km') : '';
                             }
+                            if (!(_isHtml && !_hasReps)) _note = _clampNote(_note, _noteBudget(_pace, _km));
                             detail += `<div style="position:relative;padding:9px 10px 9px 16px;${_bord}">`
                                 + `<div style="position:absolute;left:0;top:9px;bottom:9px;width:4px;border-radius:4px;background:${_grad};"></div>`
                                 + `<div style="display:flex;align-items:center;gap:9px;">`
@@ -34479,7 +34508,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 const _rp = _parseBlk(r.detail);
                                 detail += `<div style="display:flex;align-items:center;gap:9px;padding:4px 0;min-height:26px;">`
                                     + `<div style="width:24px;height:24px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.15);">${_icoRep(r)}</div>`
-                                    + `<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:700;color:var(--tw);${_CLAMP2}">${_shortLabel(r.label||'')}</div>${_rp.line ? `<div style="font-size:10.5px;color:var(--ts);${_CLAMP2}">${_rp.line}</div>` : ''}</div>`
+                                    + `<div style="flex:1;min-width:0;"><div style="font-size:12.5px;font-weight:700;color:var(--tw);${_CLAMP2}">${_shortLabel(r.label||'')}</div>${_rp.line ? `<div style="font-size:10.5px;color:var(--ts);${_CLAMP2}">${_clampNote(_rp.line, _noteBudget(_rp.pace, r.km))}</div>` : ''}</div>`
                                     + (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}${_MONO}font-size:11px;font-weight:700;color:var(--tw);flex-shrink:0;">${_rp.pace}</span>` : '')
                                     + (r.km ? `<span style="font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px;color:var(--det-tw);flex-shrink:0;background:${_rGrad};">${r.km} km</span>` : '')
                                     + `</div>`;
@@ -48740,7 +48769,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.16.0-p4';
+        window.__mrCorosVersion = 'v2.16.0-p5';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
