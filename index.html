@@ -5226,6 +5226,17 @@
         100% { transform: scale(2.4); opacity: 0;  }
     }
 
+    /* ── [v2.6.2] Bloques expandidos del plan · raíl V3-B ────────────────
+       Un solo carril vertical; las repeticiones cuelgan de él con nodos
+       pequeños. El ritmo se tiñe por bloque con contraste por tema. */
+    .mr-blk-rail { position: relative; padding-left: 26px; }
+    .mr-blk-rail::before {
+        content: ''; position: absolute; left: 10px; top: 11px; bottom: 11px;
+        width: 2px; background: var(--border-strong, var(--border)); border-radius: 2px;
+    }
+    .mr-blk-pace { color: var(--pl); }
+    body.dark-mode .mr-blk-pace { color: var(--pd); }
+
 
     </style>
 
@@ -34049,50 +34060,94 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if(pct>0) detail += `<div style="flex:${pct};background:${_gradForBlock(b.color)};border-radius:2px;" title="${b.label}"></div>`;
                     });
                     detail += `</div>`;
-                    // Block detail rows — Opción B: fila blanca + icono redondo gradient + label negro + km-pill gradient
-                    // [v5.2 GAP 6] Si el bloque tiene reps[], además de la fila padre
-                    // renderizamos sub-cuadro con las repeticiones indentado, con badge Nx cyan.
+                    // ── [v2.6.2] Raíl V3-B ──────────────────────────────────────────
+                    // Un único carril vertical. Cada bloque es un nodo con su km
+                    // acumulado; las repeticiones cuelgan del mismo raíl con nodos
+                    // menores. El detail (texto ya existente, " · " separado) se
+                    // reparte: ritmo a su columna monoespaciada, resto a la nota.
+                    // Regla A: si el bloque tiene reps, el ritmo vive en el hijo.
+                    // NO altera colores, frases ni tipos de entreno.
+                    const _PACE_TONE = {
+                        '#60a5fa':['#2563eb','#93c5fd'], '#7dd3fc':['#0284c7','#7dd3fc'],
+                        '#f87171':['#dc2626','#fca5a5'], '#ef4444':['#dc2626','#fca5a5'],
+                        '#4ade80':['#16a34a','#86efac'], '#22c55e':['#16a34a','#86efac'],
+                        '#4CAF50':['#16a34a','#86efac'], '#7c3aed':['#6d28d9','#c4b5fd'],
+                        '#a78bfa':['#7c3aed','#c4b5fd'], '#e879f9':['#a21caf','#f0abfc'],
+                        '#C9A84C':['#8a7229','#e3c77a'], '#FF9800':['#cc7a00','#ffb74d'],
+                        '#9ca3af':['#64748b','#cbd5e1'], '#facc15':['#c4881e','#fde047'],
+                        '#fbbf24':['#c4881e','#fde047']
+                    };
+                    const _paceVars = (c) => { const t = _PACE_TONE[c] || [c, c]; return `--pl:${t[0]};--pd:${t[1]};`; };
+                    const _parseBlk = (txt) => {
+                        const o = { pace:'', rec:'', fc:'', note:[], dist:'' };
+                        String(txt||'').split('\u00b7').map(x => x.trim()).forEach(t => {
+                            if (/\/km$/.test(t) && /\d['\u2019:]\d{2}/.test(t)) o.pace = t.replace('/km','');
+                            else if (/^rec /i.test(t)) o.rec = t.replace(/^rec /i,'');
+                            else if (/^FC /i.test(t)) o.fc = t.replace(/^FC /i,'');
+                            else if (/^\d+([.,]\d+)?\s?km$/.test(t)) o.dist = t;
+                            else if (t) o.note.push(t);
+                        });
+                        const bits = [];
+                        if (o.note.length) bits.push(o.note.join(' \u00b7 '));
+                        if (o.fc)   bits.push('FC ' + o.fc);
+                        if (o.rec)  bits.push('rec ' + o.rec);
+                        if (!bits.length && o.dist) bits.push(o.dist);
+                        o.line = bits.join(' \u00b7 ');
+                        return o;
+                    };
+                    const _MONO = `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;`;
+                    let _cum = 0;
+                    detail += `<div class="mr-blk-rail">`;
                     sess.blocks.forEach(b => {
                         const _grad = _gradForBlock(b.color);
                         const _blkIcon = _iconForBlock(b);
                         const _hasReps = Array.isArray(b.reps) && b.reps.length > 0 && b.repeat > 0;
                         const _blockKm = _computeBlockKm(b);
-                        // Contenedor externo (padre + sub-cuadro) sin margin bottom si tiene reps (se aplica al sub-cuadro)
-                        detail += `<div style="margin-bottom:4px;">`;
-                        // Fila del bloque padre [v2.5.0-p4] compactado 9px 11px → 7px 10px
-                        detail += `<div style="display:flex;align-items:flex-start;gap:9px;padding:7px 10px;background:var(--card);border-radius:${_hasReps?'10px 10px 0 0':'10px'};border:1px solid var(--border);${_hasReps?'border-bottom:0;':''}">`
-                            + `<div style="width:26px;height:26px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_blkIcon}</div>`
-                            + `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;">`
+                        const _pct = Math.round(_blockKm/totalKmBlocks*100);
+                        _cum = Math.round((_cum + _blockKm)*10)/10;
+                        const _isHtml = !!b.detailHtml;
+                        const _p = _isHtml ? { pace:'', line:'' } : _parseBlk(b.detail);
+                        const _noteHtml = _isHtml ? b.detailHtml : _p.line;
+                        const _showPace = _p.pace && !_hasReps;
+                        detail += `<div style="position:relative;background:var(--card);border:1px solid var(--border);border-radius:9px;padding:5px 9px;margin-bottom:3px;">`
+                            + `<span style="position:absolute;left:-20px;top:9px;width:10px;height:10px;border-radius:50%;background:${_grad};box-shadow:0 1px 2px rgba(0,0,0,.15);"></span>`
+                            + (_blockKm ? `<span style="position:absolute;left:-26px;top:23px;width:21px;text-align:center;font-size:7.5px;font-weight:700;color:var(--ts);letter-spacing:-.2px;${_MONO}">${_cum}k</span>` : '')
+                            + `<div style="display:flex;align-items:center;gap:8px;">`
+                            +   `<div style="width:22px;height:22px;border-radius:50%;background:${_grad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);">${_blkIcon}</div>`
                             +   `<div style="flex:1;min-width:0;">`
-                            +     `<div style="font-size:11.5px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${b.label}</div>`
-                            +     `<div style="font-size:10px;color:var(--ts);font-weight:500;line-height:1.35;margin-top:1px;">${b.detailHtml||b.detail||''}</div>`
+                            +     `<div style="font-size:11px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${b.label}</div>`
+                            +     (_noteHtml ? `<div style="font-size:9px;color:var(--ts);font-weight:500;line-height:1.25;">${_noteHtml}</div>` : '')
                             +   `</div>`
-                            +   (_hasReps ? `<span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#06b6d4 0%,#0891b2 100%);flex-shrink:0;letter-spacing:.3px;box-shadow:0 1px 3px rgba(6,182,212,.35);">${b.repeat}×</span>` : '')
+                            +   (_hasReps ? `<span style="font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:999px;color:#fff;background:linear-gradient(135deg,#06b6d4 0%,#0891b2 100%);flex-shrink:0;letter-spacing:-.2px;box-shadow:0 1px 3px rgba(6,182,212,.35);">${b.repeat}\u00d7</span>` : '')
+                            +   (_showPace ? `<span class="mr-blk-pace" style="${_paceVars(b.color)}font-size:10px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_p.pace}</span>` : '')
+                            +   (_blockKm ? `<span style="font-size:10px;font-weight:800;padding:1px 7px;border-radius:12px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_grad};box-shadow:0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.2);">${Math.round(_blockKm*10)/10} km</span>` : '')
                             + `</div>`
-                            + (_blockKm ? `<span style="font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:12px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_grad};box-shadow:0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.2);">${Math.round(_blockKm*10)/10} km</span>` : '');
-                        detail += `</div>`;
-                        // Sub-cuadro con las reps (si hay)
+                            + (_pct>0 ? `<div style="height:2px;border-radius:2px;margin-top:4px;opacity:.9;background:${_grad};width:${_pct}%;"></div>` : '');
                         if (_hasReps) {
-                            detail += `<div style="background:var(--bsoft);border:1px solid var(--border);border-top:1px dashed var(--border);border-radius:0 0 10px 10px;padding:6px 8px 6px 24px;position:relative;">`;
-                            // Línea vertical indicativa del "grupo repetido"
-                            detail += `<div style="position:absolute;left:12px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,#06b6d4 0%,#0891b2 100%);border-radius:999px;"></div>`;
+                            detail += `<div style="margin-top:3px;">`;
                             b.reps.forEach((r, ri) => {
                                 const _rGrad = _gradForBlock(r.color);
                                 const _rIcon = _iconForBlock(r);
                                 const _isLast = ri === b.reps.length - 1;
-                                detail += `<div style="display:flex;align-items:center;gap:7px;padding:5px 8px;background:var(--card);border-radius:8px;border:1px solid var(--border);${_isLast?'':'margin-bottom:4px;'}">`
-                                    + `<div style="width:20px;height:20px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.12);">${_rIcon.replace(/width="14" height="14"/,'width="11" height="11"')}</div>`
-                                    + `<div style="flex:1;min-width:0;">`
-                                    +   `<div style="font-size:10.5px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${r.label||''}</div>`
-                                    +   `<div style="font-size:9.5px;color:var(--ts);font-weight:500;line-height:1.3;margin-top:1px;">${r.detail||''}</div>`
+                                const _rp = _parseBlk(r.detail);
+                                detail += `<div style="position:relative;">`
+                                    + `<span style="position:absolute;left:-28px;top:9px;width:6px;height:6px;border-radius:50%;background:${_rGrad};"></span>`
+                                    + `<div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:8px;${_isLast?'':'margin-bottom:3px;'}">`
+                                    +   `<div style="width:18px;height:18px;border-radius:50%;background:${_rGrad};display:flex;align-items:center;justify-content:center;color:var(--det-tw);flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.12);">${_rIcon.replace(/width="14" height="14"/,'width="11" height="11"')}</div>`
+                                    +   `<div style="flex:1;min-width:0;">`
+                                    +     `<div style="font-size:10px;font-weight:700;color:var(--tw);letter-spacing:-.1px;">${r.label||''}</div>`
+                                    +     (_rp.line ? `<div style="font-size:8.5px;color:var(--ts);font-weight:500;line-height:1.2;">${_rp.line}</div>` : '')
+                                    +   `</div>`
+                                    +   (_rp.pace ? `<span class="mr-blk-pace" style="${_paceVars(r.color)}font-size:9.5px;font-weight:700;letter-spacing:-.3px;flex-shrink:0;${_MONO}">${_rp.pace}</span>` : '')
+                                    +   (r.km ? `<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_rGrad};box-shadow:0 1px 2px rgba(0,0,0,.10);">${r.km}</span>` : '')
                                     + `</div>`
-                                    + (r.km ? `<span style="font-size:9.5px;font-weight:800;padding:2px 6px;border-radius:10px;color:var(--det-tw);flex-shrink:0;letter-spacing:-.2px;background:${_rGrad};box-shadow:0 1px 2px rgba(0,0,0,.10);">${r.km} km</span>` : '');
-                                detail += `</div>`;
+                                    + `</div>`;
                             });
                             detail += `</div>`;
                         }
-                        detail += `</div>`; // fin contenedor externo
+                        detail += `</div>`;
                     });
+                    detail += `</div>`;
                     detail += `</div>`;
                     html += detail;
                 } else if (sess.exercises && sess.exercises.length > 0) {
@@ -48273,7 +48328,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.6.1-p1';
+        window.__mrCorosVersion = 'v2.6.2-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
