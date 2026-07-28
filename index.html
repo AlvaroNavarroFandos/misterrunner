@@ -40073,6 +40073,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const curCtl=ctlArr[ctlArr.length-1]||0;
         const curAtl=atlArr[atlArr.length-1]||0;
         const curTsb=tsbArr[tsbArr.length-1]||0;
+        // ── Exponer PMC al widget de readiness (L-3.3-03). Solo lectura; NO toca el motor. ──
+        window.__mrPMC = { tsb:curTsb, ctl:curCtl, atl:curAtl, ts:Date.now() };
         const maxCtlAtl=Math.max(...weekPoints.map(w=>Math.max(w.ctl,w.atl)),1);
 
         let formLabel='', formColor='', formColorLt='';
@@ -49091,6 +49093,209 @@ window.addEventListener('DOMContentLoaded', function() {
             var whoami = await window.mrCorosWhoami();
             console.log('  state:', window.__mrCoros);
             return { status: status, whoami: whoami, state: window.__mrCoros };
+        };
+
+        // ═══════════════════════════════════════════════════════════════════
+        //  READINESS (widget Home) — CAPA DE DATOS · sub-proyecto MR x COROS
+        //  Fetch GET /readiness + caché 3h (localStorage) + score (CONTEXTO §3).
+        //  NO renderiza: expone window._mrReadiness() para el render (paso 6).
+        // ═══════════════════════════════════════════════════════════════════
+        var _RDN_CACHE_KEY = 'mr_coros_readiness';
+        var _RDN_TTL_MS    = 3 * 60 * 60 * 1000;   // 3 horas
+        var _RDN_DAYS      = 42;                     // ventana pedida al backend
+        var _RDN_BASE_WIN  = 21;                     // ventana baseline FC reposo (mediana)
+
+        // — helpers puros —
+        function _rdnClamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+
+        function _rdnMedian(arr) {
+            if (!arr || !arr.length) return null;
+            var s = arr.slice().sort(function(a, b){ return a - b; });
+            var m = Math.floor(s.length / 2);
+            return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+
+        // "Sin reloj": HRV nocturna ausente o < 50% de su base ⇒ HRV y FC reposo
+        // de ese día quedan invalidados a la vez (gotcha §2: testRhr también se dispara).
+        function _rdnSinReloj(d) {
+            if (!d) return true;
+            var hrv = d.hrv_nocturna_ms, base = d.hrv_base_ms;
+            if (hrv == null || base == null || base <= 0) return true;
+            return hrv < 0.50 * base;
+        }
+
+        // Zonas por score (§3). icon = nombre de archivo en bucket readiness-icons.
+        function _rdnZone(score) {
+            if (score == null) return { key:'nd',      label:'—',        icon:null,          color:'#94a3b8' };
+            if (score < 18)    return { key:'muerto',  label:'MUERTO',   icon:'muerto.png',  color:'#64748b' };
+            if (score < 38)    return { key:'fatiga',  label:'FATIGA',   icon:'fatiga.png',  color:'#ea580c' };
+            if (score < 60)    return { key:'regular', label:'REGULAR',  icon:'regular.png', color:'#d97706' };
+            if (score < 84)    return { key:'bien',    label:'BIEN',     icon:'listo.png',   color:'#0284c7' };
+            return                    { key:'optimo',  label:'PERFECTO', icon:'optimo.png',  color:'#16a34a' };
+        }
+
+        // — caché localStorage: guarda la RESPUESTA cruda + ts; el score se
+        //   recomputa en cada lectura para tomar el TSB fresco de __mrPMC —
+        function _rdnCacheGet() {
+            try {
+                var raw = localStorage.getItem(_RDN_CACHE_KEY);
+                if (!raw) return null;
+                var o = JSON.parse(raw);
+                if (!o || typeof o.ts !== 'number' || !o.resp) return null;
+                return o;   // { resp, ts }
+            } catch (_) { return null; }
+        }
+        function _rdnCacheSet(resp) {
+            try {
+                localStorage.setItem(_RDN_CACHE_KEY, JSON.stringify({ resp: resp, ts: Date.now() }));
+            } catch (_) {}
+        }
+        // Invalidación externa (p.ej. tras connect/disconnect · paso 6).
+        window._mrReadinessBust = function() {
+            try { localStorage.removeItem(_RDN_CACHE_KEY); } catch (_) {}
+        };
+
+        // — normaliza respuesta + TSB (__mrPMC) → objeto para el render —
+        function _rdnCompute(resp, cacheTs) {
+            var pmc  = window.__mrPMC || null;
+            var tsb  = (pmc && typeof pmc.tsb === 'number') ? pmc.tsb : null;
+            var sTSB = (tsb == null) ? null : _rdnClamp01((tsb + 20) / 40);
+
+            var out = {
+                connected: !!(resp && resp.connected),
+                hasData:   false,
+                mode:      'load-only',   // 'full' | 'load-only'
+                score:     null,          // 0..100 | null (si falta TSB)
+                zone:      _rdnZone(null),
+                tsb:       tsb,
+                hrv:       { valid:false, ok:false, value:null, base:null, pct:null },
+                rhr:       { valid:false, ok:false, value:null, baseline:null },
+                ts:        (typeof cacheTs === 'number') ? cacheTs : Date.now(),
+                fromCache: false,
+                stale:     false
+            };
+
+            var days = (resp && Array.isArray(resp.days)) ? resp.days.slice() : [];
+            // Orden asc por fecha (robusto ante cambios de orden del backend).
+            days.sort(function(a, b){ return (a.date < b.date) ? -1 : (a.date > b.date ? 1 : 0); });
+
+            // — sin COROS o sin datos: score solo-carga (TSB) —
+            if (!out.connected || days.length === 0) {
+                out.score = (sTSB == null) ? null : Math.round(sTSB * 100);
+                out.zone  = _rdnZone(out.score);
+                return out;
+            }
+
+            out.hasData = true;
+            var today = days[days.length - 1];
+
+            // Baseline FC reposo = mediana 21d de fc_reposo, excluyendo noches sin reloj.
+            var win = days.slice(-_RDN_BASE_WIN);
+            var rhrVals = [];
+            for (var i = 0; i < win.length; i++) {
+                var d = win[i];
+                if (!_rdnSinReloj(d) && d.fc_reposo != null) rhrVals.push(d.fc_reposo);
+            }
+            var baseline = _rdnMedian(rhrVals);
+
+            var todaySinReloj = _rdnSinReloj(today);
+
+            // — caso A (confirmado): hoy sin reloj o sin baseline ⇒ solo-carga,
+            //   indicadores HRV/FC reposo en n/d (ya inicializados como invalid) —
+            if (todaySinReloj || baseline == null) {
+                out.score = (sTSB == null) ? null : Math.round(sTSB * 100);
+                out.zone  = _rdnZone(out.score);
+                out.rhr.baseline = baseline;   // informativo si existiera
+                return out;
+            }
+
+            // — full: hoy válido —
+            out.mode = 'full';
+            var hrv = today.hrv_nocturna_ms, hbase = today.hrv_base_ms, rhr = today.fc_reposo;
+
+            out.hrv.value = hrv;
+            out.hrv.base  = hbase;
+            out.hrv.pct   = (hbase > 0) ? Math.round(hrv / hbase * 100) : null;
+            out.hrv.valid = true;
+            out.hrv.ok    = hrv >= 0.85 * hbase;
+
+            out.rhr.value    = rhr;
+            out.rhr.baseline = baseline;
+            out.rhr.valid    = (rhr != null);
+            out.rhr.ok       = (rhr != null) && (rhr <= baseline + 5);
+
+            var sHRV = _rdnClamp01((hrv / hbase - 0.70) / 0.40);   // 70%→0, 110%→100
+            var sRHR = (rhr == null) ? null : _rdnClamp01((baseline + 8 - rhr) / 12); // base+8→0, base-4→100
+
+            if (sRHR == null || sTSB == null) {
+                // Falta algún componente ⇒ degradamos a solo-carga con lo disponible.
+                out.mode  = 'load-only';
+                out.score = (sTSB == null) ? null : Math.round(sTSB * 100);
+            } else {
+                out.score = Math.round((0.40 * sHRV + 0.30 * sRHR + 0.30 * sTSB) * 100);
+            }
+            out.zone = _rdnZone(out.score);
+            return out;
+        }
+
+        // — fetch de red (una llamada; el render decide cuándo) —
+        async function _rdnFetch() {
+            var r = await _corosFetch('GET', '/readiness?days=' + _RDN_DAYS);
+            if (r && r.ok && r.data) { _rdnCacheSet(r.data); return r.data; }
+            return null;
+        }
+
+        // ═══ API pública: window._mrReadiness(opts) ═════════════════════════
+        //  Devuelve SIEMPRE un objeto normalizado (nunca lanza).
+        //   · Pinta al instante desde caché si existe (fromCache:true).
+        //   · Si caché ausente o > 3h: hace fetch y refresca.
+        //  opts.force === true ⇒ ignora caché y va a red (bloqueante).
+        //  opts.onFresh(obj)   ⇒ callback opcional al llegar dato de red, para
+        //                        re-pintar el widget sin bloquear el primer paint.
+        window._mrReadiness = async function(opts) {
+            opts = opts || {};
+            var cache = _rdnCacheGet();
+            var now   = Date.now();
+            var fresh = cache && (now - cache.ts) < _RDN_TTL_MS;
+
+            // 1) caché válida y sin force → devuelve ya, sin red
+            if (cache && fresh && !opts.force) {
+                var o = _rdnCompute(cache.resp, cache.ts);
+                o.fromCache = true; o.stale = false;
+                return o;
+            }
+
+            // 2) caché vieja (no force) y hay onFresh → devuelve stale y refresca en background
+            if (cache && !opts.force && typeof opts.onFresh === 'function') {
+                var stale = _rdnCompute(cache.resp, cache.ts);
+                stale.fromCache = true; stale.stale = true;
+                _rdnFetch().then(function(resp){
+                    if (resp) {
+                        var fr = _rdnCompute(resp, Date.now());
+                        fr.fromCache = false; fr.stale = false;
+                        try { opts.onFresh(fr); } catch (_) {}
+                    }
+                }).catch(function(_){});
+                return stale;
+            }
+
+            // 3) sin caché utilizable (o force) → fetch bloqueante
+            var resp = await _rdnFetch();
+            if (resp) {
+                var live = _rdnCompute(resp, Date.now());
+                live.fromCache = false; live.stale = false;
+                return live;
+            }
+
+            // 4) red falló pero hay caché vieja → último recurso
+            if (cache) {
+                var last = _rdnCompute(cache.resp, cache.ts);
+                last.fromCache = true; last.stale = true;
+                return last;
+            }
+
+            // 5) nada: objeto vacío (solo-carga con TSB si lo hubiera)
+            return _rdnCompute(null, now);
         };
 
         // ═══ Auto-polling whoami al arranque (event-driven + initial tick) ═══
