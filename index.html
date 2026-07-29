@@ -26290,6 +26290,35 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (loadOv && loadOv.parentNode) loadOv.parentNode.removeChild(loadOv);
         }
 
+        // [FIX ele distSer] Solo la vía bulk (_mapStreamsToActFields) incrusta
+        // `ele` punto-a-punto en distSer. Los demás imports (auto-import Strava,
+        // parsers .fit/.gpx/.tcx, manual) dejan distSer sin `ele`; la altitud
+        // vive solo en act.eleSeries (array plano). Sin ele en distSer, el
+        // cálculo de "R. esfuerzo" (GAP) y el "Desn." de parciales fallan (GAP
+        // → null → hero cae a "Distancia" duplicada; Desn. → guion). Aquí
+        // normalizamos una única vez, en memoria y al abrir el detalle: por cada
+        // punto sin ele lo inyectamos desde eleSeries por alineado proporcional
+        // de índice (ambas series recorren la actividad start→end en orden).
+        // Retroactivo (arregla ya importadas) + prospectivo. Bulk ya trae ele → no-op.
+        (function _mrEnsureDistSerEle(){
+            try {
+                var ds = act.distSer, es = act.eleSeries;
+                if (!Array.isArray(ds) || ds.length < 2) return;
+                if (!Array.isArray(es) || es.length < 2) return;
+                var need = false;
+                for (var _i = 0; _i < ds.length; _i++) { if (ds[_i] && ds[_i].ele == null) { need = true; break; } }
+                if (!need) return;
+                var _dN = ds.length, _eN = es.length;
+                for (var _j = 0; _j < _dN; _j++) {
+                    if (!ds[_j] || ds[_j].ele != null) continue;
+                    var _k = (_dN > 1) ? Math.round(_j * (_eN - 1) / (_dN - 1)) : 0;
+                    if (_k < 0) _k = 0; else if (_k >= _eN) _k = _eN - 1;
+                    var _v = es[_k];
+                    if (_v != null && isFinite(_v)) ds[_j].ele = _v;
+                }
+            } catch (e) {}
+        })();
+
         const d    = new Date(act.dateStr + 'T12:00:00');
         const df   = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
         const dfS  = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'});
@@ -48877,7 +48906,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.19.0-p6';
+        window.__mrCorosVersion = 'v2.19.0-p7';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
