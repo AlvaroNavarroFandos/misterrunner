@@ -6177,8 +6177,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="runner-flag-display" class="mr-rh-flag">🏃</div>
                 </div>
 
-                <!-- 2. VO2MAX — bloque separado navy -->
+                <!-- 2. VO2MAX — bloque separado navy (clicable → modal histórico) -->
                 <div id="vo2max-card" style="display:none;"></div>
+
+                <!-- VO2MAX HISTÓRICO SHEET (patrón runner: backdrop + sheet + ✕) -->
+                <div id="vo2max-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('vo2max-sheet')">
+                    <div class="sheet">
+                        <div class="sheet-handle-wrap">
+                            <div class="sheet-handle"></div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                                    VO2 max · evolución
+                                </div>
+                                <button onclick="closeSheet('vo2max-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
+                            </div>
+                        </div>
+                        <div class="sheet-body" id="vo2max-sheet-body"></div>
+                    </div>
+                </div>
 
                 <!-- ── GRUPO RUNNER ROWS · filas unificadas ───────────── -->
                 <div style="background:var(--card);border-radius:16px;border:1px solid var(--border);overflow:hidden;">
@@ -37549,11 +37566,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function renderVO2maxCard() {
         const card = document.getElementById('vo2max-card');
         if(!card) return;
-        const vo2 = profileData.vo2max;
+        // [VO2 · COROS] Valor en vivo: último VO2max COROS válido; fallback al manual del perfil.
+        var _corosVo2 = (typeof window._mrVo2Latest === 'function') ? window._mrVo2Latest() : null;
+        const _isCoros = (_corosVo2 != null && _corosVo2 > 0);
+        const vo2 = _isCoros ? _corosVo2 : profileData.vo2max;
         if(!vo2 || vo2 < 10) { card.style.display='none'; return; }
         card.style.display = '';
-        // Card respeta paleta clara/oscura (var(--card) + border)
-        card.style.cssText = 'background:var(--card);border-radius:16px;border:1px solid var(--border);overflow:hidden;';
+        // Card respeta paleta clara/oscura (var(--card) + border). Ahora clicable → modal histórico VO2max.
+        card.style.cssText = 'background:var(--card);border-radius:16px;border:1px solid var(--border);overflow:hidden;cursor:pointer;transition:transform .12s ease;';
+        card.onclick = function(){ try { window._openVo2Sheet && window._openVo2Sheet(); } catch(_){} };
+        card.onpointerdown = function(){ card.style.transform='scale(.985)'; };
+        card.onpointerup = card.onpointerleave = function(){ card.style.transform=''; };
+        const corosChip = _isCoros ? '<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;color:#DC2027;background:rgba(220,32,39,.12);padding:2px 6px;border-radius:6px;letter-spacing:.3px;">● COROS</span>' : '';
 
         // Edad (solo si está definida en perfil)
         let age = null;
@@ -37620,7 +37644,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // Centro
                     '<div style="flex:1;min-width:0;">' +
                         // [v5.3] Solo "VO2 MAX" como label (quitado "Capacidad aeróbica")
-                        '<div style="font-size:11px;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">VO2 MAX</div>' +
+                        '<div style="display:flex;align-items:center;gap:7px;"><div style="font-size:11px;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">VO2 MAX</div>' + corosChip + '</div>' +
                         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:3px;flex-wrap:wrap;">' +
                             '<span style="font-size:26px;font-weight:900;color:var(--tw);line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
                             '<span style="font-size:10px;color:var(--tm);">ml/kg/min</span>' +
@@ -37629,12 +37653,84 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '</div>' +
                     // Derecha: Top% + cohorte (solo si hay edad)
                     cohortBlock +
+                    // Chevron: indica que la card abre el modal histórico
+                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-left:2px;"><path d="M9 18l6-6-6-6"/></svg>' +
                 '</div>' +
                 // [VO2 V4] Barra segmentada sin labels debajo (redundantes: la categoría
                 // ya sale al lado de las unidades como "Élite" en color de la categoría)
                 '<div style="display:flex;gap:3px;">' + segHtml + '</div>' +
             '</div>';
     }
+
+    // ── VO2MAX HISTÓRICO · modal (Q1=A vivo COROS · Q2=B 84d · Q3=A+semanal · Q5=A) ──
+    function _vo2Age(){
+        if(!profileData.dob) return null;
+        var b=new Date(profileData.dob), n=new Date();
+        var a=n.getFullYear()-b.getFullYear();
+        if(n.getMonth()<b.getMonth()||(n.getMonth()===b.getMonth()&&n.getDate()<b.getDate())) a--;
+        return (a<5||a>120)?null:a;
+    }
+    function _vo2ZoneThresholds(age,sex){
+        var tables={H:[[31,37,44,51,56],[29,35,41,47,53],[26,32,38,44,49],[23,29,35,40,45],[20,26,31,37,41]],
+                    M:[[23,28,35,41,46],[21,26,32,38,43],[19,24,29,34,39],[17,21,26,31,36],[15,19,23,27,32]]};
+        var brackets=[29,39,49,59,120], idx=brackets.findIndex(function(b){return age<=b;}), i=idx<0?4:idx;
+        var t=tables[(sex==='M'?'M':'H')][i];
+        return [{v:t[0],color:'#f97316'},{v:t[1],color:'#eab308'},{v:t[2],color:'#22c55e'},{v:t[3],color:'#45aaf2'},{v:t[4],color:'#a855f7'}];
+    }
+    function _buildVo2Chart(series,cat,age,sex){
+        if(!series || series.length<2) return '<div style="font-size:12px;color:var(--tm);padding:20px 2px;line-height:1.5;">Aún no hay suficiente histórico COROS para el gráfico (se necesitan ~2 semanas con lecturas de VO2 max).</div>';
+        var col=cat.color;
+        var W=460,H=230,padL=34,padR=14,padT=18,padB=26;
+        var iw=W-padL-padR, ih=H-padT-padB;
+        var vals=series.map(function(s){return s.vo2;});
+        var thr=_vo2ZoneThresholds(age,sex);
+        var vmin=Math.floor(Math.min.apply(null,vals)-3), vmax=Math.ceil(Math.max.apply(null,vals)+3);
+        if(vmax<=vmin) vmax=vmin+1;
+        var x=function(i){return padL+(iw*i/(series.length-1));};
+        var y=function(v){return padT+ih-((v-vmin)/(vmax-vmin))*ih;};
+        var uid='g'+Math.random().toString(36).slice(2,7);
+        var defs='<defs><linearGradient id="area'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+col+'" stop-opacity="0.34"/><stop offset="100%" stop-color="'+col+'" stop-opacity="0"/></linearGradient><filter id="glow'+uid+'" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
+        var grid='';
+        thr.forEach(function(t){ if(t.v>vmin&&t.v<vmax){ var yy=y(t.v); grid+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+yy.toFixed(1)+'" stroke="'+t.color+'" stroke-opacity="0.16" stroke-width="1" stroke-dasharray="2 4"/>'; grid+='<text x="'+(padL-5)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end" font-size="8.5" fill="var(--tm)" font-weight="600">'+t.v+'</text>'; } });
+        var d=''; series.forEach(function(s,i){ d+=(i?'L':'M')+x(i).toFixed(1)+' '+y(s.vo2).toFixed(1)+' '; });
+        var area=d+'L'+x(series.length-1).toFixed(1)+' '+(padT+ih)+' L'+x(0).toFixed(1)+' '+(padT+ih)+' Z';
+        var pts=''; series.forEach(function(s,i){ var cx=x(i).toFixed(1), cy=y(s.vo2).toFixed(1), isLast=i===series.length-1; pts+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(isLast?11:8)+'" fill="'+col+'" opacity="'+(isLast?0.28:0.16)+'"/>'; pts+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(isLast?7:5)+'" fill="'+col+'" filter="url(#glow'+uid+')"/>'; if(isLast) pts+='<circle cx="'+cx+'" cy="'+cy+'" r="2.6" fill="#fff"/>'; });
+        var xlab=''; var step=Math.max(1,Math.round(series.length/5)); series.forEach(function(s,i){ if(i%step===0||i===series.length-1){ var parts=s.label.split(' '); xlab+='<text x="'+x(i).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle" font-size="8.5" fill="var(--tm)" font-weight="600">'+(parts[1]||s.label)+'</text>'; } });
+        var lastX=x(series.length-1), lastY=y(series[series.length-1].vo2), tagX=Math.min(lastX,W-padR-30);
+        var tag='<g transform="translate('+tagX.toFixed(1)+','+(lastY-16).toFixed(1)+')"><rect x="-16" y="-11" width="32" height="18" rx="6" fill="'+col+'"/><text x="0" y="2" text-anchor="middle" font-size="10.5" font-weight="900" fill="#fff">'+series[series.length-1].vo2+'</text></g>';
+        return '<div style="background:var(--bsoft);border:1px solid var(--border);border-radius:14px;padding:10px 6px 4px;"><svg viewBox="0 0 '+W+' '+H+'" width="100%" style="display:block;">'+defs+grid+'<path d="'+area+'" fill="url(#area'+uid+')"/><path d="'+d.trim()+'" fill="none" stroke="'+col+'" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow'+uid+')"/>'+pts+tag+xlab+'</svg></div>';
+    }
+    function _buildVo2SheetBody(){
+        var series=(typeof window._mrVo2Series==='function')?window._mrVo2Series():[];
+        var age=_vo2Age()||30, sex=profileData.sex||'H';
+        var latest=(typeof window._mrVo2Latest==='function')?window._mrVo2Latest():null;
+        var cur=series.length?series[series.length-1].vo2:(latest!=null?latest:profileData.vo2max);
+        if(cur==null||cur<10){ return '<div style="font-size:12px;color:var(--tm);padding:24px 2px;line-height:1.5;">Sin datos de VO2 max todavía. Conecta COROS o registra tu VO2 max en tu perfil.</div>'; }
+        var cat=getVO2maxCategory(cur,age,sex), col=cat.color;
+        var first=series.length?series[0].vo2:cur;
+        var delta=Math.round((cur-first)*10)/10;
+        var deltaTxt=(delta>0?'+':'')+delta;
+        var deltaArrow=delta>0?'▲':(delta<0?'▼':'▬');
+        var deltaCol=delta>0?'#22c55e':(delta<0?'#ef4444':'var(--tm)');
+        var html='';
+        html+='<div style="display:flex;align-items:flex-end;gap:14px;padding:6px 2px 2px;">'+
+            '<div><div style="font-size:11px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">Actual</div>'+
+              '<div style="display:flex;align-items:baseline;gap:5px;margin-top:2px;"><span style="font-size:40px;font-weight:900;color:var(--tw);line-height:.9;letter-spacing:-1px;">'+cur+'</span><span style="font-size:11px;color:var(--tm);">ml/kg/min</span></div>'+
+              '<div style="margin-top:5px;"><span style="font-size:12px;font-weight:800;color:'+col+';">'+cat.label+'</span></div></div>';
+        if(series.length>=2){
+            html+='<div style="margin-left:auto;text-align:right;"><div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:.6px;font-weight:700;">'+series.length+' semanas</div>'+
+              '<div style="font-size:16px;font-weight:900;color:'+deltaCol+';margin-top:3px;">'+deltaArrow+' '+deltaTxt+'</div></div>';
+        }
+        html+='</div>';
+        html+=_buildVo2Chart(series,cat,age,sex);
+        html+='<div style="font-size:10.5px;color:var(--tm);line-height:1.5;padding:0 2px;">Datos de COROS (EvoLab). Un punto por semana; las semanas sin lectura nueva conservan el último VO2 max estimado. La línea toma el color de tu rango actual.</div>';
+        return html;
+    }
+    window._openVo2Sheet = function(){
+        var body=document.getElementById('vo2max-sheet-body');
+        if(body) body.innerHTML=_buildVo2SheetBody();
+        try { if(typeof openSheet==='function') openSheet('vo2max-sheet'); else if(window.openSheet) window.openSheet('vo2max-sheet'); } catch(_){}
+    };
 
     // ── MARATHON PREDICTOR ──────────────────────────────────────────
     // Uses Riegel formula + Daniels VDOT for cross-distance prediction
@@ -39291,7 +39387,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const rdnCard0 = document.createElement('div');
         rdnCard0.id = 'mr-readiness-card';
         rdnCard0.className = 'mr-rdn';
-        container.appendChild(rdnCard0);
+        // [Home reorder] El readiness se inserta DEBAJO del plan navy (mr-pc-card).
+        // Se crea aquí para que #mr-readiness-card exista, pero el appendChild
+        // se hace tras container.appendChild(planCard) (ver más abajo).
 
         // ── 0a. [v4.0 GAP 4 + v4.2 GAP 3] TRAINING PATTERN ALERTS ────
         // analyzeTrainingPatterns() fusiona:
@@ -39793,6 +39891,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>`;
         }
         container.appendChild(planCard);
+
+        // [Home reorder] Readiness (MR × COROS) reubicado DEBAJO del plan navy.
+        container.appendChild(rdnCard0);
 
         // ── 2b. WARM UP BLOCK (aplanado claro/oscuro) ──────────────
         if(window.warmupRoutine && window.warmupRoutine.exercises && window.warmupRoutine.exercises.length) {
@@ -48906,7 +49007,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.19.0-p7';
+        window.__mrCorosVersion = 'v2.20.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -49230,7 +49331,7 @@ window.addEventListener('DOMContentLoaded', function() {
         // ═══════════════════════════════════════════════════════════════════
         var _RDN_CACHE_KEY = 'mr_coros_readiness';
         var _RDN_TTL_MS    = 3 * 60 * 60 * 1000;   // 3 horas
-        var _RDN_DAYS      = 42;                     // ventana pedida al backend
+        var _RDN_DAYS      = 84;                     // ventana pedida al backend (~3 meses; alimenta readiness + histórico VO2max)
         var _RDN_BASE_WIN  = 21;                     // ventana baseline FC reposo (mediana)
 
         // — helpers puros —
@@ -49281,6 +49382,52 @@ window.addEventListener('DOMContentLoaded', function() {
         // Invalidación externa (p.ej. tras connect/disconnect · paso 6).
         window._mrReadinessBust = function() {
             try { localStorage.removeItem(_RDN_CACHE_KEY); } catch (_) {}
+        };
+
+        // ══ VO2max histórico (deriva de resp.days[] de /readiness) ════════════
+        //  El backend ya persiste vo2max por día en coros_health_daily y /readiness
+        //  lo devuelve en cada day. Aquí lo exponemos sin tocar backend.
+        function _vo2DaysRaw() {
+            var cache = null; try { cache = _rdnCacheGet(); } catch (_) {}
+            var resp = (cache && cache.resp) ? cache.resp : null;
+            return (resp && Array.isArray(resp.days)) ? resp.days : [];
+        }
+        // Último VO2max COROS válido (número) o null si no hay COROS/dato.
+        window._mrVo2Latest = function() {
+            var days = _vo2DaysRaw().slice()
+                .sort(function(a, b){ return (a.date < b.date) ? -1 : (a.date > b.date ? 1 : 0); });
+            for (var i = days.length - 1; i >= 0; i--) {
+                var v = days[i].vo2max;
+                if (v != null && v > 0) return v;
+            }
+            return null;
+        };
+        var _VO2_MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        // Serie semanal: 1 punto/semana (lunes), arrastrando el último VO2max válido
+        // en semanas sin lectura nueva (Q3: días sin dato = no se entrenó, valor intacto).
+        window._mrVo2Series = function() {
+            var days = _vo2DaysRaw();
+            var valid = [];
+            for (var i = 0; i < days.length; i++) {
+                var v = days[i].vo2max;
+                if (v != null && v > 0 && days[i].date) valid.push({ t: new Date(days[i].date + 'T12:00:00'), v: v });
+            }
+            if (!valid.length) return [];
+            valid.sort(function(a, b){ return a.t - b.t; });
+            function monday(dt){ var x = new Date(dt); var wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); x.setHours(12,0,0,0); return x; }
+            var firstMon = monday(valid[0].t), lastMon = monday(new Date());
+            var weeks = [];
+            for (var m = new Date(firstMon); m <= lastMon; m.setDate(m.getDate() + 7)) weeks.push(new Date(m));
+            var out = [], last = null;
+            for (var w = 0; w < weeks.length; w++) {
+                var ws = weeks[w], we = new Date(ws); we.setDate(we.getDate() + 7);
+                var wv = null;
+                for (var k = 0; k < valid.length; k++) { if (valid[k].t >= ws && valid[k].t < we) wv = valid[k].v; }
+                var isCarry = false;
+                if (wv == null) { if (last == null) continue; wv = last; isCarry = true; } else { last = wv; }
+                out.push({ weekStart: new Date(ws), label: ws.getDate() + ' ' + _VO2_MESES[ws.getMonth()], vo2: wv, isCarry: isCarry });
+            }
+            return out;
         };
 
         // — normaliza respuesta + TSB (__mrPMC) → objeto para el render —
