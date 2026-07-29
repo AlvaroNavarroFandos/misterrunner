@@ -375,9 +375,10 @@
     .mr-rdn.skel .sk{border-radius:7px;background:linear-gradient(90deg,var(--blockbg),var(--blockbd),var(--blockbg));background-size:200% 100%;animation:mrRdnShim 1.2s linear infinite;}
     @keyframes mrRdnShim{0%{background-position:200% 0}100%{background-position:-200% 0}}
     /* READINESS · sheet detalle (3 secciones) · vars de color scopeadas aquí */
-    .rdn-sheet-scope{--hrv:#0891b2;--hrvband:rgba(8,145,178,.14);--fc:#db2777;}
-    body.dark-mode .rdn-sheet-scope{--hrv:#22d3ee;--hrvband:rgba(34,211,238,.13);--fc:#f472b6;}
-    .rdn-sec{padding:9px 0 5px;border-bottom:1px solid var(--border);}
+    .rdn-sheet-scope{--hrv:#0891b2;--hrvband:rgba(8,145,178,.14);--fc:#db2777;--rdn-div:rgba(0,0,0,.14);}
+    body.dark-mode .rdn-sheet-scope{--hrv:#22d3ee;--hrvband:rgba(34,211,238,.13);--fc:#f472b6;--rdn-div:rgba(255,255,255,.13);}
+    .rdn-sec{padding:12px 0 8px;border-bottom:1.5px solid var(--rdn-div);}
+    .rdn-sec:first-child{padding-top:6px;}
     .rdn-sec:last-child{border-bottom:0;padding-bottom:2px;}
     .rdn-sec-h{display:flex;align-items:center;gap:7px;margin-bottom:1px;}
     .rdn-sec-ico{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
@@ -48855,7 +48856,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.19.0-p1';
+        window.__mrCorosVersion = 'v2.19.0-p2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -49508,27 +49509,47 @@ window.addEventListener('DOMContentLoaded', function() {
         // ═══ SHEET de detalle (3 secciones) ═════════════════════════════════
         // SVG line chart minimalista estilo COROS.
         function _rdnLineChart(data, o) {
-            var W=390,H=108,padL=6,padR=30,padT=9,padB=18;
+            var W=390,H=110,padL=6,padR=30,padT=9,padB=19;
             var pW=W-padL-padR, pH=H-padT-padB;
             var min=o.min, max=o.max, i;
+            var gid=o.gid||'rdnG';
             function X(i){ return padL+(data.length<=1?pW/2:(i/(data.length-1))*pW); }
             function Y(v){ return padT+(1-(v-min)/(max-min))*pH; }
+            var baseY=(padT+pH).toFixed(1);
             var s='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+            s+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'+
+               '<stop offset="0%" stop-color="'+o.color+'" stop-opacity="0.30"/>'+
+               '<stop offset="100%" stop-color="'+o.color+'" stop-opacity="0"/></linearGradient></defs>';
+            // banda rango normal (HRV) tenue detrás
             if(o.band){
                 var up='',dn='';
                 data.forEach(function(d,i){ up+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(d.hi).toFixed(1)+' '; });
                 for(i=data.length-1;i>=0;i--){ dn+='L'+X(i).toFixed(1)+' '+Y(data[i].lo).toFixed(1)+' '; }
                 s+='<path d="'+up+dn+'Z" fill="'+o.band+'" stroke="none"/>';
             }
+            // gridlines + labels Y
             o.ticks.forEach(function(t){
                 var yy=Y(t).toFixed(1);
                 s+='<line x1="'+padL+'" y1="'+yy+'" x2="'+(padL+pW)+'" y2="'+yy+'" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 4"/>';
                 s+='<text x="'+(W-2)+'" y="'+(+yy+3)+'" text-anchor="end" font-size="9" fill="var(--ts)" font-weight="600">'+t+'</text>';
             });
+            // path de la línea (reutilizado)
             var ln='';
             data.forEach(function(d,i){ ln+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(d.value).toFixed(1)+' '; });
-            s+='<path d="'+ln+'" fill="none" stroke="'+o.color+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
-            data.forEach(function(d,i){ s+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(d.value).toFixed(1)+'" r="2.8" fill="var(--card)" stroke="'+o.color+'" stroke-width="1.8"/>'; });
+            // área bajo la línea con gradiente
+            s+='<path d="'+ln+'L'+X(data.length-1).toFixed(1)+' '+baseY+' L'+X(0).toFixed(1)+' '+baseY+' Z" fill="url(#'+gid+')" stroke="none"/>';
+            // glow (línea gruesa translúcida detrás)
+            s+='<path d="'+ln+'" fill="none" stroke="'+o.color+'" stroke-width="6" stroke-opacity="0.16" stroke-linejoin="round" stroke-linecap="round"/>';
+            // línea principal (trazo grueso)
+            s+='<path d="'+ln+'" fill="none" stroke="'+o.color+'" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>';
+            // puntos: pequeños salvo el último (hoy) destacado con halo
+            data.forEach(function(d,i){
+                var last=(i===data.length-1);
+                var cx=X(i).toFixed(1), cy=Y(d.value).toFixed(1);
+                if(last) s+='<circle cx="'+cx+'" cy="'+cy+'" r="6.5" fill="'+o.color+'" fill-opacity="0.18"/>';
+                s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(last?4:2.4)+'" fill="'+(last?o.color:'var(--card)')+'" stroke="'+o.color+'" stroke-width="'+(last?0:1.8)+'"/>';
+            });
+            // labels X
             data.forEach(function(d,i){ if(i%2===0||i===data.length-1){ s+='<text x="'+X(i).toFixed(1)+'" y="'+(H-5)+'" text-anchor="middle" font-size="8.5" fill="var(--tm)" font-weight="600">'+d.label+'</text>'; } });
             return s+'</svg>';
         }
@@ -49595,7 +49616,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 var lastHrv=hrvData[hrvData.length-1];
                 hrvSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--hrv)"></span><span class="rdn-sec-t">VFC nocturna</span></div>'+
                     '<div class="rdn-sec-sub">Anoche <b>'+lastHrv.value+' ms</b> · Rango normal <b>'+lastHrv.lo+'–'+lastHrv.hi+' ms</b></div>'+
-                    '<div class="rdn-chart">'+_rdnLineChart(hrvData,{min:hr[0],max:hr[1],ticks:_rdnTicks(hr[0],hr[1]),color:'var(--hrv)',band:'var(--hrvband)'})+'</div></div>';
+                    '<div class="rdn-chart">'+_rdnLineChart(hrvData,{min:hr[0],max:hr[1],ticks:_rdnTicks(hr[0],hr[1]),color:'var(--hrv)',band:'var(--hrvband)',gid:'rdnHrvGrad'})+'</div></div>';
             } else {
                 hrvSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--hrv)"></span><span class="rdn-sec-t">VFC nocturna</span></div><div class="rdn-empty">Aún no hay histórico de HRV nocturna.</div></div>';
             }
@@ -49608,7 +49629,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 var lastFc=fcData[fcData.length-1];
                 fcSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--fc)"></span><span class="rdn-sec-t">FC en reposo</span></div>'+
                     '<div class="rdn-sec-sub">Hoy <b>'+lastFc.value+' ppm</b> · Media '+fcData.length+' días <b>'+fcMean+' ppm</b></div>'+
-                    '<div class="rdn-chart">'+_rdnLineChart(fcData,{min:fr[0],max:fr[1],ticks:_rdnTicks(fr[0],fr[1]),color:'var(--fc)'})+'</div></div>';
+                    '<div class="rdn-chart">'+_rdnLineChart(fcData,{min:fr[0],max:fr[1],ticks:_rdnTicks(fr[0],fr[1]),color:'var(--fc)',gid:'rdnFcGrad'})+'</div></div>';
             } else {
                 fcSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--fc)"></span><span class="rdn-sec-t">FC en reposo</span></div><div class="rdn-empty">Aún no hay histórico de FC en reposo.</div></div>';
             }
@@ -49629,6 +49650,9 @@ window.addEventListener('DOMContentLoaded', function() {
         function _mrOpenReadinessSheet(){
             var id='readiness-sheet';
             var bd=document.getElementById(id);
+            // Ya abierto/abriéndose → no reabrir (evita el estado "blur sin sheet" por doble-tap)
+            if (bd && bd.classList.contains('show')) return;
+            var isNew=false;
             if(!bd){
                 bd=document.createElement('div');
                 bd.id=id; bd.className='sheet-backdrop';
@@ -49640,10 +49664,16 @@ window.addEventListener('DOMContentLoaded', function() {
                     '</div></div>'+
                     '<div class="sheet-body" id="readiness-sheet-body" style="padding:0 16px 16px;"></div></div>';
                 document.body.appendChild(bd);
+                isNew=true;
             }
             var body=document.getElementById('readiness-sheet-body');
             if(body) body.innerHTML='<div class="rdn-sheet-scope">'+_mrRdnBuildSheetBody()+'</div>';
-            if(typeof window.openSheet==='function') window.openSheet(id);
+            var doOpen=function(){ try { if(typeof window.openSheet==='function') window.openSheet(id); } catch(_){} };
+            // Si el sheet es nuevo, esperamos 2 frames para que el navegador pinte el
+            // estado inicial (.sheet en translateY(100%)) ANTES de aplicar .show; sin
+            // esto la transición puede colapsar y el sheet queda abajo (solo blur).
+            if(isNew){ requestAnimationFrame(function(){ requestAnimationFrame(doOpen); }); }
+            else { doOpen(); }
         }
         window._mrOpenReadinessSheet = _mrOpenReadinessSheet;
 
@@ -49696,18 +49726,22 @@ window.addEventListener('DOMContentLoaded', function() {
                 }
             } catch (_) {}
 
-            // ── Refresh en background en cada apertura (throttle 90s) → repinta fresco ──
+            // ── Refresh en background (throttle 90s). Sin caché (skeleton) SIEMPRE
+            //    intenta, y si el fetch falla se resetea el throttle para reintentar
+            //    en el próximo render (evita quedarse en skeleton). ──────────────
             try {
                 var now = Date.now();
-                if (!window.__mrRdnLastFetch || (now - window.__mrRdnLastFetch) > 90000) {
+                var hasCacheNow = !!(cache && cache.resp);
+                var due = !window.__mrRdnLastFetch || (now - window.__mrRdnLastFetch) > 90000;
+                if (due || !hasCacheNow) {
                     window.__mrRdnLastFetch = now;
                     _rdnFetch().then(function(resp){
-                        if (!resp) return;
+                        if (!resp) { window.__mrRdnLastFetch = 0; return; }
                         var fr = _rdnCompute(resp, Date.now());
                         fr.fromCache = false; fr.stale = false;
                         var c2 = document.getElementById('mr-readiness-card');
                         if (c2 && c2.style.display !== 'none') _paintReadiness(c2, fr);
-                    }).catch(function (_) {});
+                    }).catch(function (_) { window.__mrRdnLastFetch = 0; });
                 }
             } catch (_) {}
         };
