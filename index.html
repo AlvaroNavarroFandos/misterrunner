@@ -30046,6 +30046,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 base.interval  = Math.round(ltsp * rInterval);
                 base.repeat    = Math.round(ltsp * rInterval * 0.96);
             }
+            // [Fase 2 · Rampa MP] fitRatio = forma ACTUAL (ltsp) vs OBJETIVO (umbral meta).
+            //  >1 = vas por detrás → la rampa de ensayos parte más lento y baja a objetivo.
+            //  Sin ltsp o yendo sobrado (<=1) → rampa inactiva (objetivo intacto).
+            const _thObj = Math.round(raceP * f.threshold);
+            base._fitRatio = (ltsp != null && _thObj) ? (ltsp / _thObj) : 1;
         } catch (_) {}
         return base;
     }
@@ -30549,7 +30554,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 type:'long', dist:totalKm, pace:paces.marathon, fc:meta.fcM, longSec:realSec, durStr:fmtLongDur(realSec), long:meta,
                 blocks:[
                     { label:'Entrada fácil', detail:easyRange(paces) + '/km', color:P, km:easyKm, durStr:_fmtBlockDur(easySec) },
-                    { label:'Ritmo Maratón (MP)', detail:marathonRange(paces) + '/km · acostumbrar al cuerpo al ritmo objetivo', color:G, km:mpKm, durStr:_fmtBlockDur(mpSec) }
+                    { label:'Ritmo Maratón (MP)', detail:marathonRange(paces) + '/km · acostumbrar al cuerpo al ritmo objetivo', color:G, km:mpKm, durStr:_fmtBlockDur(mpSec), _rampMP:paces.marathon }
                 ],
                 desc:'Long ' + fmtLongDur(realSec) + ' · ' + totalKm + 'km · últimos ' + mpKm + 'km a RM ' + fmtPace(paces.marathon) + '/km'
             };
@@ -30564,7 +30569,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             type:'long', dist:pTotalKm, pace:paces.easy, fc:meta.fcE, longSec:pRealSec, durStr:fmtLongDur(pRealSec), long:meta,
             blocks:[
                 { label:'Long fácil', detail:easyRange(paces) + '/km', color:P, km:pEasyKm, durStr:_fmtBlockDur(pEasySec) },
-                { label:'Progresivo final', detail:'hasta ' + marathonRange(paces) + '/km', color:G, km:progKm, durStr:_fmtBlockDur(progSec) }
+                { label:'Progresivo final', detail:'hasta ' + marathonRange(paces) + '/km', color:G, km:progKm, durStr:_fmtBlockDur(progSec), _rampMP:paces.marathon }
             ],
             desc:'Long ' + fmtLongDur(pRealSec) + ' · ' + pTotalKm + 'km · últimos ' + progKm + 'km a RM'
         };
@@ -30644,7 +30649,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         else rec={durSec:90, km:_kmMin(1.5,paces.easy)};
         const wl = unit==='km'?`${q}km`:(unit==='m'?`${q}m`:((unit==="'"||unit==="\u2032")?`${q}'`:`${q}"`));
         return [{label:b.label, detail:b.detail, color:wc, repeat:n,
-          reps:[Object.assign({label:wl, detail, color:wc}, work, _asSensacion?{noPace:true}:{}),
+          reps:[Object.assign({label:wl, detail, color:wc}, work, _asSensacion?{noPace:true}:{}, b._rampMP?{_rampMP:b._rampMP}:{}),
                 Object.assign({label:'recuperaci\u00f3n', detail:'trote easy', color:REC}, rec)]}];
       }
       return [b];
@@ -30684,6 +30689,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
     try { window._mrStructBlock = _mrStructBlock; window._mrStructureSessionBlocks = _mrStructureSessionBlocks; } catch(e){}
+
+    // ══ [Fase 2 · Rampa MP universal] ═══════════════════════════════════════
+    //  De la forma ACTUAL (ltsp) al ritmo OBJETIVO, lineal por semana, aterrizando
+    //  COLCHÓN semanas antes de la meta y en meseta hasta el final. Solo rampa los
+    //  ensayos a volumen marcados con `_rampMP` (= ritmo objetivo del ensayo, en
+    //  s/km). Sin COROS o yendo ya sobrado (fitRatio<=1) → objetivo intacto (cero
+    //  regresión). Corre DESPUÉS del normalizador → no puede pisarlo el color→pace.
+    const _MR_RAMP_COLCHON = 5;
+    function _mrRampPace(objSec, fitRatio, t) {
+        if (!(fitRatio > 0)) fitRatio = 1;
+        t = (typeof t === 'number' && isFinite(t)) ? Math.max(0, Math.min(1, t)) : 1;
+        return Math.round(objSec * (fitRatio + (1 - fitRatio) * t));
+    }
+    function _mrPlanT(globalIdx, fullWeeks, colchon) {
+        const landing = Math.max(1, fullWeeks - 1 - (colchon || 0));
+        return Math.max(0, Math.min(1, globalIdx / landing));
+    }
+    function _mrApplyMpRamp(sess, paces) {
+        if (!sess || !Array.isArray(sess.blocks) || !paces) return;
+        var fr = paces._fitRatio; if (!(fr > 1)) return;      // sin COROS o sobrado → objetivo
+        var t = paces._t, pairs = [];
+        function ramp(o) {
+            if (o && o._rampMP) {
+                var obj = o._rampMP, r = _mrRampPace(obj, fr, t);
+                if (r !== obj) {
+                    var oR = fmtRange(obj, 10), nR = fmtRange(r, 10),
+                        oP = fmtPace(obj),      nP = fmtPace(r);
+                    if (o.detail) o.detail = o.detail.split(oR).join(nR).split(oP).join(nP);
+                    o._rampPaceSec = r;                        // override que leerá el mapper (reloj)
+                    if (o.pace === obj) o.pace = r;
+                    pairs.push([oR, nR, oP, nP]);
+                }
+            }
+            if (o && Array.isArray(o.reps)) o.reps.forEach(ramp);
+        }
+        sess.blocks.forEach(ramp);
+        if (pairs.length && sess.desc) {
+            pairs.forEach(function (p) { sess.desc = sess.desc.split(p[0]).join(p[1]).split(p[2]).join(p[3]); });
+        }
+    }
+    try { window._mrRampPace = _mrRampPace; window._mrPlanT = _mrPlanT; window._mrApplyMpRamp = _mrApplyMpRamp; } catch(e){}
 
     function buildWeekSessions(phase, weekNum, dayList, paces, lt, phaseLen, isRaceWeek, vdot) {
         const n = dayList.length;
@@ -30769,7 +30815,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Marathon pace cruise intervals
                 { type:'series', dist:16, pace:paces.marathon, fc:fcM,
                   blocks:[WU,
-                    {label:'MP cruise intervals 3×5km',detail:`${marathonRange(paces)}/km · rec 90" · ritmo objetivo maratón`,color:'#C9A84C',km:12},
+                    {label:'MP cruise intervals 3×5km',detail:`${marathonRange(paces)}/km · rec 90" · ritmo objetivo maratón`,color:'#C9A84C',km:12,_rampMP:paces.marathon},
                     CD],
                   desc:`MP cruise 3×5km a ${fmtPace(paces.marathon)}/km · rec 90"` },
                 // Threshold pyramid
@@ -30796,7 +30842,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      color:'#C9A84C', km:0,
                      repeat:4,
                      reps:[
-                       {label:'4km @ MP', detail:`${marathonRange(paces)}/km · ritmo maratón`, color:'#C9A84C', km:4},
+                       {label:'4km @ MP', detail:`${marathonRange(paces)}/km · ritmo maratón`, color:'#C9A84C', km:4, _rampMP:paces.marathon},
                        {label:`Recuperación 2'`, detail:'trote easy · ≈ 400m', color:'#60a5fa', km:0.4}
                      ]},
                     CD],
@@ -30811,7 +30857,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 { type:'series', dist:20, pace:paces.marathon, fc:fcM,
                   blocks:[
                     {label:'Calentamiento fácil',detail:`4km · ${easyRange(paces)}/km`,color:'#60a5fa',km:4},
-                    {label:'Simulación maratón 14km',detail:`${marathonRange(paces)}/km · ritmo objetivo real`,color:'#C9A84C',km:14},
+                    {label:'Simulación maratón 14km',detail:`${marathonRange(paces)}/km · ritmo objetivo real`,color:'#C9A84C',km:14,_rampMP:paces.marathon},
                     {label:'Vuelta',detail:`2km · ${easyRange(paces)}/km`,color:'#60a5fa',km:2}],
                   desc:`Simulación 14km a ${fmtPace(paces.marathon)}/km (race-pace)` },
                 // Mix: umbral + intervalo
@@ -30884,7 +30930,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                   blocks:[WU,{label:'Series 5×1000m',detail:`${intervalRange(paces)}/km · rec 2' · VO2max`,color:'#f87171',km:8},CD],
                   desc:`Series 5×1000m a ${fmtPace(paces.interval)}/km · rec 2'` },
                 { type:'series', dist:14, pace:hmPace, fc:fcT,
-                  blocks:[WU,{label:'HM pace 3×4km',detail:`${fmtPace(hmPace)}/km · ritmo objetivo media maratón`,color:'#a78bfa',km:10},CD],
+                  blocks:[WU,{label:'HM pace 3×4km',detail:`${fmtPace(hmPace)}/km · ritmo objetivo media maratón`,color:'#a78bfa',km:10,_rampMP:hmPace},CD],
                   desc:`Ritmo media 3×4km a ${fmtPace(hmPace)}/km` },
                 { type:'series', dist:12, pace:paces.threshold, fc:fcT,
                   blocks:[WU,{label:'Tempo pirámide 1-2-3-2km',detail:`${thresholdRange(paces)}/km · rec 60" entre`,color:'#f87171',km:8},CD],
@@ -30903,7 +30949,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      color:'#a78bfa', km:0,
                      repeat:2,
                      reps:[
-                       {label:'5km @ HM pace', detail:`${fmtPace(hmPace)}/km · ritmo HM`, color:'#a78bfa', km:5},
+                       {label:'5km @ HM pace', detail:`${fmtPace(hmPace)}/km · ritmo HM`, color:'#a78bfa', km:5, _rampMP:hmPace},
                        {label:'Recuperación 1km', detail:`${easyRange(paces)}/km · trote easy`, color:'#60a5fa', km:1}
                      ]},
                     CD],
@@ -30923,7 +30969,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                   desc:`Threshold 3×3km a ${fmtPace(paces.threshold)}/km` },
                 { type:'series', dist:13, pace:hmPace, fc:fcT,
                   blocks:[{label:'Entrada',detail:`3km · ${easyRange(paces)}/km`,color:'#60a5fa',km:3},
-                          {label:'Simulación HM 8km',detail:`${fmtPace(hmPace)}/km · ritmo objetivo real`,color:'#a78bfa',km:8},CD],
+                          {label:'Simulación HM 8km',detail:`${fmtPace(hmPace)}/km · ritmo objetivo real`,color:'#a78bfa',km:8,_rampMP:hmPace},CD],
                   desc:`Simulación 8km a ${fmtPace(hmPace)}/km (HM race-pace)` },
             ][cyc];
         }
@@ -31712,7 +31758,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // Se DESCUENTA del easy para no inflar el volumen total de la sesión.
                     const mpKm = Math.min(kmMin(12, paces.marathon), kmEasy(minutes) * 0.34);
                     blocks[0].km = Math.max(1, kmEasy(minutes) - mpKm);
-                    blocks.push({ label: 'último tercio a ritmo maratón', detail: fmtPace(paces.marathon) + '/km · ~12 min al final · especificidad', color:'#C9A84C', km: mpKm });
+                    blocks.push({ label: 'último tercio a ritmo maratón', detail: fmtPace(paces.marathon) + '/km · ~12 min al final · especificidad', color:'#C9A84C', km: mpKm, _rampMP: paces.marathon });
                     extras.push('progresión MP');
                 }
                 if (strides) {
@@ -31850,7 +31896,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 }
 
-                sessions.forEach(function(s){ _mrStructureSessionBlocks(s, paces); });
+                // [Fase 2 · Rampa MP] idx global = wi; plan completo = base + 20 motor.
+                paces._t = _mrPlanT(wi, numWeeks + 20, _MR_RAMP_COLCHON);
+                sessions.forEach(function(s){ _mrStructureSessionBlocks(s, paces); _mrApplyMpRamp(s, paces); });
                 weeks.push({
                     n: wi + 1,
                     weekStart: weekStartStr,
@@ -32409,12 +32457,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
             }
 
+            // [Fase 2 · Rampa MP] t de esta semana según su posición GLOBAL en el plan
+            // (en XL, el offset de la base prepend; en el resto, 0). fullWeeks real.
+            var _rampBaseOff = (_xlContext && _xlContext.baseWeeks) ? _xlContext.baseWeeks : 0;
+            paces._t = _mrPlanT(_rampBaseOff + w, _rampBaseOff + totalWeeks, _MR_RAMP_COLCHON);
             const sessionDefs=buildWeekSessions(phase,phaseWeekNum,effectiveDays,paces,lt,
                 phase==='base'?baseW:phase==='build'?buildW:phase==='peak'?peakW:taperW,isRaceWeek,vdot);
 
             // Estructura intervalos/progresiones/pirámides planos → repeat/reps o
             // bloques secuenciales (fiel en la app y en el reloj COROS).
-            sessionDefs.forEach(function(s){ _mrStructureSessionBlocks(s, paces); });
+            sessionDefs.forEach(function(s){ _mrStructureSessionBlocks(s, paces); _mrApplyMpRamp(s, paces); });
 
             // Apply deload multiplier: reduce all session distances by ~30%
             // [Fix v5.1] También se regenera `desc` coherentemente. El bug anterior
@@ -49286,7 +49338,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.23.0-p2';
+        window.__mrCorosVersion = 'v2.24.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
