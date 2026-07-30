@@ -29843,7 +29843,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var el = document.getElementById('vdot-evolution-value');
             if (!el) return;
             var cur = _vdotCurrent();
-            el.textContent = (cur && cur.vdot != null) ? cur.vdot : '\u2014';
+            var fa = _mrFormaActual(cur, _vdotActivePlan());
+            el.textContent = (fa && fa.vdot) ? fa.vdot : ((cur && cur.vdot != null) ? cur.vdot : '\u2014');
         } catch(_){}
     }
     window._updateVdotEvolutionRow = _updateVdotEvolutionRow;
@@ -29864,6 +29865,112 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
              + rowsHtml
              + '</div>';
     }
+
+    // ── [Fase 3] Forma actual desde COROS (termómetro read-only) ───────
+    //  Fuente D1: carrera/test reciente › ltsp (COROS) › vo2max (fallback) › plan.
+    //  SOLO display: no toca pacesFromGoal (los ritmos ya los ancla el ltsp).
+    //  VDOT en escala interna de la app (coherente con chart/objetivo/predicciones).
+    function _mrFormaActual(cur, plan) {
+        var DIST_KM = { first_5k:5, '10k':10, half:21.097, marathon:42.195, marathon_xl:42.195, marathon_intermediate:42.195 };
+        var THR_F   = { first_5k:1.05, '10k':1.00, half:0.97, marathon:0.93, marathon_xl:0.93, marathon_intermediate:0.93 };
+        var LABEL   = { first_5k:'5K', '10k':'10K', half:'media', marathon:'marat\u00f3n', marathon_xl:'marat\u00f3n', marathon_intermediate:'marat\u00f3n' };
+        var planDist  = (plan && plan.planDist) || 'marathon';
+        var distKm    = DIST_KM[planDist] || 42.195;
+        var distM     = Math.round(distKm * 1000);
+        var thrF      = THR_F[planDist] || 0.93;
+        var distLabel = LABEL[planDist] || 'marat\u00f3n';
+        var goalSecs  = (plan && Number(plan.goalSecs)) || 0;
+        var goalVdot  = (plan && plan.vdot != null) ? Math.round(plan.vdot)
+                      : (goalSecs ? Math.round(vdotFromResult(goalSecs, distM)) : 0);
+
+        var vdot = 0, equivSec = 0, source = '', badge = '', ltsp = null;
+
+        // 1 · carrera/test reciente (patrón oro)
+        if (cur && cur.source === 'activity' && cur.activity) {
+            vdot = cur.vdot;
+            equivSec = _riegelProject(Number(cur.activity.durationSec), Number(cur.activity.distKm) * 1000, distM);
+            source = 'activity'; badge = _vdotDistLabel(cur.activity.distKm) + ' reciente';
+        }
+        // 2 · ltsp COROS (alta fidelidad · el umbral↔VDOT es casi invertible)
+        if (!source) {
+            ltsp = (typeof window._mrLtspLatest === 'function') ? window._mrLtspLatest() : null;
+            if (ltsp) {
+                var raceP = ltsp / thrF;               // ritmo de carrera (dist plan) que implica tu umbral
+                equivSec = raceP * distKm;
+                vdot = Math.round(vdotFromResult(equivSec, distM));
+                source = 'ltsp'; badge = 'umbral COROS';
+            }
+        }
+        // 3 · vo2max fallback (cross-check)
+        if (!source) {
+            var vo2 = (typeof window._mrVo2Latest === 'function') ? window._mrVo2Latest() : null;
+            if (vo2 && vo2 > 0) {
+                vdot = Math.round(vo2);
+                equivSec = _goalSecsFromVDOT(vdot, planDist) || 0;
+                source = 'vo2'; badge = 'vo2max COROS';
+            }
+        }
+        // 4 · sin COROS ni carrera → degradar al plan (comportamiento previo, cero regresión)
+        if (!source) {
+            vdot = (cur && cur.vdot) || goalVdot || 0;
+            equivSec = goalSecs || (goalVdot ? (_goalSecsFromVDOT(goalVdot, planDist) || 0) : 0);
+            source = 'plan'; badge = 'objetivo';
+        }
+
+        var gapSec  = (goalSecs && equivSec) ? (equivSec - goalSecs) : 0;
+        var gapPace = (goalSecs && equivSec) ? Math.round((equivSec - goalSecs) / distKm) : 0;
+        return { vdot:vdot, equivSec:Math.round(equivSec), distKm:distKm, distLabel:distLabel,
+                 source:source, badge:badge, ltsp:ltsp, goalSecs:goalSecs, goalVdot:goalVdot,
+                 gapSec:Math.round(gapSec), gapPace:gapPace };
+    }
+
+    function _mrFormaActualHero(cur, plan) {
+        var fa = _mrFormaActual(cur, plan);
+        function eqT(s){ s=Math.round(s); var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60;
+            return h>0 ? (h+':'+String(m).padStart(2,'0')) : (m+':'+String(x).padStart(2,'0')); }
+        function fp(s){ s=Math.round(s); return Math.floor(s/60)+"'"+String(s%60).padStart(2,'0')+'"'; }
+        function mn(s){ return Math.round(Math.abs(s)/60); }
+
+        var isCoros = (fa.source==='ltsp' || fa.source==='vo2');
+        var bCol = isCoros ? '#DC2027' : (fa.source==='activity' ? '#C9A84C' : 'var(--ts)');
+        var bBg  = isCoros ? 'rgba(220,32,39,.10)' : (fa.source==='activity' ? 'rgba(201,168,76,.12)' : 'var(--bsoft)');
+        var bBd  = isCoros ? 'rgba(220,32,39,.28)' : 'var(--border)';
+        var badge = '<span style="position:absolute;top:14px;right:14px;z-index:2;font-size:9px;font-weight:800;letter-spacing:.3px;padding:4px 8px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;background:'+bBg+';color:'+bCol+';border:1px solid '+bBd+';"><span style="width:5px;height:5px;border-radius:50%;background:currentColor;"></span>'+fa.badge+'</span>';
+
+        var subBits = '\u2248 '+fa.distLabel+' <b style="color:var(--tw);font-weight:800;">'+eqT(fa.equivSec)+'</b>';
+        if (fa.source==='ltsp' && fa.ltsp) subBits += ' \u00b7 umbral <b style="color:var(--tw);font-weight:800;">'+fp(fa.ltsp)+'</b>';
+
+        var gapHtml = '';
+        if (fa.goalSecs && fa.source !== 'plan') {
+            var pillBg, pillCol, aTxt, bTxt, pillTxt;
+            if (Math.abs(fa.gapSec) < 45) {
+                pillBg='rgba(201,168,76,.16)'; pillCol='#C9A84C'; pillTxt='0';
+                aTxt='En l\u00ednea con tu objetivo'; bTxt='forma '+fa.vdot+' \u00b7 objetivo '+fa.goalVdot;
+            } else if (fa.gapSec > 0) {
+                pillBg='rgba(217,123,52,.16)'; pillCol='#d97b34'; pillTxt='+'+mn(fa.gapSec)+'\u2032';
+                aTxt='Objetivo '+fa.goalVdot+' \u00b7 '+eqT(fa.goalSecs);
+                bTxt='faltan '+mn(fa.gapSec)+' min \u00b7 ~'+fa.gapPace+'s/km';
+            } else {
+                pillBg='rgba(58,157,106,.16)'; pillCol='#3a9d6a'; pillTxt='\u2212'+mn(fa.gapSec)+'\u2032';
+                aTxt='Objetivo '+fa.goalVdot+' \u00b7 '+eqT(fa.goalSecs);
+                bTxt='vas '+mn(fa.gapSec)+' min por debajo';
+            }
+            gapHtml = '<div style="margin-top:16px;display:flex;align-items:center;gap:11px;padding-top:14px;border-top:1px solid var(--border);position:relative;z-index:1;">'
+                    + '<div style="font-size:15px;font-weight:900;padding:6px 11px;border-radius:11px;flex-shrink:0;font-variant-numeric:tabular-nums;line-height:1;background:'+pillBg+';color:'+pillCol+';">'+pillTxt+'</div>'
+                    + '<div style="flex:1;text-align:left;"><div style="font-size:13px;font-weight:800;letter-spacing:-.2px;color:var(--tw);">'+aTxt+'</div><div style="font-size:11.5px;color:var(--ts);font-weight:600;margin-top:1px;">'+bTxt+'</div></div>'
+                    + '</div>';
+        }
+
+        return '<div style="position:relative;overflow:hidden;text-align:center;padding:20px 18px 18px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
+             + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 38%,rgba(201,168,76,.14),transparent 72%);"></div>'
+             + badge
+             + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:2px;">Forma actual</div>'
+             + '<div style="position:relative;z-index:1;font-size:54px;font-weight:800;color:#C9A84C;letter-spacing:-2.5px;line-height:1;font-variant-numeric:tabular-nums;">'+fa.vdot+'</div>'
+             + '<div style="position:relative;z-index:1;font-size:13px;color:var(--ts);font-weight:600;margin-top:6px;">'+subBits+'</div>'
+             + gapHtml
+             + '</div>';
+    }
+    window._mrFormaActual = _mrFormaActual;
 
     // ── Sheet VDOT: VDOT actual + predicción de marcas + chart/eventos ──
     function _renderVdotHistorySheet() {
@@ -29937,12 +30044,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var trendIcon = trend >= 0
                 ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>'
                 : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>';
-            var hero = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
-                     + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
-                     + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
-                     + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
-                     + '<div style="position:relative;z-index:1;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:'+trendColor+';font-weight:700;margin-top:8px;font-variant-numeric:tabular-nums;">'+trendIcon+(trend>=0?'+':'')+trend+' vs. inicio del plan</div>'
-                     + '</div>';
+            var hero = _mrFormaActualHero(cur, plan);
             var evHtml = hist.slice().reverse().map(function(h){
                 var d = Number(h.vdot) - Number(h.oldVdot);
                 var up = d >= 0;
@@ -29971,12 +30073,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var sub = (cur.source === 'activity' && cur.activity)
             ? ('Desde tu ' + _vdotDistLabel(cur.activity.distKm) + ' ' + _vdotFmtHMS(cur.activity.durationSec) + (cur.activity.dateStr ? (' \u00b7 ' + new Date(cur.activity.dateStr+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'})) : ''))
             : 'Se refinará tras cada test o carrera';
-        var heroSimple = '<div style="position:relative;overflow:hidden;text-align:center;padding:24px 20px;background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:18px;margin-bottom:18px;">'
-                       + '<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(150px 100px at 50% 42%,rgba(201,168,76,.14),transparent 72%);"></div>'
-                       + '<div style="position:relative;z-index:1;font-size:9.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ts);font-weight:700;margin-bottom:4px;">VDOT actual</div>'
-                       + '<div style="position:relative;z-index:1;font-size:52px;font-weight:800;color:#C9A84C;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums;">'+current+'</div>'
-                       + '<div style="position:relative;z-index:1;font-size:11px;color:var(--ts);margin-top:8px;">'+sub+'</div>'
-                       + '</div>';
+        var heroSimple = _mrFormaActualHero(cur, plan);
         var note = (cur.source === 'activity')
             ? '<div style="padding:6px 16px 8px;text-align:center;font-size:11.5px;color:var(--ts);line-height:1.6;">Crea un plan para ver la <b style="color:var(--tw);">evolución</b> y que los ritmos se <b style="color:var(--tw);">recalibren solos</b> tras cada test.</div>'
             : '<div style="padding:6px 16px 8px;text-align:center;font-size:11.5px;color:var(--ts);line-height:1.6;">Aún no hay recalibraciones. Registra un <b style="color:var(--tw);">test</b> o <b style="color:var(--tw);">carrera</b> y tu VDOT se refinará automáticamente.</div>';
@@ -49338,7 +49435,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.24.0-p1';
+        window.__mrCorosVersion = 'v2.25.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
