@@ -1854,6 +1854,34 @@
         margin-bottom: 4px
     }
 
+    /* [Auto-umbral COROS] Badge "auto COROS" en cajones Umbral FC / Ritmo */
+    .mr-thr-coros-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--coros-lt, rgba(220, 32, 39, .10));
+        border: 1px solid var(--coros-bd, rgba(220, 32, 39, .35));
+        color: #DC2027;
+        border-radius: 7px;
+        padding: 2px 6px 2px 5px;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: .2px;
+        white-space: nowrap;
+        line-height: 1;
+        flex-shrink: 0
+    }
+    .mr-thr-coros-badge svg {
+        width: 9px;
+        height: 9px;
+        flex-shrink: 0
+    }
+    body.dark-mode .mr-thr-coros-badge {
+        color: #f0868c;
+        background: rgba(220, 32, 39, .16);
+        border-color: rgba(220, 32, 39, .40)
+    }
+
     .sheet-body input, .sheet-body select {
         width: 100%;
         background: var(--card);
@@ -12957,6 +12985,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             const el = document.getElementById('threshold-validation-msg');
             if(!el) return;
+            // En modo auto COROS el ritmo umbral es MEDIDO por el reloj; una
+            // estimación Daniels no debe "corregirlo". Ocultar el aviso.
+            if(window._mrThreshIsAuto && window._mrThreshIsAuto('pace')){ el.style.display='none'; return; }
             if(typeof paceValue === 'undefined' || !paceValue) return;
             if(typeof pacesFromGoal !== 'function') return;
 
@@ -18284,6 +18315,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     let ltValue = 170; // bpm
     let paceValue = 262; // seconds per km (4'22" = 262s)
+    // [Auto-umbral COROS · B2] Valor manual del usuario (fallback cuando NO hay
+    // COROS conectado / dato válido). ltValue/paceValue son el valor EFECTIVO
+    // (COROS medido si conectado, manual si no). Persistidos aparte; migración
+    // desde ltValue/paceValue en la carga si no existían.
+    let ltManual = 170;
+    let paceManual = 262;
     // Profile data — single source of truth (not read from DOM)
     let profileData = {
         name:'', flag:'🇪🇸', meta:'', watch:'', avatar:'', bio:'',
@@ -18403,8 +18440,55 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     renderZones();
     renderPaceZones();
 
+    // ══ [Auto-umbral COROS · B2] ══════════════════════════════════════════
+    //  Con COROS conectado + dato válido, ltValue/paceValue = lthr/ltsp medidos
+    //  por el reloj; los cajones se bloquean y muestran badge "auto COROS". Sin
+    //  COROS (o dato fuera de rango) → valor manual, cajón editable como siempre.
+    //  Las listas de zonas (renderZones/renderPaceZones) se recalculan solas.
+    //  Inyección idempotente: se re-aplica en arranque, mrCorosOnChange y tras
+    //  cada _rdnFetch (readiness fresco). Cross-IIFE vía window.* (L-3.3-03).
+    function _mrRenderThreshCajon(id, valueText, isAuto) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var badge = '<span class="mr-thr-coros-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 6l.5-3h5l.5 3M9 18l.5 3h5l.5-3"/></svg>auto COROS</span>';
+        var chev  = '<span style="opacity:.4;font-size:11px;">\u203A</span>';
+        el.innerHTML = '<span>' + valueText + '</span>' + (isAuto ? badge : chev);
+        if (isAuto) {
+            el.style.borderColor = 'rgba(220,32,39,.35)';
+            el.style.background  = 'linear-gradient(0deg,rgba(220,32,39,.06),transparent),var(--card)';
+            el.style.cursor      = 'default';
+        } else {
+            el.style.borderColor = 'var(--border)';
+            el.style.background  = 'var(--card)';
+            el.style.cursor      = 'pointer';
+        }
+    }
+    window._mrApplyCorosThresholds = function() {
+        try {
+            var connected = !!(window.__mrCoros && window.__mrCoros.connected);
+            var lthr = (typeof window._mrLthrLatest === 'function') ? window._mrLthrLatest() : null;
+            var ltsp = (typeof window._mrLtspLatest === 'function') ? window._mrLtspLatest() : null;
+            var fcAuto   = connected && (lthr != null);
+            var paceAuto = connected && (ltsp != null);
+            ltValue   = fcAuto   ? lthr : (ltManual   || 170);
+            paceValue = paceAuto ? ltsp : (paceManual || 262);
+            window.__mrThreshAuto = { fc: fcAuto, pace: paceAuto };
+            _mrRenderThreshCajon('lt-display',   ltValue + ' ppm', fcAuto);
+            _mrRenderThreshCajon('pace-display', secsToStr(paceValue), paceAuto);
+            try { renderZones(); }     catch (_) {}
+            try { renderPaceZones(); } catch (_) {}
+        } catch (_) {}
+    };
+    window._mrThreshIsAuto = function(kind) {
+        return !!(window.__mrThreshAuto && window.__mrThreshAuto[kind]);
+    };
+
     /* ── LT ── */
     document.getElementById('row-lt').addEventListener('click', () => {
+        if (window._mrThreshIsAuto && window._mrThreshIsAuto('fc')) {
+            if (typeof showToast === 'function') showToast('Umbral FC gestionado por COROS');
+            return;
+        }
         document.getElementById('lt-input').value = ltValue;
         openSheet('lt-modal');
         setTimeout(() => document.getElementById('lt-input').focus(), 120);
@@ -18412,15 +18496,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function saveLT() {
         const v = parseInt(document.getElementById('lt-input').value, 10);
         if (v && v >= 100 && v <= 250) {
-            ltValue = v;
-            document.getElementById('lt-display').textContent = v + ' ppm ›';
-            renderZones();
+            ltManual = v;                 // valor manual del usuario (fallback)
+            ltValue  = v;                 // efectivo (aquí COROS está desconectado)
+            if (window._mrApplyCorosThresholds) window._mrApplyCorosThresholds();
+            else { const _e=document.getElementById('lt-display'); if(_e) _e.textContent = v + ' ppm ›'; renderZones(); }
         }
         closeSheet('lt-modal');
     }
 
     /* ── PACE ── */
     document.getElementById('row-pace').addEventListener('click', () => {
+        if (window._mrThreshIsAuto && window._mrThreshIsAuto('pace')) {
+            if (typeof showToast === 'function') showToast('Ritmo umbral gestionado por COROS');
+            return;
+        }
         document.getElementById('pace-input').value = secsToStr(paceValue);
         openSheet('pace-modal');
         setTimeout(() => document.getElementById('pace-input').focus(), 120);
@@ -18429,9 +18518,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const raw = document.getElementById('pace-input').value.trim();
         const secs = parsePaceStr(raw);
         if (secs && secs > 60 && secs < 1200) {
-            paceValue = secs;
-            document.getElementById('pace-display').textContent = secsToStr(secs) + ' ›';
-            renderPaceZones();
+            paceManual = secs;            // valor manual del usuario (fallback)
+            paceValue  = secs;            // efectivo (aquí COROS está desconectado)
+            if (window._mrApplyCorosThresholds) window._mrApplyCorosThresholds();
+            else { const _e=document.getElementById('pace-display'); if(_e) _e.textContent = secsToStr(secs) + ' ›'; renderPaceZones(); }
         }
         closeSheet('pace-modal');
     }
@@ -36931,6 +37021,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     injuries:  profileData.injuries,
                     ltValue:   ltValue,
                     paceValue: paceValue,
+                    ltManual:   ltManual,
+                    paceManual: paceManual,
                 },
                 activePlan,
                 ts: Date.now(),
@@ -37066,6 +37158,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if(p.trainingDays) profileData.trainingDays = p.trainingDays;
                 if(p.ltValue!==undefined)  ltValue=p.ltValue;
                 if(p.paceValue!==undefined) paceValue=p.paceValue;
+                // [Auto-umbral COROS] Restaurar manual; migración: si no existía,
+                // sembrar del valor persistido para no perder el manual actual.
+                ltManual   = (p.ltManual   !== undefined) ? p.ltManual   : ((p.ltValue   !== undefined) ? p.ltValue   : 170);
+                paceManual = (p.paceManual !== undefined) ? p.paceManual : ((p.paceValue !== undefined) ? p.paceValue : 262);
                 // Restore DOM from profileData
                 if(profileData.name){
                     const nd=document.getElementById('runner-name-display');
@@ -37087,10 +37183,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if(_hm) _hm.textContent=(profileData.hrMax||195)+' ppm ›';
                 if(_hr) _hr.textContent=(profileData.hrRest||50)+' ppm ›';
                 // Restore lt / pace / days displays
-                const _lt = document.getElementById('lt-display');
-                if(_lt) _lt.textContent = ltValue+' ppm ›';
-                const _pa = document.getElementById('pace-display');
-                if(_pa) _pa.textContent = secsToStr(paceValue)+' ›';
+                // [Auto-umbral COROS] Pinta ambos cajones según estado COROS
+                // (auto+badge si conectado con dato válido; manual si no). Los
+                // hooks (mrCorosOnChange / _rdnFetch) re-aplican al resolverse COROS.
+                if (window._mrApplyCorosThresholds) {
+                    window._mrApplyCorosThresholds();
+                } else {
+                    const _lt = document.getElementById('lt-display');
+                    if(_lt) _lt.textContent = ltValue+' ppm ›';
+                    const _pa = document.getElementById('pace-display');
+                    if(_pa) _pa.textContent = secsToStr(paceValue)+' ›';
+                }
                 const _dd = document.getElementById('days-display');
                 if(_dd && profileData.trainingDays && profileData.trainingDays.length)
                     _dd.textContent = profileData.trainingDays.join(' · ')+' ›';
@@ -49161,7 +49264,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.22.0-p3';
+        window.__mrCorosVersion = 'v2.23.0-p1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -49341,6 +49444,11 @@ window.addEventListener('DOMContentLoaded', function() {
         window._mrUpdateCorosWatchDot = _mrUpdateCorosWatchDot;
         window.mrCorosOnChange(_mrUpdateCorosWatchDot);
         _mrUpdateCorosWatchDot();
+
+        // [Auto-umbral COROS] Recalcular cajones/zonas al cambiar conexión COROS.
+        window.mrCorosOnChange(function(){
+            try { if (window._mrApplyCorosThresholds) window._mrApplyCorosThresholds(); } catch (_) {}
+        });
 
         // ═══ _corosFetch: helper uniforme para todas las llamadas ═══════
         async function _corosFetch(method, path, body) {
@@ -49609,6 +49717,29 @@ window.addEventListener('DOMContentLoaded', function() {
             return out;
         };
 
+        // ══ Umbrales COROS medidos (lthr bpm · ltsp s/km) desde resp.days[] ══
+        //  Mismo patrón/fuente que _mrVo2Latest (columnas reales de coros_health_daily
+        //  serializadas por /readiness en cada day). Devuelven el último valor válido
+        //  en rango fisiológico, o null (→ el motor cae a manual, sin ruido).
+        window._mrLthrLatest = function() {
+            var days = _vo2DaysRaw().slice()
+                .sort(function(a, b){ return (a.date < b.date) ? -1 : (a.date > b.date ? 1 : 0); });
+            for (var i = days.length - 1; i >= 0; i--) {
+                var v = days[i].lthr;
+                if (v != null && v >= 140 && v <= 200) return Math.round(v);
+            }
+            return null;
+        };
+        window._mrLtspLatest = function() {
+            var days = _vo2DaysRaw().slice()
+                .sort(function(a, b){ return (a.date < b.date) ? -1 : (a.date > b.date ? 1 : 0); });
+            for (var i = days.length - 1; i >= 0; i--) {
+                var v = days[i].ltsp;
+                if (v != null && v >= 200 && v <= 400) return Math.round(v);
+            }
+            return null;
+        };
+
         // — normaliza respuesta + TSB (__mrPMC) → objeto para el render —
         function _rdnCompute(resp, cacheTs) {
             var pmc  = window.__mrPMC || null;
@@ -49698,7 +49829,12 @@ window.addEventListener('DOMContentLoaded', function() {
         // — fetch de red (una llamada; el render decide cuándo) —
         async function _rdnFetch() {
             var r = await _corosFetch('GET', '/readiness?days=' + _RDN_DAYS);
-            if (r && r.ok && r.data) { _rdnCacheSet(r.data); return r.data; }
+            if (r && r.ok && r.data) {
+                _rdnCacheSet(r.data);
+                // [Auto-umbral COROS] readiness fresco → recalcular lthr/ltsp.
+                try { if (window._mrApplyCorosThresholds) window._mrApplyCorosThresholds(); } catch (_) {}
+                return r.data;
+            }
             return null;
         }
 
