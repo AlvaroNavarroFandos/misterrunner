@@ -30481,7 +30481,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (c==='#f87171'||c==='#06b6d4') return paces.threshold;
         if (c==='#ef4444'||c==='#fbbf24') return paces.interval;
         return paces.easy; };
-      const REC='#60a5fa';
+      const REC='#60a5fa'; const _fp=s=>Math.floor(s/60)+':'+String(Math.round(s%60)).padStart(2,'0');
       // PROGRESIÓN
       if (/progresi/i.test(lc)) {
         const segs = detail.split('\u2192'); const blocks=[];
@@ -30499,7 +30499,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             else if(/easy|f[aá]cil/.test(s)){color='#60a5fa';pl='easy';}
             else {color='#c9a84c';pl='ritmo marat\u00f3n';}
           }
-          blocks.push({label:`Progresi\u00f3n ${km}km \u00b7 ${pl}`, detail:seg.trim(), color, km});
+          let _det=seg.trim(); if(color==='#d9a441') _det=_fp(paces.marathon-17)+'-'+_fp(paces.marathon-5)+'/km \u00b7 MP\u22125\" m\u00e1s r\u00e1pido'; blocks.push({label:`Progresi\u00f3n ${km}km \u00b7 ${pl}`, detail:_det, color, km});
         }
         if (blocks.length) return blocks;
       }
@@ -30531,7 +30531,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           else rec={durSec:rq*60, km:_kmMin(rq,paces.easy)}; }
         else rec={durSec:90, km:_kmMin(1.5,paces.easy)};
         const wl = unit==='km'?`${q}km`:(unit==='m'?`${q}m`:((unit==="'"||unit==="\u2032")?`${q}'`:`${q}"`));
-        return [{label:b.label, detail:b.detail, color:b.color, repeat:n,
+        return [{label:b.label, detail:b.detail, color:wc, repeat:n,
           reps:[Object.assign({label:wl, detail, color:wc}, work, _asSensacion?{noPace:true}:{}),
                 Object.assign({label:'recuperaci\u00f3n', detail:'trote easy', color:REC}, rec)]}];
       }
@@ -30549,7 +30549,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             for (var j = 0; j < conv.length; j++) out.push(conv[j]);
         }
         sess.blocks = out;
+        out.forEach(_mrPaintStrides);
         return sess;
+    }
+    // Strides neuromusculares -> rojo + sin objetivo (a sensaci\u00f3n); cuestas -> naranja + sin objetivo.
+    // "MP strides" (reps a ritmo MP) se excluyen: mantienen su dorado. Recuperaciones intactas.
+    function _mrPaintStrides(b) {
+        if (!b) return;
+        var lab = String(b.label||'').toLowerCase();
+        var isRec = /recuper|calma|^rec\b|trote/.test(lab) || b.color==='#60a5fa';
+        var isCuesta = /cuesta/.test(lab);
+        var isStride = (/\bstrides?\b|acelera/.test(lab)) && !/mp\s*strides/.test(lab);
+        if (!isRec && (isCuesta||isStride)) { b.color = isCuesta ? '#f97316' : '#ef4444'; b.noPace = true; }
+        if (Array.isArray(b.reps)) {
+            b.reps.forEach(function(r){
+                var rl = String(r.label||'').toLowerCase();
+                var rRec = /recuper|calma|^rec\b|trote/.test(rl) || r.color==='#60a5fa';
+                var rCuesta = /cuesta/.test(rl) || (isCuesta && !rRec);
+                var rStride = ((/\bstrides?\b|acelera/.test(rl)) && !/mp\s*strides/.test(rl)) || (isStride && !rRec);
+                if (!rRec && (rCuesta||rStride)) { r.color = rCuesta ? '#f97316' : '#ef4444'; r.noPace = true; }
+            });
+        }
     }
     try { window._mrStructBlock = _mrStructBlock; window._mrStructureSessionBlocks = _mrStructureSessionBlocks; } catch(e){}
 
@@ -33903,7 +33923,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         '#4ade80':9, '#22c55e':9, '#4CAF50':9,
         '#7c3aed':10,
         '#C9A84C':13, '#facc15':13, '#fbbf24':13,
-        '#f97316':15, '#FF9800':15, '#a78bfa':14,
+        '#f97316':15, '#FF9800':15, '#a78bfa':14, '#d9a441':14,
         '#f87171':16, '#ef4444':16, '#e879f9':16,
         '#06b6d4':16, '#F44336':16, '#D32F2F':16,
         '#3b82f6':7,  '#10b981':9,  '#5DC960':9, '#6FD870':9,
@@ -34617,6 +34637,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     };
                     const _iconForBlock = (b) => {
                         const _up14 = (svg) => svg.replace(/width="12" height="12"/, 'width="14" height="14"');
+                        const _lblIco = String(b.label||'').toLowerCase();
+                        if (/fartlek|strides?|acelera/.test(_lblIco)) return _up14(_ICONS_PLAN_DAY.series);
                         const raw = _ICON_FOR_BLOCK_COLOR[b.color];
                         if (raw) return _up14(raw);
                         // [v2.16.0-p5] Fallback por palabra clave del label -> icono correcto
