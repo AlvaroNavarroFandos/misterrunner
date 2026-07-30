@@ -30472,6 +30472,87 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // Daniels-calibrated: exact rep counts and recoveries per VDOT zone
+    function _mrStructBlock(b, paces) {
+      if (!b || b.reps || b.repeat) return [b];
+      const label = String(b.label||''); const detail = String(b.detail||''); const lc = label.toLowerCase();
+      const _kmMin = (min, pace) => Math.round((min*60/pace)*100)/100;
+      const _colToPace = (col) => { const c=String(col||'').toLowerCase();
+        if (c==='#c9a84c'||c==='#d9a441') return paces.marathon;
+        if (c==='#f87171'||c==='#06b6d4') return paces.threshold;
+        if (c==='#ef4444'||c==='#fbbf24') return paces.interval;
+        return paces.easy; };
+      const REC='#60a5fa';
+      // PROGRESIÓN
+      if (/progresi/i.test(lc)) {
+        const segs = detail.split('\u2192'); const blocks=[];
+        for (const seg of segs) {
+          const m = seg.match(/(\d+(?:\.\d+)?)\s*km/i); if(!m) continue;
+          const km=parseFloat(m[1]); const s=seg.toLowerCase(); let color,pl;
+          if (/mp\s*\+?\s*5|mp-5|m[aá]s r[aá]pido/.test(s)){color='#d9a441';pl='MP\u22125" (r\u00e1pido)';}
+          else {
+            const pm = seg.match(/(\d+)[:'\u2032](\d{2})/g);
+            if (pm){ const secs=pm.map(t=>{const mm=t.match(/(\d+)[:'\u2032](\d{2})/); return +mm[1]*60+ +mm[2];});
+              const mid=secs.reduce((a,b)=>a+b,0)/secs.length;
+              const cand=[['#60a5fa',paces.easy,'easy'],['#c9a84c',paces.marathon,'ritmo marat\u00f3n'],['#f87171',paces.threshold,'umbral']];
+              const best=cand.reduce((b,c)=>Math.abs(c[1]-mid)<Math.abs(b[1]-mid)?c:b); color=best[0]; pl=best[2]; }
+            else if(/mp|marat/.test(s)){color='#c9a84c';pl='ritmo marat\u00f3n';}
+            else if(/easy|f[aá]cil/.test(s)){color='#60a5fa';pl='easy';}
+            else {color='#c9a84c';pl='ritmo marat\u00f3n';}
+          }
+          blocks.push({label:`Progresi\u00f3n ${km}km \u00b7 ${pl}`, detail:seg.trim(), color, km});
+        }
+        if (blocks.length) return blocks;
+      }
+      // PIRÁMIDE
+      if (/pir[aá]mide/i.test(lc)) {
+        const m = label.match(/((?:\d+-)+\d+)\s*km/i);
+        if (m) { const dists=m[1].split('-').map(Number); const wc=b.color||'#f87171'; const blocks=[];
+          dists.forEach((d,i)=>{ blocks.push({label:`${d}km`, detail, color:wc, km:d});
+            if(i<dists.length-1) blocks.push({label:'rec 90"', detail:'trote easy', color:REC, durSec:90, km:_kmMin(1.5,paces.easy), noPace:true}); });
+          return blocks; }
+      }
+      // UNIFORME N×Q
+      const mRep = label.match(/(\d+)\s*[\u00d7x]\s*(\d+(?:\.\d+)?)\s*(km|m|['\u2032\u2033"])/i);
+      if (mRep) {
+        const n=parseInt(mRep[1],10); const q=parseFloat(mRep[2]); const unit=mRep[3];
+        let wc=b.color; if(/fartlek/i.test(lc)) wc='#c9a84c'; else if(/hm pace|ritmo hm/i.test(lc)) wc='#f87171'; else if(/ritmo 5k|5k pace/i.test(lc+' '+detail.toLowerCase())) wc='#ef4444';
+        const _isShortTime = (unit==="'"||unit==="\u2032"||unit==='"'||unit==="\u2033") && q<=40;
+        const _asSensacion = /cuesta/i.test(lc) || (/stride|acelera/i.test(lc) && _isShortTime);
+        const wp=_colToPace(wc); let work;
+        if(unit==='km') work={km:q};
+        else if(unit==='m') work={km:q/1000};
+        else if(unit==="'"||unit==="\u2032") work={durSec:q*60, km:_kmMin(q,wp)};
+        else work={durSec:q, km:_kmMin(q/60,wp)};
+        let rec=null; let mRec=detail.match(/rec\.?\s*(\d+(?:\.\d+)?)\s*(['\u2032\u2033"]|km|m|min|s)?/i);
+        if(!mRec) mRec=detail.match(/(\d+(?:\.\d+)?)\s*(['\u2032\u2033"]|km|m)\s*(?:de\s*)?(?:trote|easy|recup)/i);
+        if(mRec){ const rq=parseFloat(mRec[1]); const ru=(mRec[2]||"'").toLowerCase();
+          if(ru==='km') rec={km:rq}; else if(ru==='m') rec={km:rq/1000};
+          else if(ru==='s'||ru==='\u2033'||ru==='"') rec={durSec:rq, km:_kmMin(rq/60,paces.easy)};
+          else rec={durSec:rq*60, km:_kmMin(rq,paces.easy)}; }
+        else rec={durSec:90, km:_kmMin(1.5,paces.easy)};
+        const wl = unit==='km'?`${q}km`:(unit==='m'?`${q}m`:((unit==="'"||unit==="\u2032")?`${q}'`:`${q}"`));
+        return [{label:b.label, detail:b.detail, color:b.color, repeat:n,
+          reps:[Object.assign({label:wl, detail, color:wc}, work, _asSensacion?{noPace:true}:{}),
+                Object.assign({label:'recuperaci\u00f3n', detail:'trote easy', color:REC}, rec)]}];
+      }
+      return [b];
+    }
+
+    // Estructura los intervalos/progresiones/pirámides planos de una sesión en
+    // bloques con repeat/reps (o bloques secuenciales), para que salgan bien en
+    // la app Y se envíen fieles al reloj COROS. Idempotente.
+    function _mrStructureSessionBlocks(sess, paces) {
+        if (!sess || !Array.isArray(sess.blocks)) return sess;
+        var out = [];
+        for (var i = 0; i < sess.blocks.length; i++) {
+            var conv = _mrStructBlock(sess.blocks[i], paces);
+            for (var j = 0; j < conv.length; j++) out.push(conv[j]);
+        }
+        sess.blocks = out;
+        return sess;
+    }
+    try { window._mrStructBlock = _mrStructBlock; window._mrStructureSessionBlocks = _mrStructureSessionBlocks; } catch(e){}
+
     function buildWeekSessions(phase, weekNum, dayList, paces, lt, phaseLen, isRaceWeek, vdot) {
         const n = dayList.length;
         const fcE = `${Math.round(lt*0.80)}-${Math.round(lt*0.91)}`;
@@ -31637,6 +31718,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 }
 
+                sessions.forEach(function(s){ _mrStructureSessionBlocks(s, paces); });
                 weeks.push({
                     n: wi + 1,
                     weekStart: weekStartStr,
@@ -31936,6 +32018,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     });
                 });
 
+                sessions.forEach(function(s){ _mrStructureSessionBlocks(s, paces); });
                 weeks.push({
                     n: tpl.n,
                     weekStart: weekStartStr,
@@ -32196,6 +32279,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             const sessionDefs=buildWeekSessions(phase,phaseWeekNum,effectiveDays,paces,lt,
                 phase==='base'?baseW:phase==='build'?buildW:phase==='peak'?peakW:taperW,isRaceWeek,vdot);
+
+            // Estructura intervalos/progresiones/pirámides planos → repeat/reps o
+            // bloques secuenciales (fiel en la app y en el reloj COROS).
+            sessionDefs.forEach(function(s){ _mrStructureSessionBlocks(s, paces); });
 
             // Apply deload multiplier: reduce all session distances by ~30%
             // [Fix v5.1] También se regenera `desc` coherentemente. El bug anterior
