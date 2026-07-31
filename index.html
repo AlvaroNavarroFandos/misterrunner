@@ -16346,6 +16346,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             document.body.classList.remove('sheet-open');
         }
     }
+    // [Home sheets · Q2A] Wrapper que replica el patrón del warm-up detail
+    //   sheet (openWarmupDetailSheet): mueve el sheet al final del body y
+    //   fuerza un reflow ANTES de openSheet(), de forma que el flujo interno
+    //   detecte el elemento como "ya adjunto al body" (wasReattached=false) y
+    //   aplique .show INMEDIATAMENTE, sin el doble RAF que en los sheets
+    //   permanentes (dentro de #app) genera 2 frames de solape entre el
+    //   backdrop-filter (blur 22px) y el translateY del sheet — lo que Álvaro
+    //   percibe como "difumina mientras desliza". Con el reattach previo +
+    //   reflow, la transición arranca en un único paint limpio, igual que en
+    //   warm-up. No cambia el CSS; solo el timing del kick-off.
+    function _openHomeSheet(id) {
+        var el = document.getElementById(id);
+        if (!el) { if (typeof openSheet === 'function') openSheet(id); return; }
+        try {
+            if (el.parentNode !== document.body || el !== document.body.lastElementChild) {
+                document.body.appendChild(el);
+                // Reflow forzado para pintar el estado inicial (opacity 0,
+                // translateY(100%)) ANTES de que openSheet añada .show.
+                void el.offsetHeight;
+            }
+        } catch(_) {}
+        if (typeof openSheet === 'function') openSheet(id);
+    }
+    try { window._openHomeSheet = _openHomeSheet; } catch(_){}
     // ═══════════════════════════════════════════════════════════════════════
     // [v4.0 GAP 4] RPE Quick Sheet — bottom sheet minimal post-Strava
     // showRpeQuickSheet(context) → Promise<int|null>
@@ -40098,45 +40122,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
              + '</svg>';
     }
 
-    // Renderer de la card Home. Si no hay dato → no crea nada.
+    // Renderer de la card Home. SIEMPRE crea el div en el DOM (oculto
+    // si no hay dato), y separa el paint en _mrRepaintStamina() para
+    // poder repintar cuando el cache se actualice (readiness fetch).
     function _mrRenderStaminaCard(container){
         if(!container) return;
-        var latest = _mrStaminaLatest();
-        if(!latest) return;   // defensivo: sin dato, no aparece
-        var v   = latest.val;
-        var col = _mrStaminaColor(v);
-        var N   = 16;
-        var filled = Math.round(v/100*N);
-        // Encendidas a la DERECHA (vaciado izq→der = las bajas se apagan primero por la izquierda)
-        var barsHtml='';
-        for(var i=0;i<N;i++){
-            var lit = i >= (N-filled);
-            var bg  = lit ? col : 'var(--bsoft)';
-            var sh  = lit ? 'box-shadow:0 0 5px '+col+'66;' : '';
-            barsHtml += '<div class="mr-st-bar" style="flex:1;border-radius:1.5px;background:'+bg+';'+sh+'"></div>';
-        }
+        // Evita duplicados
+        var existing = container.querySelector('#home-stamina-badge');
+        if (existing) { _mrRepaintStamina(); return; }
         var card = document.createElement('div');
         card.id = 'home-stamina-badge';
         card.setAttribute('data-ho','stamina');
         card.className = 'mr-st-card';
-        card.style.cssText = 'padding:12px 14px;display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
+        // display:none por defecto; el repaint lo hace visible si hay dato
+        card.style.cssText = 'padding:12px 14px;display:none;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
         card.setAttribute('role','button');
-        card.setAttribute('aria-label','Stamina '+v+' de 100. Abre el detalle.');
-        card.innerHTML =
-            '<div class="mr-st-ic" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-          +   _mrStaminaPumpSVG(24,'#ef4444')
-          + '</div>'
-          + '<div style="display:flex;flex-direction:column;align-items:flex-start;flex-shrink:0;">'
-          +   '<span style="font-size:22px;font-weight:900;letter-spacing:-.5px;line-height:1;font-variant-numeric:tabular-nums;color:'+col+';">'+v+'</span>'
-          +   '<span style="font-size:8px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--tm);margin-top:2px;">Stamina</span>'
-          + '</div>'
-          + '<div style="flex:1;display:flex;align-items:stretch;gap:2px;height:22px;min-width:0;">'+barsHtml+'</div>'
-          + '<div class="mr-st-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
-        // Click → abre sheet
+        // Click → abre sheet (delegado al inner cuando esté poblado; hookeado aquí una vez)
         card.addEventListener('click', function(){
             try {
                 if (typeof renderStaminaSheet === 'function') renderStaminaSheet();
-                if (typeof openSheet === 'function') openSheet('stamina-sheet');
+                // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
+                if (typeof window._openHomeSheet === 'function') window._openHomeSheet('stamina-sheet');
+                else if (typeof openSheet === 'function') openSheet('stamina-sheet');
             } catch(_){}
         });
         // iOS PWA: espejo touch para :active fiable
@@ -40145,8 +40152,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         card.addEventListener('touchend', _stRelease, { passive:true });
         card.addEventListener('touchcancel', _stRelease, { passive:true });
         container.appendChild(card);
+        _mrRepaintStamina();
     }
-    try { window._mrRenderStaminaCard = _mrRenderStaminaCard; } catch(_){}
+    // Repinta la card según el estado actual del cache readiness.
+    // Silencioso y idempotente: se puede llamar en cualquier momento.
+    function _mrRepaintStamina(){
+        var card = document.getElementById('home-stamina-badge');
+        if (!card) return;
+        var latest = _mrStaminaLatest();
+        if (!latest) {
+            card.style.display = 'none';
+            return;
+        }
+        var v   = latest.val;
+        var col = _mrStaminaColor(v);
+        var N   = 16;
+        var filled = Math.round(v/100*N);
+        var barsHtml='';
+        for (var i=0;i<N;i++){
+            var lit = i >= (N-filled);
+            var bg  = lit ? col : 'var(--bsoft)';
+            var sh  = lit ? 'box-shadow:0 0 5px '+col+'66;' : '';
+            barsHtml += '<div class="mr-st-bar" style="flex:1;border-radius:1.5px;background:'+bg+';'+sh+'"></div>';
+        }
+        card.setAttribute('aria-label','Stamina '+v+' de 100. Abre el detalle.');
+        card.innerHTML =
+            '<div class="mr-st-ic" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          +   _mrStaminaPumpSVG(24,'#ef4444')
+          + '</div>'
+          + '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;flex-shrink:0;">'
+          +   'Stamina · <span style="font-weight:900;color:'+col+';font-variant-numeric:tabular-nums;letter-spacing:-.3px;">'+v+'</span>'
+          + '</div>'
+          + '<div style="flex:1;display:flex;align-items:stretch;gap:2px;height:22px;min-width:0;">'+barsHtml+'</div>'
+          + '<div class="mr-st-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
+        card.style.display = 'flex';
+    }
+    try { window._mrRenderStaminaCard = _mrRenderStaminaCard; window._mrRepaintStamina = _mrRepaintStamina; } catch(_){}
 
     // Sheet: explicación + gráfica 7d (sparkline)
     function renderStaminaSheet(){
@@ -40530,6 +40571,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _motiv   = _motives[today.getDay()%_motives.length];
                 const _typeLbl = getTypeLabel(sess.type);
                 const _distLbl = _isStr ? '30 min' : (sess.dist||0)+' km';
+                // [Pill V4 clon del Plan] Separar num + unit para el mismo estilo
+                //   que la pill de la pestaña Plan: fondo con gradient del tipo,
+                //   texto blanco, unit pequeña con opacity .85.
+                const _pillNum  = _isStr ? '30'  : String(sess.dist||0);
+                const _pillUnit = _isStr ? 'min' : 'km';
                 const _equipLbl= _isStr && sess.strengthEquip
                     ? (sess.strengthEquip==='gym'?'Gimnasio':'Casa') : '';
                 const _rowId   = _isStr ? 'hero-str-row' : 'hero-run-row';
@@ -40579,7 +40625,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <div style="flex:1;min-width:0;">
                                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
                                     <span style="font-size:13px;font-weight:800;color:${_tColor};">${_typeLbl}</span>
-                                    <span style="font-size:10px;font-weight:600;color:rgba(255,255,255,.7);background:rgba(255,255,255,.10);border-radius:6px;padding:1px 8px;">${_distLbl}</span>
+                                    <span style="background:${_grad};color:#fff;border-radius:6px;padding:2px 10px 2px 9px;font-size:10px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25);"><span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span><span style="font-size:7.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span></span>
                                     ${_equipLbl?`<span style="font-size:10px;color:rgba(255,255,255,.45);">· ${_equipLbl}</span>`:''}
                                     ${window._corosRenderBadgeIfSynced?window._corosRenderBadgeIfSynced(sess):''}
                                     ${_matched?'<span style="font-size:10px;color:#4ade80;margin-left:auto;font-weight:700;">✓ Completado</span>':''}
@@ -40900,12 +40946,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         container.appendChild(planCard);
 
-        // [Backlog D · Stamina] Widget "gasolina para hoy" encima del readiness.
-        // Defensivo: si no hay dato en la caché de readiness, no se pinta nada.
-        try { if (typeof window._mrRenderStaminaCard === 'function') window._mrRenderStaminaCard(container); } catch(_) {}
-
         // [Home reorder] Readiness (MR × COROS) reubicado DEBAJO del plan navy.
         container.appendChild(rdnCard0);
+
+        // [Backlog D · Stamina] Widget "gasolina para hoy" DEBAJO del readiness.
+        // Defensivo: si no hay dato en la caché de readiness, no se pinta nada.
+        try { if (typeof window._mrRenderStaminaCard === 'function') window._mrRenderStaminaCard(container); } catch(_) {}
 
         // ── 2b. WARM UP BLOCK (aplanado claro/oscuro) ──────────────
         if(window.warmupRoutine && window.warmupRoutine.exercises && window.warmupRoutine.exercises.length) {
@@ -41552,7 +41598,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [v5.4 Home] Abre el detalle (sheet ACWR) directamente, no navega a Runner.
                 try {
                     if (typeof renderACWRSheet === 'function') renderACWRSheet();
-                    if (typeof openSheet === 'function') openSheet('acwr-sheet');
+                    // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
+                    if (typeof window._openHomeSheet === 'function') window._openHomeSheet('acwr-sheet');
+                    else if (typeof openSheet === 'function') openSheet('acwr-sheet');
                 } catch(_) {}
             });
             // [Refuerzo iOS PWA] El :active no siempre dispara en divs en iOS;
@@ -41605,7 +41653,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 vdCard.addEventListener('click', function() {
                     try {
                         if (typeof window._renderVdotHistorySheet === 'function') window._renderVdotHistorySheet();
-                        if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
+                        // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
+                        if (typeof window._openHomeSheet === 'function') window._openHomeSheet('vdot-history-sheet');
+                        else if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
                     } catch(_) {}
                 });
                 vdCard.addEventListener('touchstart', function(){ vdCard.classList.add('mr-vd-pressing'); }, { passive: true });
@@ -51062,6 +51112,8 @@ window.addEventListener('DOMContentLoaded', function() {
                 } else if (!card.querySelector('.rw')) {
                     _paintSkeleton(card);
                 }
+                // [Backlog D · Stamina] Repaint stamina en paralelo (mismo cache)
+                try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
             } catch (_) {}
 
             // ── Refresh en background (throttle 90s). Sin caché (skeleton) SIEMPRE
@@ -51079,6 +51131,8 @@ window.addEventListener('DOMContentLoaded', function() {
                         fr.fromCache = false; fr.stale = false;
                         var c2 = document.getElementById('mr-readiness-card');
                         if (c2 && c2.style.display !== 'none') _paintReadiness(c2, fr);
+                        // [Backlog D · Stamina] Cache recién actualizado → repaint stamina
+                        try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
                     }).catch(function (_) { window.__mrRdnLastFetch = 0; });
                 }
             } catch (_) {}
