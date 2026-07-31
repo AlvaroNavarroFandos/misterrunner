@@ -40045,6 +40045,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Defensivo: prueba varios nombres de campo (stamina_level,
     // staminaLevel, stamina) sobre resp.days[] del cache readiness.
     // Si no hay dato → devuelve null y la card no se pinta.
+    // NOTA: _rdnCacheGet vive en otro IIFE (no expuesto en window), así
+    // que leemos directamente de localStorage con la MISMA clave.
     // ═══════════════════════════════════════════════════════════════
     function _mrStaminaVal(day){
         if(!day || typeof day !== 'object') return null;
@@ -40055,27 +40057,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         return null;
     }
-    function _mrStaminaLatest(){
+    function _mrStaminaReadDays(){
         try{
-            var c=(typeof _rdnCacheGet==='function') ? _rdnCacheGet() : null;
-            var days=c && c.resp && Array.isArray(c.resp.days) ? c.resp.days : null;
-            if(!days || !days.length) return null;
-            for(var i=days.length-1;i>=0;i--){
-                var v=_mrStaminaVal(days[i]);
-                if(v!==null) return {val:v, date:days[i].date||null};
-            }
-        }catch(_){}
+            var raw = localStorage.getItem('mr_coros_readiness');
+            if(!raw) return null;
+            var o = JSON.parse(raw);
+            if(!o || !o.resp || !Array.isArray(o.resp.days)) return null;
+            return o.resp.days;
+        }catch(_){ return null; }
+    }
+    function _mrStaminaLatest(){
+        var days = _mrStaminaReadDays();
+        if(!days || !days.length) return null;
+        for(var i=days.length-1;i>=0;i--){
+            var v=_mrStaminaVal(days[i]);
+            if(v!==null) return {val:v, date:days[i].date||null};
+        }
         return null;
     }
     function _mrStamina7d(){
-        try{
-            var c=(typeof _rdnCacheGet==='function') ? _rdnCacheGet() : null;
-            var days=c && c.resp && Array.isArray(c.resp.days) ? c.resp.days : null;
-            if(!days || !days.length) return [];
-            var last7=days.slice(-7);
-            return last7.map(function(d){ return {date:d.date||null, val:_mrStaminaVal(d)}; })
-                        .filter(function(x){ return x.val!==null; });
-        }catch(_){ return []; }
+        var days = _mrStaminaReadDays();
+        if(!days || !days.length) return [];
+        var last7 = days.slice(-7);
+        return last7.map(function(d){ return {date:d.date||null, val:_mrStaminaVal(d)}; })
+                    .filter(function(x){ return x.val!==null; });
     }
     try { window._mrStaminaLatest = _mrStaminaLatest; window._mrStamina7d = _mrStamina7d; } catch(_){}
 
