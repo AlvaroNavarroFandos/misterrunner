@@ -50661,7 +50661,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.27.0-p3';
+        window.__mrCorosVersion = 'v2.27.0-p4';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -51606,9 +51606,25 @@ window.addEventListener('DOMContentLoaded', function() {
             if (_mrRdnWired) return;
             _mrRdnWired = true;
             if (typeof window.mrCorosOnChange !== 'function') return;
+            // v2.27.0-p4 · Trackear también "ready" para distinguir la primera
+            // resolución del whoami (arranque) de un cambio de cuenta real.
+            // En el arranque, whoami transiciona "no resuelto → resuelto",
+            // y ANTES el bust prematuro provocaba "sale/se-esconde/aparece"
+            // (widget aparecía con cache, se borraba cache al resolver whoami,
+            // se ocultaba, y solo volvía cuando el fetch en bg terminaba ~2s).
+            window.__mrRdnLastReady = !!(window.__mrCoros && window.__mrCoros.ready);
             window.__mrRdnLastConn = !!(window.__mrCoros && window.__mrCoros.connected);
             window.mrCorosOnChange(function(state){
+                var isReady = !!(state && state.ready);
                 var now = !!(state && state.connected);
+                // Primera resolución del whoami tras arranque: solo actualiza
+                // el snapshot, NO bust ni re-render. El fetch en bg del propio
+                // _mrRenderReadiness ya trae dato fresco sin salto visual.
+                if (!window.__mrRdnLastReady && isReady) {
+                    window.__mrRdnLastReady = true;
+                    window.__mrRdnLastConn = now;
+                    return;
+                }
                 if (now === window.__mrRdnLastConn) return;
                 window.__mrRdnLastConn = now;
                 try { window._mrReadinessBust(); } catch (_) {}
