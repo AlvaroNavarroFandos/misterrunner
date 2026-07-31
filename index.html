@@ -1699,15 +1699,14 @@
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
-        /* [Sheets Premium v3.1] Transición de CIERRE del backdrop: 0.42s
-           con la misma curva ease-out iOS que el sheet (cubic-bezier
-           .32,.72,0,1). Antes era 0.32s ease-out que terminaba ANTES que
-           el sheet (0.42s) → el sheet seguía bajando 0.10s sin backdrop y
-           se percibía como "desvanecerse" en lugar de "deslizar hacia
-           abajo". Ahora ambos terminan a la vez y se siente como un único
-           gesto coherente con el swipe-to-dismiss del handle. */
-        transition: opacity .42s cubic-bezier(.32,.72,0,1),
-                    visibility .42s linear;
+        /* [Sheets Premium v4 · Biblioteca style] Transición del backdrop
+           acortada a 0.22s ease-out (antes 0.42s cubic-bezier). Coincide con
+           la ventana visual del translateY del sheet (0.40s) y del blur
+           (instantáneo) para que la sensación sea "el fondo YA está oscuro
+           cuando el sheet sube", eliminando el efecto "difumina mientras
+           desliza" que Álvaro percibía como sucio. */
+        transition: opacity .22s ease-out,
+                    visibility .22s linear;
     }
 
     .sheet-backdrop.show {
@@ -1720,11 +1719,13 @@
            lejanos", reforzando la percepción de capa elevada. */
         backdrop-filter: blur(22px) saturate(1.3);
         -webkit-backdrop-filter: blur(22px) saturate(1.3);
-        /* Solo en .show metemos la transición del filter — así el coste del
-           sistema de blur de Safari iOS solo está activo cuando el sheet
-           se está abriendo, no permanente en los 23 sheets ocultos. */
-        transition: opacity .32s ease-out, visibility .32s ease-out,
-                    backdrop-filter .42s ease-out, -webkit-backdrop-filter .42s ease-out;
+        /* [Sheets Premium v4 · Biblioteca style] backdrop-filter FUERA de la
+           transition list → aparece INSTANTÁNEO junto con el opacity, no se
+           anima gradualmente. Antes se animaba en 0.42s ease-out y coincidía
+           con la subida del sheet, creando el efecto "difumina mientras
+           desliza". Ahora el blur está presente desde el primer frame de
+           .show y el sheet sube en un fondo YA oscurecido. */
+        transition: opacity .22s ease-out, visibility .22s ease-out;
     }
 
     /* Cuando hay un sheet abierto, bloqueamos el scroll de la vista activa
@@ -1761,24 +1762,24 @@
         box-shadow:
             0 -22px 65px rgba(0,0,0,.50),
             0 -1px 0 rgba(255,255,255,.10) inset;
-        /* [Sheets Premium v3.2 · 09-jun-2026] Rebote MINI: cubic-bezier
-           (.25, 1.20, .4, 1) con overshoot de ~20% (vs +56% del v3.1 que
-           Álvaro percibía como demasiado pronunciado). El sheet sube limpio
-           y al llegar arriba da un mini-bote sutil. Duración 0.55s (vs 0.62s
-           v3.1) para que la subida se sienta más decisiva. */
-        transition: transform .55s cubic-bezier(.25,1.20,.4,1);
+        /* [Sheets Premium v4 · Biblioteca style · 31-jul-2026] Copia exacta
+           del _fxHeroIn del visor de actividades (Biblioteca): 0.40s con
+           ease-out iOS limpio cubic-bezier(.32,.72,0,1). Antes era 0.55s
+           spring con overshoot cubic-bezier(.25,1.20,.4,1); demasiado lento
+           y con el rebote hacía que en combinación con el blur gradual
+           todo se percibiera pesado ("difumina mientras desliza"). Álvaro
+           validó B en preview_sheets.html. */
+        transition: transform .40s cubic-bezier(.32,.72,0,1);
     }
     /* Animación de salida: cuando el backdrop pierde .show, el sheet debe
        animarse de vuelta a translateY(100%). La transición la pone el estado
        transitorio que mantenemos un instante via JS (clase .closing).
-       [Sheets Premium v3.1] Curva ease-out iOS (cubic-bezier .32,.72,0,1):
-       rápido al inicio, frena al final — exactamente el momentum natural
-       cuando sueltas el dedo tras arrastrar el sheet con swipe-to-dismiss.
-       Antes era cubic-bezier(.5,0,.75,0) (ease-in: lento→rápido, sensación
-       de "caer y desaparecer"), incoherente con el gesto del swipe. Mismo
-       timing que el backdrop (0.42s) para que ambos completen a la vez. */
+       [Sheets Premium v4 · Biblioteca style] Duración 0.34s (era 0.42s) con
+       curva ease-in-out estándar cubic-bezier(.4,0,.2,1) — copia exacta del
+       _fxHeroOut del visor de actividades. Timing sincronizado con el
+       backdrop (0.22s → cerrado antes que el sheet, natural). */
     .sheet-backdrop.closing .sheet {
-        transition: transform .42s cubic-bezier(.32,.72,0,1);
+        transition: transform .34s cubic-bezier(.4,0,.2,1);
     }
 
     /* Mientras el usuario arrastra: sin transición, solo lo que diga el JS.
@@ -16340,36 +16341,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // necesarios para que la salida se anime con la curva spring.
         bd.classList.add('closing');
         bd.classList.remove('show');
-        setTimeout(function(){ bd.classList.remove('closing'); }, 560);
+        // [Sheets Premium v4] Timeout ajustado a 360ms (era 560ms) para que
+        // .closing se retire justo tras terminar la nueva animación de salida
+        // (transform .34s) con un buffer mínimo de 20ms.
+        setTimeout(function(){ bd.classList.remove('closing'); }, 360);
         // Solo quitamos el lock si no queda ningún otro sheet abierto
         if (!document.querySelector('.sheet-backdrop.show')) {
             document.body.classList.remove('sheet-open');
         }
     }
-    // [Home sheets · Q2A] Wrapper que replica el patrón del warm-up detail
-    //   sheet (openWarmupDetailSheet): mueve el sheet al final del body y
-    //   fuerza un reflow ANTES de openSheet(), de forma que el flujo interno
-    //   detecte el elemento como "ya adjunto al body" (wasReattached=false) y
-    //   aplique .show INMEDIATAMENTE, sin el doble RAF que en los sheets
-    //   permanentes (dentro de #app) genera 2 frames de solape entre el
-    //   backdrop-filter (blur 22px) y el translateY del sheet — lo que Álvaro
-    //   percibe como "difumina mientras desliza". Con el reattach previo +
-    //   reflow, la transición arranca en un único paint limpio, igual que en
-    //   warm-up. No cambia el CSS; solo el timing del kick-off.
-    function _openHomeSheet(id) {
-        var el = document.getElementById(id);
-        if (!el) { if (typeof openSheet === 'function') openSheet(id); return; }
-        try {
-            if (el.parentNode !== document.body || el !== document.body.lastElementChild) {
-                document.body.appendChild(el);
-                // Reflow forzado para pintar el estado inicial (opacity 0,
-                // translateY(100%)) ANTES de que openSheet añada .show.
-                void el.offsetHeight;
-            }
-        } catch(_) {}
-        if (typeof openSheet === 'function') openSheet(id);
-    }
-    try { window._openHomeSheet = _openHomeSheet; } catch(_){}
     // ═══════════════════════════════════════════════════════════════════════
     // [v4.0 GAP 4] RPE Quick Sheet — bottom sheet minimal post-Strava
     // showRpeQuickSheet(context) → Promise<int|null>
@@ -40141,9 +40121,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         card.addEventListener('click', function(){
             try {
                 if (typeof renderStaminaSheet === 'function') renderStaminaSheet();
-                // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
-                if (typeof window._openHomeSheet === 'function') window._openHomeSheet('stamina-sheet');
-                else if (typeof openSheet === 'function') openSheet('stamina-sheet');
+                if (typeof openSheet === 'function') openSheet('stamina-sheet');
             } catch(_){}
         });
         // iOS PWA: espejo touch para :active fiable
@@ -41598,9 +41576,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [v5.4 Home] Abre el detalle (sheet ACWR) directamente, no navega a Runner.
                 try {
                     if (typeof renderACWRSheet === 'function') renderACWRSheet();
-                    // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
-                    if (typeof window._openHomeSheet === 'function') window._openHomeSheet('acwr-sheet');
-                    else if (typeof openSheet === 'function') openSheet('acwr-sheet');
+                    if (typeof openSheet === 'function') openSheet('acwr-sheet');
                 } catch(_) {}
             });
             // [Refuerzo iOS PWA] El :active no siempre dispara en divs en iOS;
@@ -41653,9 +41629,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 vdCard.addEventListener('click', function() {
                     try {
                         if (typeof window._renderVdotHistorySheet === 'function') window._renderVdotHistorySheet();
-                        // [Q2A] Usar _openHomeSheet (patrón warm-up) para animación limpia
-                        if (typeof window._openHomeSheet === 'function') window._openHomeSheet('vdot-history-sheet');
-                        else if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
+                        if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
                     } catch(_) {}
                 });
                 vdCard.addEventListener('touchstart', function(){ vdCard.classList.add('mr-vd-pressing'); }, { passive: true });
