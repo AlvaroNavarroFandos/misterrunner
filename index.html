@@ -1271,13 +1271,16 @@
         filter: drop-shadow(0 1px 3px rgba(196,136,30,.35));
     }
     .mr-rh-watch-ic .mr-coros-dot {
+        /* [v2.x · reloj v2] Dot centrado DENTRO de la esfera (era esquina sup-der).
+           Tamaño ligeramente menor + borde más fino para que respire dentro del círculo. */
         position: absolute;
-        top: -1px;
-        right: -1px;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
         margin: 0;
-        width: 9px;
-        height: 9px;
-        border: 1.5px solid var(--card);
+        width: 8px;
+        height: 8px;
+        border: 1.2px solid var(--card);
     }
     .mr-rh-edit-chip {
         position: absolute;
@@ -6524,13 +6527,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                         <div class="mr-rh-watch">
                             <span class="mr-rh-watch-ic">
+                                <!-- [v2.x · reloj v2] SVG basado en PNG referencia:
+                                     correas trapezoidales (parte ancha pegada a la
+                                     esfera, se estrechan hacia el exterior) + esfera
+                                     circular vacía. Dorado (#c4881e) como antes.
+                                     El dot COROS se centra DENTRO de la esfera vía CSS. -->
                                 <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="#c4881e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="8.5" y="2" width="7" height="3.3" rx="1"/>
-                                    <rect x="8.5" y="18.7" width="7" height="3.3" rx="1"/>
-                                    <circle cx="12" cy="12" r="6.5"/>
-                                    <circle cx="12" cy="12" r="1"/>
+                                    <path d="M8.5 1.5 L15.5 1.5 L17.5 5 L6.5 5 Z"/>
+                                    <path d="M6.5 19 L17.5 19 L15.5 22.5 L8.5 22.5 Z"/>
+                                    <circle cx="12" cy="12" r="7"/>
                                 </svg>
-                                <!-- [v2.x] Dot Coros verde(on)/rojo(off) con glow, en la esquina sup-der del icono -->
+                                <!-- [v2.x · reloj v2] Dot Coros verde(on)/rojo(off) con glow,
+                                     ahora centrado DENTRO de la esfera (no en la esquina). -->
                                 <span id="mr-coros-dot" class="mr-coros-dot pending" aria-label="Estado COROS"></span>
                             </span>
                             <span id="watch-display">Coros Pace 2</span>
@@ -37921,7 +37929,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ${exHtml}
             </div>
         </div>`;
-        document.body.appendChild(ov);
+        // [Sheets Premium v4 · Biblioteca style] Antes se hacía appendChild
+        // directamente al body: openSheet detectaba el elemento como last
+        // child del body y aplicaba .show INMEDIATAMENTE (sin doble RAF), lo
+        // que con la nueva animación 0.40s ease-out generaba un arranque
+        // irregular (el estado inicial translateY(100%) no llegaba a pintar
+        // antes del .show). Con appendChild a #app forzamos que openSheet
+        // detecte el elemento fuera del body → doble RAF → arranque limpio,
+        // igual que el resto de sheets permanentes.
+        var _wuHost = document.getElementById('app') || document.body;
+        _wuHost.appendChild(ov);
         openSheet('warmup-detail-sheet');
     }
 

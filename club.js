@@ -6707,15 +6707,14 @@ function _openPRsSheet(userId, displayName, isSelf) {
     var isDark = document.body.classList.contains('dark-mode');
 
     // ── Backdrop ──────────────────────────────────────────────────────
+    // [Sheets Premium v4 · Biblioteca style] Adopta el patrón .sheet-backdrop
+    // + .sheet para heredar la animación premium biblioteca (0.40s ease-out,
+    // blur 22px instantáneo, box-shadow, swipe-to-dismiss). Antes: backdrop
+    // inline con blur 5px + transición custom 0.25s ease. Ahora consistente
+    // con TODOS los sheets de la app.
     var back = document.createElement('div');
     back.id = 'mr-prs-sheet';
-    back.style.cssText = [
-        'position:fixed','inset:0','z-index:99996',
-        'background:rgba(0,0,0,.55)',
-        'backdrop-filter:blur(5px)','-webkit-backdrop-filter:blur(5px)',
-        'display:flex','align-items:flex-end','justify-content:center',
-        'opacity:0','transition:opacity .25s ease'
-    ].join(';');
+    back.className = 'sheet-backdrop';
 
     // [Bloque B · UI premium] Inyectar keyframes una sola vez
     if (!document.getElementById('mr-prs-anim-style')) {
@@ -6743,27 +6742,29 @@ function _openPRsSheet(userId, displayName, isSelf) {
             '.mr-prs-card-stagger {',
             '  animation: mrPrsStaggerIn .42s cubic-bezier(.34,1.45,.64,1) both;',
             '}',
+            '@keyframes mrPrsSpin {',
+            '  0%   { transform: rotate(0deg); }',
+            '  100% { transform: rotate(360deg); }',
+            '}',
         ].join('\n');
         document.head.appendChild(animStyle);
     }
 
     // ── Sheet ─────────────────────────────────────────────────────────
+    // [Sheets Premium v4 · Biblioteca style] Adopta clase .sheet estándar.
+    // Antes: transform:translateY(40px) + transición custom .3s. Ahora:
+    // hereda transform:translateY(100%) + transition .40s ease-out del
+    // patrón global. Coherente con todo el resto de sheets.
     var sheet = document.createElement('div');
-    sheet.style.cssText = [
-        'width:100%','max-width:480px',
-        'background:var(--bg)',
-        'border-radius:22px 22px 0 0',
-        'box-shadow:0 -8px 30px rgba(0,0,0,.4)',
-        'display:flex','flex-direction:column',
-        'max-height:92vh',
-        'transform:translateY(40px)','transition:transform .3s cubic-bezier(.32,.72,0,1)',
-        'overflow:hidden'
-    ].join(';');
+    sheet.className = 'sheet';
 
-    // ── Handle drag visual ────────────────────────────────────────────
-    var handle = document.createElement('div');
-    handle.style.cssText = 'width:42px;height:4px;border-radius:2px;background:var(--border);margin:8px auto 6px;flex-shrink:0;';
-    sheet.appendChild(handle);
+    // Handle estándar (sustituye al handle inline)
+    var handleWrap = document.createElement('div');
+    handleWrap.className = 'sheet-handle-wrap';
+    var handleBar = document.createElement('div');
+    handleBar.className = 'sheet-handle';
+    handleWrap.appendChild(handleBar);
+    sheet.appendChild(handleWrap);
 
     // ── Cabecera premium (Opción A · silver gradient + línea decorativa dorada) ─
     // Wrapper coherente con banner KPI biblioteca (mismo lenguaje visual)
@@ -6813,8 +6814,12 @@ function _openPRsSheet(userId, displayName, isSelf) {
     sheet.appendChild(hdrWrap);
 
     // ── Contenedor scrollable que englobará ambas secciones ───────────
+    // [Sheets Premium v4] flex:1 para ocupar el resto del sheet flexbox;
+    // position:relative para poder anclar el loading spinner overlay dentro.
     var scrollArea = document.createElement('div');
     scrollArea.style.cssText = [
+        'flex:1',
+        'position:relative',
         'overflow-y:auto','overflow-x:hidden',
         '-webkit-overflow-scrolling:touch',
         'padding-bottom:max(16px,env(safe-area-inset-bottom,0px) + 14px)'
@@ -6896,16 +6901,42 @@ function _openPRsSheet(userId, displayName, isSelf) {
     });
     scrollArea.appendChild(gridStreak);
 
+    // [Sheets Premium v4] Loading spinner central overlay: cubre el scroll
+    // mientras el fetch a Supabase resuelve. Se desvanece cuando llegan los
+    // datos. Antes: el sheet aparecía con las cards en estado skeleton
+    // (shimmer) pero durante ~200-400ms se veía "vacío" hasta que arrancaba
+    // el shimmer, y quedaba feo. Este overlay tapa ese hueco.
+    var loadingOv = document.createElement('div');
+    loadingOv.id = 'mr-prs-loading';
+    loadingOv.style.cssText = [
+        'position:absolute','inset:0','z-index:5',
+        'display:flex','flex-direction:column',
+        'align-items:center','justify-content:center','gap:14px',
+        'background:var(--bg)',
+        'pointer-events:auto',
+        'opacity:1','transition:opacity .22s ease'
+    ].join(';');
+    loadingOv.innerHTML =
+        '<div style="width:44px;height:44px;border-radius:50%;'
+      +   'border:3.5px solid var(--gold-lt);border-top-color:var(--gold-text);'
+      +   'animation:mrPrsSpin .9s linear infinite;"></div>'
+      + '<div style="font-size:12px;font-weight:700;color:var(--tm);'
+      +   'letter-spacing:.4px;">Cargando marcas…</div>';
+    scrollArea.appendChild(loadingOv);
+
     sheet.appendChild(scrollArea);
 
     back.appendChild(sheet);
-    document.body.appendChild(back);
+    // [Sheets Premium v4 · Biblioteca style] AppendChild a #app (no al body).
+    // Así openSheet detecta el elemento fuera del body → doble RAF interno →
+    // el estado inicial (translateY(100%), opacity 0) pinta ANTES del .show
+    // y la animación arranca limpia. Idéntico al resto de sheets permanentes.
+    var _prsHost = document.getElementById('app') || document.body;
+    _prsHost.appendChild(back);
 
-    // Animación de entrada
-    requestAnimationFrame(function() {
-        back.style.opacity = '1';
-        sheet.style.transform = 'translateY(0)';
-    });
+    // Animación de entrada: openSheet aplica clase .show → el CSS global
+    // dispara la transición biblioteca (0.40s ease-out desde translateY(100%)).
+    if (typeof openSheet === 'function') openSheet('mr-prs-sheet');
 
     // ── E3: carga real de récords desde Supabase ─────────────────────
     // [Bloque B · UI premium] Las cards arrancan con clase mr-prs-card-skeleton
@@ -6931,6 +6962,14 @@ function _openPRsSheet(userId, displayName, isSelf) {
             // Indexar por record_type
             var byType = {};
             rows.forEach(function(r) { byType[r.record_type] = r; });
+
+            // [Sheets Premium v4] Fetch OK → desvanecer el loading overlay.
+            // Se hace ANTES del re-render para que las cards con stagger se
+            // vean subir tras el fade del overlay (transición limpia).
+            if (loadingOv) {
+                loadingOv.style.opacity = '0';
+                setTimeout(function(){ if (loadingOv.parentNode) loadingOv.remove(); }, 240);
+            }
 
             // Re-renderizar AMBOS grids con datos reales
             // [Bloque B · UI premium] Stagger entrance: cards aparecen escalonadas
@@ -6982,6 +7021,12 @@ function _openPRsSheet(userId, displayName, isSelf) {
                 + '</span>';
         } catch (e) {
             console.warn('[MR][PRs] load fail:', e && e.message ? e.message : e);
+            // [Sheets Premium v4] Fetch fallado → desvanecer también el
+            // loading overlay para que se vea el mensaje de error.
+            if (loadingOv) {
+                loadingOv.style.opacity = '0';
+                setTimeout(function(){ if (loadingOv.parentNode) loadingOv.remove(); }, 240);
+            }
             // [Bloque B · UI premium] Sustituir loading dots por mensaje de error
             counter.innerHTML = '<span style="color:var(--tm);opacity:.85;">Error de carga</span>';
             // Mostrar mensaje de error reemplazando el grid
@@ -7043,9 +7088,14 @@ function _openPRsSheet(userId, displayName, isSelf) {
 
     // ── Cierre ────────────────────────────────────────────────────────
     function closeMe() {
-        back.style.opacity = '0';
-        sheet.style.transform = 'translateY(40px)';
-        setTimeout(function() { if (back.parentNode) back.remove(); }, 280);
+        // [Sheets Premium v4 · Biblioteca style] closeSheet aplica clase
+        // .closing → el CSS global anima el sheet de vuelta a translateY(100%)
+        // en 0.34s ease-in-out y el backdrop opacity a 0 en 0.22s. El remove
+        // del elemento se hace tras el fin de la animación (360ms buffer).
+        if (typeof closeSheet === 'function') closeSheet('mr-prs-sheet');
+        setTimeout(function() {
+            if (back.parentNode) back.remove();
+        }, 400);
         document.removeEventListener('keydown', onKey);
     }
     function onKey(e) { if (e.key === 'Escape') closeMe(); }
