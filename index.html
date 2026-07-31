@@ -505,12 +505,21 @@
         85%  { opacity: 1; }
         100% { transform: translateY(100%); opacity: .96; }
     }
+    /* [Visor · swipe edge-back Card 1] Salida horizontal en el sentido del
+       gesto (→) para que la animación acompañe al arrastre en vez de
+       "saltar" hacia abajo. Misma duración/easing que _fxHeroOut. */
+    @keyframes _fxHeroOutRight{
+        0%   { transform: translateX(0);    opacity: 1; }
+        85%  { opacity: 1; }
+        100% { transform: translateX(100%); opacity: .96; }
+    }
     .mr-fx-skeleton{background:linear-gradient(90deg,var(--bsoft) 0%,var(--card) 50%,var(--bsoft) 100%);background-size:200% 100%;animation:_fxSkeletonShimmer 1.4s ease-in-out infinite;border-radius:8px;}
     .mr-fx-view-in{animation:_fxFadeViewIn .22s cubic-bezier(.32,.72,0,1) both;}
     .mr-fx-view-slide-l{animation:_fxViewSlideInLeft .28s cubic-bezier(.22,.61,.36,1) both;}
     .mr-fx-view-slide-r{animation:_fxViewSlideInRight .28s cubic-bezier(.22,.61,.36,1) both;}
     .mr-fx-hero-in{animation:_fxHeroIn .40s cubic-bezier(.32,.72,0,1) both;will-change:transform;}
     .mr-fx-hero-out{animation:_fxHeroOut .34s cubic-bezier(.4,0,.2,1) both;will-change:transform,opacity;}
+    .mr-fx-hero-out-right{animation:_fxHeroOutRight .34s cubic-bezier(.4,0,.2,1) both;will-change:transform,opacity;}
 
     /* ────────────────────────────────────────────────────────────────
        [HOME · Warm up · efecto premium al pulsar]
@@ -27078,9 +27087,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
             } catch(_){}
         }
-        function _detCloseAnimated() {
+        function _detCloseAnimated(dir) {
             ov.classList.remove('mr-fx-hero-in');
-            ov.classList.add('mr-fx-hero-out');
+            // [Visor · swipe edge-back] dir='right' para que la salida
+            // acompañe al gesto horizontal; default 'down' para el botón
+            // fecha (comportamiento original intacto).
+            ov.classList.add(dir === 'right' ? 'mr-fx-hero-out-right' : 'mr-fx-hero-out');
             setTimeout(function(){
                 try { _detCleanup(); } catch(_){}
                 if (ov.parentNode) ov.remove();
@@ -28575,9 +28587,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             drag=false;
             if(dragDir==='h'){
                 // Edge-back: swipe→ desde borde izq en card 0 con >60px → cerrar visor
+                // con salida horizontal (mismo sentido del gesto).
                 if(edgeSwipe && ddx > 60){
                     edgeSwipe=false; dragDir=null;
-                    _detCloseAnimated();
+                    _detCloseAnimated('right');
                     return;
                 }
                 track.style.transition='transform .3s cubic-bezier(.25,.46,.45,.94)';
@@ -39742,7 +39755,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const availH = H - MARGIN_TOP - MARGIN_BOT - HEADER_H - HEADER_ROW_GAP;
         const nRows = rows.length;
         const rowH = Math.max(55, Math.min(110, availH / nRows));
-        const totalContentH = HEADER_H + HEADER_ROW_GAP + rowH * nRows;
+        // ── Firma "Misterrunner" + logo MR (v2.23.0) ──
+        // Bloque de firma pegado al último parcial, justificado a la izquierda,
+        // con el logo MR (badge navy + borde dorado) a la derecha del texto.
+        // Se cuenta en totalContentH para que todo el conjunto siga centrado.
+        const SIG_FONT = 78;   // tamaño de la firma
+        const SIG_LOGO = 96;   // lado del badge del logo
+        const SIG_GAP = 18;    // separación firma <-> último parcial
+        const SIG_ROW_H = Math.max(SIG_FONT, SIG_LOGO);
+        const SIG_BLOCK_H = SIG_GAP + SIG_ROW_H;
+        const totalContentH = HEADER_H + HEADER_ROW_GAP + rowH * nRows + SIG_BLOCK_H;
         const startY = Math.max(MARGIN_TOP, (H - totalContentH) / 2);
 
         // Columnas: KM · RITMO · BARRA
@@ -39836,7 +39858,98 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.restore();
         });
 
-        _exportInstaCanvas(canvas, act);
+        // ── FIRMA "Misterrunner" + logo MR ────────────────────────────
+        // Debajo del último parcial, pegada (SIG_GAP), justificada a la
+        // izquierda (mismo margen que la columna KM). Texto tri-color con
+        // stroke negro en dos pasadas (evita que el stroke de un tramo pise
+        // el relleno del anterior). Logo MR a la derecha del texto: badge
+        // navy redondeado con borde dorado (mismo tratamiento que la app).
+        const _sigCy = startY + HEADER_H + HEADER_ROW_GAP + rowH * nRows + SIG_GAP + SIG_ROW_H / 2;
+        const _sigParts = [['Mist', '#dc2626'], ['erru', '#facc15'], ['nner', '#dc2626']];
+
+        // Logo cacheado a nivel window para no recargar en cada share
+        let _logoImg = window.__mrPartialsLogo;
+        if (!_logoImg) {
+            _logoImg = new Image();
+            _logoImg.src = window.__MR_LOGO_DATA_URI__ || '';
+            window.__mrPartialsLogo = _logoImg;
+        }
+
+        function _drawSigAndExport() {
+            // Texto de la firma (tri-color con stroke negro, dos pasadas)
+            ctx.save();
+            ctx.font = '900 ' + SIG_FONT + 'px ' + F;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.lineJoin = 'round';
+            ctx.miterLimit = 2;
+            let _sigW = 0;
+            for (let i = 0; i < _sigParts.length; i++) _sigW += ctx.measureText(_sigParts[i][0]).width;
+            // pasada 1 · stroke negro con halo
+            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+            ctx.shadowBlur = 14;
+            ctx.strokeStyle = 'rgba(0,0,0,0.95)';
+            ctx.lineWidth = Math.max(6, SIG_FONT * 0.155);
+            let _cx = MARGIN_X;
+            for (let i = 0; i < _sigParts.length; i++) {
+                ctx.strokeText(_sigParts[i][0], _cx, _sigCy);
+                _cx += ctx.measureText(_sigParts[i][0]).width;
+            }
+            // pasada 2 · relleno por tramos (sin sombra, nitidez)
+            ctx.shadowColor = 'transparent';
+            ctx.shadowBlur = 0;
+            _cx = MARGIN_X;
+            for (let i = 0; i < _sigParts.length; i++) {
+                ctx.fillStyle = _sigParts[i][1];
+                ctx.fillText(_sigParts[i][0], _cx, _sigCy);
+                _cx += ctx.measureText(_sigParts[i][0]).width;
+            }
+            ctx.restore();
+
+            // Logo MR pegado a la derecha del texto
+            if (_logoImg && _logoImg.naturalWidth) {
+                const _lx = MARGIN_X + _sigW + 26;
+                const _ly = _sigCy - SIG_LOGO / 2;
+                const _lr = SIG_LOGO * 0.24;
+                // halo + fondo navy (respaldo por si el badge cae sobre foto clara)
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.55)';
+                ctx.shadowBlur = 16;
+                ctx.beginPath();
+                ctx.roundRect(_lx, _ly, SIG_LOGO, SIG_LOGO, _lr);
+                ctx.fillStyle = '#12233a';
+                ctx.fill();
+                ctx.restore();
+                // imagen cover (object-position center 10%, como en la app)
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(_lx, _ly, SIG_LOGO, SIG_LOGO, _lr);
+                ctx.clip();
+                const _iw = _logoImg.naturalWidth, _ih = _logoImg.naturalHeight;
+                const _sc = Math.max(SIG_LOGO / _iw, SIG_LOGO / _ih);
+                const _sw = SIG_LOGO / _sc, _sh = SIG_LOGO / _sc;
+                const _sx = (_iw - _sw) * 0.5, _sy = (_ih - _sh) * 0.10;
+                ctx.drawImage(_logoImg, _sx, _sy, _sw, _sh, _lx, _ly, SIG_LOGO, SIG_LOGO);
+                ctx.restore();
+                // borde dorado
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(_lx, _ly, SIG_LOGO, SIG_LOGO, _lr);
+                ctx.lineWidth = Math.max(2, SIG_LOGO * 0.03);
+                ctx.strokeStyle = 'rgba(196,136,30,0.65)';
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            _exportInstaCanvas(canvas, act);
+        }
+
+        if (_logoImg.complete && _logoImg.naturalWidth) {
+            _drawSigAndExport();
+        } else {
+            _logoImg.onload = _drawSigAndExport;
+            _logoImg.onerror = _drawSigAndExport; // exporta igualmente sin logo
+        }
     }
     // ── END SHARE PARCIALES INSTAGRAM ─────────────────────────────────
 
