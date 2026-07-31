@@ -6691,8 +6691,21 @@ function _openPRsSheet(userId, displayName, isSelf) {
     var sb = window._sbClient;
     var resolveSelf = (userId === 'me' || isSelf === true);
 
-    // Evitar dobles aperturas
-    if (document.getElementById('mr-prs-sheet')) return;
+    // [Sheets Premium v4 · fix reapertura] Manejo tolerante de residuos:
+    //   - Si el sheet YA está visible (.show), no hacer nada (evita doble
+    //     apertura real).
+    //   - Si existe pero SIN .show, es un residuo del cierre anterior que
+    //     no llegó a removerse (típicamente tras swipe-to-dismiss: ese
+    //     flujo pasa por closeSheet directo desde _mrSheetSwipeBind y no
+    //     por closeMe, por lo que back.remove() no se llegaba a ejecutar).
+    //     Lo removemos AHORA para reabrir limpio.
+    //   Antes: `if (document.getElementById('mr-prs-sheet')) return;` →
+    //   el residuo bloqueaba la reapertura hasta recargar la app.
+    var _existing = document.getElementById('mr-prs-sheet');
+    if (_existing) {
+        if (_existing.classList.contains('show')) return;
+        _existing.remove();
+    }
 
     // Orden FIJO de récords en el grid (de más cotizado a menos)
     // [FASE 8] +6 PRs nuevos al final: streak, week, month, cadence, hr_easy, efficiency
@@ -6927,6 +6940,19 @@ function _openPRsSheet(userId, displayName, isSelf) {
     sheet.appendChild(scrollArea);
 
     back.appendChild(sheet);
+    // [Sheets Premium v4 · fix reapertura] Auto-cleanup universal: cuando
+    // termina la transición del transform del sheet y ya NO tiene .show,
+    // significa que se completó el cierre (por CUALQUIER vía: ✕, backdrop,
+    // swipe-to-dismiss o Escape). Removemos el elemento del DOM aquí para
+    // que la siguiente apertura funcione siempre sin residuos.
+    // Nota: transitionend también dispara al ABRIR (translateY 100%→0), pero
+    // en ese momento `.show` está presente → el guard filtra correctamente.
+    back.addEventListener('transitionend', function(e) {
+        if (e.propertyName !== 'transform') return;
+        if (back.classList.contains('show')) return; // aún abierto
+        if (back.parentNode) back.remove();
+        try { document.removeEventListener('keydown', onKey); } catch(_) {}
+    });
     // [Sheets Premium v4 · Biblioteca style] AppendChild a #app (no al body).
     // Así openSheet detecta el elemento fuera del body → doble RAF interno →
     // el estado inicial (translateY(100%), opacity 0) pinta ANTES del .show
