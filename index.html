@@ -15507,7 +15507,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     function logoutUser() {
         if(!window.confirm('¿Cerrar sesión?'))return;
-        if(window._sbClient){window._sbClient.auth.signOut().catch(()=>{});}
+        // v2.27.0-p3 · scope:'local' — solo cierra el dispositivo actual.
+        // El default de Supabase (global) invalida TODAS las sesiones del
+        // usuario en todos los dispositivos, lo que a su vez hace que las
+        // llamadas a Edge Functions (p.ej. coros-sync) devuelvan
+        // "unauthorized" en el resto de dispositivos hasta re-login.
+        if(window._sbClient){window._sbClient.auth.signOut({ scope: 'local' }).catch(()=>{});}
         currentUser=null;APP_KEY_OVERRIDE=null;activePlan=null;activeStrengthPlan=null;activities=[];
         // [FASE 5.7.5] Resetear guard de bootApp para permitir arranque limpio
         // al hacer login con otra cuenta sin necesidad de recargar la página
@@ -39745,25 +39750,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Layout ────────────────────────────────────────────────────
         // Márgenes X fijos. Altura de filas adaptable al número de rows
-        // (rango 55-110px) para caber siempre centrado en 1080×1920 con
+        // (rango 30-110px) para caber siempre centrado en 1080×1920 con
         // margen visual arriba/abajo. Contenido centrado verticalmente.
+        // v2.27.0-p3 · rowH min 55→30, márgenes 140→80, firma 78/96→64/78 y
+        // availH incluye SIG_BLOCK_H → cabe hasta 51 filas (ultra 50km).
         const MARGIN_X = 100;
-        const MARGIN_TOP = 140;
-        const MARGIN_BOT = 140;
+        const MARGIN_TOP = 80;
+        const MARGIN_BOT = 80;
         const HEADER_H = 70;
         const HEADER_ROW_GAP = 14;
-        const availH = H - MARGIN_TOP - MARGIN_BOT - HEADER_H - HEADER_ROW_GAP;
-        const nRows = rows.length;
-        const rowH = Math.max(55, Math.min(110, availH / nRows));
-        // ── Firma "Misterrunner" + logo MR (v2.23.0) ──
-        // Bloque de firma pegado al último parcial, justificado a la izquierda,
-        // con el logo MR (badge navy + borde dorado) a la derecha del texto.
-        // Se cuenta en totalContentH para que todo el conjunto siga centrado.
-        const SIG_FONT = 78;   // tamaño de la firma
-        const SIG_LOGO = 96;   // lado del badge del logo
+        // ── Firma "Misterrunner" + logo MR (constantes calculadas antes que rowH) ──
+        const SIG_FONT = 64;   // tamaño de la firma
+        const SIG_LOGO = 78;   // lado del badge del logo
         const SIG_GAP = 18;    // separación firma <-> último parcial
         const SIG_ROW_H = Math.max(SIG_FONT, SIG_LOGO);
         const SIG_BLOCK_H = SIG_GAP + SIG_ROW_H;
+        const availH = H - MARGIN_TOP - MARGIN_BOT - HEADER_H - HEADER_ROW_GAP - SIG_BLOCK_H;
+        const nRows = rows.length;
+        const rowH = Math.max(30, Math.min(110, availH / nRows));
         const totalContentH = HEADER_H + HEADER_ROW_GAP + rowH * nRows + SIG_BLOCK_H;
         const startY = Math.max(MARGIN_TOP, (H - totalContentH) / 2);
 
@@ -40754,6 +40758,131 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           + chartHtml;
     }
     try { window.renderStaminaSheet = renderStaminaSheet; } catch(_){}
+
+    // ═════════════════════════════════════════════════════════════════
+    // v2.27.0-p3 · TRAINING LOAD + VDOT · patrón Stamina "carga inmediata"
+    // Ambas cards siempre crean el div en el DOM (display:none), y separan
+    // el paint en _mrRepaintXCard() para poder repintar cuando llega el
+    // dato bueno (post-fetch, post-refresh de activities). Sin salto visual:
+    // si no hay dato válido → oculto; cuando llega → aparece "de sopetón".
+    // ═════════════════════════════════════════════════════════════════
+
+    // ── TRAINING LOAD (ACWR badge) ──
+    function _mrRenderTrainingLoadCard(container){
+        if (!container) return;
+        var existing = container.querySelector('#home-acwr-badge');
+        if (existing) { _mrRepaintTrainingLoadCard(); return; }
+        var card = document.createElement('div');
+        card.id = 'home-acwr-badge';
+        card.setAttribute('data-ho', 'training');
+        card.className = 'mr-tl-card';
+        card.style.cssText = 'padding:12px 14px;display:none;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
+        card.setAttribute('role', 'button');
+        card.addEventListener('click', function() {
+            try {
+                if (typeof renderACWRSheet === 'function') renderACWRSheet();
+                if (typeof openSheet === 'function') openSheet('acwr-sheet');
+            } catch(_) {}
+        });
+        card.addEventListener('touchstart', function(){ card.classList.add('mr-tl-pressing'); }, { passive: true });
+        var _tlRelease = function(){ card.classList.remove('mr-tl-pressing'); };
+        card.addEventListener('touchend', _tlRelease, { passive: true });
+        card.addEventListener('touchcancel', _tlRelease, { passive: true });
+        container.appendChild(card);
+        _mrRepaintTrainingLoadCard();
+    }
+    function _mrRepaintTrainingLoadCard(){
+        var card = document.getElementById('home-acwr-badge');
+        if (!card) return;
+        var acwr = null;
+        try { acwr = (typeof computeACWR === 'function') ? computeACWR(activities) : null; } catch(_){}
+        if (!acwr) { card.style.display = 'none'; return; }
+        var zMap = {
+            undertraining: { c:'#5BB8F5', bg:'rgba(91,184,245,.14)', brd:'rgba(91,184,245,.40)', lbl:'Subcarga'    },
+            sweet:         { c:'#4CAF50', bg:'rgba(76,175,80,.14)',  brd:'rgba(76,175,80,.40)',  lbl:'Sweet spot'  },
+            caution:       { c:'#FF9500', bg:'rgba(255,149,0,.14)',  brd:'rgba(255,149,0,.40)',  lbl:'Precaución'  },
+            high_risk:     { c:'#F44336', bg:'rgba(244,67,54,.14)',  brd:'rgba(244,67,54,.40)',  lbl:'Alto riesgo' }
+        };
+        var z = zMap[acwr.zone];
+        if (!z) { card.style.display = 'none'; return; }
+        var val = acwr.ratio.toFixed(2);
+        card.setAttribute('aria-label', 'Training load ACWR ' + val + ' zona ' + z.lbl + '. Abre el detalle de carga.');
+        card.innerHTML =
+            '<div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          +   '<svg class="mr-tl-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+          +     '<line x1="3" y1="20" x2="3" y2="14"/><line x1="9" y1="20" x2="9" y2="10"/><line x1="15" y1="20" x2="15" y2="6"/><line x1="21" y1="20" x2="21" y2="12"/>'
+          +   '</svg>'
+          + '</div>'
+          + '<div style="flex:1;min-width:0;">'
+          +   '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Training load</div>'
+          + '</div>'
+          + '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;background:'+z.bg+';border:1px solid '+z.brd+';font-size:11.5px;font-weight:700;color:'+z.c+';letter-spacing:-.2px;font-variant-numeric:tabular-nums;flex-shrink:0;">'
+          +   '<span style="width:6px;height:6px;border-radius:50%;background:'+z.c+';"></span>'+val
+          + '</span>'
+          + '<div class="mr-tl-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
+        card.style.display = 'flex';
+    }
+    try { window._mrRenderTrainingLoadCard = _mrRenderTrainingLoadCard; window._mrRepaintTrainingLoadCard = _mrRepaintTrainingLoadCard; } catch(_){}
+
+    // ── VDOT (Evolución) ──
+    function _mrRenderVdotCard(container){
+        if (!container) return;
+        var existing = container.querySelector('#home-vdot-card');
+        if (existing) { _mrRepaintVdotCard(); return; }
+        var card = document.createElement('div');
+        card.id = 'home-vdot-card';
+        card.setAttribute('data-ho', 'vdot');
+        card.className = 'mr-vd-card';
+        card.style.cssText = 'padding:12px 14px;display:none;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
+        card.setAttribute('role', 'button');
+        card.addEventListener('click', function(){
+            try {
+                if (typeof window._renderVdotHistorySheet === 'function') window._renderVdotHistorySheet();
+                if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
+            } catch(_){}
+        });
+        card.addEventListener('touchstart', function(){ card.classList.add('mr-vd-pressing'); }, { passive: true });
+        var _vdRelease = function(){ card.classList.remove('mr-vd-pressing'); };
+        card.addEventListener('touchend', _vdRelease, { passive: true });
+        card.addEventListener('touchcancel', _vdRelease, { passive: true });
+        container.appendChild(card);
+        _mrRepaintVdotCard();
+    }
+    function _mrRepaintVdotCard(){
+        var card = document.getElementById('home-vdot-card');
+        if (!card) return;
+        var _vdCur = null, _fa = null;
+        try {
+            _vdCur = (typeof window._vdotCurrent === 'function') ? window._vdotCurrent() : null;
+            var _vdPlan = (typeof activePlan !== 'undefined' ? activePlan : (window.activePlan || null));
+            _fa = (typeof window._mrFormaActual === 'function') ? window._mrFormaActual(_vdCur, _vdPlan) : null;
+        } catch(_){}
+        if (!_fa || !_fa.vdot) { card.style.display = 'none'; return; }
+        var _st = (!_fa.goalSecs || _fa.source === 'plan') ? 'neutral'
+                : (Math.abs(_fa.gapSec) < 45 ? 'on' : (_fa.gapSec > 0 ? 'behind' : 'ahead'));
+        var _vdZ = {
+            neutral: { c:'#C9A84C', bg:'rgba(201,168,76,.14)', brd:'rgba(201,168,76,.40)' },
+            on:      { c:'#C9A84C', bg:'rgba(201,168,76,.14)', brd:'rgba(201,168,76,.40)' },
+            behind:  { c:'#d97b34', bg:'rgba(217,123,52,.14)', brd:'rgba(217,123,52,.40)' },
+            ahead:   { c:'#3a9d6a', bg:'rgba(58,157,106,.14)', brd:'rgba(58,157,106,.40)' }
+        }[_st];
+        card.setAttribute('aria-label','Evolución VDOT. Forma actual ' + _fa.vdot + '. Abre el detalle.');
+        card.innerHTML =
+            '<div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+          +   '<svg class="mr-vd-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+          +     '<path d="M3 3v18h18"/><polyline points="7 15 11 9 15 12 21 5"/>'
+          +   '</svg>'
+          + '</div>'
+          + '<div style="flex:1;min-width:0;">'
+          +   '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Evolución VDOT</div>'
+          + '</div>'
+          + '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;background:'+_vdZ.bg+';border:1px solid '+_vdZ.brd+';font-size:11.5px;font-weight:700;color:'+_vdZ.c+';letter-spacing:-.2px;font-variant-numeric:tabular-nums;flex-shrink:0;">'
+          +   '<span style="width:6px;height:6px;border-radius:50%;background:'+_vdZ.c+';"></span>'+_fa.vdot
+          + '</span>'
+          + '<div class="mr-vd-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
+        card.style.display = 'flex';
+    }
+    try { window._mrRenderVdotCard = _mrRenderVdotCard; window._mrRepaintVdotCard = _mrRepaintVdotCard; } catch(_){}
 
     function renderHome() {
         const container = document.getElementById('home-content');
@@ -42063,120 +42192,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(_) {}
 
         // ── [v4.1 GAP 2] TRAINING LOAD MICRO-BADGE (ACWR) ────────────
-        // Fila-badge al final de Home con el mismo lenguaje visual que la
-        // fila "Training load" del Runner tab: icono cyan de barras
-        // crecientes (24×24 stroke) + título + pill de ratio con color
-        // de zona + chevron. Puente visual entre Home y Runner.
-        //
-        // Click → navega a Runner tab (patrón .nb/.view consistente con
-        // resto de nav de la app, líneas 21233-21236 y 18184-18186).
-        //
-        // Siempre visible. Si computeACWR() retorna null (sin datos
-        // suficientes en ventana crónica), fallback: dot y ratio en gris
-        // + label "Sin datos". Fallback silencioso ante excepciones.
-        try {
-            var _acwr = (typeof computeACWR === 'function') ? computeACWR(activities) : null;
-            var _zMap = {
-                undertraining: { c:'#5BB8F5', bg:'rgba(91,184,245,.14)', brd:'rgba(91,184,245,.40)', lbl:'Subcarga'    },
-                sweet:         { c:'#4CAF50', bg:'rgba(76,175,80,.14)',  brd:'rgba(76,175,80,.40)',  lbl:'Sweet spot'  },
-                caution:       { c:'#FF9500', bg:'rgba(255,149,0,.14)',  brd:'rgba(255,149,0,.40)',  lbl:'Precaución'  },
-                high_risk:     { c:'#F44336', bg:'rgba(244,67,54,.14)',  brd:'rgba(244,67,54,.40)',  lbl:'Alto riesgo' }
-            };
-            var _z    = _acwr ? _zMap[_acwr.zone] : null;
-            var _col  = _z ? _z.c   : 'var(--tm)';
-            var _bg   = _z ? _z.bg  : 'transparent';
-            var _brd  = _z ? _z.brd : 'var(--border)';
-            var _lbl  = _z ? _z.lbl : 'Sin datos';
-            var _val  = _acwr ? _acwr.ratio.toFixed(2) : '—';
-
-            var acwrBadge = document.createElement('div');
-            acwrBadge.id = 'home-acwr-badge'; acwrBadge.setAttribute('data-ho','training');
-            acwrBadge.className = 'mr-tl-card';
-            acwrBadge.style.cssText = 'padding:12px 14px;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
-            acwrBadge.setAttribute('role', 'button');
-            acwrBadge.setAttribute('aria-label', 'Training load ACWR ' + _val + ' zona ' + _lbl + '. Abre el detalle de carga.');
-            acwrBadge.innerHTML =
-                '<div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-              +   '<svg class="mr-tl-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-              +     '<line x1="3" y1="20" x2="3" y2="14"/><line x1="9" y1="20" x2="9" y2="10"/><line x1="15" y1="20" x2="15" y2="6"/><line x1="21" y1="20" x2="21" y2="12"/>'
-              +   '</svg>'
-              + '</div>'
-              + '<div style="flex:1;min-width:0;">'
-              +   '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Training load</div>'
-              + '</div>'
-              + '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;background:'+_bg+';border:1px solid '+_brd+';font-size:11.5px;font-weight:700;color:'+_col+';letter-spacing:-.2px;font-variant-numeric:tabular-nums;flex-shrink:0;">'
-              +   '<span style="width:6px;height:6px;border-radius:50%;background:'+_col+';"></span>'+_val
-              + '</span>'
-              + '<div class="mr-tl-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
-            acwrBadge.addEventListener('click', function() {
-                // [v5.4 Home] Abre el detalle (sheet ACWR) directamente, no navega a Runner.
-                try {
-                    if (typeof renderACWRSheet === 'function') renderACWRSheet();
-                    if (typeof openSheet === 'function') openSheet('acwr-sheet');
-                } catch(_) {}
-            });
-            // [Refuerzo iOS PWA] El :active no siempre dispara en divs en iOS;
-            // añadimos una clase espejo con touch para garantizar que el efecto
-            // (press + icono + flecha cyan) SIEMPRE se vea. Patrón espejo del warm-up.
-            acwrBadge.addEventListener('touchstart', function(){ acwrBadge.classList.add('mr-tl-pressing'); }, { passive: true });
-            var _tlRelease = function(){ acwrBadge.classList.remove('mr-tl-pressing'); };
-            acwrBadge.addEventListener('touchend', _tlRelease, { passive: true });
-            acwrBadge.addEventListener('touchcancel', _tlRelease, { passive: true });
-            container.appendChild(acwrBadge);
-        } catch(e) {
-            console.warn('[MR][v4.1 GAP 2] ACWR badge Home exception:', e);
-        }
+        // v2.27.0-p3 · Patrón Stamina: renderer separado que siempre crea
+        // el div oculto y solo lo muestra cuando computeACWR devuelve algo
+        // válido. Sin "Sin datos" gris intermedio en el arranque.
+        try { if (typeof window._mrRenderTrainingLoadCard === 'function') window._mrRenderTrainingLoadCard(container); } catch(_){}
 
         // [Fase 3 · Home] Card "Evolución VDOT" (dorada) → abre modal vdot-history-sheet.
-        // Valor = forma actual (_mrFormaActual); píldora coloreada por estado
-        // (dorado en punto · naranja por detrás · verde sobrado). Solo si hay VDOT.
-        try {
-            var _vdCur  = (typeof window._vdotCurrent === 'function') ? window._vdotCurrent() : null;
-            var _vdPlan = (typeof activePlan !== 'undefined' ? activePlan : (window.activePlan || null));
-            var _fa = (typeof window._mrFormaActual === 'function') ? window._mrFormaActual(_vdCur, _vdPlan) : null;
-            if (_fa && _fa.vdot) {
-                var _st = (!_fa.goalSecs || _fa.source === 'plan') ? 'neutral'
-                        : (Math.abs(_fa.gapSec) < 45 ? 'on' : (_fa.gapSec > 0 ? 'behind' : 'ahead'));
-                var _vdZ = {
-                    neutral: { c:'#C9A84C', bg:'rgba(201,168,76,.14)', brd:'rgba(201,168,76,.40)' },
-                    on:      { c:'#C9A84C', bg:'rgba(201,168,76,.14)', brd:'rgba(201,168,76,.40)' },
-                    behind:  { c:'#d97b34', bg:'rgba(217,123,52,.14)', brd:'rgba(217,123,52,.40)' },
-                    ahead:   { c:'#3a9d6a', bg:'rgba(58,157,106,.14)', brd:'rgba(58,157,106,.40)' }
-                }[_st];
-                var vdCard = document.createElement('div');
-                vdCard.id = 'home-vdot-card'; vdCard.setAttribute('data-ho','vdot');
-                vdCard.className = 'mr-vd-card';
-                vdCard.style.cssText = 'padding:12px 14px;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-radius:16px;cursor:pointer;';
-                vdCard.setAttribute('role','button');
-                vdCard.setAttribute('aria-label','Evolución VDOT. Forma actual ' + _fa.vdot + '. Abre el detalle.');
-                vdCard.innerHTML =
-                    '<div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
-                  +   '<svg class="mr-vd-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C9A84C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-                  +     '<path d="M3 3v18h18"/><polyline points="7 15 11 9 15 12 21 5"/>'
-                  +   '</svg>'
-                  + '</div>'
-                  + '<div style="flex:1;min-width:0;">'
-                  +   '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Evolución VDOT</div>'
-                  + '</div>'
-                  + '<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;background:'+_vdZ.bg+';border:1px solid '+_vdZ.brd+';font-size:11.5px;font-weight:700;color:'+_vdZ.c+';letter-spacing:-.2px;font-variant-numeric:tabular-nums;flex-shrink:0;">'
-                  +   '<span style="width:6px;height:6px;border-radius:50%;background:'+_vdZ.c+';"></span>'+_fa.vdot
-                  + '</span>'
-                  + '<div class="mr-vd-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
-                vdCard.addEventListener('click', function() {
-                    try {
-                        if (typeof window._renderVdotHistorySheet === 'function') window._renderVdotHistorySheet();
-                        if (typeof openSheet === 'function') openSheet('vdot-history-sheet');
-                    } catch(_) {}
-                });
-                vdCard.addEventListener('touchstart', function(){ vdCard.classList.add('mr-vd-pressing'); }, { passive: true });
-                var _vdRelease = function(){ vdCard.classList.remove('mr-vd-pressing'); };
-                vdCard.addEventListener('touchend', _vdRelease, { passive: true });
-                vdCard.addEventListener('touchcancel', _vdRelease, { passive: true });
-                container.appendChild(vdCard);
-            }
-        } catch(e) {
-            console.warn('[MR][Fase 3] VDOT card Home exception:', e);
-        }
+        // v2.27.0-p3 · Patrón Stamina: renderer separado que siempre crea
+        // el div oculto y solo lo muestra cuando _mrFormaActual devuelve
+        // dato válido. Sin "sale, se esconde y aparece" en el arranque.
+        try { if (typeof window._mrRenderVdotCard === 'function') window._mrRenderVdotCard(container); } catch(_){}
 
         // [v5.4 Home reorder] Orden de Home: plan → hoy(warmup/rehab) → Training load →
         // Próximos → Carga·Fatiga·Forma → Distancia semanal → Carreras acumuladas (última).
@@ -50636,7 +50661,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.27.0-p2';
+        window.__mrCorosVersion = 'v2.27.0-p3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -51612,15 +51637,20 @@ window.addEventListener('DOMContentLoaded', function() {
             if (!show) { card.style.display = 'none'; card.innerHTML = ''; return; }
             card.style.display = '';
 
-            // ── Instant-paint SÍNCRONO desde caché (sale ya) o skeleton si no hay ──
+            // ── v2.27.0-p3 · Patrón Stamina: instant-paint SÍNCRONO desde caché
+            // si existe (sale ya con dato bueno), o display:none si no hay
+            // caché válido. El fetch en background lo mostrará cuando llegue,
+            // "de sopetón" con el valor real, en vez de skeleton→salto visual.
             try {
                 if (cache && cache.resp) {
                     var o = _rdnCompute(cache.resp, cache.ts);
                     o.fromCache = true;
                     o.stale = (Date.now() - cache.ts) >= _RDN_TTL_MS;
                     _paintReadiness(card, o);
-                } else if (!card.querySelector('.rw')) {
-                    _paintSkeleton(card);
+                } else {
+                    // Sin caché → oculto hasta que llegue el fetch
+                    card.style.display = 'none';
+                    card.innerHTML = '';
                 }
                 // [Backlog D · Stamina] Repaint stamina en paralelo (mismo cache)
                 try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
@@ -51640,9 +51670,19 @@ window.addEventListener('DOMContentLoaded', function() {
                         var fr = _rdnCompute(resp, Date.now());
                         fr.fromCache = false; fr.stale = false;
                         var c2 = document.getElementById('mr-readiness-card');
-                        if (c2 && c2.style.display !== 'none') _paintReadiness(c2, fr);
+                        // v2.27.0-p3 · patrón Stamina: pintar SIEMPRE que exista
+                        // el nodo (aunque estuviera display:none). Al llegar el
+                        // dato del fetch, la card aparece "de sopetón" con el
+                        // valor real, sin skeleton intermedio.
+                        if (c2) {
+                            c2.style.display = '';
+                            _paintReadiness(c2, fr);
+                        }
                         // [Backlog D · Stamina] Cache recién actualizado → repaint stamina
                         try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
+                        // v2.27.0-p3 · Repaint Training Load + VDOT si están montados
+                        try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
+                        try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
                     }).catch(function (_) { window.__mrRdnLastFetch = 0; });
                 }
             } catch (_) {}
