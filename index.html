@@ -40771,10 +40771,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
         var v = latest.val;
-        // Tendencia vs día anterior con dato (▲ sube = verde / ▼ baja = rojo).
-        var series = _mrStamina7d();
+        // Tendencia: preferir el change OFICIAL de COROS (racestatus); si no hay,
+        // fallback al delta calculado del histórico (_mrStamina7d).
         var delta = null;
-        if (series.length >= 2) delta = series[series.length-1].val - series[series.length-2].val;
+        try {
+            var _rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+            if (_rs && typeof _rs.stamina_change === 'number') delta = _rs.stamina_change;
+        } catch(_){}
+        if (delta == null) {
+            var series = _mrStamina7d();
+            if (series.length >= 2) delta = series[series.length-1].val - series[series.length-2].val;
+        }
         var trendInline = '';
         if (delta != null && Math.abs(delta) >= 0.05) {
             var up = delta > 0;
@@ -40799,7 +40806,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     try { window._mrRenderStaminaCard = _mrRenderStaminaCard; window._mrRepaintStamina = _mrRepaintStamina; } catch(_){}
 
-    // Sheet: explicación + gráfica 7d (sparkline)
+    // [Estado de forma · COROS] Rangos de ritmo de las 4 capacidades derivados de
+    // ltsp_zone (mapeo exacto verificado contra la app COROS · HAR /dashboard/query):
+    //   aeróbica  = zone1..zone0 · umbral = zone4..(zone2-1)
+    //   velocidad = zone5..(zone4-1) · sprint = < zone5
+    function _efCapRanges(zone){
+        if(!Array.isArray(zone) || zone.length < 6) return null;
+        function p(i){ var z=zone[i]; return (z && typeof z.pace==='number') ? z.pace : null; }
+        var fp = (typeof fmtPace==='function') ? fmtPace : function(s){return String(s);};
+        var z0=p(0),z1=p(1),z2=p(2),z4=p(4),z5=p(5);
+        if([z0,z1,z2,z4,z5].some(function(x){return x==null;})) return null;
+        return {
+            aerobic:   fp(z1)+'–'+fp(z0),
+            threshold: fp(z4)+'–'+fp(z2-1),
+            speed:     fp(z5)+'–'+fp(z4-1),
+            sprint:    '<'+fp(z5)
+        };
+    }
+    // Desglose de las 4 capacidades (nombre + rango + score + change + barra).
+    function _efCapacitiesHTML(rs){
+        if(!rs || !rs.capacities) return '';
+        var caps=rs.capacities, ranges=_efCapRanges(rs.ltsp_zone);
+        var rows=[
+            ['Resistencia aeróbica', caps.aerobic,   ranges&&ranges.aerobic],
+            ['Umbral',               caps.threshold, ranges&&ranges.threshold],
+            ['Velocidad',            caps.speed,     ranges&&ranges.speed],
+            ['Sprint',               caps.sprint,    ranges&&ranges.sprint]
+        ];
+        var body=rows.map(function(r){
+            var name=r[0], c=r[1]||{}, range=r[2];
+            var score=(typeof c.score==='number')?c.score:null;
+            if(score==null) return '';
+            var change=(typeof c.change==='number')?c.change:null, chHtml='';
+            if(change!=null && Math.abs(change)>=0.05){
+                var up=change>0, cc=up?'#16a34a':'#ef4444';
+                chHtml='<span style="font-size:9.5px;font-weight:800;color:'+cc+';font-variant-numeric:tabular-nums;margin-left:6px;">'+(up?'▲':'▼')+Math.abs(change).toFixed(1)+'</span>';
+            }
+            var pct=Math.max(0,Math.min(100,score));
+            return '<div style="margin-top:13px;">'
+              + '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px;">'
+              +   '<div style="font-size:12.5px;font-weight:700;color:var(--tw);">'+name
+              +     (range?' <span style="font-size:10px;color:var(--tm);font-weight:600;">'+range+'/km</span>':'')
+              +   '</div>'
+              +   '<div style="font-size:14px;font-weight:900;color:var(--gold-text);font-variant-numeric:tabular-nums;">'+score.toFixed(1)+chHtml+'</div>'
+              + '</div>'
+              + '<div style="height:6px;border-radius:4px;background:var(--bsoft);overflow:hidden;">'
+              +   '<i style="display:block;height:100%;width:'+pct+'%;border-radius:4px;background:linear-gradient(90deg,var(--gold),#fb923c);"></i>'
+              + '</div></div>';
+        }).join('');
+        if(!body) return '';
+        return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--tm);margin:22px 2px 2px;">Desglose del estado de forma</div>'+body;
+    }
+    // Predictor de carrera de COROS (racestatus.predictor). Orden 5K→Maratón.
+    function _efCorosPredHTML(rs){
+        if(!rs || !Array.isArray(rs.predictor) || !rs.predictor.length) return '';
+        var LBL={'5k':'5K','10k':'10K','half':'Media maratón','marathon':'Maratón'};
+        var order=['5k','10k','half','marathon'], byDist={};
+        rs.predictor.forEach(function(p){ if(p&&p.dist) byDist[p.dist]=p; });
+        var i=0, rows=order.map(function(dist){
+            var p=byDist[dist]; if(!p||!p.duration) return '';
+            var pace=(typeof p.avgPace==='number'&&typeof fmtPace==='function')?fmtPace(p.avgPace)+'/km':'';
+            var t=(typeof _vdotFmtHMS==='function')?_vdotFmtHMS(p.duration):String(p.duration);
+            var brd=(i++>0)?'border-top:1px solid var(--border);':'';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;'+brd+'">'
+              + '<span style="font-size:12.5px;color:var(--tw);font-weight:600;">'+(LBL[dist]||dist)+'</span>'
+              + '<span style="font-size:11px;color:var(--tm);font-variant-numeric:tabular-nums;margin-left:auto;margin-right:14px;">'+pace+'</span>'
+              + '<span style="font-size:14px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'+t+'</span></div>';
+        }).join('');
+        if(!rows) return '';
+        return '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:4px 16px;margin-bottom:2px;">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 8px;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;">Predicción de marcas</span><span style="font-size:9px;color:var(--tm);letter-spacing:.3px;">COROS</span></div>'
+          + rows + '</div>';
+    }
+
+    // Sheet Estado de forma
     function renderStaminaSheet(){
         var body = document.getElementById('stamina-sheet-body');
         if(!body) return;
@@ -40836,20 +40916,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           +   _efMetric(lthr!=null?lthr:'—', ' ppm', 'Umbral de FC', '#ef4444')
           + '</div>';
 
-        // ── Predicción de marcas (nuestro predictor VDOT · Daniels·Riegel) ──
-        var predHtml = '';
-        try {
-            var cur  = (typeof _vdotCurrent === 'function') ? _vdotCurrent() : null;
-            var plan = (typeof _vdotActivePlan === 'function') ? _vdotActivePlan() : null;
-            var fa   = (typeof _mrFormaActual === 'function') ? _mrFormaActual(cur, plan) : null;
-            var vd   = (fa && fa.vdot) || (cur && cur.vdot) || null;
-            if (vd && typeof _vdotPredBlockHTML === 'function') predHtml = _vdotPredBlockHTML(vd);
-        } catch(_){}
+        // ── racestatus COROS (capacidades + predictor + change) ──
+        var rs = null;
+        try { rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null; } catch(_){}
+        var capsHtml = rs ? _efCapacitiesHTML(rs) : '';
 
-        // ── Tendencia (toda la serie ~90d) al fondo ──
+        // ── Predicción de marcas: COROS si hay racestatus, si no fallback VDOT ──
+        var predHtml = rs ? _efCorosPredHTML(rs) : '';
+        if (!predHtml) {
+            try {
+                var cur  = (typeof _vdotCurrent === 'function') ? _vdotCurrent() : null;
+                var plan = (typeof _vdotActivePlan === 'function') ? _vdotActivePlan() : null;
+                var fa   = (typeof _mrFormaActual === 'function') ? _mrFormaActual(cur, plan) : null;
+                var vd   = (fa && fa.vdot) || (cur && cur.vdot) || null;
+                if (vd && typeof _vdotPredBlockHTML === 'function') predHtml = _vdotPredBlockHTML(vd);
+            } catch(_){}
+        }
+
+        // ── Tendencia (toda la serie disponible) al fondo ──
         var chartHtml = _efTrendChart();
 
-        body.innerHTML = metricsHtml + predHtml + chartHtml;
+        // Orden: Métricas → Desglose capacidades → Predicción → Tendencia.
+        body.innerHTML = metricsHtml + capsHtml + predHtml + chartHtml;
+
+        // Si aún no hay racestatus en caché → traerlo y re-render (aparece al llegar).
+        if (!rs) {
+            try { if (window._mrRaceStatus) window._mrRaceStatus({}).then(function(d){ if (d) renderStaminaSheet(); }).catch(function(_){}); } catch(_){}
+        }
     }
     try { window.renderStaminaSheet = renderStaminaSheet; } catch(_){}
 
@@ -51408,6 +51501,34 @@ window.addEventListener('DOMContentLoaded', function() {
             return null;
         }
 
+        // ═══ RACE STATUS (Estado de forma · /dashboard/query vía edge /racestatus) ══
+        //  Trae EN VIVO: stamina + change oficial, 4 capacidades (score+change),
+        //  umbrales + zonas de ritmo (rangos), y el predictor de carrera de COROS.
+        //  Cache localStorage 1h; el sheet/card leen de cache y refrescan en bg.
+        var _RS_CACHE_KEY = 'mr_coros_racestatus';
+        var _RS_TTL_MS    = 60 * 60 * 1000;
+        function _rsCacheGet(){
+            try { var raw = localStorage.getItem(_RS_CACHE_KEY); if(!raw) return null;
+                  var o = JSON.parse(raw); if(!o || typeof o.ts!=='number' || !o.data) return null; return o; }
+            catch(_){ return null; }
+        }
+        function _rsCacheSet(data){ try { localStorage.setItem(_RS_CACHE_KEY, JSON.stringify({ data:data, ts:Date.now() })); } catch(_){} }
+        window._mrRaceStatusCached = function(){ var o = _rsCacheGet(); return o ? o.data : null; };
+        window._mrRaceStatusBust   = function(){ try { localStorage.removeItem(_RS_CACHE_KEY); } catch(_){} };
+        window._mrRaceStatusFetch  = async function(){
+            var r = await _corosFetch('GET', '/racestatus');
+            if (r && r.ok && r.data && r.data.connected) { _rsCacheSet(r.data); return r.data; }
+            return null;
+        };
+        // Getter: cache si fresca, si no → red (o última cache). opts.force salta TTL.
+        window._mrRaceStatus = async function(opts){
+            opts = opts || {};
+            var o = _rsCacheGet(); var fresh = o && (Date.now()-o.ts) < _RS_TTL_MS;
+            if (o && fresh && !opts.force) return o.data;
+            var d = await window._mrRaceStatusFetch();
+            return d || (o ? o.data : null);
+        };
+
         // ═══ API pública: window._mrReadiness(opts) ═════════════════════════
         //  Devuelve SIEMPRE un objeto normalizado (nunca lanza).
         //   · Pinta al instante desde caché si existe (fromCache:true).
@@ -51872,6 +51993,13 @@ window.addEventListener('DOMContentLoaded', function() {
                         // v2.27.0-p3 · Repaint Training Load + VDOT si están montados
                         try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
                         try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+                        // [Estado de forma · COROS] racestatus en paralelo → repaint stamina
+                        // con el change oficial (-0.4) cuando llegue.
+                        try {
+                            if (window._mrRaceStatusFetch) window._mrRaceStatusFetch().then(function(rs){
+                                if (rs && typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina();
+                            }).catch(function(_){});
+                        } catch(_){}
                     }).catch(function (_) { window.__mrRdnLastFetch = 0; });
                 }
             } catch (_) {}
