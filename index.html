@@ -40661,36 +40661,59 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // Tarjeta de métrica básica (VO2 / ritmo umbral / umbral FC) para el sheet.
-    function _efMetric(v, unit, label){
+    function _efMetric(v, unit, label, color){
+        var c = color || 'var(--tw)';
         return '<div style="flex:1;background:var(--card2);border:1px solid var(--border);border-radius:14px;padding:14px 8px;text-align:center;">'
-             + '<div style="font-size:24px;font-weight:900;letter-spacing:-.8px;color:var(--tw);font-variant-numeric:tabular-nums;line-height:1;">'
+             + '<div style="font-size:24px;font-weight:900;letter-spacing:-.8px;color:'+c+';font-variant-numeric:tabular-nums;line-height:1;">'
              +   v + (unit ? '<small style="font-size:12px;font-weight:700;color:var(--ts);letter-spacing:0;">'+unit+'</small>' : '')
              + '</div>'
              + '<div style="font-size:10px;color:var(--tm);font-weight:600;margin-top:6px;line-height:1.25;">'+label+'</div>'
              + '</div>';
     }
 
-    // Gráfica de tendencia (toda la serie disponible ~90d) para el fondo del sheet.
+    // Gráfica de tendencia (toda la serie disponible) para el fondo del sheet.
     function _efTrendChart(){
         var series = _mrStamina90d();
         if(series.length < 2) return '';
-        var W=340,H=90,pad=8;
+        var first = series[0], last = series[series.length-1];
+        var spanDays = series.length;
+        try {
+            var _d0=new Date(first.date+'T12:00:00'), _d1=new Date(last.date+'T12:00:00');
+            if(!isNaN(_d0)&&!isNaN(_d1)) spanDays = Math.round((_d1-_d0)/86400000)+1;
+        } catch(_){}
+        var MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        function fmtD(ds){ try{ var d=new Date(ds+'T12:00:00'); return d.getDate()+' '+MES[d.getMonth()]; }catch(_){ return ds||''; } }
         var vals=series.map(function(s){return s.val;});
         var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
-        mn=Math.max(0,mn-2); mx=Math.min(100,mx+2); var rng=(mx-mn)||1;
-        var xAt=function(i){return pad + i*((W-2*pad)/(series.length-1));};
-        var yAt=function(x){return pad + (1-(x-mn)/rng)*(H-2*pad);};
+        var mnP=Math.max(0,mn-1), mxP=Math.min(100,mx+1); var rng=(mxP-mnP)||1;
+        var W=340,H=104,padX=8,padTop=14,padBot=14,rightLbl=32;
+        var plotW=W-padX-rightLbl;
+        var xAt=function(i){return padX + i*(plotW/(series.length-1));};
+        var yAt=function(x){return padTop + (1-(x-mnP)/rng)*(H-padTop-padBot);};
         var d='',pts=[];
         series.forEach(function(s,i){ var x=xAt(i), y=yAt(s.val); d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' '; pts.push({x:x,y:y}); });
-        var last=pts[pts.length-1];
-        var area='M'+xAt(0).toFixed(1)+' '+(H-pad)+' L'+pts.map(function(p){return p.x.toFixed(1)+' '+p.y.toFixed(1);}).join(' L')+' L'+xAt(series.length-1).toFixed(1)+' '+(H-pad)+' Z';
-        return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--tm);margin:22px 2px 8px;">Tendencia · últimos '+series.length+' días</div>'
-             + '<svg width="100%" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="display:block;">'
-             +   '<defs><linearGradient id="mrEfTrGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity=".22"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>'
-             +   '<path d="'+area+'" fill="url(#mrEfTrGrad)"/>'
-             +   '<path d="'+d+'" fill="none" stroke="var(--gold)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'
-             +   '<circle cx="'+last.x.toFixed(1)+'" cy="'+last.y.toFixed(1)+'" r="4" fill="var(--gold)"/>'
-             + '</svg>';
+        var lp=pts[pts.length-1];
+        var area='M'+xAt(0).toFixed(1)+' '+(H-padBot)+' L'+pts.map(function(p){return p.x.toFixed(1)+' '+p.y.toFixed(1);}).join(' L')+' L'+xAt(series.length-1).toFixed(1)+' '+(H-padBot)+' Z';
+        var delta=(last.val-first.val);
+        var deltaC=delta>=0?'#16a34a':'#ef4444';
+        var deltaStr=(delta>=0?'+':'−')+Math.abs(delta).toFixed(1);
+        var head='<div style="display:flex;align-items:baseline;justify-content:space-between;margin:22px 2px 8px;">'
+               + '<span style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--tm);">Tendencia · '+spanDays+' días</span>'
+               + '<span style="font-size:11px;font-weight:800;color:'+deltaC+';font-variant-numeric:tabular-nums;">'+deltaStr+'</span></div>';
+        var svg='<svg width="100%" viewBox="0 0 '+W+' '+H+'" style="display:block;overflow:visible;">'
+            + '<defs><linearGradient id="mrEfTrGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity=".22"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>'
+            + '<line x1="'+padX+'" y1="'+yAt(mx).toFixed(1)+'" x2="'+(padX+plotW)+'" y2="'+yAt(mx).toFixed(1)+'" stroke="var(--border)" stroke-dasharray="3 3"/>'
+            + '<line x1="'+padX+'" y1="'+yAt(mn).toFixed(1)+'" x2="'+(padX+plotW)+'" y2="'+yAt(mn).toFixed(1)+'" stroke="var(--border)" stroke-dasharray="3 3"/>'
+            + '<text x="'+(padX+plotW+5)+'" y="'+(yAt(mx)+3).toFixed(1)+'" fill="var(--tm)" font-size="9" font-weight="700">'+mx.toFixed(1)+'</text>'
+            + '<text x="'+(padX+plotW+5)+'" y="'+(yAt(mn)+3).toFixed(1)+'" fill="var(--tm)" font-size="9" font-weight="700">'+mn.toFixed(1)+'</text>'
+            + '<path d="'+area+'" fill="url(#mrEfTrGrad)"/>'
+            + '<path d="'+d+'" fill="none" stroke="var(--gold)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'
+            + '<circle cx="'+lp.x.toFixed(1)+'" cy="'+lp.y.toFixed(1)+'" r="4" fill="var(--gold)"/>'
+            + '<text x="'+(lp.x-7).toFixed(1)+'" y="'+(lp.y-8).toFixed(1)+'" fill="var(--gold-text)" font-size="12" font-weight="900" text-anchor="end">'+last.val.toFixed(1)+'</text>'
+            + '</svg>';
+        var foot='<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--tm);font-weight:600;margin:4px 2px 0;">'
+               + '<span>'+fmtD(first.date)+' · '+first.val.toFixed(1)+'</span><span>hoy · '+last.val.toFixed(1)+'</span></div>';
+        return head + svg + foot;
     }
 
     // Color/label por nivel (rojo/ámbar/verde)
@@ -40752,25 +40775,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var series = _mrStamina7d();
         var delta = null;
         if (series.length >= 2) delta = series[series.length-1].val - series[series.length-2].val;
-        var trendHtml = '';
+        var trendInline = '';
         if (delta != null && Math.abs(delta) >= 0.05) {
             var up = delta > 0;
             var tc = up ? '#16a34a' : '#ef4444';
-            trendHtml = '<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:800;padding:2px 7px;border-radius:8px;color:'+tc+';background:'+tc+'1f;font-variant-numeric:tabular-nums;flex-shrink:0;">'
-                      + (up?'▲':'▼')+' '+Math.abs(delta).toFixed(1)+'</span>';
+            trendInline = ' <span style="font-size:10.5px;font-weight:800;color:'+tc+';font-variant-numeric:tabular-nums;letter-spacing:0;">'
+                        + (up?'▲':'▼')+Math.abs(delta).toFixed(1)+'</span>';
         }
         card.setAttribute('aria-label','Estado de forma '+v.toFixed(1)+' de 100. Abre el detalle.');
         card.innerHTML =
             '<div class="mr-st-ic" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
           +   _mrEfSpeedoSVG(24)
           + '</div>'
-          + '<div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;flex-shrink:0;">'
+          + '<div style="font-size:15px;font-weight:700;color:var(--tw);letter-spacing:-.3px;flex-shrink:0;white-space:nowrap;">'
           +   'Estado de forma · <span style="font-weight:900;color:var(--gold-text);font-variant-numeric:tabular-nums;letter-spacing:-.3px;">'+v.toFixed(1)+'</span>'
+          +   trendInline
           + '</div>'
-          + '<div style="flex:1;height:7px;border-radius:4px;background:var(--bsoft);position:relative;overflow:hidden;min-width:34px;">'
+          + '<div style="flex:1;height:7px;border-radius:4px;background:var(--bsoft);position:relative;overflow:hidden;min-width:20px;">'
           +   '<i style="position:absolute;left:0;top:0;bottom:0;width:'+v+'%;border-radius:4px;background:linear-gradient(90deg,var(--gold),#fb923c);"></i>'
           + '</div>'
-          + trendHtml
           + '<div class="mr-st-arrow" style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;flex-shrink:0;">›</div>';
         card.style.display = 'flex';
     }
@@ -40790,12 +40813,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var ltsp = (typeof window._mrLtspLatest === 'function') ? window._mrLtspLatest() : null;
         var lthr = (typeof window._mrLthrLatest === 'function') ? window._mrLthrLatest() : null;
         var paceStr = (ltsp != null && typeof fmtPace === 'function') ? fmtPace(ltsp) : '—';
+        // Color VO₂máx = nivel de la pestaña Runner (getVO2maxCategory).
+        var vo2Color = 'var(--gold-text)';
+        try {
+            if (vo2 != null && typeof getVO2maxCategory === 'function' && typeof profileData === 'object' && profileData) {
+                var _age = null;
+                if (profileData.dob) {
+                    var _b = new Date(profileData.dob), _n = new Date();
+                    _age = _n.getFullYear() - _b.getFullYear();
+                    if (_n.getMonth() < _b.getMonth() || (_n.getMonth() === _b.getMonth() && _n.getDate() < _b.getDate())) _age--;
+                    if (_age < 5 || _age > 120) _age = null;
+                }
+                var _cat = getVO2maxCategory(vo2, _age || 30, profileData.sex || 'H');
+                if (_cat && _cat.color) vo2Color = _cat.color;
+            }
+        } catch(_){}
         var metricsHtml =
             '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--tm);margin:4px 2px 10px;">Métricas básicas</div>'
           + '<div style="display:flex;gap:8px;">'
-          +   _efMetric(vo2!=null?vo2:'—', '', 'VO₂ máx')
-          +   _efMetric(paceStr, '/km', 'Ritmo umbral')
-          +   _efMetric(lthr!=null?lthr:'—', ' ppm', 'Umbral de FC')
+          +   _efMetric(vo2!=null?vo2:'—', '', 'VO₂ máx', vo2Color)
+          +   _efMetric(paceStr, '/km', 'Ritmo umbral', 'var(--gold-text)')
+          +   _efMetric(lthr!=null?lthr:'—', ' ppm', 'Umbral de FC', '#ef4444')
           + '</div>';
 
         // ── Predicción de marcas (nuestro predictor VDOT · Daniels·Riegel) ──
