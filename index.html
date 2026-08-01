@@ -40610,7 +40610,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if(!raw) return null;
             var o = JSON.parse(raw);
             if(!o || !o.resp || !Array.isArray(o.resp.days)) return null;
-            return o.resp.days;
+            // [FIX orden] El backend devuelve days MÁS-RECIENTE-PRIMERO
+            // (recent = rows.slice(-days).reverse()). Ordenamos ascendente por
+            // fecha (mismo patrón que _mrVo2Latest) para que _mrStaminaLatest
+            // (itera desde el final) coja el día MÁS RECIENTE, y _mrStamina7d
+            // (slice -7) coja los 7 ÚLTIMOS y no los 7 más antiguos del histórico.
+            return o.resp.days.slice().sort(function(a,b){
+                var da=(a&&a.date)||'', db=(b&&b.date)||'';
+                return da<db ? -1 : (da>db ? 1 : 0);
+            });
         }catch(_){ return null; }
     }
     function _mrStaminaLatest(){
@@ -41971,15 +41979,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const ds  = localDateStr(new Date(dMs));
             const act = activities.find(a=>a.dateStr===ds);
             let t=0;
-            if(act && act.hrSeries && act.hrSeries.length>1) {
-                act.hrSeries.forEach((p,idx,arr)=>{
-                    if(p.v<60) return;
-                    const dt=idx>0?Math.min(p.t-arr[idx-1].t,10):1;
-                    const ratio=(p.v-50)/(195-50);
-                    t+=dt*ratio*Math.exp(1.92*ratio);
-                });
+            if(act){
+                // [FIX TSB=0] Preferir el TRIMP ALMACENADO (misma fuente que ACWR /
+                // _getActivityWorkload). Está presente en bulk/BD sin necesidad de
+                // hidratar act.hrSeries (blob pesado que se carga lazy al abrir la
+                // actividad). Antes SOLO se recomputaba desde hrSeries → en fresh
+                // install / 2º dispositivo hrSeries=ausente → TRIMP diario 0 → CTL/
+                // ATL/TSB 0 → readiness sin carga. Fallback a hrSeries si no hay trimp.
+                const _stTrimp = Number(act.trimp);
+                if(isFinite(_stTrimp) && _stTrimp>0){
+                    t = _stTrimp;
+                } else if(act.hrSeries && act.hrSeries.length>1){
+                    act.hrSeries.forEach((p,idx,arr)=>{
+                        if(p.v<60) return;
+                        const dt=idx>0?Math.min(p.t-arr[idx-1].t,10):1;
+                        const ratio=(p.v-50)/(195-50);
+                        t+=dt*ratio*Math.exp(1.92*ratio);
+                    });
+                    t = t/60;
+                }
             }
-            dailyTrimp.push(Math.round(t/60));
+            dailyTrimp.push(Math.round(t));
         }
 
         // CTL (42-day EMA) and ATL (7-day EMA)
