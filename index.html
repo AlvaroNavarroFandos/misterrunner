@@ -48691,6 +48691,31 @@ window._handleStravaReturn = _handleStravaReturn;
         _stravaCheckPending();
     });
 
+    // [al momento · foreground refresh] Al volver la app a primer plano,
+    // re-hidratar actividades (Training Load) + readiness/stamina frescos.
+    // Caso real: Álvaro termina entreno → COROS/Strava sincroniza en background
+    // → al reabrir MR todo se actualiza sin recargar. El hook Strava de arriba
+    // solo toca el badge de pendings; éste cubre Training Load + Stamina.
+    //   · _refreshActivitiesFromBD re-hidrata activities y llama renderHome(),
+    //     y renderHome → _mrRenderReadiness hace un _rdnFetch fresco que repinta
+    //     stamina + training-load + VDOT (cascada, sin lógica duplicada aquí).
+    //   · Reseteamos __mrRdnLastFetch para saltar el throttle 90s de readiness y
+    //     forzar dato COROS fresco en ese renderHome.
+    // Cooldown propio (60s) para no machacar Supabase/COROS en tab-switch frenético.
+    var _MR_FG_REFRESH_COOLDOWN_MS = 60000;
+    var _mrLastFgRefreshAt = 0;
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState !== 'visible') return;
+        var now = Date.now();
+        if (now - _mrLastFgRefreshAt < _MR_FG_REFRESH_COOLDOWN_MS) return;
+        _mrLastFgRefreshAt = now;
+        try { window.__mrRdnLastFetch = 0; } catch(_) {}
+        try {
+            var _fn = window._MR_StravaImport && window._MR_StravaImport.refreshActivities;
+            if (typeof _fn === 'function') _fn();
+        } catch(_) {}
+    });
+
     // ────────────────────────────────────────────────────────────
     // Auto-init: verificar conexión cuando Supabase esté listo
     // ────────────────────────────────────────────────────────────
