@@ -30134,6 +30134,262 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return _riegelProject(mSecs, 42195, distM);
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // v2.30.0-p1 · FASE 1 · Recalibración Modelo B + Variante 2
+    // Helpers globales del sistema Objetivo Sagrado + Puente Sigmoide.
+    // Compatibilidad A3: leen plan.finalGoalSecs ?? plan.goalSecs (legacy).
+    // La escritura futura va a finalGoalSecs (Fase 6). El motor VDOT sigue
+    // escribiendo a goalSecs hasta refactor de Fase 3/6.
+    // ═══════════════════════════════════════════════════════════════
+
+    // LUT distancia string → metros. Cubre planDist válidos + aliases del predictor.
+    var _MR_DIST_M = {
+        '5k':5000, 'first_5k':5000,
+        '10k':10000,
+        'half':21097.5, 'hm':21097.5,
+        'marathon':42195, 'marathon_intermediate':42195, 'marathon_xl':42195, 'm':42195
+    };
+
+    // Label ES por planDist (para meta línea "Maratón Sevilla").
+    function _mrDistLabel(planDist){
+        var m = {
+            '5k':'5K', 'first_5k':'5K',
+            '10k':'10K',
+            'half':'Media marat\u00f3n',
+            'marathon':'Marat\u00f3n', 'marathon_intermediate':'Marat\u00f3n', 'marathon_xl':'Marat\u00f3n'
+        };
+        return m[planDist] || 'Objetivo';
+    }
+    window._mrDistLabel = _mrDistLabel;
+
+    // Titulo del plan: "Maratón Sevilla" si hay plan.name; si no, solo distancia.
+    function _mrPlanTitle(plan){
+        if (!plan) return 'Objetivo';
+        var lbl = _mrDistLabel(plan.planDist);
+        var nm = (plan.name && typeof plan.name === 'string') ? plan.name.trim() : '';
+        return nm ? (lbl + ' ' + nm) : lbl;
+    }
+    window._mrPlanTitle = _mrPlanTitle;
+
+    // Formato HH:MM:SS o M:SS (secs positivos). Reutiliza _vdotFmtHMS si existe.
+    function _mrFmtHMS(secs){
+        if (secs == null || isNaN(secs)) return '\u2014';
+        if (typeof window._vdotFmtHMS === 'function') return window._vdotFmtHMS(Math.round(secs));
+        var s = Math.round(secs);
+        var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60;
+        return h>0 ? h+':'+String(m).padStart(2,'0')+':'+String(r).padStart(2,'0')
+                   : m+':'+String(r).padStart(2,'0');
+    }
+    window._mrFmtHMS = _mrFmtHMS;
+
+    // Delta con signo: ±0:00 si |Δ|<5s, si no +HH:MM:SS / -HH:MM:SS (H1).
+    function _mrFmtDelta(secs){
+        if (secs == null || isNaN(secs)) return '\u2014';
+        var s = Math.round(secs);
+        if (Math.abs(s) < 5) return '\u00b10:00';
+        return (s < 0 ? '-' : '+') + _mrFmtHMS(Math.abs(s));
+    }
+    window._mrFmtDelta = _mrFmtDelta;
+
+    // Modo de recalibración: 'coros' | 'vdot'.
+    // Fase 7 añadirá override profileData.watchBrand; hoy es auto puro.
+    function _mrRecalibMode(){
+        try {
+            var override = (typeof profileData !== 'undefined' && profileData && profileData.watchBrand) || null;
+            if (override === 'coros') return 'coros';
+            if (override && override !== 'auto') return 'vdot';
+            var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+            return (rs && Array.isArray(rs.predictor) && rs.predictor.length) ? 'coros' : 'vdot';
+        } catch(_){ return 'vdot'; }
+    }
+    window._mrRecalibMode = _mrRecalibMode;
+
+    // Proyección Riegel n=1.06 con strings o metros. Envuelve _riegelProject.
+    // signatura: _projectRiegel(secs, toDist [, fromDist='marathon']).
+    function _projectRiegel(secs, toDist, fromDist){
+        if (!secs || secs <= 0 || !toDist) return 0;
+        var toM   = (typeof toDist === 'number') ? toDist : _MR_DIST_M[toDist];
+        var fromM = (fromDist == null) ? 42195 : ((typeof fromDist === 'number') ? fromDist : _MR_DIST_M[fromDist]);
+        if (!toM || !fromM) return 0;
+        if (typeof window._riegelProject === 'function') return window._riegelProject(secs, fromM, toM);
+        return secs * Math.pow(toM/fromM, 1.06);
+    }
+    window._projectRiegel = _projectRiegel;
+
+    // Stub Fase 1: retorna null hasta Fase 4 (donde se implementará detección type='test').
+    // B1 confirmado: la interfaz está para que Fases 4/5 la consuman sin cambios.
+    function _findRecentManualTest(plan, days){
+        return null;
+    }
+    window._findRecentManualTest = _findRecentManualTest;
+
+    // Fitness actual: prioridad test manual (Fase 4) > COROS predictor > VDOT > fallback finalGoal.
+    // Retorna segundos (o null si no hay datos suficientes).
+    function _mrCurrentFitnessSecs(plan){
+        if (!plan || !plan.planDist) return null;
+        var mode = _mrRecalibMode();
+        var planDist = plan.planDist;
+
+        // 1 · test manual reciente (stub hasta Fase 4)
+        try {
+            var test = _findRecentManualTest(plan, 14);
+            if (test && test.secs) return test.secs;
+        } catch(_){}
+
+        // 2 · RAMA A · predictor COROS
+        if (mode === 'coros'){
+            try {
+                var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                if (rs && Array.isArray(rs.predictor)){
+                    // El predictor COROS usa keys 5k/10k/half/marathon.
+                    var kA = (planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'marathon'
+                           : (planDist === 'first_5k') ? '5k'
+                           : planDist;
+                    var pred = rs.predictor.find(function(p){ return p && p.dist === kA; });
+                    if (pred && pred.duration) return pred.duration;
+                }
+            } catch(_){}
+        }
+
+        // 3 · RAMA B · VDOT convertido
+        try {
+            var vdot = plan.vdot;
+            if (!vdot && typeof window._vdotCurrent === 'function'){
+                var vc = window._vdotCurrent();
+                vdot = vc && vc.vdot;
+            }
+            if (vdot && typeof window._vdotPredictRaces === 'function'){
+                var preds = window._vdotPredictRaces(vdot);
+                // _vdotPredictRaces usa keys 5k/10k/hm/m.
+                var kB = (planDist === 'marathon' || planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'm'
+                       : (planDist === 'half') ? 'hm'
+                       : (planDist === '10k') ? '10k'
+                       : (planDist === 'first_5k' || planDist === '5k') ? '5k'
+                       : 'm';
+                if (preds && preds[kB]) return preds[kB];
+            }
+        } catch(_){}
+
+        // 4 · Fallback: asume que está en forma para el finalGoal (A3 · leer legacy).
+        var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+        return goal || null;
+    }
+    window._mrCurrentFitnessSecs = _mrCurrentFitnessSecs;
+
+    // Training goal (puente sigmoide SNAP k=8 · F1 confirmado).
+    // Retorna segundos redondeados. `nowMs` opcional (inyectable para tests).
+    // Snap extremos: prog<=0 → goalW=0.15 exacto · prog>=1 → goalW=1.0 exacto.
+    function _mrTrainingGoalSecs(plan, nowMs){
+        if (!plan) return null;
+        var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+        if (!goal) return null;
+        var fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
+        if (!fit) fit = goal;
+        if (!plan.startDate || !plan.raceDate) return goal;
+        try {
+            var start = new Date(plan.startDate + 'T00:00:00Z').getTime();
+            var race  = new Date(plan.raceDate  + 'T00:00:00Z').getTime();
+            if (!isFinite(start) || !isFinite(race)) return goal;
+            var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
+            var totalD = (race - start) / 86400000;
+            if (!(totalD > 0)) return goal;
+            var elapD = Math.max(0, (now - start) / 86400000);
+            var prog  = Math.max(0, Math.min(1, elapD / totalD));
+            var goalW;
+            if      (prog <= 0) goalW = 0.15;
+            else if (prog >= 1) goalW = 1.0;
+            else {
+                var raw = 1 / (1 + Math.exp(-8 * (prog - 0.5)));
+                goalW = 0.15 + raw * 0.85;
+            }
+            return Math.round(goal * goalW + fit * (1 - goalW));
+        } catch(_){ return goal; }
+    }
+    window._mrTrainingGoalSecs = _mrTrainingGoalSecs;
+
+    // Enrichment reutilizable entre _efCorosPredHTML y _vdotPredBlockHTML.
+    // Retorna null si el plan no permite calcular la doble info.
+    // Objeto {activeKey, pillHTML, activeRowStyle, activeLblStyle, metaHTML, trainLineHTML}.
+    // activeKey se compara contra la key nativa de cada renderer (5k/10k/half/marathon en COROS,
+    // 5k/10k/hm/m en VDOT). Devolvemos ambos alias.
+    function _mrPredEnrichment(plan){
+        if (!plan) return null;
+        var finalGoal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+        if (!finalGoal) return null;
+        var fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
+        if (!fit) return null;
+        var trainingSecs = _mrTrainingGoalSecs(plan);
+        if (!trainingSecs) trainingSecs = finalGoal;
+
+        var planDist = plan.planDist || 'marathon';
+        // keys nativas de cada renderer
+        var activeKeyCoros = (planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'marathon'
+                           : (planDist === 'first_5k') ? '5k'
+                           : planDist; // '5k','10k','half','marathon'
+        var activeKeyVdot  = (planDist === 'marathon' || planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'm'
+                           : (planDist === 'half') ? 'hm'
+                           : (planDist === 'first_5k' || planDist === '5k') ? '5k'
+                           : (planDist === '10k') ? '10k' : 'm';
+
+        var deltaSecs = fit - finalGoal;
+        var showTrainLine = Math.abs(trainingSecs - finalGoal) > 5;
+
+        // H1: pill class por Δ
+        var pillColor, pillBorder;
+        if (deltaSecs <= -5)       { pillColor = 'var(--ok)';     pillBorder = 'var(--ok)'; }
+        else if (deltaSecs >=  5)  { pillColor = 'var(--danger)'; pillBorder = 'var(--danger)'; }
+        else                       { pillColor = 'var(--tm)';     pillBorder = 'var(--border)'; }
+
+        // Pill inline (I1 traducido: pegada al label, margin-left:8px)
+        var pillHTML = '<span style="padding:1px 6px;border-radius:8px;font-size:10px;font-weight:900;'
+            + 'font-variant-numeric:tabular-nums;letter-spacing:-.2px;line-height:1.4;'
+            + 'background:var(--card);border:1.3px solid '+pillBorder+';color:'+pillColor+';'
+            + 'white-space:nowrap;margin-left:8px;">'
+            + _mrFmtDelta(deltaSecs) + '</span>';
+
+        // Estilo fila activa (J1: fondo gold-lt + left-border dorado)
+        var activeRowStyle = 'background:var(--gold-lt);border-radius:8px;padding:8px 10px;'
+            + 'margin:2px -10px;border-top:none;border-left:2.5px solid var(--gold);';
+        var activeLblStyle = 'color:var(--gold-text);font-weight:800;';
+
+        // Meta línea Fase 1 (compacta, un renglón)
+        var titulo = _mrPlanTitle(plan);
+        var metaHTML = '<div style="padding:0 0 8px;font-size:10.5px;color:var(--ts);line-height:1.35;letter-spacing:.1px;">'
+            + '<span style="color:var(--gold-text);font-weight:800;">' + titulo + '</span>'
+            + ' \u00b7 objetivo <b style="color:var(--tw);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
+            +   _mrFmtHMS(finalGoal) + '</b>'
+            + ' \u00b7 fitness <b style="color:var(--tw);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
+            +   _mrFmtHMS(fit) + '</b>'
+            + '</div>';
+
+        // Sub-línea training goal (G1, solo si trainingGoal ≠ finalGoal)
+        var trainLineHTML = '';
+        if (showTrainLine){
+            trainLineHTML = '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px 8px;'
+                + 'margin:0 -10px;font-size:10px;color:var(--tm);line-height:1.4;letter-spacing:.1px;'
+                + 'background:var(--gold-lt);border-bottom-left-radius:8px;border-bottom-right-radius:8px;">'
+                + 'Entrenando a <b style="color:var(--gold-text);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
+                +   _mrFmtHMS(trainingSecs) + '</b>'
+                + '<span style="opacity:.4">\u00b7</span> brecha objetivo <b style="color:var(--gold-text);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
+                +   _mrFmtHMS(Math.abs(deltaSecs)) + '</b>'
+                + '</div>';
+        }
+
+        return {
+            activeKeyCoros: activeKeyCoros,
+            activeKeyVdot:  activeKeyVdot,
+            pillHTML:       pillHTML,
+            activeRowStyle: activeRowStyle,
+            activeLblStyle: activeLblStyle,
+            metaHTML:       metaHTML,
+            trainLineHTML:  trainLineHTML,
+            showTrainLine:  showTrainLine
+        };
+    }
+    window._mrPredEnrichment = _mrPredEnrichment;
+
+    // ═══ fin bloque Fase 1 v2.30.0-p1 ═══════════════════════════════
+
     // ── Buscar recalibración pendiente ────────────────────────────────
     // Q8=C: guard implícito vía plan.vdotHistory[i].activityId (evita reproces).
     // Solo considera activities test/race de últimos 14 días con datos válidos.
@@ -30474,18 +30730,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window._updateVdotEvolutionRow = _updateVdotEvolutionRow;
 
     // ── Bloque "Predicción de marcas" (HTML) desde un vdot ─────────────
+    // v2.30.0-p1 · Fase 1 (K-α): enriquecido con delta pill inline + sub-línea training
+    // goal + meta header nuevo cuando hay plan activo. Si no hay plan, layout original.
     function _vdotPredBlockHTML(vdot) {
         var preds = _vdotPredictRaces(vdot);
         if (!preds) return '';
-        var rows = [['5K',preds['5k']],['10K',preds['10k']],['Media maratón',preds['hm']],['Maratón',preds['m']]];
-        var rowsHtml = rows.map(function(p, i){
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;'+(i>0?'border-top:1px solid var(--border);':'')+'">'
-                 + '<span style="font-size:12.5px;color:var(--tw);font-weight:600;">'+p[0]+'</span>'
-                 + '<span style="font-size:14px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'+_vdotFmtHMS(p[1])+'</span>'
+        // key nativa aquí: 5k / 10k / hm / m
+        var rows = [['5K','5k',preds['5k']],['10K','10k',preds['10k']],['Media maratón','hm',preds['hm']],['Maratón','m',preds['m']]];
+
+        // Enrichment (K-α · Fase 1). null si no hay plan/finalGoal/fitness.
+        var plan = (typeof window._vdotActivePlan === 'function') ? window._vdotActivePlan() : null;
+        var enr  = (plan && typeof window._mrPredEnrichment === 'function') ? window._mrPredEnrichment(plan) : null;
+        var activeKey = enr ? enr.activeKeyVdot : null;
+
+        var i=0, rowsHtml = rows.map(function(p){
+            var lbl = p[0], key = p[1], secs = p[2];
+            var isActive = (key === activeKey);
+            var pillHTML = isActive ? enr.pillHTML : '';
+            var lblStyle = 'font-size:12.5px;color:var(--tw);font-weight:600;' + (isActive ? enr.activeLblStyle : '');
+            var brd = (i++ > 0 && !isActive) ? 'border-top:1px solid var(--border);' : '';
+            var rowStyle = isActive
+                ? 'display:flex;align-items:center;justify-content:space-between;' + enr.activeRowStyle
+                : 'display:flex;align-items:center;justify-content:space-between;padding:10px 0;' + brd;
+            var timeStyle = 'font-size:14px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;' + (isActive ? '' : 'margin-left:auto;');
+            // Orden pedido: label + pill (izq) · tiempo (der). VDOT no tiene columna pace.
+            var html = '<div style="'+rowStyle+'">'
+                 + '<span style="'+lblStyle+'">'+lbl+'</span>'
+                 + pillHTML
+                 + '<span style="'+timeStyle+'">'+_vdotFmtHMS(secs)+'</span>'
                  + '</div>';
+            if (isActive && enr.trainLineHTML) html += enr.trainLineHTML;
+            return html;
         }).join('');
+
+        var metaHTML = enr ? enr.metaHTML : '';
         return '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:4px 16px;margin-bottom:18px;">'
              + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 8px;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;">Predicción de marcas</span><span style="font-size:9px;color:var(--tm);letter-spacing:.3px;">Daniels · Riegel</span></div>'
+             + metaHTML
              + rowsHtml
              + '</div>';
     }
@@ -40938,24 +41219,45 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--tm);margin:4px 2px 2px;">Desglose del estado de forma</div>'+body;
     }
     // Predictor de carrera de COROS (racestatus.predictor). Orden 5K→Maratón.
+    // v2.30.0-p1 · Fase 1 (K-α): enriquecido con delta pill inline + sub-línea training
+    // goal + meta header nuevo cuando hay plan activo. Si no hay plan, layout original.
     function _efCorosPredHTML(rs){
         if(!rs || !Array.isArray(rs.predictor) || !rs.predictor.length) return '';
         var LBL={'5k':'5K','10k':'10K','half':'Media maratón','marathon':'Maratón'};
         var order=['5k','10k','half','marathon'], byDist={};
         rs.predictor.forEach(function(p){ if(p&&p.dist) byDist[p.dist]=p; });
+
+        // Enrichment (K-α · Fase 1). null si no hay plan/finalGoal/fitness.
+        var plan = (typeof window._vdotActivePlan === 'function') ? window._vdotActivePlan() : null;
+        var enr  = (plan && typeof window._mrPredEnrichment === 'function') ? window._mrPredEnrichment(plan) : null;
+        var activeKey = enr ? enr.activeKeyCoros : null;
+
         var i=0, rows=order.map(function(dist){
             var p=byDist[dist]; if(!p||!p.duration) return '';
             var pace=(typeof p.avgPace==='number'&&typeof fmtPace==='function')?fmtPace(p.avgPace)+'/km':'';
             var t=(typeof _vdotFmtHMS==='function')?_vdotFmtHMS(p.duration):String(p.duration);
-            var brd=(i++>0)?'border-top:1px solid var(--border);':'';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;'+brd+'">'
-              + '<span style="font-size:12.5px;color:var(--tw);font-weight:600;">'+(LBL[dist]||dist)+'</span>'
+            var isActive = (dist === activeKey);
+            var pillHTML = isActive ? enr.pillHTML : '';
+            var lblStyle = 'font-size:12.5px;color:var(--tw);font-weight:600;' + (isActive ? enr.activeLblStyle : '');
+            var brd=(i++>0 && !isActive)?'border-top:1px solid var(--border);':'';
+            var rowStyle = isActive
+                ? 'display:flex;align-items:center;justify-content:space-between;' + enr.activeRowStyle
+                : 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;'+brd;
+            // Orden pedido: label + pill (izq) · pace + tiempo (der)
+            var html = '<div style="'+rowStyle+'">'
+              + '<span style="'+lblStyle+'">'+(LBL[dist]||dist)+'</span>'
+              + pillHTML
               + '<span style="font-size:11px;color:var(--tm);font-variant-numeric:tabular-nums;margin-left:auto;margin-right:14px;">'+pace+'</span>'
               + '<span style="font-size:14px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'+t+'</span></div>';
+            // Sub-línea pegada tras fila activa (mismo tint gold-lt)
+            if (isActive && enr.trainLineHTML) html += enr.trainLineHTML;
+            return html;
         }).join('');
         if(!rows) return '';
+        var metaHTML = enr ? enr.metaHTML : '';
         return '<div style="background:linear-gradient(158deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:14px;padding:2px 16px;margin-bottom:2px;">'
           + '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0 7px;"><span style="font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--ts);font-weight:700;">Predicción de marcas</span><span style="font-size:9px;color:var(--tm);letter-spacing:.3px;">COROS</span></div>'
+          + metaHTML
           + rows + '</div>';
     }
 
