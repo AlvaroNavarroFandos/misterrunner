@@ -1793,7 +1793,7 @@
         width: 100%;
         max-width: 500px;
         min-height: auto;
-        max-height: min(94dvh, 820px);
+        max-height: min(96dvh, 860px);
         border-radius: 22px 22px 0 0;
         display: flex;
         flex-direction: column;
@@ -1883,7 +1883,7 @@
         overflow-y: scroll;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain;
-        padding: 4px 20px 8px;
+        padding: 4px 20px 16px;
         display: flex;
         flex-direction: column;
         gap: 12px
@@ -30312,11 +30312,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Objeto {activeKey, pillHTML, activeRowStyle, activeLblStyle, metaHTML, trainLineHTML}.
     // activeKey se compara contra la key nativa de cada renderer (5k/10k/half/marathon en COROS,
     // 5k/10k/hm/m en VDOT). Devolvemos ambos alias.
-    function _mrPredEnrichment(plan){
+    // opts.fitOverride (secs): fuerza el valor de fitness. Necesario para _vdotPredBlockHTML
+    // (que debe usar el fitness del propio VDOT, no la prioridad global que contamina en
+    // transiciones COROS↔VDOT). v2.30.0-p1-fix.
+    function _mrPredEnrichment(plan, opts){
         if (!plan) return null;
         var finalGoal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
         if (!finalGoal) return null;
-        var fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
+        var fit;
+        if (opts && opts.fitOverride && opts.fitOverride > 0) fit = opts.fitOverride;
+        else fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
         if (!fit) return null;
         var trainingSecs = _mrTrainingGoalSecs(plan);
         if (!trainingSecs) trainingSecs = finalGoal;
@@ -30739,8 +30744,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var rows = [['5K','5k',preds['5k']],['10K','10k',preds['10k']],['Media maratón','hm',preds['hm']],['Maratón','m',preds['m']]];
 
         // Enrichment (K-α · Fase 1). null si no hay plan/finalGoal/fitness.
-        var plan = (typeof window._vdotActivePlan === 'function') ? window._vdotActivePlan() : null;
-        var enr  = (plan && typeof window._mrPredEnrichment === 'function') ? window._mrPredEnrichment(plan) : null;
+        // v2.30.0-p1-fix: SOLO en RAMA B (mode==='vdot'). En RAMA A (COROS conectado)
+        // este bloque queda limpio porque la info completa vive ya en el sheet
+        // Estado de forma COROS — evita duplicar y evita cross-contamination con
+        // racestatus cacheado durante transiciones.
+        var mode = (typeof window._mrRecalibMode === 'function') ? window._mrRecalibMode() : 'vdot';
+        var plan = (mode === 'vdot' && typeof window._vdotActivePlan === 'function') ? window._vdotActivePlan() : null;
+        var enr = null;
+        if (plan && typeof window._mrPredEnrichment === 'function'){
+            // fitOverride: fitness derivado del MISMO VDOT que se está pintando.
+            // Garantiza coherencia entre fila activa y meta/pill/sub-línea.
+            var planDist = plan.planDist || 'marathon';
+            var kNat = (planDist === 'marathon' || planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'm'
+                     : (planDist === 'half') ? 'hm'
+                     : (planDist === 'first_5k' || planDist === '5k') ? '5k'
+                     : (planDist === '10k') ? '10k' : 'm';
+            var fitFromVdot = preds[kNat] || preds.m;
+            enr = window._mrPredEnrichment(plan, { fitOverride: fitFromVdot });
+        }
         var activeKey = enr ? enr.activeKeyVdot : null;
 
         var i=0, rowsHtml = rows.map(function(p){
@@ -41228,8 +41249,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         rs.predictor.forEach(function(p){ if(p&&p.dist) byDist[p.dist]=p; });
 
         // Enrichment (K-α · Fase 1). null si no hay plan/finalGoal/fitness.
+        // v2.30.0-p1-fix: pasar fitOverride explícito = predictor COROS del planDist.
+        // Garantiza coherencia entre fila activa y meta/pill/sub-línea.
         var plan = (typeof window._vdotActivePlan === 'function') ? window._vdotActivePlan() : null;
-        var enr  = (plan && typeof window._mrPredEnrichment === 'function') ? window._mrPredEnrichment(plan) : null;
+        var enr = null;
+        if (plan && typeof window._mrPredEnrichment === 'function'){
+            var planDist = plan.planDist || 'marathon';
+            var kNat = (planDist === 'marathon_intermediate' || planDist === 'marathon_xl') ? 'marathon'
+                     : (planDist === 'first_5k') ? '5k'
+                     : planDist;
+            var predForDist = byDist[kNat];
+            var fitFromCoros = predForDist && predForDist.duration;
+            enr = window._mrPredEnrichment(plan, fitFromCoros ? { fitOverride: fitFromCoros } : null);
+        }
         var activeKey = enr ? enr.activeKeyCoros : null;
 
         var i=0, rows=order.map(function(dist){
@@ -41454,6 +41486,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function _mrRepaintVdotCard(){
         var card = document.getElementById('home-vdot-card');
         if (!card) return;
+        // v2.30.0-p1-fix · R1 · Guard RAMA A · Fase 3.4 anticipada.
+        // En RAMA A (COROS conectado con racestatus), la card Evolución VDOT en
+        // Home duplica info del bloque Estado de forma. Ocultar según arquitectura
+        // "dos ramas" del plan v2 (RAMA A · sin card VDOT en Home).
+        try {
+            if (typeof window._mrRecalibMode === 'function' && window._mrRecalibMode() === 'coros') {
+                card.style.display = 'none';
+                return;
+            }
+        } catch(_){}
         var _vdCur = null, _fa = null;
         try {
             _vdCur = (typeof window._vdotCurrent === 'function') ? window._vdotCurrent() : null;
