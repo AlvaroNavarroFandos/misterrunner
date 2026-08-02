@@ -1793,7 +1793,7 @@
         width: 100%;
         max-width: 500px;
         min-height: auto;
-        max-height: min(96dvh, 860px);
+        max-height: min(97dvh, 900px);
         border-radius: 22px 22px 0 0;
         display: flex;
         flex-direction: column;
@@ -30193,13 +30193,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // Modo de recalibración: 'coros' | 'vdot'.
     // Fase 7 añadirá override profileData.watchBrand; hoy es auto puro.
+    // v2.30.0-p1-fix2 · U1 · Fuente de verdad: window.__mrCoros.connected (flag
+    // populado por /whoami · L51508). Antes solo miraba rs.predictor cacheado,
+    // que sobrevive en localStorage tras desconectar y contaminaba el modo
+    // (mantenía RAMA A incorrectamente al usuario tras desconectar COROS).
     function _mrRecalibMode(){
         try {
             var override = (typeof profileData !== 'undefined' && profileData && profileData.watchBrand) || null;
             if (override === 'coros') return 'coros';
             if (override && override !== 'auto') return 'vdot';
-            var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
-            return (rs && Array.isArray(rs.predictor) && rs.predictor.length) ? 'coros' : 'vdot';
+            var mc = window.__mrCoros;
+            if (mc && mc.ready) {
+                // Estado real conocido. connected=false → RAMA B aunque haya racestatus cacheado.
+                if (!mc.connected) return 'vdot';
+                var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                return (rs && Array.isArray(rs.predictor) && rs.predictor.length) ? 'coros' : 'vdot';
+            }
+            // Fallback pre-whoami (arranque en frío, ~200ms): usar cacheado para no
+            // parpadear la UX. Cuando llegue whoami, el listener mrCorosOnChange (V1)
+            // dispara el repaint automáticamente.
+            var rsFb = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+            return (rsFb && Array.isArray(rsFb.predictor) && rsFb.predictor.length) ? 'coros' : 'vdot';
         } catch(_){ return 'vdot'; }
     }
     window._mrRecalibMode = _mrRecalibMode;
@@ -30357,9 +30371,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + 'margin:2px -10px;border-top:none;border-left:2.5px solid var(--gold);';
         var activeLblStyle = 'color:var(--gold-text);font-weight:800;';
 
-        // Meta línea Fase 1 (compacta, un renglón)
+        // Meta línea Fase 1 (compacta, un renglón). v2.30.0-p1-fix2 W3b: padding-bottom
+        // reducido 8→4 para ahorrar ~4px de altura sin sacrificar legibilidad.
         var titulo = _mrPlanTitle(plan);
-        var metaHTML = '<div style="padding:0 0 8px;font-size:10.5px;color:var(--ts);line-height:1.35;letter-spacing:.1px;">'
+        var metaHTML = '<div style="padding:0 0 4px;font-size:10.5px;color:var(--ts);line-height:1.35;letter-spacing:.1px;">'
             + '<span style="color:var(--gold-text);font-weight:800;">' + titulo + '</span>'
             + ' \u00b7 objetivo <b style="color:var(--tw);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
             +   _mrFmtHMS(finalGoal) + '</b>'
@@ -30367,10 +30382,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   _mrFmtHMS(fit) + '</b>'
             + '</div>';
 
-        // Sub-línea training goal (G1, solo si trainingGoal ≠ finalGoal)
+        // Sub-línea training goal (G1, solo si trainingGoal ≠ finalGoal). v2.30.0-p1-fix2
+        // W3b: padding vertical reducido 6-8 → 4-6 para ahorrar ~4px de altura.
         var trainLineHTML = '';
         if (showTrainLine){
-            trainLineHTML = '<div style="display:flex;align-items:center;gap:5px;padding:6px 10px 8px;'
+            trainLineHTML = '<div style="display:flex;align-items:center;gap:5px;padding:4px 10px 6px;'
                 + 'margin:0 -10px;font-size:10px;color:var(--tm);line-height:1.4;letter-spacing:.1px;'
                 + 'background:var(--gold-lt);border-bottom-left-radius:8px;border-bottom-right-radius:8px;">'
                 + 'Entrenando a <b style="color:var(--gold-text);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">'
@@ -41482,6 +41498,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         card.addEventListener('touchcancel', _vdRelease, { passive: true });
         container.appendChild(card);
         _mrRepaintVdotCard();
+        // v2.30.0-p1-fix2 · V1 · Auto-repaint al conectar/desconectar COROS.
+        // mrCorosOnChange (pub/sub L~51529) emite en cada cambio de estado real.
+        // Flag en el elemento evita doble-suscripción si _mrRenderVdotCard corre otra vez.
+        try {
+            if (!card._mrCorosHooked && typeof window.mrCorosOnChange === 'function') {
+                card._mrCorosHooked = true;
+                window.mrCorosOnChange(function(){ try { _mrRepaintVdotCard(); } catch(_){} });
+            }
+        } catch(_){}
     }
     function _mrRepaintVdotCard(){
         var card = document.getElementById('home-vdot-card');
