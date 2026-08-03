@@ -4554,24 +4554,29 @@
         /* ═══ [Fase 2 · v2.30.0-p2] Sub-bloque "Ritmos objetivo del mes" ═════════════
            Card interna dentro del widget Plan Activo, debajo del bloque HOY.
            Solo visible si hay puente activo (trainingGoal ≠ finalGoal).
-           Estructura V3: accent bar navy/silver (auto via --pc-a-*) + body.
-           Tap → sheet detallado (Fase 5 lo implementará). */
+           v2.30.0-p3: ahora es colapsable · por defecto solo cabecera (no ocupa
+           espacio permanente) · tap en cabecera expande/colapsa · estado persistido
+           en localStorage 'mr.paces.expanded'. */
         .mr-pc-paces {
             margin-top: 10px;
             background: var(--card2);
             border-radius: 12px;
             border: 1px solid var(--border);
             overflow: hidden;
-            cursor: pointer;
-            transition: transform .12s ease, background-color .12s;
         }
-        .mr-pc-paces:active { transform: scale(.985); }
         .mr-pc-paces-accent {
             height: 2px;
             background: linear-gradient(90deg, transparent 0%, var(--pc-a-deep) 10%, var(--pc-a) 32%, var(--pc-a-bright) 50%, var(--pc-a) 68%, var(--pc-a-deep) 90%, transparent 100%);
         }
-        .mr-pc-paces-body { padding: 12px 12px 12px; }
-        .mr-pc-paces-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+        .mr-pc-paces-body { padding: 0 12px; }
+        .mr-pc-paces-hdr {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 0;
+            cursor: pointer;
+            user-select: none;
+            transition: opacity .12s;
+        }
+        .mr-pc-paces-hdr:active { opacity: .7; }
         .mr-pc-paces-title {
             font-size: 11px; font-weight: 800; color: var(--gold-text);
             text-transform: uppercase; letter-spacing: 1.2px;
@@ -4580,9 +4585,27 @@
             color: var(--tw); text-transform: capitalize;
             letter-spacing: normal; margin-left: 4px;
         }
-        .mr-pc-paces-chev { font-size: 16px; color: var(--tm); line-height: 1; transform: translateY(-1px); }
+        .mr-pc-paces-chev {
+            color: var(--tm); flex-shrink: 0;
+            transition: transform .22s ease, color .12s;
+        }
+        .mr-pc-paces[data-expanded="1"] .mr-pc-paces-chev {
+            transform: rotate(180deg);
+            color: var(--gold-text);
+        }
+        .mr-pc-paces-collapse {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height .3s ease, padding-bottom .3s ease;
+            padding-bottom: 0;
+        }
+        .mr-pc-paces[data-expanded="1"] .mr-pc-paces-collapse {
+            max-height: 500px;
+            padding-bottom: 12px;
+        }
         .mr-pc-paces-ctx {
             font-size: 10.5px; color: var(--ts); margin-bottom: 10px; font-style: italic;
+            padding-top: 2px;
         }
         .mr-pc-paces-ctx b {
             color: var(--gold-text); font-family: 'Chakra Petch', monospace;
@@ -6130,8 +6153,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                                 <span style="font-size:16px;font-weight:900;color:#000;letter-spacing:1.2px;text-transform:uppercase;text-shadow:0 1px 0 rgba(255,255,255,.25);line-height:1;">CLUB</span>
                             </div>
-                            <!-- Persiana con suelo dorado 5px (efecto botón claro) · marco lateral 11px · lamas L3 · candado dorado -->
-                            <div style="flex:1;display:flex;align-items:stretch;padding:0 11px 5px;">
+                            <!-- Persiana con suelo dorado 10px (efecto botón muy claro) · marco lateral 11px · lamas L3 · candado dorado -->
+                            <div style="flex:1;display:flex;align-items:stretch;padding:0 11px 10px;">
                                 <div style="flex:1;position:relative;overflow:hidden;border-top:1px solid rgba(0,0,0,.4);border-left:1px solid rgba(0,0,0,.2);border-right:1px solid rgba(0,0,0,.2);box-shadow:inset 2px 0 3px rgba(0,0,0,.22),inset -2px 0 3px rgba(0,0,0,.22),inset 0 2px 3px rgba(0,0,0,.28);">
                                     <svg style="width:100%;height:100%;display:block;" viewBox="0 0 100 55" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
                                         <defs>
@@ -30491,17 +30514,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._mrMonthShort = _mrMonthShort;
 
-    // _openPacesSheet(): STUB. Fase 5 lo implementará con el sheet detallado del
-    // puente (histórico + próximos hitos + ritmos por fase). De momento toast.
-    function _openPacesSheet(){
-        if (typeof showToast === 'function'){
-            showToast('Sheet detallado del puente · próximamente', 2200);
-        } else {
-            console.log('[_openPacesSheet] stub · Fase 5 lo implementará');
-        }
+    // _togglePacesBlock(evt): expande/colapsa el sub-bloque Ritmos objetivo.
+    // Estado persistido en localStorage 'mr.paces.expanded' ('0'|'1').
+    // v2.30.0-p3: reemplaza el stub _openPacesSheet, que queda como no-op por si
+    // algún handler legacy sigue apuntándolo. El sheet detallado del puente lo
+    // implementará Fase 5.
+    function _togglePacesBlock(evt){
+        try {
+            if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
+            var target = evt && (evt.currentTarget || evt.target);
+            var host = target ? (target.closest ? target.closest('.mr-pc-paces') : null) : null;
+            if (!host) host = document.querySelector('.mr-pc-paces');
+            if (!host) return;
+            var isExp = host.getAttribute('data-expanded') === '1';
+            var next = isExp ? '0' : '1';
+            host.setAttribute('data-expanded', next);
+            try { localStorage.setItem('mr.paces.expanded', next); } catch(_){}
+        } catch(_){}
     }
+    window._togglePacesBlock = _togglePacesBlock;
+
+    // _openPacesSheet(): NO-OP en v2.30.0-p3. Fase 5 lo cableará al sheet
+    // detallado del puente (histórico + próximos hitos + ritmos por fase).
+    function _openPacesSheet(){ /* Fase 5 · pendiente */ }
     window._openPacesSheet = _openPacesSheet;
-    // ═══ fin helpers Fase 2 v2.30.0-p2 ═══════════════════════════════════════════
+    // ═══ fin helpers Fase 2 v2.30.0-p3 ═══════════════════════════════════════════
 
     // Enrichment reutilizable entre _efCorosPredHTML y _vdotPredBlockHTML.
     // Retorna null si el plan no permite calcular la doble info.
@@ -42309,10 +42346,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const _hoyWrapCls = _hasAny ? 'mr-pc-hoy-wrap mr-pc-hoy-press' : 'mr-pc-hoy-wrap';
             const _todayHeroHtml = `<div class="${_hoyWrapCls}">${_todayHtml}</div>`;
 
-            // ═══ [Fase 2 · v2.30.0-p2] Sub-bloque "Ritmos objetivo del mes" ═══════════
+            // ═══ [Fase 2 · v2.30.0-p3] Sub-bloque "Ritmos objetivo del mes" ═══════════
             //  Solo aparece si hay puente activo (trainingGoal ≠ finalGoal).
             //  Se renderiza al final del planCard, debajo del bloque HOY.
-            //  Tap → _openPacesSheet() (stub Fase 5).
+            //  Colapsable: por defecto solo cabecera; tap en hdr expande/colapsa.
+            //  Estado persistido en localStorage 'mr.paces.expanded'.
             let _pacesHtml = '';
             try {
                 const _finalGoal = (activePlan.finalGoalSecs != null) ? activePlan.finalGoalSecs : activePlan.goalSecs;
@@ -42327,22 +42365,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             ? _nextD.getDate() + ' ' + ((typeof window._mrMonthShort === 'function') ? window._mrMonthShort(_nextD) : '')
                             : null;
                         const _fmt = (typeof fmtPace === 'function') ? fmtPace : (function(s){ var m=Math.floor(s/60),sc=s%60; return m+"'"+String(sc).padStart(2,'0')+'"'; });
+                        const _expInit = (function(){ try { return localStorage.getItem('mr.paces.expanded') === '1'; } catch(_){ return false; } })();
                         _pacesHtml =
-                            '<div class="mr-pc-paces" onclick="if(window._openPacesSheet)window._openPacesSheet()">'
+                            '<div class="mr-pc-paces" data-expanded="' + (_expInit ? '1' : '0') + '">'
                           +   '<div class="mr-pc-paces-accent"></div>'
                           +   '<div class="mr-pc-paces-body">'
-                          +     '<div class="mr-pc-paces-hdr">'
+                          +     '<div class="mr-pc-paces-hdr" onclick="if(window._togglePacesBlock)window._togglePacesBlock(event)">'
                           +       '<span class="mr-pc-paces-title">Ritmos objetivo<span class="mr-pc-paces-month"> \u00b7 ' + _monthLong + '</span></span>'
-                          +       '<span class="mr-pc-paces-chev">\u203a</span>'
+                          +       '<svg class="mr-pc-paces-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>'
                           +     '</div>'
-                          +     '<div class="mr-pc-paces-ctx">Entrenando a <b>' + _tgHMS + '</b> esta fase</div>'
-                          +     '<div class="mr-pc-paces-grid">'
-                          +       '<div class="mr-pc-pace-cell"><span class="lbl">Easy</span><span class="val">' + _fmt(_paces.easy) + '<small>/km</small></span></div>'
-                          +       '<div class="mr-pc-pace-cell"><span class="lbl">Marathon</span><span class="val">' + _fmt(_paces.marathon) + '<small>/km</small></span></div>'
-                          +       '<div class="mr-pc-pace-cell"><span class="lbl">Umbral</span><span class="val">' + _fmt(_paces.threshold) + '<small>/km</small></span></div>'
-                          +       '<div class="mr-pc-pace-cell"><span class="lbl">Intervalo</span><span class="val">' + _fmt(_paces.interval) + '<small>/km</small></span></div>'
+                          +     '<div class="mr-pc-paces-collapse">'
+                          +       '<div class="mr-pc-paces-ctx">Entrenando a <b>' + _tgHMS + '</b> esta fase</div>'
+                          +       '<div class="mr-pc-paces-grid">'
+                          +         '<div class="mr-pc-pace-cell"><span class="lbl">Easy</span><span class="val">' + _fmt(_paces.easy) + '<small>/km</small></span></div>'
+                          +         '<div class="mr-pc-pace-cell"><span class="lbl">Marathon</span><span class="val">' + _fmt(_paces.marathon) + '<small>/km</small></span></div>'
+                          +         '<div class="mr-pc-pace-cell"><span class="lbl">Umbral</span><span class="val">' + _fmt(_paces.threshold) + '<small>/km</small></span></div>'
+                          +         '<div class="mr-pc-pace-cell"><span class="lbl">Intervalo</span><span class="val">' + _fmt(_paces.interval) + '<small>/km</small></span></div>'
+                          +       '</div>'
+                          +       (_nextTxt ? '<div class="mr-pc-paces-foot">Pr\u00f3ximo ajuste: <b>' + _nextTxt + '</b></div>' : '')
                           +     '</div>'
-                          +     (_nextTxt ? '<div class="mr-pc-paces-foot">Pr\u00f3ximo ajuste: <b>' + _nextTxt + '</b></div>' : '')
                           +   '</div>'
                           + '</div>';
                     }
