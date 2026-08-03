@@ -4693,12 +4693,17 @@
             font-size: 11px; font-weight: 800; color: var(--gold-text);
             text-transform: uppercase; letter-spacing: 1.2px;
         }
+        /* Push 5c-fix Qj=A · pill cuadrada al lado del tiempo nuevo,
+           libera el eyebrow del título (evita wrap con badge Debug). */
         .mr-recalib-bridge {
-            font-size: 9px; font-weight: 800; color: var(--pc-a);
+            font-size: 8.5px; font-weight: 800; color: var(--pc-a);
             text-transform: uppercase; letter-spacing: 1px;
             background: var(--pc-a-tint); border: 1px solid var(--pc-a-bd);
-            padding: 2px 7px; border-radius: 999px;
-            white-space: nowrap;
+            padding: 3px 6px; border-radius: 4px;
+            white-space: nowrap; line-height: 1;
+            align-self: center;
+            margin-left: 4px;
+            font-family: var(--f);
         }
         .mr-recalib-delta {
             display: flex; align-items: baseline; gap: 10px;
@@ -6694,12 +6699,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                     </div>
                 </div>
-
-                <!-- ═══ FASE 5 Push 5c · slot card recalibración COROS ═══
-                     Q2=B · debajo del widget Plan Activo. Se puebla en
-                     renderMisterPlanCard() vía _findPendingCorosRecalibration
-                     + _corosRecalibHTML. Queda vacío si no hay recalibración. -->
-                <div id="coros-recalib-slot"></div>
 
                 <!-- tarjeta crear plan -->
                 <div id="create-plan-card" class="card" style="background:#12233a;border:1px solid rgba(100,140,220,.25);margin-top:4px;padding:0;overflow:hidden;">
@@ -31186,12 +31185,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +         (rec._debug ? '<span class="mr-recalib-debug-badge">Debug</span>' : '')
                 +         'Recalibración disponible'
                 +       '</div>'
-                +       bridgeBadge
                 +     '</div>'
                 +     '<div class="mr-recalib-delta' + deltaClass + '">'
                 +       deltaOldEl
                 +       '<div class="mr-recalib-arrow">&rarr;</div>'
                 +       '<div class="mr-recalib-new">' + newHM + '</div>'
+                +       bridgeBadge
                 +     '</div>'
                 +     '<div class="mr-recalib-meta">' + metaHtml + '</div>'
                 +     '<div class="mr-recalib-paces">'
@@ -31229,7 +31228,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var dateStr = new Date().toISOString().slice(0,10);
                 localStorage.setItem('mr.corosRecalib.dismissed.' + dateStr, '1');
             }
-            if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard();
+            if (typeof renderHome === 'function') renderHome();
         } catch(e) { console.warn('[MR][F5·5c] dismiss:', e); }
     }
     window._corosRecalibDismiss = _corosRecalibDismiss;
@@ -31319,14 +31318,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_){}
             // Cerrar sheet y navegar a Home para ver la card.
             if (typeof closeSheet === 'function') closeSheet('coros-recalib-debug-sheet');
-            var misterBtn = document.querySelector('[data-target="mister"]');
-            if (misterBtn) {
-                misterBtn.click();
+            var homeBtn = document.querySelector('[data-target="home"]');
+            if (homeBtn) {
+                homeBtn.click();
                 setTimeout(function(){
-                    if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard();
+                    if (typeof renderHome === 'function') renderHome();
                 }, 220);
-            } else if (typeof renderMisterPlanCard === 'function') {
-                renderMisterPlanCard();
+            } else if (typeof renderHome === 'function') {
+                renderHome();
             }
         } catch(e) { console.warn('[MR][F5·5c-bis] debugSet:', e); }
     }
@@ -34952,26 +34951,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!activeCard||!createCard) return;
         // Only show running plan (not strength-only plan)
         const runPlan = activePlan && activePlan.type !== 'strength' ? activePlan : null;
-        // ── FASE 5 Push 5c · card recalibración COROS ─────────────────
-        // Q2=B · debajo del widget Plan Activo. El slot #coros-recalib-slot
-        // vive en el DOM entre #active-plan-card y #create-plan-card.
-        // Se puebla si _findPendingCorosRecalibration(runPlan) no es null;
-        // si no, se vacía (esconde). Modo strength o sin plan → vacío.
-        try {
-            const _slot = document.getElementById('coros-recalib-slot');
-            if (_slot) {
-                // Push 5c-bis · si hay flag debug, usa rec ficticio (prioridad).
-                // Si no, llama al detector real.
-                let _rec = (typeof window._corosRecalibDebugRec === 'function')
-                    ? window._corosRecalibDebugRec() : null;
-                if (!_rec) {
-                    _rec = (runPlan && typeof window._findPendingCorosRecalibration === 'function')
-                        ? window._findPendingCorosRecalibration(runPlan) : null;
-                }
-                _slot.innerHTML = (_rec && typeof window._corosRecalibHTML === 'function')
-                    ? window._corosRecalibHTML(_rec) : '';
-            }
-        } catch(e) { console.warn('[MR][F5·5c] renderMisterPlanCard wire:', e); }
         if(runPlan){
             activeCard.style.display='';
             createCard.style.display='none';
@@ -42755,6 +42734,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>`;
             container.appendChild(rehabCard);
         }
+
+        // ── FASE 5 Push 5c-fix · Card recalibración COROS (Qi=D) ──
+        // Canónica única, encima del widget Plan Activo (.mr-pc-card).
+        // Push 5c-bis · si hay flag debug activo, usa rec ficticio; si no,
+        // llama al detector real. Si el resultado es null, no se añade nada.
+        try {
+            let _rec = (typeof window._corosRecalibDebugRec === 'function')
+                ? window._corosRecalibDebugRec() : null;
+            if (!_rec && activePlan && typeof window._findPendingCorosRecalibration === 'function') {
+                _rec = window._findPendingCorosRecalibration(activePlan);
+            }
+            if (_rec && typeof window._corosRecalibHTML === 'function') {
+                const _recalibWrap = document.createElement('div');
+                _recalibWrap.id = 'coros-recalib-slot';
+                _recalibWrap.innerHTML = window._corosRecalibHTML(_rec);
+                container.appendChild(_recalibWrap);
+            }
+        } catch(e) { console.warn('[MR][F5·5c-fix] renderHome wire:', e); }
 
         // ── 1. PLAN CARD ──────────────────────────────────────────
         const planCard = document.createElement('div');
