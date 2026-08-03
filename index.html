@@ -31233,11 +31233,56 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._corosRecalibDismiss = _corosRecalibDismiss;
 
-    // Aplicar · stub Push 5c. Implementación completa en Push 5d
-    // (mutación plan.currentFitnessSecs + saveAppState + toast).
+    // Aplicar · Push 5d implementación real. Orquesta:
+    //  1 · Obtiene rec activo (prioridad debug > detector real)
+    //  2 · Llama _applyCorosRecalibration (muta + persiste + push historial)
+    //  3 · Guarda backup en window._corosLastRecalibBackup (5s undo)
+    //  4 · Si estaba en modo debug: limpia el flag debug (escenario consumido)
+    //  5 · Re-render Home + toast custom con acción "Deshacer"
     function _corosRecalibApply(){
-        console.log('[MR][F5·5c] Aplicar · pendiente Push 5d');
-        try { if (window.alert) window.alert('Función disponible en el siguiente push.'); } catch(_){}
+        try {
+            var plan = (typeof activePlan !== 'undefined') ? activePlan : window.activePlan;
+            if (!plan) { console.warn('[MR][F5·5d] no activePlan'); return; }
+
+            // 1 · Rec activo (debug > real). Coherente con wire renderHome.
+            var rec = (typeof window._corosRecalibDebugRec === 'function')
+                ? window._corosRecalibDebugRec() : null;
+            var wasDebug = !!rec;
+            if (!rec && typeof window._findPendingCorosRecalibration === 'function') {
+                rec = window._findPendingCorosRecalibration(plan);
+            }
+            if (!rec) {
+                if (typeof fxToast === 'function') fxToast('Sin recalibración pendiente', { variant: 'info' });
+                return;
+            }
+
+            // 2 · Aplicar mutación
+            var result = window._applyCorosRecalibration(plan, rec);
+            if (!result) {
+                if (typeof fxToast === 'function') fxToast('Error al aplicar', { variant: 'error' });
+                return;
+            }
+
+            // 3 · Backup vive 5s para permitir Undo
+            window._corosLastRecalibBackup = result.backup;
+
+            // 4 · Si venía de modo debug, consumir el flag (escenario aplicado)
+            if (wasDebug) {
+                try {
+                    localStorage.removeItem('mr.corosRecalib.debugScenario');
+                    var st = document.getElementById('dev-coros-recalib-status');
+                    if (st) st.textContent = 'Sin escenario activo';
+                } catch(_){}
+            }
+
+            // 5 · Re-render Home (la card ya no aparece con los nuevos valores
+            //     porque el detector ve currentFitness == predictor → delta 0)
+            //     + toast custom con Deshacer 5s
+            if (typeof renderHome === 'function') renderHome();
+            if (typeof window._corosShowApplyToast === 'function') {
+                window._corosShowApplyToast(5000);
+            }
+        } catch(e) { console.warn('[MR][F5·5d] recalibApply:', e); }
     }
     window._corosRecalibApply = _corosRecalibApply;
 
@@ -31342,6 +31387,221 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._corosRecalibDebugRefreshStatus = _corosRecalibDebugRefreshStatus;
     // ═══ fin Push 5c-bis ═════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════════
+    // FASE 5 Push 5d · Aplicar recalibración + Undo (Q4=A, Ql=A, Qm=A,
+    // Qn=A, Qo=A, Qp=A todos confirmados). Reusa infra VDOT:
+    //   · _updateFuturePlanPaces  → reescribe sesiones futuras
+    //   · _mrTrainingGoalSecs      → recalcula puente tras mutar fitness
+    //   · pacesFromGoal            → deriva 4 ritmos del trainingGoal nuevo
+    //   · saveAppState              → persiste localStorage/IDB (no Supabase)
+    // Backup en window._corosLastRecalibBackup durante 5s del toast.
+    // ═══════════════════════════════════════════════════════════════════
+
+    // _applyCorosRecalibration(plan, rec): muta plan y retorna resumen.
+    // Retorna null si el plan/rec son inválidos o la derivación de paces falla.
+    // Rollback automático si _updateFuturePlanPaces falla mid-operation.
+    function _applyCorosRecalibration(plan, rec){
+        try {
+            if (!plan || !plan.planDist || !rec || !rec.newFitnessSecs) return null;
+
+            // fromDate: HOY. _updateFuturePlanPaces respeta sesiones con
+            // dateStr <= fromDate (o sea HOY no se reescribe, mañana sí).
+            var fromDate = new Date().toISOString().slice(0,10);
+
+            // Snapshot ANTES de mutar (para el backup y para trainingGoalOld).
+            var oldFitnessSecs = (plan.currentFitnessSecs != null)
+                ? plan.currentFitnessSecs
+                : (typeof _mrCurrentFitnessSecs === 'function' ? _mrCurrentFitnessSecs(plan) : null);
+            var trainingGoalOld = (typeof _mrTrainingGoalSecs === 'function')
+                ? _mrTrainingGoalSecs(plan) : null;
+            var oldPaces = JSON.parse(JSON.stringify(plan.paces || {}));
+
+            // Backup en variable local para poder rollback si algo falla
+            // en el medio; luego se expone en window para Undo del usuario.
+            var backup = {
+                currentFitnessSecs: (plan.currentFitnessSecs != null) ? plan.currentFitnessSecs : null,
+                paces: oldPaces,
+                fromDate: fromDate,
+                appliedAt: new Date().toISOString()
+            };
+
+            // 1 · Mutar currentFitnessSecs (Qn=A: solo este campo)
+            plan.currentFitnessSecs = rec.newFitnessSecs;
+
+            // 2 · Recalcular trainingGoal con el nuevo fitness (puente sigmoide
+            //     reacciona automáticamente porque _mrTrainingGoalSecs lee
+            //     plan.currentFitnessSecs cada vez).
+            var trainingGoalNew = (typeof _mrTrainingGoalSecs === 'function')
+                ? _mrTrainingGoalSecs(plan) : null;
+            if (!trainingGoalNew || trainingGoalNew <= 0) {
+                // Rollback
+                plan.currentFitnessSecs = backup.currentFitnessSecs;
+                console.warn('[MR][F5·5d] trainingGoalNew inválido, rollback');
+                return null;
+            }
+
+            // 3 · Derivar 4 ritmos + repeat/race del trainingGoal nuevo
+            var newPaces = (typeof pacesFromGoal === 'function')
+                ? pacesFromGoal(trainingGoalNew, plan.planDist) : null;
+            if (!newPaces) {
+                // Rollback
+                plan.currentFitnessSecs = backup.currentFitnessSecs;
+                console.warn('[MR][F5·5d] pacesFromGoal falló, rollback');
+                return null;
+            }
+
+            // 4 · Reescribir sesiones futuras (Qp=A: _updateFuturePlanPaces
+            //     con fromDate=HOY, respetando la infra VDOT existente).
+            //     IMPORTANTE: plan.paces aún es oldPaces aquí, porque
+            //     _updateFuturePlanPaces lee plan.paces como fuente "from".
+            var updateResult = { updated: 0, weeksTouched: 0 };
+            if (typeof _updateFuturePlanPaces === 'function') {
+                updateResult = _updateFuturePlanPaces(plan, newPaces, fromDate) || updateResult;
+            }
+
+            // 5 · Ahora sí, mutar plan.paces al nuevo set
+            plan.paces = newPaces;
+
+            // 6 · Push a plan.recalibHistory[] (Ql=A shape rico, Qm=A array
+            //     separado de vdotHistory). El firstTime queda registrado.
+            plan.recalibHistory = Array.isArray(plan.recalibHistory) ? plan.recalibHistory : [];
+            plan.recalibHistory.push({
+                date: backup.appliedAt,
+                source: rec.source || 'coros_predictor',
+                oldFitnessSecs: oldFitnessSecs,
+                newFitnessSecs: rec.newFitnessSecs,
+                trainingGoalOld: trainingGoalOld,
+                trainingGoalNew: trainingGoalNew,
+                hasBridge: !!rec.hasBridge,
+                deltaSecs: rec.deltaSecs,
+                deltaPct: rec.deltaPct,
+                threshold: rec.threshold,
+                firstTime: !!rec.firstTime,
+                sessionsUpdated: updateResult.updated,
+                weeksTouched: updateResult.weeksTouched
+            });
+
+            // 7 · Persistir localStorage/IDB (no hay _updatePlanInSupabase)
+            if (typeof saveAppState === 'function') {
+                try { saveAppState(); } catch(e) { console.warn('[MR][F5·5d] saveAppState:', e); }
+            }
+
+            return {
+                backup: backup,
+                oldFitnessSecs: oldFitnessSecs,
+                newFitnessSecs: rec.newFitnessSecs,
+                trainingGoalOld: trainingGoalOld,
+                trainingGoalNew: trainingGoalNew,
+                sessionsUpdated: updateResult.updated,
+                weeksTouched: updateResult.weeksTouched
+            };
+        } catch(e) { console.warn('[MR][F5·5d] applyCorosRecalibration:', e); return null; }
+    }
+    window._applyCorosRecalibration = _applyCorosRecalibration;
+
+    // _corosUndoLastRecalibration(): revierte state con el backup en memoria.
+    // Reversibilidad exacta porque _updateFuturePlanPaces hace find-replace
+    // basándose en plan.paces actual (que es newPaces tras Aplicar) como
+    // fuente, y backup.paces como target → invierte los reemplazos 1:1.
+    function _corosUndoLastRecalibration(){
+        try {
+            var backup = window._corosLastRecalibBackup;
+            var plan = (typeof activePlan !== 'undefined') ? activePlan : window.activePlan;
+            if (!backup || !plan) return false;
+
+            // 1 · Reescribir sesiones futuras con paces antiguas
+            //     (plan.paces = newPaces ahora → función lo lee como fuente).
+            if (typeof _updateFuturePlanPaces === 'function' && backup.paces) {
+                _updateFuturePlanPaces(plan, backup.paces, backup.fromDate);
+            }
+
+            // 2 · Restaurar paces originales
+            if (backup.paces) plan.paces = backup.paces;
+
+            // 3 · Restaurar currentFitnessSecs original (puede ser null si
+            //     era firstTime → volver a null, el helper reflejará COROS
+            //     predictor otra vez)
+            plan.currentFitnessSecs = backup.currentFitnessSecs;
+
+            // 4 · Pop del último entry en recalibHistory (el que acabamos
+            //     de añadir en apply)
+            if (Array.isArray(plan.recalibHistory) && plan.recalibHistory.length > 0) {
+                plan.recalibHistory.pop();
+            }
+
+            // 5 · Persistir
+            if (typeof saveAppState === 'function') {
+                try { saveAppState(); } catch(_){}
+            }
+
+            // 6 · Limpiar backup + toast confirmación + re-render
+            window._corosLastRecalibBackup = null;
+            if (typeof fxToast === 'function') fxToast('Recalibración deshecha', { variant: 'info' });
+            if (typeof renderHome === 'function') renderHome();
+            return true;
+        } catch(e) { console.warn('[MR][F5·5d] undoLastRecalibration:', e); return false; }
+    }
+    window._corosUndoLastRecalibration = _corosUndoLastRecalibration;
+
+    // _corosShowApplyToast(duration): toast custom con botón Deshacer
+    // interactivo. Reusa keyframes _fxToastIn/_fxToastOut (heredados de
+    // fxToast). duration ms → auto-consolida (limpia backup).
+    function _corosShowApplyToast(duration){
+        try {
+            duration = (typeof duration === 'number' && duration > 0) ? duration : 5000;
+            // Cerrar toast previo si existe
+            var prev = document.getElementById('coros-apply-toast');
+            if (prev) prev.remove();
+
+            var toast = document.createElement('div');
+            toast.id = 'coros-apply-toast';
+            toast.style.cssText = 'position:fixed;top:calc(env(safe-area-inset-top,0px) + 18px);left:50%;'
+                + 'transform:translateX(-50%);'
+                + 'background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;'
+                + 'padding:10px 6px 10px 14px;border-radius:14px;'
+                + 'display:flex;align-items:center;gap:10px;'
+                + 'font-family:var(--f);font-size:13px;font-weight:800;letter-spacing:.1px;'
+                + 'box-shadow:0 8px 28px rgba(0,0,0,.30),0 0 0 1px rgba(34,197,94,.40) inset;'
+                + 'z-index:100050;animation:_fxToastIn .55s cubic-bezier(.34,1.56,.64,1) forwards;'
+                + 'max-width:92vw;';
+            toast.innerHTML = ''
+                + '<span style="font-size:16px;line-height:1;">&#10003;</span>'
+                + '<span>Recalibración aplicada</span>'
+                + '<button id="coros-undo-btn" style="background:rgba(255,255,255,.20);'
+                + 'border:1px solid rgba(255,255,255,.35);color:#fff;font-family:var(--f);'
+                + 'font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;'
+                + 'padding:6px 12px;border-radius:8px;cursor:pointer;margin-left:6px;flex-shrink:0;'
+                + '">Deshacer</button>';
+            document.body.appendChild(toast);
+
+            var undoBtn = document.getElementById('coros-undo-btn');
+            var _dismiss = function(){
+                try {
+                    clearTimeout(toast._t);
+                    toast.style.animation = '_fxToastOut .26s cubic-bezier(.5,0,.75,0) forwards';
+                    setTimeout(function(){ if (toast.parentNode) toast.remove(); }, 280);
+                } catch(_){}
+            };
+            var _closeAndConsolidate = function(){
+                _dismiss();
+                // Consolidar: limpiar backup (recalibración ya no reversible).
+                window._corosLastRecalibBackup = null;
+            };
+            var _closeAndUndo = function(){
+                _dismiss();
+                setTimeout(function(){
+                    if (typeof window._corosUndoLastRecalibration === 'function') {
+                        window._corosUndoLastRecalibration();
+                    }
+                }, 100);
+            };
+            if (undoBtn) undoBtn.onclick = _closeAndUndo;
+            toast._t = setTimeout(_closeAndConsolidate, duration);
+        } catch(e) { console.warn('[MR][F5·5d] showApplyToast:', e); }
+    }
+    window._corosShowApplyToast = _corosShowApplyToast;
+    // ═══ fin Push 5d · Aplicar + Undo ══════════════════════════════════
 
     // ═══ fin Fase 5 Push 5c · renderer + handlers ══════════════════════
 
