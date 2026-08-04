@@ -6041,21 +6041,23 @@
     /* Activo cuando #home-strava-dot tiene display != none                 */
     /* ═══════════════════════════════════════════════════════════════════ */
     .strava-dot-alert {
-        /* [Push A · dot inline] Antes: position:absolute top:-6 right:-6.
-           Ahora: inline junto al texto del botón, más compacto. */
+        /* [Fix 3 · dot blanco cuadrado con número naranja]
+           Antes: circular naranja + rings pulse (mala visibilidad sobre bg dark
+           del botón blanco con border naranja). Ahora: cuadrado blanco con número
+           naranja bold para máximo contraste contra el bg card del botón. */
         position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 16px; height: 16px;
-        border-radius: 8px;
-        padding: 0 4px;
-        background: linear-gradient(135deg, #fc4c02, #e63e00);
-        border: none;
-        color: #ffffff;
+        min-width: 18px; height: 18px;
+        border-radius: 4px;
+        padding: 0 5px;
+        background: #ffffff;
+        border: 1.5px solid #FC4C02;
+        color: #FC4C02;
         font-family: var(--f);
-        font-size: 9px;
-        font-weight: 800;
+        font-size: 10.5px;
+        font-weight: 900;
         line-height: 1;
         font-variant-numeric: tabular-nums;
         letter-spacing: 0;
@@ -6063,15 +6065,17 @@
         pointer-events: none;
         flex-shrink: 0;
         z-index: 3;
-        box-shadow: 0 1px 4px rgba(252, 76, 2, .55), 0 0 8px rgba(252, 76, 2, .35);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, .18), 0 0 8px rgba(252, 76, 2, .30);
         animation: strava-dot-pulse 1.8s ease-in-out infinite;
     }
     .strava-dot-alert::before {
+        /* [Fix 3] Rings adaptados al dot cuadrado: border-radius menor y color
+           naranja tenue para armonizar con el fondo blanco del dot. */
         content: '';
         position: absolute;
         inset: -2px;
-        border-radius: 12px;
-        background: #fc4c02;
+        border-radius: 6px;
+        background: rgba(252, 76, 2, .55);
         z-index: -1;
         pointer-events: none;
         animation: strava-dot-ring-a 1.8s cubic-bezier(.2, .7, .5, 1) infinite;
@@ -6080,8 +6084,8 @@
         content: '';
         position: absolute;
         inset: -2px;
-        border-radius: 12px;
-        background: #fc4c02;
+        border-radius: 6px;
+        background: rgba(252, 76, 2, .40);
         z-index: -2;
         pointer-events: none;
         animation: strava-dot-ring-b 1.8s cubic-bezier(.2, .7, .5, 1) infinite;
@@ -40485,7 +40489,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     //   isToday=true → muestra card weather+outfit + botón "Enviar al reloj" COROS.
     //   isToday=false → sin weather, sin "Enviar al reloj" (solo "Ver en el plan").
     var _MR_SESSION_SHEET_ID = 'mr-session-detail-sheet';
-    function _openSessionSheet(runSess, strSess, isToday) {
+    function _openSessionSheet(runSess, strSess, isToday, wkIdx) {
         if (!runSess && !strSess) return;
         var existing = document.getElementById(_MR_SESSION_SHEET_ID);
         if (existing) { try { existing.remove(); } catch(_){} }
@@ -40502,7 +40506,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             '<div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>'
           + '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\')" aria-label="Cerrar" style="position:absolute;top:10px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">\u00d7</button>'
           + '<div class="sheet-body" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:env(safe-area-inset-bottom, 0);">'
-          +     _buildSessionSheetContent(runSess, strSess, isToday)
+          +     _buildSessionSheetContent(runSess, strSess, isToday, wkIdx)
           + '</div>';
 
         backdrop.appendChild(sheet);
@@ -40543,7 +40547,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + '</div>';
     }
 
-    function _buildSessionSheetContent(runSess, strSess, isToday) {
+    function _buildSessionSheetContent(runSess, strSess, isToday, wkIdx) {
         var _TYPE_GRAD = {
             easy:     'linear-gradient(135deg, #22c55e 0%, #15803d 100%)',
             recovery: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)',
@@ -40676,10 +40680,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 html += '<div id="' + _strUid + '" style="display:none;margin-top:10px;display:none;">';
                 sess.blocks.forEach(function(b) {
                     var bColor = b.color || '#94a3b8';
-                    var bLabel = b.label || 'Bloque';
                     var bDetailHtml = b.detailHtml || b.detail || '';
-                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:0 8px 8px 0;padding:8px 11px;margin-bottom:6px;">';
-                    html += '<div style="font-size:11.5px;font-weight:800;color:var(--tw);letter-spacing:-.1px;">' + bLabel + '</div>';
+                    // [Fix 2] Sin título redundante: el bloque compacto de arriba ya lo
+                    // muestra + barra lateral del color mantiene el reference. Solo
+                    // detailHtml con los ejercicios y GIFs.
+                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:0 8px 8px 0;padding:6px 8px;margin-bottom:6px;">';
                     html += bDetailHtml;
                     html += '</div>';
                 });
@@ -40717,7 +40722,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             content += '</button>';
         }
         // Ver en el plan (sin icono calendar por feedback Álvaro).
-        content += '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\');setTimeout(function(){' + (isToday ? '' : (_dateStr ? 'try{window.__mrPlanTargetDate=\'' + _dateStr + '\';}catch(_){}' : '')) + 'var _t=document.querySelector(\'[data-target=&quot;cal&quot;]\');if(_t)_t.click();},350);" style="width:100%;padding:13px;background:var(--card2);border:1px solid var(--border);border-radius:12px;color:var(--tw);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;">';
+        // [Fix 1] Usar __mrPlanTargetWeek (número) que el nav handler consume,
+        // en vez de __mrPlanTargetDate (que no lee nadie). Solo se setea para
+        // entrenos NO-HOY (para hoy ya se está en la semana actual).
+        var _vpTarget = (!isToday && typeof wkIdx === 'number' && wkIdx >= 0)
+            ? 'try{window.__mrPlanTargetWeek=' + wkIdx + ';}catch(_){}'
+            : '';
+        content += '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\');setTimeout(function(){' + _vpTarget + 'var _t=document.querySelector(\'[data-target=&quot;cal&quot;]\');if(_t)_t.click();},350);" style="width:100%;padding:13px;background:var(--card2);border:1px solid var(--border);border-radius:12px;color:var(--tw);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;">';
         content +=   '<span>Ver en el plan</span>';
         content += '</button>';
         content += '</div>';
@@ -43621,12 +43632,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   HOY: usa todayRunSess/todayStrSess (misma referencia que el hero).
                     //   Futuros: reconstruye run/str desde _r.sessions.
                     //   Pasados: sin acción (Álvaro: "pasados NO").
+                    // [Fix 1] Pasar _r.wkIdx como 4to arg para que "Ver en el plan"
+                    // navegue a la semana correcta vía __mrPlanTargetWeek.
                     if (_r.state === 'today') {
-                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(todayRunSess, todayStrSess, true);
+                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(todayRunSess, todayStrSess, true, _r.wkIdx);
                     } else if (_r.state !== 'past') {
                         const _run = _r.sessions.find(s => !(s.isStrength || s.type === 'strength')) || null;
                         const _str = _r.sessions.find(s => (s.isStrength || s.type === 'strength')) || null;
-                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(_run, _str, false);
+                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(_run, _str, false, _r.wkIdx);
                     }
                     // Estado 'past' → sin sheet, sin navegación (silencioso).
                 }
