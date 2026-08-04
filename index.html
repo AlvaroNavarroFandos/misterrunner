@@ -16130,15 +16130,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         el.classList.remove('hidden');
         el.style.opacity = '1';
         el.style.pointerEvents = 'auto';
-        // v2.28.0-p4 · Fix: el splash con polling (bootApp) NO aplica cuando
-        // no hay sesión iniciada. Al entrar al login hay que ocultarlo
-        // inmediatamente, si no queda superpuesto (z-index 999998) tapando
-        // el formulario hasta que el timeout 10s lo mate.
-        try {
-            if (typeof window._mrHideSplash === 'function') {
-                window._mrHideSplash('login');
-            }
-        } catch(_){}
+        // v2.28.0-p4 · El timer fijo 3.5s del splash se encarga (un único
+        // camino). No ocultar aquí — evita races con SIGNED_IN.
     }
 
 
@@ -39067,17 +39060,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 _loadClubChunk();
             }, 0);
         } else {
-            // No hay sesión → mostrar login con fade in suave
-            // v2.28.0-p4 · Fix crítico: sin sesión el pipeline de bootApp NO
-            // corre, por tanto el poll del splash tampoco. El splash quedaba
-            // superpuesto (z-index 999998) tapando el formulario hasta el
-            // timeout 10s. Aquí lo ocultamos inmediato: el usuario aterriza
-            // directo en el login.
-            try {
-                if (typeof window._mrHideSplash === 'function') {
-                    window._mrHideSplash('no-session');
-                }
-            } catch(_){}
+            // v2.28.0-p4 · No hay sesión (o SIGNED_IN listener ya la procesó
+            // en race). NO ocultamos el splash aquí: si es una race condition
+            // real, el listener ya montó currentUser + bootApp y el splash
+            // debe SEGUIR visible hasta que renderHome termine. El timer fijo
+            // 3.5s se encarga de ocultarlo en ambos casos:
+            //   · Race con sesión → home pintado tras 3.5s → splash oculta
+            //   · Sin sesión real → login-screen visible detrás → splash oculta a 3.5s
             const app = document.getElementById('app');
             if (app) app.style.opacity = '1';
             const ls = document.getElementById('login-screen');
@@ -51957,8 +51946,6 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
         if (typeof authShowMode === 'function') authShowMode('reset');
         const ls = document.getElementById('login-screen');
         if(ls){ ls.style.display=''; ls.style.opacity='1'; ls.style.pointerEvents=''; }
-        // v2.28.0-p4 · Ocultar splash: recovery muestra login sin bootApp.
-        try { if (typeof window._mrHideSplash === 'function') window._mrHideSplash('recovery'); } catch(_){}
         return;
     }
     if (event === 'SIGNED_IN' && session && !currentUser) {
