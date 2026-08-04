@@ -23564,7 +23564,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var pct = Math.max(0, Math.min(100, (acwr.ratio / 2.0) * 100));
 
             // Km auxiliar 7d/28d (independiente de canónica; contexto siempre visible)
-            var refEpoch = new Date().getTime();
+            // [FIX ACWR sheet · refEpoch normalizado al mediodía]
+            // Antes: new Date().getTime() = hora actual (ej 6:38). La activity
+            // de HOY tiene aEpoch=12:00, y aEpoch > refEpoch cuando son <12:00
+            // → se excluía la de hoy del km acumulado. Ahora normalizado al
+            // mediodía como hace computeACWR (~L23403).
+            var _refD = new Date();
+            var _refStr = _refD.getFullYear() + '-'
+                + String(_refD.getMonth()+1).padStart(2,'0') + '-'
+                + String(_refD.getDate()).padStart(2,'0');
+            var refEpoch = new Date(_refStr + 'T12:00:00').getTime();
             var DAY_MS = 86400000;
             var acuteCutoff = refEpoch - 7 * DAY_MS;
             var chronicCutoff = refEpoch - 28 * DAY_MS;
@@ -25300,6 +25309,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             outfit: outfitState ? { ...outfitState } : null,
             deviceBrand: pendingFitData.deviceBrand || null,
         };
+        // [FIX ACWR post-import · TRIMP local]
+        // Sin esto, act queda sin `trimp` en memoria → _getActivityWorkload
+        // devuelve source='dist' → computeACWR (canonical='trimp' con ≥80%
+        // cobertura histórica) descarta la nueva activity del Pass 2 y el
+        // ACWR de Home/sheet queda "estancado" hasta que la BD persista.
+        // Simétrico con el flujo BD (línea ~23953, ~24528, ~24748).
+        try {
+            if (typeof _computeTRIMP === 'function' && act.avgHr && act.durationSec) {
+                var _trLocal = _computeTRIMP(act, profileData);
+                if (_trLocal != null && _trLocal > 0) act.trimp = _trLocal;
+            }
+        } catch(_) {}
         activities.push(act);
         if (shoe && act.distKm > 0) addKmToShoe(shoe.id, act.distKm);
         // ── FASE 5 Push 5a · plan.testHistory[] hook (import) ─────────
@@ -25338,6 +25359,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var _deferHeavyImport = function() {
             try { renderActivities(); } catch(e) { console.warn('[MR][P2-Fix] renderActivities:', e); }
             try { saveAppState(); }    catch(e) { console.warn('[MR][P2-Fix] saveAppState:', e); }
+            // [FIX widgets Home post-import]
+            // Sin esto, TrainingLoad/Readiness/VO2max/VDOT/Stamina se quedan
+            // con el valor viejo hasta que el user navegue a HOME (que dispara
+            // renderHome completo). Los repaints son noop si su nodo no existe
+            // (arranque en otro tab), así que sin coste añadido.
+            try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
+            try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
+            try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
+            try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+            try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
         };
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(_deferHeavyImport, { timeout: 500 });
@@ -27384,6 +27415,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _editPhotoB64 = undefined;
         renderActivities();
         saveAppState();
+        // [FIX widgets Home post-edit]
+        // Simétrico con _deferHeavyImport: cambio de tipo puede reclasificar la
+        // activity en ACWR o alterar TSB. Todos son noop si el nodo no existe.
+        try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
+        try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
+        try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
+        try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+        try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
         // FASE 6.1.b: persistencia a Supabase si la activity vive en BD
         // (tanto manuales como bulk Strava). Se ejecuta en background, no
         // bloquea UI. Si falla, queda en IDB local con los cambios.
