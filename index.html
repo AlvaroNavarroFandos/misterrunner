@@ -3608,6 +3608,55 @@
     }
     #plan-sync-icon { animation: plan-sync-pulse 1.6s ease-in-out infinite; }
 
+    /* [Splash · Push carga inicial]
+       Pantalla de carga minimalista visible desde el primer frame de pintado
+       hasta que la app está totalmente cargada. Estilos declarados aquí en
+       head/<style> para que estén disponibles en el primer paint antes de
+       cualquier JS. Al cerrarse se mide y logea tiempo de arranque para
+       poder optimizar. Se oculta con fadeout suave. Timeout de seguridad
+       10s en el JS inline al final del body. */
+    #mr-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 999998;
+        background: #0a0e14;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 26px;
+        transition: opacity .4s ease-out, visibility .4s;
+        pointer-events: none;
+    }
+    #mr-splash.mr-splash-hide { opacity: 0; visibility: hidden; }
+    #mr-splash-logo {
+        width: 96px;
+        height: 96px;
+        border-radius: 22px;
+        object-fit: cover;
+        box-shadow: 0 10px 32px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+    }
+    #mr-splash-txt {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 11px;
+        font-weight: 800;
+        color: rgba(255,255,255,.55);
+        text-transform: uppercase;
+        letter-spacing: 3px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    #mr-splash-spin {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,.14);
+        border-top-color: #ef4444;
+        border-radius: 50%;
+        animation: mrSplashSpin .7s linear infinite;
+    }
+    @keyframes mrSplashSpin { to { transform: rotate(360deg); } }
+
     /* [BugWizard · Plan B] Overlay de carga durante el reload post-wizard.
        Por defecto oculto. Cuando <html> tiene la clase .mr-reloading
        (activada por el script inline del head si hay flag en sessionStorage),
@@ -6144,6 +6193,13 @@
     </script>
 </head>
 <body>
+<div id="mr-splash" aria-hidden="true">
+    <img id="mr-splash-logo" data-mr-logo="1" src="" alt="">
+    <div id="mr-splash-txt">
+        <div id="mr-splash-spin"></div>
+        <span>Cargando</span>
+    </div>
+</div>
 <div id="mr-reload-overlay" aria-hidden="true">
     <div class="mr-reload-spinner"></div>
 </div>
@@ -6214,6 +6270,58 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
       });
     }
   } catch(e){ /* no-op */ }
+})();
+
+// [Splash · hide + timing]
+// Se llama desde renderHome() tras el primer render exitoso (doble rAF).
+// Timeout de seguridad 10s por si algo se cuelga antes de esa señal.
+// Muestra timing en el propio splash (no hay consola en el móvil).
+(function(){
+    window.__mrSplashStart = performance.now();
+    var _splashHidden = false;
+    window._mrHideSplash = function(source) {
+        if (_splashHidden) return;
+        _splashHidden = true;
+        var el = document.getElementById('mr-splash');
+        if (!el) return;
+        var elapsed = performance.now() - window.__mrSplashStart;
+        var elapsedMs = Math.round(elapsed);
+        var isTimeout = (source === 'timeout-10s');
+        console.log('[MR][splash] hide (' + (source||'ok') + ') tras ' + elapsedMs + ' ms');
+        try { localStorage.setItem('mr_last_splash_ms', String(elapsedMs)); } catch(_){}
+        // Cambiar contenido del splash antes del fadeout: sustituir spinner
+        // por check verde + texto con timing. Móvil sin consola → así se lee.
+        var spin = document.getElementById('mr-splash-spin');
+        var span = document.querySelector('#mr-splash-txt span');
+        if (spin) {
+            if (isTimeout) {
+                spin.style.border = 'none';
+                spin.style.animation = 'none';
+                spin.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#ef4444" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>';
+            } else {
+                spin.style.border = 'none';
+                spin.style.animation = 'none';
+                spin.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#4ade80" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg>';
+            }
+        }
+        if (span) {
+            span.textContent = (isTimeout ? 'Timeout · ' : 'Listo · ') + elapsedMs + ' ms';
+            span.style.color = isTimeout ? 'rgba(239,68,68,.85)' : 'rgba(74,222,128,.85)';
+        }
+        // 900ms visible con el timing, luego fadeout
+        setTimeout(function(){
+            el.classList.add('mr-splash-hide');
+            setTimeout(function(){
+                if (el && el.parentNode) el.parentNode.removeChild(el);
+            }, 500);
+        }, 900);
+    };
+    // Timeout de seguridad: si algo se cuelga y renderHome no llega a llamar
+    // _mrHideSplash en 10s, ocultamos igualmente para no dejar la pantalla
+    // en blanco. Se registra en consola para poder detectar la anomalía.
+    setTimeout(function(){
+        if (!_splashHidden) window._mrHideSplash('timeout-10s');
+    }, 10000);
 })();
 </script>
 
@@ -42956,7 +43064,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!container) return;
         container.innerHTML = '';
         try { renderPrimerosPasos(); } catch(_) {}
-
         const today     = new Date();
         const todayStr  = localDateStr(today);
         const dayName   = today.toLocaleDateString('es-ES',{weekday:'long'});
@@ -44417,6 +44524,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── READINESS: poblar el widget (ya con __mrPMC/TSB calculado) ──
         try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_) {}
+
+        // [Splash · hide primer render]
+        // Con doble rAF (~32ms) damos tiempo a que los widgets síncronos hayan
+        // pintado. Los widgets async (readiness, training load, VDOT, plan
+        // card) pintan un instante después pero al haber fadeout de 400ms
+        // suele quedar visible el resultado completo antes del vacío.
+        // Guard: solo la primera vez que renderHome se completa.
+        if (!window.__mrSplashDone) {
+            window.__mrSplashDone = true;
+            requestAnimationFrame(function(){
+                requestAnimationFrame(function(){
+                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
+                });
+            });
+        }
     }
 
     // ── PDF SEMANAL ──────────────────────────────────────────────
