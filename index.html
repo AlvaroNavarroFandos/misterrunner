@@ -25510,6 +25510,108 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // y rellena act.weather = { tempC, condition } o deja act.weather = null
     // si falla cualquier cosa. NUNCA rompe el flujo de guardado.
     // ─────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // [Push D · Sheet HOY] Weather + outfit helpers para el sheet detalle
+    // de la sesión de hoy. Fetch open-meteo (sin API key) con geocoding de
+    // profileData.city → lat/lon. Cache localStorage 1h. Recomendador de
+    // outfit basado en temp + weathercode + viento.
+    // ─────────────────────────────────────────────────────────────────────
+    function _mrWeatherIcon(code) {
+        if (code === 0) return '\u2600\ufe0f';                       // sol
+        if (code <= 3) return '\u26c5';                              // parcialmente nublado
+        if (code <= 48) return '\ud83c\udf2b\ufe0f';                 // niebla
+        if (code <= 57) return '\ud83c\udf26\ufe0f';                 // llovizna
+        if (code <= 67) return '\ud83c\udf27\ufe0f';                 // lluvia
+        if (code <= 77) return '\u2744\ufe0f';                       // nieve
+        if (code <= 82) return '\ud83c\udf26\ufe0f';                 // chubascos
+        if (code <= 99) return '\u26c8\ufe0f';                       // tormenta
+        return '\u2601\ufe0f';                                       // nubes
+    }
+    function _mrWeatherDesc(code) {
+        if (code === 0) return 'Despejado';
+        if (code <= 3) return 'Nublado';
+        if (code <= 48) return 'Niebla';
+        if (code <= 57) return 'Llovizna';
+        if (code <= 67) return 'Lluvia';
+        if (code <= 77) return 'Nieve';
+        if (code <= 82) return 'Chubascos';
+        if (code <= 99) return 'Tormenta';
+        return 'Nublado';
+    }
+    function _mrOutfitForTemp(tempC, code, wind) {
+        var raining = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || (code >= 95);
+        var snowy   = (code >= 71 && code <= 77);
+        var outfit = '';
+        var accessories = [];
+        if (tempC < 5) {
+            outfit = 'Malla larga t\u00e9rmica + camiseta manga larga + cortavientos';
+            accessories.push('\ud83e\udde4 guantes', '\ud83e\uddba gorro');
+        } else if (tempC < 12) {
+            outfit = 'Malla larga + camiseta manga larga t\u00e9cnica';
+            accessories.push('\ud83e\udde4 guantes finos');
+        } else if (tempC < 18) {
+            outfit = 'Manga larga ligera + shorts o malla corta';
+        } else if (tempC < 25) {
+            outfit = 'Camiseta t\u00e9cnica manga corta + shorts';
+        } else {
+            outfit = 'Camiseta t\u00e9cnica ligera + shorts';
+            accessories.push('\ud83e\uddee gorra', '\ud83d\udd76\ufe0f gafas');
+        }
+        if (tempC >= 20) accessories.push('\ud83d\udca7 hidrataci\u00f3n');
+        if (raining && tempC >= 5) accessories.push('\ud83e\uddee gorra impermeable');
+        if (snowy) accessories.push('\u2744 atenci\u00f3n suelo');
+        if (wind && wind > 20 && tempC < 20) accessories.push('\ud83d\udca8 cortavientos');
+        return { outfit: outfit, accessories: accessories };
+    }
+    async function _mrFetchTodayWeather() {
+        var key = 'mr_today_weather_v1';
+        try {
+            var raw = localStorage.getItem(key);
+            if (raw) {
+                var c = JSON.parse(raw);
+                if (c && (Date.now() - c.ts) < 3600000) return c.data;
+            }
+        } catch(_) {}
+        var city = (typeof profileData !== 'undefined' && profileData && profileData.city) ? String(profileData.city).trim() : '';
+        if (!city) return null;
+        var lat, lon;
+        try {
+            var geoRes = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=es');
+            if (!geoRes.ok) return null;
+            var geo = await geoRes.json();
+            if (!geo.results || !geo.results.length) return null;
+            lat = Number(geo.results[0].latitude).toFixed(4);
+            lon = Number(geo.results[0].longitude).toFixed(4);
+        } catch(_) { return null; }
+        var now = new Date();
+        var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+        try {
+            var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon
+                    + '&start_date=' + dateStr + '&end_date=' + dateStr
+                    + '&hourly=temperature_2m,weathercode,windspeed_10m&timezone=auto';
+            var res = await fetch(url);
+            if (!res.ok) return null;
+            var data = await res.json();
+            if (!data || !data.hourly) return null;
+            var hour = now.getHours();
+            var temps = data.hourly.temperature_2m || [];
+            var codes = data.hourly.weathercode || [];
+            var winds = data.hourly.windspeed_10m || [];
+            if (!temps.length) return null;
+            var tempC = Math.round(Number(temps[hour]));
+            var code = Number(codes[hour]);
+            var wind = Number(winds[hour]);
+            var result = { tempC: tempC, code: code, wind: wind, city: city };
+            try { localStorage.setItem(key, JSON.stringify({ data: result, ts: Date.now() })); } catch(_){}
+            return result;
+        } catch(_) { return null; }
+    }
+    window._mrWeatherIcon = _mrWeatherIcon;
+    window._mrWeatherDesc = _mrWeatherDesc;
+    window._mrOutfitForTemp = _mrOutfitForTemp;
+    window._mrFetchTodayWeather = _mrFetchTodayWeather;
+
+    // ─────────────────────────────────────────────────────────────────────
     async function _fetchActivityWeather(act) {
         if (!act || act.weather) return; // ya tiene datos, no re-pedir
         try {
@@ -36617,7 +36719,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Antes: border-radius:10px 10px 0 0 y border-bottom:0 la conectaba visualmente
         // con el daysCard, ahora ambos son elementos independientes con su elevación.
         hCard.style.cssText = 'background:linear-gradient(135deg,'+_phaseCol+' 0%,'+_phaseDark+' 100%);'
-            + 'border:1px solid '+_phaseCol+';border-radius:10px;padding:12px 14px;margin-bottom:6px;'
+            + 'border:1px solid '+_phaseCol+';border-radius:10px;padding:12px 14px;margin-bottom:0;'
             + 'touch-action:pan-y;position:relative;overflow:hidden;cursor:grab;'
             + 'user-select:none;-webkit-user-select:none;will-change:transform;'
             + 'transition:transform .25s cubic-bezier(.22,.61,.36,1);'
@@ -36760,7 +36862,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // tap-toggle para expandir detalle. Fuerza apilada bajo running con sangría.
         const daysCard = document.createElement('div');
         daysCard.className = 'mr-plan-days';
-        daysCard.style.cssText = 'background:transparent;padding:2px 0 4px;touch-action:pan-y;';
+        daysCard.style.cssText = 'background:transparent;padding:0 0 4px;touch-action:pan-y;';
 
         // [FASE 6 prep · Plan premium] Barra superior con gradiente del color
         // de la fase (mismo patrón que la cabecera de semana). Crea cohesión
@@ -40377,59 +40479,71 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // nunca se poblaba (sólo init=[]) y el bloque DOM #pr-history-block ya no existe.
     // El Hall of Fame real vive en `_openPRsSheet('me')` que lee user_records directo.
 
-    // ── TODAY DETAIL SHEET (p13 · sheet premium al pulsar card HOY en Home) ──
-    function _openTodayDetailSheet(runSess, strSess) {
+    // ── SESSION DETAIL SHEET (Push D · migrado a sheet-backdrop estándar) ──
+    //   Sheet usado para HOY y para entrenos FUTUROS del carrusel Home.
+    //   Estructura estándar → hereda swipe-down automáticamente via _mrSheetSwipeBind.
+    //   isToday=true → muestra card weather+outfit + botón "Enviar al reloj" COROS.
+    //   isToday=false → sin weather, sin "Enviar al reloj" (solo "Ver en el plan").
+    var _MR_SESSION_SHEET_ID = 'mr-session-detail-sheet';
+    function _openSessionSheet(runSess, strSess, isToday) {
         if (!runSess && !strSess) return;
-        var existing = document.getElementById('_today-detail-sheet');
-        if (existing) { _closeTodayDetailSheet(); return; }
+        var existing = document.getElementById(_MR_SESSION_SHEET_ID);
+        if (existing) { try { existing.remove(); } catch(_){} }
 
         var backdrop = document.createElement('div');
-        backdrop.id = '_today-detail-sheet';
-        backdrop.style.cssText = 'position:fixed;inset:0;z-index:99995;background:rgba(0,0,0,.62);'
-            + 'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);'
-            + 'display:flex;align-items:flex-end;justify-content:center;'
-            + 'opacity:0;transition:opacity .22s ease;';
+        backdrop.id = _MR_SESSION_SHEET_ID;
+        backdrop.className = 'sheet-backdrop';
+        backdrop.onclick = function(e){ if(e.target === backdrop) closeSheet(_MR_SESSION_SHEET_ID); };
 
         var sheet = document.createElement('div');
-        sheet.className = '_today-detail-body';
-        sheet.style.cssText = 'background:var(--bg);width:100%;max-width:520px;'
-            + 'max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;'
-            + 'border-radius:22px 22px 0 0;box-shadow:0 -8px 32px rgba(0,0,0,.45);'
-            + 'transform:translateY(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);'
-            + 'padding-bottom:env(safe-area-inset-bottom, 0);position:relative;';
+        sheet.className = 'sheet';
 
-        sheet.innerHTML = _buildTodayDetailContent(runSess, strSess);
+        sheet.innerHTML =
+            '<div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>'
+          + '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\')" aria-label="Cerrar" style="position:absolute;top:10px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">\u00d7</button>'
+          + '<div class="sheet-body" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:env(safe-area-inset-bottom, 0);">'
+          +     _buildSessionSheetContent(runSess, strSess, isToday)
+          + '</div>';
 
         backdrop.appendChild(sheet);
         document.body.appendChild(backdrop);
+        openSheet(_MR_SESSION_SHEET_ID);
 
-        backdrop.addEventListener('click', function(e) {
-            if (e.target === backdrop) _closeTodayDetailSheet();
-        });
-
-        var onKey = function(e) {
-            if (e.key === 'Escape') _closeTodayDetailSheet();
-        };
-        document.addEventListener('keydown', onKey);
-        backdrop._onKey = onKey;
-
-        requestAnimationFrame(function() {
-            backdrop.style.opacity = '1';
-            sheet.style.transform = 'translateY(0)';
-        });
+        // Fetch weather async (solo HOY con running) y actualizar el placeholder.
+        if (isToday && runSess && typeof window._mrFetchTodayWeather === 'function') {
+            window._mrFetchTodayWeather().then(function(w){
+                if (!w) return;
+                var slot = document.getElementById('mr-sess-weather-slot');
+                if (!slot) return;
+                slot.innerHTML = _buildWeatherCardHtml(w);
+            }).catch(function(_){});
+        }
     }
 
-    function _closeTodayDetailSheet() {
-        var el = document.getElementById('_today-detail-sheet');
-        if (!el) return;
-        var sheet = el.querySelector('._today-detail-body');
-        if (sheet) sheet.style.transform = 'translateY(100%)';
-        el.style.opacity = '0';
-        if (el._onKey) document.removeEventListener('keydown', el._onKey);
-        setTimeout(function() { if (el.parentNode) el.remove(); }, 320);
+    function _buildWeatherCardHtml(w) {
+        if (!w) return '';
+        var icon = (typeof window._mrWeatherIcon === 'function') ? window._mrWeatherIcon(w.code) : '\u2601\ufe0f';
+        var desc = (typeof window._mrWeatherDesc === 'function') ? window._mrWeatherDesc(w.code) : 'Nublado';
+        var outfit = (typeof window._mrOutfitForTemp === 'function') ? window._mrOutfitForTemp(w.tempC, w.code, w.wind) : { outfit:'', accessories:[] };
+        var accHtml = (outfit.accessories || []).map(function(a){
+            return '<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--tm);background:var(--bsoft);border-radius:5px;padding:2px 7px;margin-right:4px;margin-top:5px;">' + a + '</span>';
+        }).join('');
+        return '<div style="margin:0 16px 12px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:12px;display:grid;grid-template-columns:auto 1px 1fr;gap:12px;align-items:center;">'
+            +    '<div style="text-align:center;min-width:64px;">'
+            +      '<div style="font-size:26px;line-height:1;margin-bottom:4px;">' + icon + '</div>'
+            +      '<div style="font-size:20px;font-weight:900;color:var(--tw);line-height:1;font-variant-numeric:tabular-nums;">' + w.tempC + '<small style="font-size:10px;font-weight:700;color:var(--tm);">\u00b0C</small></div>'
+            +      '<div style="font-size:9px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:.6px;margin-top:2px;">' + desc + '</div>'
+            +    '</div>'
+            +    '<div style="background:var(--border);align-self:stretch;"></div>'
+            +    '<div style="min-width:0;">'
+            +      '<div style="font-size:9px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px;">Ropa recomendada</div>'
+            +      '<div style="font-size:11.5px;color:var(--tw);line-height:1.35;font-weight:600;">' + outfit.outfit + '</div>'
+            +      (accHtml ? '<div>' + accHtml + '</div>' : '')
+            +    '</div>'
+            + '</div>';
     }
 
-    function _buildTodayDetailContent(runSess, strSess) {
+    function _buildSessionSheetContent(runSess, strSess, isToday) {
         var _TYPE_GRAD = {
             easy:     'linear-gradient(135deg, #22c55e 0%, #15803d 100%)',
             recovery: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)',
@@ -40446,28 +40560,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             series:   '<svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M13 2L4 13h6l-2 9 10-12h-7l2-8z"/></svg>',
             long:     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20l6-10 4 6 4-8 6 12z"/><circle cx="17" cy="6" r="1.5" fill="#fff"/></svg>',
             race:     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="15" r="6"/><path d="M8.5 9L6 3h12l-2.5 6"/></svg>',
-            strength: '<svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>',
+            strength: '<svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>',
             test:     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6M12 7V5"/></svg>'
         };
-        var _MOTIV = {
-            easy: ['¡A disfrutar del rodaje!','Ritmo cómodo, mente despejada.','Hoy recarga el motor.'],
-            recovery: ['El descanso activo es parte del entrenamiento.','Suave y regenerador.','Escucha a tu cuerpo hoy.'],
-            series: ['¡Hoy se trabaja duro!','Las series te hacen más rápido.','Esfuerzo máximo en cada repetición.'],
-            long: ['El long run construye la base.','Paciencia y consistencia.','Hoy se hace grande la base aeróbica.'],
-            race: ['¡Día de carrera!','Todo el trabajo ha sido para hoy.','¡A por ello!'],
-            strength: ['¡A trabajar la base muscular!','Fuerza que sostiene tus km.','Cuerpo fuerte, runner imparable.']
-        };
 
-        var _todayD = new Date();
-        var _dowD = _todayD.toLocaleDateString('es-ES', {weekday: 'long'});
-        var _dowDCap = _dowD.charAt(0).toUpperCase() + _dowD.slice(1);
-        var _monD = _todayD.toLocaleDateString('es-ES', {month: 'short'});
-        var _dayN = _todayD.getDate();
-        var _dateLbl = _dowDCap + ' ' + _dayN + ' ' + _monD;
+        // Fecha del sess (para chip y decidir el label). Si HOY, usa "Hoy"; si futuro, día+fecha.
+        var _sessRef = runSess || strSess;
+        var _dateStr = (_sessRef && _sessRef.dateStr) ? _sessRef.dateStr : null;
+        var _sessDate = _dateStr ? new Date(_dateStr + 'T12:00:00') : new Date();
+        var _dow = _sessDate.toLocaleDateString('es-ES', {weekday: 'long'});
+        var _dowCap = _dow.charAt(0).toUpperCase() + _dow.slice(1);
+        var _mon = _sessDate.toLocaleDateString('es-ES', {month: 'short'});
+        var _dayN = _sessDate.getDate();
+        var _dateLbl = _dowCap + ' ' + _dayN + ' ' + _mon;
+        var _chipLbl = isToday ? ('Hoy \u00b7 ' + _dateLbl) : _dateLbl;
+        var _chipCol = isToday ? '#4ade80' : '#b8bcc2';
+        var _chipBg  = isToday ? 'rgba(74,222,128,.18)' : 'rgba(184,188,194,.15)';
 
         var _corosConnected = !!(window.__mrCoros && window.__mrCoros.connected);
 
-        function _buildSessionSection(sess, isFirst) {
+        // Section builder de una sesión (run o strength).
+        function _sec(sess, isFirst) {
             if (!sess) return '';
             var isStr = sess.isStrength || sess.type === 'strength';
             var t = sess.type;
@@ -40477,8 +40590,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var typeLbl = (typeof getTypeLabel === 'function') ? getTypeLabel(t) : (t.charAt(0).toUpperCase()+t.slice(1));
             var distLbl = isStr ? '30 min' : (sess.dist || 0) + ' km';
             var equipLbl = isStr && sess.strengthEquip ? (sess.strengthEquip === 'gym' ? 'Gimnasio' : 'Casa') : '';
-            var motives = _MOTIV[t] || ['¡Vamos!'];
-            var motiv = motives[_todayD.getDay() % motives.length];
 
             var durTxt = '';
             if (sess.durStr) durTxt = sess.durStr;
@@ -40487,50 +40598,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 durTxt = totalMin < 60 ? totalMin + ' min' : Math.floor(totalMin/60) + 'h ' + (totalMin % 60) + 'min';
             } else if (isStr) durTxt = '30 min';
 
-            var paceLbl = sess.paceRange || '';
-            var fcLbl = sess.fc ? sess.fc + ' bpm' : '';
-
-            var divStyle = isFirst ? '' : 'border-top:1px solid var(--border);margin-top:20px;padding-top:20px;';
+            var divStyle = isFirst ? '' : 'border-top:1px solid var(--border);margin-top:16px;padding-top:16px;';
             var html = '<div style="' + divStyle + '">';
 
-            html += '<div style="display:flex;align-items:center;gap:14px;">';
-            html += '<div style="width:56px;height:56px;border-radius:50%;background:' + grad + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,.35);">' + icon + '</div>';
+            // Type-head: icon 52 + label + km/dur + MINI-STRUCT a la derecha (D3=A)
+            html += '<div style="display:flex;align-items:center;gap:14px;padding:0 20px 12px;">';
+            html += '<div style="width:52px;height:52px;border-radius:14px;background:' + grad + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 14px rgba(0,0,0,.30);">' + icon + '</div>';
             html += '<div style="flex:1;min-width:0;">';
-            html += '<div style="font-size:22px;font-weight:900;color:' + tCol + ';line-height:1;letter-spacing:-.5px;">' + typeLbl + '</div>';
+            html += '<div style="font-size:20px;font-weight:900;color:' + tCol + ';line-height:1;letter-spacing:-.5px;">' + typeLbl + '</div>';
             html += '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;">';
-            html += '<span style="font-size:12px;font-weight:700;color:var(--tw);background:rgba(255,255,255,.10);border-radius:999px;padding:3px 12px;">' + distLbl + '</span>';
-            if (durTxt) html += '<span style="font-size:11px;font-weight:600;color:var(--ts);">' + durTxt + '</span>';
-            if (equipLbl) html += '<span style="font-size:11px;color:var(--tm);">· ' + equipLbl + '</span>';
+            html += '<span style="background:' + grad + ';color:#fff;border-radius:7px;padding:3px 11px;font-size:12px;font-weight:900;display:inline-flex;align-items:baseline;gap:4px;box-shadow:0 2px 6px rgba(0,0,0,.20);"><span style="font-variant-numeric:tabular-nums;">' + (isStr ? '30' : (sess.dist || 0)) + '</span><span style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">' + (isStr ? 'MIN' : 'KM') + '</span></span>';
+            if (durTxt && !isStr) html += '<span style="font-size:12px;font-weight:700;color:var(--ts);font-variant-numeric:tabular-nums;">' + durTxt + '</span>';
+            if (equipLbl) html += '<span style="font-size:11px;color:var(--tm);">\u00b7 ' + equipLbl + '</span>';
             html += '</div>';
             html += '</div>';
-            // [v2.11.0] Mini-estructura de la sesión en el hueco de la cabecera,
-            // mismo esquema que la pestaña Plan pero al doble de tamaño.
+            // Mini-struct al lado (D3=A). Contenedor flex-shrink:0 para que quede alineado.
+            html += '<div style="flex-shrink:0;">';
             html += (window._mrMiniStruct ? window._mrMiniStruct(sess, isStr, {scale:2}) : '');
             html += '</div>';
+            html += '</div>';
 
-            html += '<div style="font-size:12px;color:var(--ts);font-style:italic;margin-top:12px;line-height:1.4;">' + motiv + '</div>';
-
-            if (!isStr && (paceLbl || fcLbl)) {
-                var colN = (paceLbl && fcLbl) ? 2 : 1;
-                html += '<div style="display:grid;grid-template-columns:repeat(' + colN + ',1fr);gap:8px;margin-top:14px;">';
-                if (paceLbl) {
-                    html += '<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;">';
-                    html += '<div style="font-size:9px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;">Ritmo</div>';
-                    html += '<div style="font-size:14px;font-weight:800;color:var(--tw);margin-top:2px;font-variant-numeric:tabular-nums;">' + paceLbl + '</div>';
-                    html += '</div>';
-                }
-                if (fcLbl) {
-                    html += '<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;">';
-                    html += '<div style="font-size:9px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;">FC objetivo</div>';
-                    html += '<div style="font-size:14px;font-weight:800;color:var(--tw);margin-top:2px;font-variant-numeric:tabular-nums;">' + fcLbl + '</div>';
-                    html += '</div>';
-                }
-                html += '</div>';
+            // ── WEATHER + OUTFIT (solo isToday) ──
+            // Placeholder que se rellena async con _mrFetchTodayWeather.
+            if (isFirst && isToday && !isStr) {
+                html += '<div id="mr-sess-weather-slot"></div>';
             }
 
+            // ── BLOQUES DEL ENTRENAMIENTO (running) ──
             if (!isStr && sess.blocks && sess.blocks.length > 0) {
-                html += '<div style="font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;margin-top:20px;margin-bottom:8px;">Bloques del entrenamiento</div>';
-                html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+                html += '<div style="padding:0 16px 14px;">';
+                html += '<div style="font-size:9px;font-weight:900;color:var(--tm);text-transform:uppercase;letter-spacing:1px;margin:4px 4px 8px;">Bloques del entrenamiento</div>';
                 sess.blocks.forEach(function(b) {
                     var bKm = b.km || 0;
                     var bKmStr = Number.isInteger(bKm) ? String(bKm) : bKm.toFixed(1);
@@ -40539,16 +40636,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var bDur = b.durStr || '';
                     var bDetail = b.detail || '';
 
-                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:8px;padding:9px 12px;">';
-                    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">';
-                    html += '<div style="font-size:11.5px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:.4px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + bLabel + '</div>';
-                    html += '<div style="font-size:11.5px;font-weight:700;color:' + bColor + ';flex-shrink:0;font-variant-numeric:tabular-nums;">' + bKmStr + ' km</div>';
+                    html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px 10px 14px;margin-bottom:5px;position:relative;overflow:hidden;">';
+                    html += '<div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:' + bColor + ';border-radius:0 2px 2px 0;"></div>';
+                    html += '<div style="display:flex;align-items:center;gap:8px;">';
+                    html += '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:var(--tw);letter-spacing:-.15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</div>';
+                    if (bKm) html += '<div style="font-size:12px;font-weight:900;color:' + bColor + ';font-variant-numeric:tabular-nums;letter-spacing:-.2px;flex-shrink:0;">' + bKmStr + ' km</div>';
                     html += '</div>';
                     if (bDur || bDetail) {
-                        html += '<div style="font-size:10px;color:var(--ts);margin-top:3px;line-height:1.4;">';
-                        if (bDur) html += bDur;
-                        if (bDur && bDetail) html += ' · ';
-                        if (bDetail) html += bDetail;
+                        html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:var(--ts);font-variant-numeric:tabular-nums;line-height:1.4;">';
+                        if (bDur) html += '<span style="font-weight:700;color:var(--tw);">' + bDur + '</span>';
+                        if (bDur && bDetail) html += '<span style="color:var(--tm);">\u00b7</span>';
+                        if (bDetail) html += '<span>' + bDetail + '</span>';
                         html += '</div>';
                     }
                     html += '</div>';
@@ -40556,24 +40654,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 html += '</div>';
             }
 
-            // [v2.5.0-p5] Modal HOME: si strength con blocks, renderizamos los bloques
-            // con label + detailHtml (mismos GIFs y botones que en el plan expandido).
+            // ── STRENGTH BLOQUES COMPACTOS + BOTÓN "Ver ejercicios" (D2=B) ──
             if (isStr && sess.blocks && sess.blocks.length > 0) {
-                html += '<div style="font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;margin-top:20px;margin-bottom:8px;">Bloques del entrenamiento</div>';
-                html += '<div style="display:flex;flex-direction:column;gap:5px;">';
+                var _strUid = 'strex-' + (isFirst ? 'a' : 'b') + '-' + Date.now();
+                html += '<div style="padding:0 16px 6px;">';
+                html += '<div style="font-size:9px;font-weight:900;color:var(--tm);text-transform:uppercase;letter-spacing:1px;margin:4px 4px 8px;">Bloques</div>';
+                sess.blocks.forEach(function(b) {
+                    var bColor = b.color || '#94a3b8';
+                    var bLabel = b.label || 'Bloque';
+                    var bDur = b.durStr || '';
+                    var bTag = (b.tag || bLabel.charAt(0)).toUpperCase().slice(0,1);
+                    html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px 8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;position:relative;overflow:hidden;">';
+                    html += '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + bColor + ';"></div>';
+                    html += '<span style="font-size:8px;font-weight:900;background:' + bColor + '26;color:' + bColor + ';padding:2px 6px;border-radius:4px;letter-spacing:.5px;flex-shrink:0;">' + bTag + '</span>';
+                    html += '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</span>';
+                    if (bDur) html += '<span style="font-size:10.5px;color:var(--tm);font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;">' + bDur + '</span>';
+                    html += '</div>';
+                });
+                // Botón "Ver ejercicios" — expande sección con detailHtml (GIFs + play).
+                html += '<button onclick="var d=document.getElementById(\'' + _strUid + '\');var b=this;if(d.style.display===\'none\'){d.style.display=\'block\';b.querySelector(\'.txt\').textContent=\'Ocultar ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(180deg)\';}else{d.style.display=\'none\';b.querySelector(\'.txt\').textContent=\'Ver ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(0)\';}" style="width:100%;margin-top:6px;padding:10px;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--tw);font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><span class="txt">Ver ejercicios</span><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg></button>';
+                html += '<div id="' + _strUid + '" style="display:none;margin-top:10px;display:none;">';
                 sess.blocks.forEach(function(b) {
                     var bColor = b.color || '#94a3b8';
                     var bLabel = b.label || 'Bloque';
                     var bDetailHtml = b.detailHtml || b.detail || '';
-                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:8px;padding:8px 11px;">';
+                    html += '<div style="background:' + bColor + '14;border-left:3px solid ' + bColor + ';border-radius:0 8px 8px 0;padding:8px 11px;margin-bottom:6px;">';
                     html += '<div style="font-size:11.5px;font-weight:800;color:var(--tw);letter-spacing:-.1px;">' + bLabel + '</div>';
                     html += bDetailHtml;
                     html += '</div>';
                 });
                 html += '</div>';
-            } else if (sess.desc) {
-                // Fallback: no strength, o strength sin blocks → desc plana
-                html += '<div style="font-size:11px;color:var(--ts);line-height:1.5;margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:10px;border:1px solid var(--border);">' + sess.desc + '</div>';
+                html += '</div>';
+            } else if (!isStr && (!sess.blocks || sess.blocks.length === 0) && sess.desc) {
+                // Fallback running sin blocks: desc
+                html += '<div style="padding:0 16px 12px;">';
+                html += '<div style="font-size:11px;color:var(--ts);line-height:1.5;padding:10px 12px;background:var(--card2);border-radius:10px;border:1px solid var(--border);">' + sess.desc + '</div>';
+                html += '</div>';
             }
 
             html += '</div>';
@@ -40581,29 +40697,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         var content = '';
-        content += '<div style="padding:12px 0 0;display:flex;justify-content:center;position:sticky;top:0;background:var(--bg);z-index:2;">';
-        content +=   '<div style="width:44px;height:5px;border-radius:999px;background:rgba(255,255,255,.18);"></div>';
+        // Chip fecha / HOY
+        content += '<div style="padding:4px 20px 12px;">';
+        content +=   '<div style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:900;letter-spacing:1px;color:' + _chipCol + ';background:' + _chipBg + ';border-radius:6px;padding:4px 10px;text-transform:uppercase;">';
+        if (isToday) content += '<span style="width:5px;height:5px;border-radius:50%;background:' + _chipCol + ';box-shadow:0 0 6px ' + _chipCol + ';"></span>';
+        content += _chipLbl;
         content += '</div>';
-        content += '<button onclick="window._closeTodayDetailSheet()" aria-label="Cerrar" style="position:absolute;top:12px;right:14px;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.10);border:none;color:var(--tw);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">×</button>';
-
-        content += '<div style="padding:14px 20px 6px;">';
-        content +=   '<div style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.8px;color:#4ade80;background:rgba(74,222,128,.18);border-radius:6px;padding:4px 10px;text-transform:uppercase;">Hoy · ' + _dateLbl + '</div>';
-        content += '</div>';
-
-        content += '<div style="padding:8px 20px 16px;">';
-        content += _buildSessionSection(runSess, true);
-        content += _buildSessionSection(strSess, !runSess);
         content += '</div>';
 
-        content += '<div style="padding:8px 16px 16px;display:flex;flex-direction:column;gap:8px;">';
-        if (runSess && _corosConnected) {
-            content += '<button onclick="window._closeTodayDetailSheet();setTimeout(function(){window.openCorosConnectFlow&&window.openCorosConnectFlow();},350);" style="width:100%;padding:13px;background:linear-gradient(135deg, var(--coros) 0%, var(--coros-deep) 100%);border:none;border-radius:12px;color:#fff;font-family:var(--f);font-size:14px;font-weight:800;letter-spacing:.2px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px var(--coros-glow);">';
+        content += _sec(runSess, true);
+        content += _sec(strSess, !runSess);
+
+        // Actions
+        content += '<div style="padding:6px 16px 12px;display:flex;flex-direction:column;gap:8px;">';
+        if (isToday && runSess && _corosConnected) {
+            content += '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\');setTimeout(function(){window.openCorosConnectFlow&&window.openCorosConnectFlow();},350);" style="width:100%;padding:13px;background:linear-gradient(135deg, var(--coros) 0%, var(--coros-deep) 100%);border:none;border-radius:12px;color:#fff;font-family:var(--f);font-size:14px;font-weight:800;letter-spacing:.2px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px var(--coros-glow);">';
             content +=   '<svg width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><g transform="translate(0,256) scale(0.1,-0.1)"><path d="M1050 2026 l-315 -193 -3 -376 -2 -376 45 -27 c25 -14 47 -25 49 -23 2 2 18 128 35 279 17 151 33 289 36 306 5 28 27 44 258 184 138 85 259 158 268 163 12 8 82 -20 281 -111 145 -67 268 -122 274 -122 5 0 7 26 4 60 l-5 59 -303 186 c-167 102 -304 185 -305 185 -1 -1 -144 -88 -317 -194z"/><path d="M1407 1839 l-48 -29 236 -188 235 -187 0 -331 0 -331 -235 -184 c-129 -101 -235 -187 -235 -190 0 -3 22 -18 48 -32 l48 -26 307 187 307 187 0 390 -1 390 -271 165 c-149 91 -288 175 -308 187 l-36 22 -47 -30z"/><path d="M538 1606 l-48 -31 0 -375 0 -375 312 -190 c171 -104 316 -191 323 -193 6 -1 146 80 311 180 l299 183 3 58 c3 54 2 58 -16 53 -11 -4 -133 -58 -272 -120 l-252 -114 -182 110 c-99 61 -215 131 -256 156 -41 25 -81 50 -88 57 -8 7 -24 118 -46 319 -18 169 -35 308 -37 310 -2 2 -25 -11 -51 -28z"/></g></svg>';
             content +=   '<span>Enviar al reloj</span>';
             content += '</button>';
         }
-        content += '<button onclick="window._closeTodayDetailSheet();setTimeout(function(){var _t=document.querySelector(\'[data-target=&quot;cal&quot;]\');if(_t)_t.click();},350);" style="width:100%;padding:13px;background:var(--card2);border:1px solid var(--border);border-radius:12px;color:var(--tw);font-family:var(--f);font-size:13px;font-weight:700;letter-spacing:.1px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">';
-        content +=   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+        // Ver en el plan (sin icono calendar por feedback Álvaro).
+        content += '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\');setTimeout(function(){' + (isToday ? '' : (_dateStr ? 'try{window.__mrPlanTargetDate=\'' + _dateStr + '\';}catch(_){}' : '')) + 'var _t=document.querySelector(\'[data-target=&quot;cal&quot;]\');if(_t)_t.click();},350);" style="width:100%;padding:13px;background:var(--card2);border:1px solid var(--border);border-radius:12px;color:var(--tw);font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;">';
         content +=   '<span>Ver en el plan</span>';
         content += '</button>';
         content += '</div>';
@@ -40611,8 +40725,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return content;
     }
 
+    // Wrapper compat: _openTodayDetailSheet mantiene la firma antigua y llama al nuevo con isToday=true.
+    function _openTodayDetailSheet(runSess, strSess) {
+        _openSessionSheet(runSess, strSess, true);
+    }
+    function _closeTodayDetailSheet() {
+        try { closeSheet(_MR_SESSION_SHEET_ID); } catch(_){}
+    }
+
     window._openTodayDetailSheet = _openTodayDetailSheet;
     window._closeTodayDetailSheet = _closeTodayDetailSheet;
+    window._openSessionSheet = _openSessionSheet;
+
 
     // ── PLAN SHARE MENU (p13 · bottom-sheet unificado: image + ics) ──
     function _openPlanShareMenu() {
@@ -43493,24 +43617,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 function _dayAction(idx){
                     const _r = _rollDays[idx];
                     if (!_r.sessions.length) return;                 // descanso: sin acción
+                    // [Push D] Wire para HOY y FUTUROS → abrir sheet.
+                    //   HOY: usa todayRunSess/todayStrSess (misma referencia que el hero).
+                    //   Futuros: reconstruye run/str desde _r.sessions.
+                    //   Pasados: sin acción (Álvaro: "pasados NO").
                     if (_r.state === 'today') {
-                        if (typeof window._openTodayDetailSheet === 'function') window._openTodayDetailSheet(todayRunSess, todayStrSess);
-                    } else {
-                        if (_r.wkIdx >= 0) window.__mrPlanTargetWeek = _r.wkIdx;
-                        const _pb = document.querySelector('#nav .nb[data-target="cal"]'); if (_pb) _pb.click();
+                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(todayRunSess, todayStrSess, true);
+                    } else if (_r.state !== 'past') {
+                        const _run = _r.sessions.find(s => !(s.isStrength || s.type === 'strength')) || null;
+                        const _str = _r.sessions.find(s => (s.isStrength || s.type === 'strength')) || null;
+                        if (typeof window._openSessionSheet === 'function') window._openSessionSheet(_run, _str, false);
                     }
+                    // Estado 'past' → sin sheet, sin navegación (silencioso).
                 }
                 function _renderCard(){
                     const _r = _rollDays[_sel];
                     const _isRest = _r.sessions.length === 0;
                     const _stateCls = _isRest ? 'rest' : _r.state;
-                    let _tag, _hint;
-                    if (_r.state === 'today') { _tag = 'HOY'; _hint = _isRest ? '' : 'toca → detalle'; }
-                    else if (_r.state === 'past') { _tag = 'Pasado'; _hint = _isRest ? '' : 'toca → ver'; }
-                    // v2.30.0-p2 · Días futuros: sin hint (era "toca → Plan" y quedaba
-                    // redundante · el press del daycard ya deja claro que es clicable)
-                    else { _tag = (_r.off === 1 ? 'Mañana' : (_r.dow+' '+_r.num)); _hint = ''; }
-                    const _when = _r.dow+' '+_r.num+' '+_r.mon;
+                    // [Push D · sin hint, con ⓘ]
+                    //   Álvaro: "Vamos a quitar todo lo que sale en el entreno de hoy
+                    //   en el widget de plan activo de toca detalle y la flecha y tal"
+                    //   → hint eliminado en TODOS los estados (today/past/future).
+                    //   → ⓘ (info dot) en esquina superior derecha solo para estados
+                    //     que abren sheet (today + future). Past sin ⓘ (no acción).
+                    const _canOpenSheet = !_isRest && (_r.state === 'today' || _r.state === 'up');
+                    const _infoBadgeHtml = _canOpenSheet
+                        ? '<div style="position:absolute;top:9px;right:12px;width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.20);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:var(--tm);pointer-events:none;font-family:Georgia,serif;font-style:italic;letter-spacing:0;">i</div>'
+                        : '';
                     let _inner;
                     if (_isRest) {
                         _inner = '<div class="mr-pc-rest"><div class="mr-pc-rest-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="18" height="10" rx="3"/><line x1="22" y1="10" x2="22" y2="14"/><polyline points="7 12 9 14 12 10"/></svg></div><div><div class="mr-pc-rest-title">Día de descanso</div><div class="mr-pc-rest-sub">El descanso es parte del entrenamiento</div></div></div>';
@@ -43520,9 +43653,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         _inner = (_run ? _buildSessionRowHtml(_run, {divider:false}) : '') + (_str ? _buildSessionRowHtml(_str, {divider:!!_run}) : '');
                     }
                     _cardHost.innerHTML =
-                        '<div class="mr-pc-daycard '+_stateCls+(_isRest?'':' mr-pc-daycard-press')+'" role="'+(_isRest?'group':'button')+'">'
+                        '<div class="mr-pc-daycard '+_stateCls+(_isRest?'':' mr-pc-daycard-press')+'" role="'+(_isRest?'group':'button')+'" style="position:relative;">'
+                      +   _infoBadgeHtml
                       +   _inner
-                      +   (_hint ? '<div class="mr-pc-dc-hint">'+_hint+'</div>' : '')
                       + '</div>';
                     const _dc = _cardHost.querySelector('.mr-pc-daycard-press');
                     if (_dc) {
