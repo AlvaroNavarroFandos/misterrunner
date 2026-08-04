@@ -40258,7 +40258,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // [v5.3] Solo "VO2 MAX" como label (quitado "Capacidad aeróbica")
                         '<div style="display:flex;align-items:center;gap:7px;"><div style="font-size:11px;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">VO2 MAX</div>' + corosChip + '</div>' +
                         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:3px;flex-wrap:wrap;">' +
-                            '<span style="font-size:26px;font-weight:900;color:var(--tw);line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
+                            '<span style="font-size:26px;font-weight:900;color:' + cat.color + ';line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
                             '<span style="font-size:10px;color:var(--tm);">ml/kg/min</span>' +
                             '<span style="font-size:11px;color:' + cat.color + ';font-weight:800;margin-left:2px;">' + cat.label + '</span>' +
                         '</div>' +
@@ -42069,10 +42069,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (wkStart) {
                         const totalSessWk = wk.sessions.length;
                         const doneSessWk  = wk.sessions.filter(s => {
+                            // [FIX banner constancia · match exacto por dateStr]
                             return activities.some(a => {
-                                if (!a.dateStr) return false;
-                                return Math.abs(new Date(a.dateStr+'T12:00:00')-new Date(s.dateStr+'T12:00:00'))<=86400000
-                                    && a.type === s.type;
+                                return a.dateStr === s.dateStr && a.type === s.type;
                             });
                         }).length;
                         const remainingSess = totalSessWk - doneSessWk;
@@ -43101,10 +43100,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const totalSess   = activePlan.weeks.reduce((a,wk)=>a+wk.sessions.length, 0);
             const doneSess    = activePlan.weeks.reduce((a,wk)=>
                 a+wk.sessions.filter(s=>{
+                    // [FIX progress bar plan · match exacto por dateStr]
+                    // Antes tolerancia ±1 día inflaba el conteo.
                     const matched = activities.some(act=>{
-                        if(!act.dateStr) return false;
-                        return Math.abs(new Date(act.dateStr+'T12:00:00')-new Date(s.dateStr+'T12:00:00'))<=86400000
-                            && act.type===s.type;
+                        return act.dateStr === s.dateStr && act.type === s.type;
                     });
                     return matched;
                 }).length, 0);
@@ -43137,15 +43136,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             function _buildSessionRowHtml(sess, opts) {
                 opts = opts || {};
                 const _isStr   = sess.isStrength || sess.type==='strength';
-                // [FIX carrusel HOME · _matched por sess.dateStr]
-                // Antes usaba todayStr → cualquier sesión del mismo tipo
-                // (mañana/pasado/ayer) salía marcada ✓ si HOY había una actividad
-                // de ese tipo hecha. Ahora compara contra sess.dateStr, coherente
-                // con la lógica de doneSess (~L43061).
+                // [FIX carrusel HOME · _matched EXACTO por sess.dateStr]
+                // Antes usaba tolerancia ±1 día (Math.abs<=86400000) → una
+                // activity de hoy marcaba como completadas las sesiones de
+                // ayer y mañana del mismo tipo (delta=86400000, borde ≤).
+                // Ahora comparación exacta de dateStr + type.
                 const _matched = sess.dateStr ? activities.some(a=>{
-                    if(!a.dateStr) return false;
-                    return Math.abs(new Date(a.dateStr+'T12:00:00')-new Date(sess.dateStr+'T12:00:00'))<=86400000
-                        && a.type===sess.type;
+                    return a.dateStr === sess.dateStr && a.type === sess.type;
                 }) : false;
                 const _tColor  = TYPE_COLOR_HOME[sess.type]||'#fff';
                 const _motives = MOTIVATIONAL[sess.type]||['¡Vamos!'];
