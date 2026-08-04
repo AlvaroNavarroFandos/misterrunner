@@ -14056,6 +14056,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // cache ya esté fresca y el widget pinte al instante en vez
         // de esperar 500-2000ms extra.
         try { if (typeof window._mrReadinessPrefetch === 'function') window._mrReadinessPrefetch(); } catch(_){}
+        // [v2.28.0-p2] Adelantar whoami — el setTimeout 2500ms del auto-polling
+        // (setupAutoWhoami) hacía que __mrCoros.ready=false durante el primer
+        // paint de renderHome, y el widget quedaba oculto por el gating. Aquí
+        // lo disparamos inmediato desde bootApp para acortar esa ventana a
+        // ~500-1500ms (solo la latencia del fetch /whoami). Guard idempotente
+        // evita doble fire si el SIGNED_IN listener también lo dispara.
+        try {
+            if (typeof window.mrCorosWhoami === 'function' && !window.__mrCorosBootWhoamiFired) {
+                window.__mrCorosBootWhoamiFired = true;
+                window.mrCorosWhoami().catch(function(_){});
+            }
+        } catch(_){}
         const loaded = loadAppState();
         loadStrengthPlanOnBoot();
         loadRehabPlanOnBoot();
@@ -44579,12 +44591,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     return;
                 }
                 // Readiness ready: no requerido (COROS no conectado) o pintado
+                var corosReady = !!(window.__mrCoros && window.__mrCoros.ready);
                 var corosOn = !!(window.__mrCoros && window.__mrCoros.connected);
                 var rdn = document.getElementById('mr-readiness-card');
-                // v2.28.0-p1 · Vía B · Con skeleton ahora la card tiene children
-                // desde el instante 0. El splash debe esperar al dato real
-                // (clase .skel ausente) para no cerrar antes de tiempo.
-                var rdnReady = !corosOn || (rdn && rdn.style.display !== 'none' && rdn.children.length > 0 && !rdn.classList.contains('skel'));
+                // v2.28.0-p2 · Fix "widget aparece 2s tarde":
+                //   · Whoami no resuelto → esperar (el bypass !corosOn de antes
+                //     cerraba el splash antes de que COROS confirmara conexión)
+                //   · Whoami resuelto y NO conectado → widget no aplica → OK
+                //   · Conectado o pending → esperar dato real (.skel ausente)
+                var rdnHasRealData = rdn && rdn.style.display !== 'none' && rdn.children.length > 0 && !rdn.classList.contains('skel');
+                var rdnReady = (corosReady && !corosOn) || rdnHasRealData;
                 // Carrusel ready: no existe (no hay plan) o poblado
                 var pcRoll = document.getElementById('mr-pc-roll');
                 var pcReady = !pcRoll || pcRoll.children.length > 0;
@@ -54108,12 +54124,17 @@ window.addEventListener('DOMContentLoaded', function() {
             window.mrCorosOnChange(function(state){
                 var isReady = !!(state && state.ready);
                 var now = !!(state && state.connected);
-                // Primera resolución del whoami tras arranque: solo actualiza
-                // el snapshot, NO bust ni re-render. El fetch en bg del propio
-                // _mrRenderReadiness ya trae dato fresco sin salto visual.
+                // v2.28.0-p2 · Con Vía B (skeleton visible pre-whoami), la
+                // primera resolución del whoami YA no causa salto visual —
+                // el skeleton hace de bridge entre "estado incierto" y el
+                // dato real. Re-renderizamos para:
+                //   · Consumir cache del prefetch (Vía A) si llegó durante boot
+                //   · Ocultar la card si whoami confirma !connected
+                //   · Actualizar gating si connected pasó a true
                 if (!window.__mrRdnLastReady && isReady) {
                     window.__mrRdnLastReady = true;
                     window.__mrRdnLastConn = now;
+                    try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
                     return;
                 }
                 if (now === window.__mrRdnLastConn) return;
@@ -54138,9 +54159,12 @@ window.addEventListener('DOMContentLoaded', function() {
             var ready     = !!(cx && cx.ready);
             var cache = null;
             try { cache = _rdnCacheGet(); } catch (_) {}
-            // Mostrar si conectado; si whoami aún no ha resuelto pero hay caché → optimista;
-            // si ya sabemos que NO está conectado → ocultar.
-            var show = connected || (!ready && !!cache);
+            // Mostrar si conectado; pre-whoami (ready=false) → optimista, mostrar
+            // skeleton por defecto (v2.28.0-p2 · Vía B se apoya en esto para
+            // pintar placeholder desde el instante 0, aunque no haya cache aún).
+            // Solo ocultar si YA sabemos con certeza que NO está conectado
+            // (ready=true && connected=false).
+            var show = connected || !ready;
             if (!show) { card.style.display = 'none'; card.innerHTML = ''; return; }
             card.style.display = '';
 
