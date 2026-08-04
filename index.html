@@ -3629,6 +3629,25 @@
         pointer-events: none;
     }
     #mr-splash.mr-splash-hide { opacity: 0; visibility: hidden; }
+    /* v2.28.0-p1 · Título brand "MisterRunner" encima del icono.
+       V3 aprobada: bold + glow suave por color, sensación brand con halo.
+       Rojo #ef4444 (mismo del spinner) + amarillo #fbbf24 (--acc-amber). */
+    #mr-splash-title {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 30px;
+        font-weight: 900;
+        letter-spacing: -0.3px;
+        line-height: 1;
+        display: inline-flex;
+    }
+    #mr-splash-title .mr-rd {
+        color: #ef4444;
+        text-shadow: 0 0 20px rgba(239,68,68,.50), 0 2px 6px rgba(0,0,0,.40);
+    }
+    #mr-splash-title .mr-yl {
+        color: #fbbf24;
+        text-shadow: 0 0 20px rgba(251,191,36,.40), 0 2px 6px rgba(0,0,0,.40);
+    }
     #mr-splash-logo {
         width: 96px;
         height: 96px;
@@ -6194,6 +6213,7 @@
 </head>
 <body>
 <div id="mr-splash" aria-hidden="true">
+    <div id="mr-splash-title" aria-hidden="true"><span class="mr-rd">Mister</span><span class="mr-yl">Runner</span></div>
     <img id="mr-splash-logo" data-mr-logo="1" src="" alt="">
     <div id="mr-splash-txt">
         <div id="mr-splash-spin"></div>
@@ -14029,6 +14049,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
         _bootAppCalled = true;
+        // [v2.28.0-p1 · Vía A] Prefetch temprano de readiness — dispara
+        // _rdnFetch() en paralelo al pipeline síncrono/asincrónico de
+        // arranque (loadAppState → IDB → refresh Supabase) para que
+        // cuando renderHome llame a _mrRenderReadiness al final, la
+        // cache ya esté fresca y el widget pinte al instante en vez
+        // de esperar 500-2000ms extra.
+        try { if (typeof window._mrReadinessPrefetch === 'function') window._mrReadinessPrefetch(); } catch(_){}
         const loaded = loadAppState();
         loadStrengthPlanOnBoot();
         loadRehabPlanOnBoot();
@@ -44554,7 +44581,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Readiness ready: no requerido (COROS no conectado) o pintado
                 var corosOn = !!(window.__mrCoros && window.__mrCoros.connected);
                 var rdn = document.getElementById('mr-readiness-card');
-                var rdnReady = !corosOn || (rdn && rdn.style.display !== 'none' && rdn.children.length > 0);
+                // v2.28.0-p1 · Vía B · Con skeleton ahora la card tiene children
+                // desde el instante 0. El splash debe esperar al dato real
+                // (clase .skel ausente) para no cerrar antes de tiempo.
+                var rdnReady = !corosOn || (rdn && rdn.style.display !== 'none' && rdn.children.length > 0 && !rdn.classList.contains('skel'));
                 // Carrusel ready: no existe (no hay plan) o poblado
                 var pcRoll = document.getElementById('mr-pc-roll');
                 var pcReady = !pcRoll || pcRoll.children.length > 0;
@@ -53688,6 +53718,51 @@ window.addEventListener('DOMContentLoaded', function() {
         };
 
         // ═══════════════════════════════════════════════════════════════════
+        //  READINESS · PREFETCH TEMPRANO (v2.28.0-p1 · Vía A)
+        //  Dispara _rdnFetch() EN PARALELO al pipeline de arranque (bootApp:
+        //  loadAppState, IDB, refresh Supabase), ANTES de que renderHome
+        //  llame a _mrRenderReadiness al final. Así cuando el widget se
+        //  pinte, la cache ya está fresca o casi. Reduce la latencia
+        //  percibida en frío en 500-2000ms.
+        //   · Skip si hay cache fresh (<3h) → nada que hacer
+        //   · Skip si el throttle 90s (__mrRdnLastFetch) está caliente
+        //   · Fire-and-forget: nunca lanza, jamás bloquea el arranque
+        //   · Repinta la card si el nodo ya existe cuando llega la respuesta
+        //     (por si renderHome terminó antes que el fetch)
+        window._mrReadinessPrefetch = function() {
+            try {
+                var now = Date.now();
+                var cache = null; try { cache = _rdnCacheGet(); } catch(_){}
+                var fresh = cache && (now - cache.ts) < _RDN_TTL_MS;
+                if (fresh) return;
+                var last = window.__mrRdnLastFetch || 0;
+                if (last && (now - last) < 90000) return;
+                window.__mrRdnLastFetch = now;
+                _rdnFetch().then(function(resp){
+                    if (!resp) { window.__mrRdnLastFetch = 0; return; }
+                    // Si el widget ya existe en el DOM, repintar con dato
+                    // fresh (esto ocurre si el fetch se resuelve DESPUÉS
+                    // de que renderHome monte el placeholder).
+                    try {
+                        var card = document.getElementById('mr-readiness-card');
+                        if (card) {
+                            var fr = _rdnCompute(resp, Date.now());
+                            fr.fromCache = false; fr.stale = false;
+                            card.style.display = '';
+                            _paintReadiness(card, fr);
+                        }
+                    } catch(_){}
+                    // Cache readiness fresco → repaint colateral de widgets
+                    // que dependen de él (mismo patrón que _mrRenderReadiness)
+                    try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
+                    try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
+                    try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+                    try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
+                }).catch(function(_){ window.__mrRdnLastFetch = 0; });
+            } catch(_){}
+        };
+
+        // ═══════════════════════════════════════════════════════════════════
         //  READINESS (widget Home) — RENDER · réplica exacta del preview aprobado.
         //  Pinta #mr-readiness-card (placeholder insertado en renderHome tras el
         //  banner de lesión). Expone window._mrRenderReadiness(), llamado al final
@@ -54080,9 +54155,14 @@ window.addEventListener('DOMContentLoaded', function() {
                     o.stale = (Date.now() - cache.ts) >= _RDN_TTL_MS;
                     _paintReadiness(card, o);
                 } else {
-                    // Sin caché → oculto hasta que llegue el fetch
-                    card.style.display = 'none';
-                    card.innerHTML = '';
+                    // v2.28.0-p1 · Vía B · Skeleton visible mientras llega el fetch,
+                    // en vez de display:none. El usuario ve el placeholder desde
+                    // el instante 0 en arranque frío (sin caché). Cuando llegue el
+                    // fetch, _paintReadiness sustituye el skeleton "de sopetón"
+                    // con el score real. La clase .skel actúa como marker para
+                    // el poll del splash (espera a que se quite antes de ocultar).
+                    card.style.display = '';
+                    _paintSkeleton(card);
                 }
                 // [Backlog D · Stamina] Repaint stamina en paralelo (mismo cache)
                 try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
