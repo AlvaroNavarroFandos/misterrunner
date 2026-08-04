@@ -4855,6 +4855,37 @@
         }
         .mr-recalib-btn.ghost .chev { font-size: 10px; margin-left: 2px; }
         body.dark-mode .mr-recalib-btn.ghost { color: var(--pc-a-bright); }
+        /* v2.28.0-p4 · Botón "Detalles" destacado (verde sólido con pulse suave). */
+        .mr-recalib-btn.cta-attn {
+            flex: 0 0 auto;
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            color: #fff;
+            padding: 10px 14px;
+            font-weight: 800;
+            letter-spacing: .3px;
+            box-shadow: 0 3px 10px rgba(22,163,74,.30);
+            position: relative;
+            overflow: hidden;
+        }
+        .mr-recalib-btn.cta-attn .chev { font-size: 10px; margin-left: 4px; opacity: .9; }
+        body.dark-mode .mr-recalib-btn.cta-attn {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            box-shadow: 0 3px 12px rgba(34,197,94,.35);
+        }
+        .mr-recalib-btn.cta-attn::after {
+            content: '';
+            position: absolute; inset: 0;
+            border-radius: inherit;
+            box-shadow: 0 0 0 0 rgba(22,163,74,.55);
+            animation: mrRecalibAttnPulse 2.2s ease-out infinite;
+            pointer-events: none;
+        }
+        body.dark-mode .mr-recalib-btn.cta-attn::after { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
+        @keyframes mrRecalibAttnPulse {
+            0%   { box-shadow: 0 0 0 0    rgba(22,163,74,.55); }
+            70%  { box-shadow: 0 0 0 10px rgba(22,163,74,0); }
+            100% { box-shadow: 0 0 0 0    rgba(22,163,74,0); }
+        }
         /* ═══ fin card Recalibración COROS Fase 5 Push 5c ═════════════ */
 
         /* ─── FASE 5 Push 5c-bis · Simulador debug ─────────────────── */
@@ -16089,6 +16120,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         el.classList.remove('hidden');
         el.style.opacity = '1';
         el.style.pointerEvents = 'auto';
+        // v2.28.0-p4 · Fix: el splash con polling (bootApp) NO aplica cuando
+        // no hay sesión iniciada. Al entrar al login hay que ocultarlo
+        // inmediatamente, si no queda superpuesto (z-index 999998) tapando
+        // el formulario hasta que el timeout 10s lo mate.
+        try {
+            if (typeof window._mrHideSplash === 'function') {
+                window._mrHideSplash('login');
+            }
+        } catch(_){}
     }
 
 
@@ -31942,7 +31982,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +     '<div class="mr-recalib-ctas">'
                 +       '<button class="mr-recalib-btn primary" onclick="if(window._corosRecalibApply)window._corosRecalibApply()">Aplicar</button>'
                 +       '<button class="mr-recalib-btn secondary" onclick="if(window._corosRecalibDismiss)window._corosRecalibDismiss()">Descartar</button>'
-                +       '<button class="mr-recalib-btn ghost" onclick="if(window._corosRecalibDetails)window._corosRecalibDetails()">Detalles<span class="chev">&#9656;</span></button>'
+                +       '<button class="mr-recalib-btn cta-attn" onclick="if(window._corosRecalibDetails)window._corosRecalibDetails()">Detalles<span class="chev">&#9656;</span></button>'
                 +     '</div>'
                 +   '</div>'
                 + '</div>';
@@ -32210,33 +32250,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var plan = (typeof activePlan !== 'undefined') ? activePlan : window.activePlan;
         var planDist = (plan && plan.planDist) ? plan.planDist : 'marathon';
         var bridgeOn = !!rec.hasBridge;
-        var badgeCls = bridgeOn ? '' : ' off';
-        var badgeTxt = bridgeOn ? 'Puente activo' : 'Sin puente';
-        var lblTxt = bridgeOn ? 'Peso actual del objetivo' : 'Ritmos directos al objetivo';
-        var descHtml = bridgeOn
-            ? 'Los ritmos de hoy se calculan combinando tu <b>marca actual</b> con el <b>objetivo final</b>, dando peso creciente al objetivo conforme se acerca la carrera.'
-            : 'Sin objetivo definido o predictor COROS ya en el objetivo. Los ritmos derivan directamente de la marca actual.';
         var pacesTitle = rec.firstTime ? 'Ritmos iniciales' : 'Ritmos de entrenamiento (nuevos)';
 
         var h = '';
-        // Sección 1 · Puente
-        h += '<div class="mr-rec-det-sec">';
-        h +=   '<div class="mr-rec-det-sec-title">Puente hacia el objetivo</div>';
-        h +=   '<div class="mr-rec-det-block">';
-        h +=     '<div class="mr-rec-det-bridge-hdr">';
-        h +=       '<span class="mr-rec-det-bridge-lbl">' + lblTxt + '</span>';
-        h +=       '<span class="mr-rec-det-bridge-badge' + badgeCls + '">' + badgeTxt + '</span>';
-        h +=     '</div>';
-        h +=     '<div class="mr-rec-det-bridge-svg-wrap">';
-        h +=       _corosRecalibDetBridgeSVG(rec, plan);
-        h +=       '<div class="mr-rec-det-bridge-legend">';
-        h +=         '<div><span class="dot" style="background:var(--gold-text);"></span>Curva del puente</div>';
-        h +=         '<div><span class="dot" style="background:#dc2626;"></span>Hoy</div>';
-        h +=       '</div>';
-        h +=     '</div>';
-        h +=     '<div class="mr-rec-det-bridge-desc">' + descHtml + '</div>';
-        h +=   '</div>';
-        h += '</div>';
+        // v2.28.0-p4 · Sección 1 solo se muestra cuando hay puente activo.
+        // Sin puente, el gráfico plano al 100% no aporta información y
+        // los labels HOY / 100% objetivo se superponen a la línea horizontal.
+        if (bridgeOn) {
+            h += '<div class="mr-rec-det-sec">';
+            h +=   '<div class="mr-rec-det-sec-title">Puente hacia el objetivo</div>';
+            h +=   '<div class="mr-rec-det-block">';
+            h +=     '<div class="mr-rec-det-bridge-hdr">';
+            h +=       '<span class="mr-rec-det-bridge-lbl">Peso actual del objetivo</span>';
+            h +=       '<span class="mr-rec-det-bridge-badge">Puente activo</span>';
+            h +=     '</div>';
+            h +=     '<div class="mr-rec-det-bridge-svg-wrap">';
+            h +=       _corosRecalibDetBridgeSVG(rec, plan);
+            h +=       '<div class="mr-rec-det-bridge-legend">';
+            h +=         '<div><span class="dot" style="background:var(--gold-text);"></span>Curva del puente</div>';
+            h +=         '<div><span class="dot" style="background:#dc2626;"></span>Hoy</div>';
+            h +=       '</div>';
+            h +=     '</div>';
+            h +=     '<div class="mr-rec-det-bridge-desc">Los ritmos de hoy se calculan combinando tu <b>marca actual</b> con el <b>objetivo final</b>, dando peso creciente al objetivo conforme se acerca la carrera.</div>';
+            h +=   '</div>';
+            h += '</div>';
+        }
         // Sección 2 · Ritmos
         h += '<div class="mr-rec-det-sec">';
         h +=   '<div class="mr-rec-det-sec-title">' + pacesTitle + '</div>';
