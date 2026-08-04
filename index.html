@@ -39058,6 +39058,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }, 0);
         } else {
             // No hay sesión → mostrar login con fade in suave
+            // v2.28.0-p4 · Fix crítico: sin sesión el pipeline de bootApp NO
+            // corre, por tanto el poll del splash tampoco. El splash quedaba
+            // superpuesto (z-index 999998) tapando el formulario hasta el
+            // timeout 10s. Aquí lo ocultamos inmediato: el usuario aterriza
+            // directo en el login.
+            try {
+                if (typeof window._mrHideSplash === 'function') {
+                    window._mrHideSplash('no-session');
+                }
+            } catch(_){}
             const app = document.getElementById('app');
             if (app) app.style.opacity = '1';
             const ls = document.getElementById('login-screen');
@@ -51973,6 +51983,8 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
         if (typeof authShowMode === 'function') authShowMode('reset');
         const ls = document.getElementById('login-screen');
         if(ls){ ls.style.display=''; ls.style.opacity='1'; ls.style.pointerEvents=''; }
+        // v2.28.0-p4 · Ocultar splash: recovery muestra login sin bootApp.
+        try { if (typeof window._mrHideSplash === 'function') window._mrHideSplash('recovery'); } catch(_){}
         return;
     }
     if (event === 'SIGNED_IN' && session && !currentUser) {
