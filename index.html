@@ -6250,6 +6250,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
       if (patchIconNow() || tries > 200) { clearInterval(iv); }
     }, 5);
   }
+  // [Splash · icono instantáneo]
+  // El div del splash (#mr-splash-logo) está declarado ANTES de este script
+  // en el DOM, así que aquí ya existe. Aplicamos el src directamente para
+  // que el logo aparezca en el primer frame, sin gap visible mientras el
+  // MutationObserver observa cambios.
+  (function(){
+    var sl = document.getElementById('mr-splash-logo');
+    if (sl && !sl.getAttribute('src')) sl.src = DATA;
+  })();
   // Capturar imágenes añadidas dinámicamente (cambios de pestaña, render dinámico)
   try {
     var mo = new MutationObserver(function(muts){
@@ -44526,18 +44535,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_) {}
 
         // [Splash · hide primer render]
-        // Con doble rAF (~32ms) damos tiempo a que los widgets síncronos hayan
-        // pintado. Los widgets async (readiness, training load, VDOT, plan
-        // card) pintan un instante después pero al haber fadeout de 400ms
-        // suele quedar visible el resultado completo antes del vacío.
         // Guard: solo la primera vez que renderHome se completa.
+        //   Espera 700ms tras el primer render para dar tiempo a que los widgets
+        //   async (readiness/stamina/plan card fetch COROS+Supabase) pinten. Sin
+        //   esta espera se veía "aterrizar" y los widgets llegando uno a uno.
+        //   Combinado con el hold del "Listo · XXX ms" en _mrHideSplash (900ms),
+        //   da un total de ~1600ms extra, suficiente para la mayoría de widgets.
         if (!window.__mrSplashDone) {
             window.__mrSplashDone = true;
-            requestAnimationFrame(function(){
-                requestAnimationFrame(function(){
-                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
-                });
-            });
+            setTimeout(function(){
+                if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
+            }, 700);
         }
     }
 
