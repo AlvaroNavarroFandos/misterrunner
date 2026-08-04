@@ -37,7 +37,7 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- ── PWA BOOTSTRAP ──────────────────────────────────────── -->
     <script>
@@ -180,7 +180,7 @@
         --border: rgba(0, 0, 0, .06);
         --bsoft: rgba(0, 0, 0, .04);
         --nav-h: 64px; /* [S26.C+] +2px vs 62px previo: más zona táctil; el gradient #app::after se recortó a 14px en paralelo */
-        --f: "Poppins", -apple-system, BlinkMacSystemFont, sans-serif;
+        --f: "Chakra Petch", -apple-system, BlinkMacSystemFont, sans-serif;
         /* [Visor light Apple] Vars del detalle de actividad — usadas en clases .det-* + estilos inline JS del rango 22559-23960.
            Dark values sobrescriben en body.dark-mode L221. */
         --det-bg: #fafafa;
@@ -6544,56 +6544,66 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
   } catch(e){ /* no-op */ }
 })();
 
-// [Splash · hide + timing]
-// Se llama desde renderHome() tras el primer render exitoso (doble rAF).
-// Timeout de seguridad 10s por si algo se cuelga antes de esa señal.
-// Muestra timing en el propio splash (no hay consola en el móvil).
+// [Splash · v2.28.0-p4 · tiempo fijo simplificado]
+// Un único camino: splash siempre visible con timer fijo 3500ms desde el
+// momento en que se muestra. Sin polling readiness/carrusel. Al agotarse
+// el timer, se oculta pase lo que pase (Home o Login están detrás).
+//
+//   · _mrShowSplash(): muestra o re-muestra el splash + arm timer 3500
+//   · _mrHideSplash(source): fadeout inmediato (idempotente hasta re-show)
+//
+// Escenarios:
+//   · Arranque con sesión → splash inicial → 3500ms → Home visible
+//   · Arranque sin sesión → splash inicial → _mrHideSplash rápido (P11) → login
+//   · Login manual exitoso → SIGNED_IN handler llama _mrShowSplash → 3500ms → Home
+//   · Recovery / SIGNED_OUT → _mrHideSplash rápido → pantalla que aplique
 (function(){
     window.__mrSplashStart = performance.now();
     var _splashHidden = false;
+    var _splashTimer = null;
+    var _SPLASH_MS = 3500;
+    window._mrShowSplash = function() {
+        var el = document.getElementById('mr-splash');
+        if (!el) return;
+        // Reset visual: contenido spinner + "Cargando"
+        var spin = document.getElementById('mr-splash-spin');
+        var span = document.querySelector('#mr-splash-txt span');
+        if (spin) {
+            spin.style.border = '';
+            spin.style.animation = '';
+            spin.innerHTML = '';
+        }
+        if (span) {
+            span.textContent = 'Cargando';
+            span.style.color = '';
+        }
+        el.classList.remove('mr-splash-hide');
+        window.__mrSplashStart = performance.now();
+        _splashHidden = false;
+        // Rearmar timer 3500ms cada vez que se muestra
+        if (_splashTimer) { clearTimeout(_splashTimer); }
+        _splashTimer = setTimeout(function(){
+            if (!_splashHidden) window._mrHideSplash('timer');
+        }, _SPLASH_MS);
+    };
     window._mrHideSplash = function(source) {
         if (_splashHidden) return;
         _splashHidden = true;
+        if (_splashTimer) { clearTimeout(_splashTimer); _splashTimer = null; }
         var el = document.getElementById('mr-splash');
         if (!el) return;
         var elapsed = performance.now() - window.__mrSplashStart;
         var elapsedMs = Math.round(elapsed);
-        var isTimeout = (source === 'timeout-10s');
         console.log('[MR][splash] hide (' + (source||'ok') + ') tras ' + elapsedMs + ' ms');
         try { localStorage.setItem('mr_last_splash_ms', String(elapsedMs)); } catch(_){}
-        // Cambiar contenido del splash antes del fadeout: sustituir spinner
-        // por check verde + texto con timing. Móvil sin consola → así se lee.
-        var spin = document.getElementById('mr-splash-spin');
-        var span = document.querySelector('#mr-splash-txt span');
-        if (spin) {
-            if (isTimeout) {
-                spin.style.border = 'none';
-                spin.style.animation = 'none';
-                spin.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#ef4444" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>';
-            } else {
-                spin.style.border = 'none';
-                spin.style.animation = 'none';
-                spin.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#4ade80" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg>';
-            }
-        }
-        if (span) {
-            span.textContent = (isTimeout ? 'Timeout · ' : 'Listo · ') + elapsedMs + ' ms';
-            span.style.color = isTimeout ? 'rgba(239,68,68,.85)' : 'rgba(74,222,128,.85)';
-        }
-        // 600ms visible con el timing, luego fadeout
-        setTimeout(function(){
-            el.classList.add('mr-splash-hide');
-            setTimeout(function(){
-                if (el && el.parentNode) el.parentNode.removeChild(el);
-            }, 500);
-        }, 600);
+        // Fadeout inmediato (sin swap de icono a check — más rápido y simple)
+        el.classList.add('mr-splash-hide');
+        // NO se remueve del DOM: permite re-show tras SIGNED_IN
     };
-    // Timeout de seguridad: si algo se cuelga y renderHome no llega a llamar
-    // _mrHideSplash en 10s, ocultamos igualmente para no dejar la pantalla
-    // en blanco. Se registra en consola para poder detectar la anomalía.
-    setTimeout(function(){
-        if (!_splashHidden) window._mrHideSplash('timeout-10s');
-    }, 10000);
+    // Arrancar timer al parsear
+    _splashTimer = setTimeout(function(){
+        if (!_splashHidden) window._mrHideSplash('timer');
+    }, _SPLASH_MS);
 })();
 </script>
 
@@ -45338,45 +45348,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── READINESS: poblar el widget (ya con __mrPMC/TSB calculado) ──
         try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_) {}
 
-        // [Splash · hide primer render + espera widgets]
-        // En vez de setTimeout fijo, hacemos polling cada 80ms hasta que los 2
-        // widgets más lentos estén realmente pintados en el DOM:
-        //   · Readiness: si COROS conectado, requiere que card no sea display:none
-        //     y tenga hijos (el _paintReadiness ha corrido)
-        //   · Carrusel: #mr-pc-roll con al menos 1 hijo (rollStrip pintado)
-        // Máximo 4s desde el arranque para no colgarse. Guard: solo primera vez.
-        if (!window.__mrSplashDone) {
-            window.__mrSplashDone = true;
-            var _spStart = window.__mrSplashStart || performance.now();
-            var _spMax = 4000;
-            var _spCheck = function() {
-                var elapsed = performance.now() - _spStart;
-                if (elapsed >= _spMax) {
-                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash('max-4s');
-                    return;
-                }
-                // Readiness ready: no requerido (COROS no conectado) o pintado
-                var corosReady = !!(window.__mrCoros && window.__mrCoros.ready);
-                var corosOn = !!(window.__mrCoros && window.__mrCoros.connected);
-                var rdn = document.getElementById('mr-readiness-card');
-                // v2.28.0-p2 · Fix "widget aparece 2s tarde":
-                //   · Whoami no resuelto → esperar (el bypass !corosOn de antes
-                //     cerraba el splash antes de que COROS confirmara conexión)
-                //   · Whoami resuelto y NO conectado → widget no aplica → OK
-                //   · Conectado o pending → esperar dato real (.skel ausente)
-                var rdnHasRealData = rdn && rdn.style.display !== 'none' && rdn.children.length > 0 && !rdn.classList.contains('skel');
-                var rdnReady = (corosReady && !corosOn) || rdnHasRealData;
-                // Carrusel ready: no existe (no hay plan) o poblado
-                var pcRoll = document.getElementById('mr-pc-roll');
-                var pcReady = !pcRoll || pcRoll.children.length > 0;
-                if (rdnReady && pcReady) {
-                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
-                } else {
-                    setTimeout(_spCheck, 80);
-                }
-            };
-            setTimeout(_spCheck, 50);
-        }
+        // v2.28.0-p4 · Splash ya NO se controla desde aquí. El timer fijo
+        // 3500ms del propio splash (definido en el script inline del head)
+        // se encarga. Sin polling → cero edge cases.
     }
 
     // ── PDF SEMANAL ──────────────────────────────────────────────
@@ -52005,6 +51979,11 @@ window._sbClient.auth.onAuthStateChange((event, session) => {
             APP_KEY_OVERRIDE = getUserKey(username);
             hideLoginScreen();
             if (typeof initDarkMode === 'function') initDarkMode();
+            // v2.28.0-p4 · Re-mostrar splash tras login manual exitoso:
+            // sin esto el usuario aterriza en Home con widgets sin pintar
+            // (bootApp corre pero el splash inicial ya se ocultó al detectar
+            // "no sesión" en _initAutoLogin). Re-arm timer 3500ms.
+            try { if (typeof window._mrShowSplash === 'function') window._mrShowSplash(); } catch(_){}
             bootApp();
             /* [Pre-Capacitor TODO-12] _loadClubChunk() reemplaza el setTimeout
                _initClubSupabase: el loader auto-invoca la init tras onload del
