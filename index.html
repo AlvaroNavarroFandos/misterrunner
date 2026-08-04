@@ -6317,13 +6317,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             span.textContent = (isTimeout ? 'Timeout · ' : 'Listo · ') + elapsedMs + ' ms';
             span.style.color = isTimeout ? 'rgba(239,68,68,.85)' : 'rgba(74,222,128,.85)';
         }
-        // 900ms visible con el timing, luego fadeout
+        // 600ms visible con el timing, luego fadeout
         setTimeout(function(){
             el.classList.add('mr-splash-hide');
             setTimeout(function(){
                 if (el && el.parentNode) el.parentNode.removeChild(el);
             }, 500);
-        }, 900);
+        }, 600);
     };
     // Timeout de seguridad: si algo se cuelga y renderHome no llega a llamar
     // _mrHideSplash en 10s, ocultamos igualmente para no dejar la pantalla
@@ -44534,18 +44534,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── READINESS: poblar el widget (ya con __mrPMC/TSB calculado) ──
         try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_) {}
 
-        // [Splash · hide primer render]
-        // Guard: solo la primera vez que renderHome se completa.
-        //   Espera 700ms tras el primer render para dar tiempo a que los widgets
-        //   async (readiness/stamina/plan card fetch COROS+Supabase) pinten. Sin
-        //   esta espera se veía "aterrizar" y los widgets llegando uno a uno.
-        //   Combinado con el hold del "Listo · XXX ms" en _mrHideSplash (900ms),
-        //   da un total de ~1600ms extra, suficiente para la mayoría de widgets.
+        // [Splash · hide primer render + espera widgets]
+        // En vez de setTimeout fijo, hacemos polling cada 80ms hasta que los 2
+        // widgets más lentos estén realmente pintados en el DOM:
+        //   · Readiness: si COROS conectado, requiere que card no sea display:none
+        //     y tenga hijos (el _paintReadiness ha corrido)
+        //   · Carrusel: #mr-pc-roll con al menos 1 hijo (rollStrip pintado)
+        // Máximo 4s desde el arranque para no colgarse. Guard: solo primera vez.
         if (!window.__mrSplashDone) {
             window.__mrSplashDone = true;
-            setTimeout(function(){
-                if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
-            }, 700);
+            var _spStart = window.__mrSplashStart || performance.now();
+            var _spMax = 4000;
+            var _spCheck = function() {
+                var elapsed = performance.now() - _spStart;
+                if (elapsed >= _spMax) {
+                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash('max-4s');
+                    return;
+                }
+                // Readiness ready: no requerido (COROS no conectado) o pintado
+                var corosOn = !!(window.__mrCoros && window.__mrCoros.connected);
+                var rdn = document.getElementById('mr-readiness-card');
+                var rdnReady = !corosOn || (rdn && rdn.style.display !== 'none' && rdn.children.length > 0);
+                // Carrusel ready: no existe (no hay plan) o poblado
+                var pcRoll = document.getElementById('mr-pc-roll');
+                var pcReady = !pcRoll || pcRoll.children.length > 0;
+                if (rdnReady && pcReady) {
+                    if (typeof window._mrHideSplash === 'function') window._mrHideSplash();
+                } else {
+                    setTimeout(_spCheck, 80);
+                }
+            };
+            setTimeout(_spCheck, 50);
         }
     }
 
