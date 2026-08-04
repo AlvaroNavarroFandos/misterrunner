@@ -36919,8 +36919,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Check badge (completado) — dot 6px verde en esquina superior izquierda de la card.
                 // Sustituye el SVG check inline del header (más discreto, marca mínima).
                 // Anclado por position:absolute al `card` (position:relative). Oculto si skipped.
+                // [FIX pestaña Plan · dot verde completado]
+                // Antes: top:5,left:5 → dot arrancaba a 5px, barra lateral a 3px →
+                // sólo 2px de gap y quedaba casi tapado. Ahora top:6,left:9 →
+                // 6px de gap desde la barra, respiradero limpio.
                 const _checkBadge = (matched && !_isSkipped)
-                    ? `<div style="position:absolute;top:5px;left:5px;width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 5px rgba(34,197,94,.65);z-index:3;pointer-events:none;" aria-label="Completado"></div>`
+                    ? `<div style="position:absolute;top:6px;left:9px;width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 5px rgba(34,197,94,.65);z-index:3;pointer-events:none;" aria-label="Completado"></div>`
                     : '';
 
                 // HEADER row
@@ -43094,11 +43098,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             function _buildSessionRowHtml(sess, opts) {
                 opts = opts || {};
                 const _isStr   = sess.isStrength || sess.type==='strength';
-                const _matched = activities.some(a=>{
+                // [FIX carrusel HOME · _matched por sess.dateStr]
+                // Antes usaba todayStr → cualquier sesión del mismo tipo
+                // (mañana/pasado/ayer) salía marcada ✓ si HOY había una actividad
+                // de ese tipo hecha. Ahora compara contra sess.dateStr, coherente
+                // con la lógica de doneSess (~L43061).
+                const _matched = sess.dateStr ? activities.some(a=>{
                     if(!a.dateStr) return false;
-                    return Math.abs(new Date(a.dateStr+'T12:00:00')-new Date(todayStr+'T12:00:00'))<=86400000
+                    return Math.abs(new Date(a.dateStr+'T12:00:00')-new Date(sess.dateStr+'T12:00:00'))<=86400000
                         && a.type===sess.type;
-                });
+                }) : false;
                 const _tColor  = TYPE_COLOR_HOME[sess.type]||'#fff';
                 const _motives = MOTIVATIONAL[sess.type]||['¡Vamos!'];
                 const _motiv   = _motives[today.getDay()%_motives.length];
@@ -53759,6 +53768,11 @@ window.addEventListener('DOMContentLoaded', function() {
                         // v2.27.0-p3 · Repaint Training Load + VDOT si están montados
                         try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
                         try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+                        // [FIX VO2max Runner card] renderVO2maxCard NO se llamaba
+                        // aquí, así la card seguía con el valor viejo (55 morado)
+                        // mientras el sheet mostraba el fresco (52 azul). Ahora
+                        // ambos leen del mismo cache readiness al mismo momento.
+                        try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
                         // [Estado de forma · COROS] racestatus en paralelo → repaint stamina
                         // con el change oficial (-0.4) cuando llegue.
                         try {
