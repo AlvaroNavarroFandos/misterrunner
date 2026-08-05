@@ -10432,6 +10432,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     return result;
                 }
+                // v2.30.1-p9 · Expuesto a window para que _mapManualActToDbRow
+                // pueda codificar records → polyline_encoded al guardar imports
+                // manuales / Strava bridge. Antes solo se usaba internamente
+                // en el bulk CSV → activities sin polyline en BD → biblio
+                // interpretaba erróneamente como indoor tras refresh (bug crítico).
+                try { window._encodePolyline = _encodePolyline; } catch(_) {}
 
                 function _computeKmSplits(records, startTimeSec) {
                     var splits = [];
@@ -24518,9 +24524,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [FASE 6.3] Decoupling desde streams en memoria (manual los tiene ya)
             decoupling:   _computeDecoupling(act.hrSeries, act.distSer),
             // [FASE 6.4 · S23] Best efforts desde streams en memoria
-            best_efforts: _computeBestEfforts(act.distSer, act.hrSeries)
+            best_efforts: _computeBestEfforts(act.distSer, act.hrSeries),
+            // v2.30.1-p9 · [BUG FIX crítico indoor false positive] Antes se dejaba
+            // null → biblio no podía reconstruir records tras refresh → activities
+            // exteriores importadas via bridge Strava aparecían como indoor tras
+            // recargar la app. Ahora codificamos records → polyline_encoded si
+            // hay coordenadas GPS válidas. Indoor sin records sigue en null.
+            polyline_encoded: (function() {
+                try {
+                    if (!Array.isArray(act.records) || act.records.length < 2) return null;
+                    if (typeof window._encodePolyline !== 'function') return null;
+                    var coords = [];
+                    for (var i = 0; i < act.records.length; i++) {
+                        var r = act.records[i];
+                        if (r && typeof r.lat === 'number' && typeof r.lon === 'number'
+                            && isFinite(r.lat) && isFinite(r.lon)) {
+                            coords.push([r.lat, r.lon]);
+                        }
+                    }
+                    return coords.length > 1 ? window._encodePolyline(coords) : null;
+                } catch(_) { return null; }
+            })()
             // streams_path → se rellena en update tras subir al bucket
-            // polyline_encoded → opcional, lo dejamos null (los manuales tienen records crudos)
         };
     }
 
@@ -28736,11 +28761,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // Helper celda de sección (valor + unidad + label)
         function _detSectCell(val, unit, label, color) {
+            // v2.30.1-p9 · Fuentes subidas para dar presencia a filas Corazón /
+            // Mecánica: val 17→22px · unit 9→11px · label 7.5→10px · margin 2→4.
             return '<div style="display:flex;flex-direction:column;align-items:center;">'
-                + '<div style="font-size:17px;font-weight:700;letter-spacing:-.4px;line-height:1.1;color:'+(color||'var(--det-tw)')+';font-family:var(--f);">'
-                +   val + (unit ? '<span style="font-size:9px;font-weight:400;opacity:.5;"> '+unit+'</span>' : '')
+                + '<div style="font-size:22px;font-weight:700;letter-spacing:-.4px;line-height:1.1;color:'+(color||'var(--det-tw)')+';font-family:var(--f);">'
+                +   val + (unit ? '<span style="font-size:11px;font-weight:400;opacity:.5;"> '+unit+'</span>' : '')
                 + '</div>'
-                + '<div style="font-size:7.5px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);margin-top:2px;text-align:center;font-family:var(--f);">'+label+'</div>'
+                + '<div style="font-size:10px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);margin-top:4px;text-align:center;font-family:var(--f);">'+label+'</div>'
                 + '</div>';
         }
         // Helper eyebrow de sección (título + hairline + chip opcional a la derecha)
@@ -28754,14 +28781,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Fila héroe: Distancia · Tiempo · Ritmo (centrados) ─────────
         function _heroCell(val, unit, label, withDiv) {
-            // v2.30.1-p8 · Fuentes subidas para dar más presencia a la fila hero:
-            // val 27→32px · unit 11→13px · label 8.5→10px · gap label superior 7→8.
+            // v2.30.1-p9 · Revertido a tamaños originales (Álvaro prefería el
+            // tamaño previo; la potencia va en la fila CORAZÓN/MECÁNICA).
             return '<div style="display:flex;flex-direction:column;align-items:center;position:relative;">'
                 + (withDiv ? '<div style="position:absolute;left:0;top:12%;height:76%;width:1px;background:var(--det-border);"></div>' : '')
-                + '<div style="font-size:32px;font-weight:800;letter-spacing:-1px;line-height:1;color:var(--det-tw);font-family:var(--f);">'
-                +   val + (unit ? '<span style="font-size:13px;font-weight:500;opacity:.5;letter-spacing:0;"> '+unit+'</span>' : '')
+                + '<div style="font-size:27px;font-weight:800;letter-spacing:-1px;line-height:1;color:var(--det-tw);font-family:var(--f);">'
+                +   val + (unit ? '<span style="font-size:11px;font-weight:500;opacity:.5;letter-spacing:0;"> '+unit+'</span>' : '')
                 + '</div>'
-                + '<div style="font-size:10px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;margin-top:8px;font-family:var(--f);">'+label+'</div>'
+                + '<div style="font-size:8.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:var(--det-lbl-accent);opacity:.85;margin-top:7px;font-family:var(--f);">'+label+'</div>'
                 + '</div>';
         }
         // ── Ritmo esfuerzo (GAP) — grade-adjusted pace desde streams ──
@@ -28866,14 +28893,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _efStrip = document.createElement('div');
             _efStrip.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:6px 14px;';
             _efStrip.innerHTML =
-                '<div style="display:flex;align-items:center;gap:10px;background:'+_efColor+'1a;border-radius:8px;padding:6px 12px;">'
-                +'<span style="font-size:9px;color:var(--det-lbl-accent);opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">EFIC.</span>'
+                '<div style="display:flex;align-items:center;gap:10px;background:'+_efColor+'1a;border-radius:8px;padding:8px 12px;">'
+                +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">EFIC.</span>'
                 +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
-                +'<div style="flex:1;height:4px;background:var(--det-elev);border-radius:100px;overflow:hidden;">'
-                +'<div style="height:100%;width:'+_efPct+'%;border-radius:100px;background:linear-gradient(90deg,#f87171 0%,#facc15 33%,#4ade80 66%,#60a5fa 100%);"></div>'
+                +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
+                +'<div style="height:100%;width:'+_efPct+'%;border-radius:2px;background:linear-gradient(90deg,#f87171 0%,#facc15 33%,#4ade80 66%,#60a5fa 100%);"></div>'
                 +'</div>'
-                +'<span style="font-size:13px;font-weight:800;color:'+_efColor+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+efDisplay+'</span>'
-                +(_efTag?'<span style="font-size:10px;color:'+_efColor+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+_efTag+'</span>':'')
+                +'<span style="font-size:14px;font-weight:800;color:'+_efColor+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+efDisplay+'</span>'
+                +(_efTag?'<span style="font-size:11px;color:'+_efColor+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+_efTag+'</span>':'')
                 +'</div></div>';
             c1.appendChild(_efStrip);
         }
@@ -28897,14 +28924,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Ancho de barra proporcional al RPE (10 → 100%)
                 var rpePct = Math.max(2, Math.min(100, rd.n * 10));
                 rpeStrip.innerHTML =
-                    '<div style="display:flex;align-items:center;gap:10px;background:'+rd.color+'1a;border-radius:8px;padding:6px 12px;">'
-                    +'<span style="font-size:9px;color:var(--det-lbl-accent);opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">RPE</span>'
+                    '<div style="display:flex;align-items:center;gap:10px;background:'+rd.color+'1a;border-radius:8px;padding:8px 12px;">'
+                    +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">RPE</span>'
                     +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
-                    +'<div style="flex:1;height:4px;background:var(--det-elev);border-radius:100px;overflow:hidden;">'
-                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:100px;background:linear-gradient(90deg,#4CAF50 0%,#FFC107 35%,#FF9500 65%,#F44336 100%);"></div>'
+                    +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
+                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:2px;background:linear-gradient(90deg,#4CAF50 0%,#FFC107 35%,#FF9500 65%,#F44336 100%);"></div>'
                     +'</div>'
-                    +'<span style="font-size:13px;font-weight:800;color:'+rd.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+rd.n+'</span>'
-                    +'<span style="font-size:10px;color:'+rd.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+rpeTag+'</span>'
+                    +'<span style="font-size:14px;font-weight:800;color:'+rd.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+rd.n+'</span>'
+                    +'<span style="font-size:11px;color:'+rd.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+rpeTag+'</span>'
                     +'</div></div>';
                 c1.appendChild(rpeStrip);
             }
@@ -28928,14 +28955,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const trimpStrip = document.createElement('div');
             trimpStrip.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:6px 14px;';
             trimpStrip.innerHTML =
-                '<div style="display:flex;align-items:center;gap:10px;background:'+lvl.color+'1a;border-radius:8px;padding:6px 12px;">'
-                +'<span style="font-size:9px;color:var(--det-lbl-accent);opacity:.75;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;font-weight:700;flex-shrink:0;">TRIMP</span>'
+                '<div style="display:flex;align-items:center;gap:10px;background:'+lvl.color+'1a;border-radius:8px;padding:8px 12px;">'
+                +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">TRIMP</span>'
                 +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
-                +'<div style="flex:1;height:4px;background:var(--det-elev);border-radius:100px;overflow:hidden;">'
-                +'<div style="height:100%;width:'+lvl.pct+'%;border-radius:100px;background:linear-gradient(90deg,#4CAF50 0%,#7aaff5 35%,#FF9500 70%,#F44336 100%);"></div>'
+                +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
+                +'<div style="height:100%;width:'+lvl.pct+'%;border-radius:2px;background:linear-gradient(90deg,#4CAF50 0%,#7aaff5 35%,#FF9500 70%,#F44336 100%);"></div>'
                 +'</div>'
-                +'<span style="font-size:13px;font-weight:800;color:'+lvl.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+trimpValue+'<span style="font-size:8px;color:var(--det-tt);font-weight:600;margin-left:1px;"> AU</span></span>'
-                +'<span style="font-size:10px;color:'+lvl.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+lvl.tag+'</span>'
+                +'<span style="font-size:14px;font-weight:800;color:'+lvl.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+trimpValue+'<span style="font-size:9px;color:var(--det-tt);font-weight:600;margin-left:1px;"> AU</span></span>'
+                +'<span style="font-size:11px;color:'+lvl.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+lvl.tag+'</span>'
                 +'</div></div>';
             c1.appendChild(trimpStrip);
         })();
