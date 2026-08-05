@@ -27890,10 +27890,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     st.id = 'mr-maplibre-tweaks';
                     st.textContent = '.maplibregl-ctrl-attrib{font-size:8.5px!important;background:rgba(0,0,0,.28)!important;}'
                         + '.maplibregl-ctrl-attrib a{color:rgba(255,255,255,.72)!important;}'
-                        + '.maplibregl-ctrl-attrib.maplibregl-compact{min-height:20px!important;background:rgba(0,0,0,.30)!important;border-radius:10px!important;box-shadow:none!important;}'
+                        + '.maplibregl-ctrl-attrib.maplibregl-compact{min-height:16px!important;background:rgba(0,0,0,.30)!important;border-radius:8px!important;box-shadow:none!important;}'
                         + '.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show){background:transparent!important;}'
-                        + '.maplibregl-ctrl-attrib-button{width:20px!important;height:20px!important;filter:invert(1);opacity:.5!important;}'
-                        + '.maplibregl-ctrl-top-right .maplibregl-ctrl,.maplibregl-ctrl-bottom-right .maplibregl-ctrl{margin:6px!important;}';
+                        + '.maplibregl-ctrl-attrib-button{width:16px!important;height:16px!important;filter:invert(1);opacity:.35!important;}'
+                        + '.maplibregl-ctrl-top-right .maplibregl-ctrl,.maplibregl-ctrl-bottom-right .maplibregl-ctrl{margin:4px!important;}';
                     document.head.appendChild(st);
                 }
                 var s = document.createElement('script');
@@ -29005,33 +29005,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // celdas mecánica para dejar protagonismo al balancín (más visual que
         // un simple % numérico).
         function _detBalanceCell(bal) {
-            var L = null, R = null, angle = 0, valTxt = '—';
+            var L = null, D = null, valTxt = '—', inZone = false;
+            // v2.30.1-p21 · Barra al aire (sin recuadro contenedor) con fondo rojo
+            // y zona verde central ampliada. Escala del marker ×8 para amplificar
+            // el rango realista 45-55% (que casi nunca se sobrepasa en la vida).
+            // Zona verde cubre 42%-58% del ancho (equivalente al balance ±1% con
+            // la escala ×8) → diferencias sutiles como 49.5/50.5 se ven perfectas.
+            // Números en verde si |L-50| ≤ 1%, en rojo si desviación mayor.
             if (bal && bal !== '—') {
                 var mm = String(bal).match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
                 if (mm) {
                     L = parseFloat(mm[1]);
-                    R = parseFloat(mm[2]);
-                    if (isFinite(L) && isFinite(R)) {
-                        // delta L-50 rango típico -5..+5 → mapear a ±14 grados de inclinación.
-                        // L>50 (más izq) → izq baja → ángulo NEGATIVO en SVG (rotate CCW).
-                        var _d = L - 50;
-                        angle = Math.max(-14, Math.min(14, -_d * 2.8));
-                        valTxt = L.toFixed(1) + '/' + R.toFixed(1);
+                    D = parseFloat(mm[2]);
+                    if (isFinite(L) && isFinite(D)) {
+                        valTxt = L.toFixed(1) + '/' + D.toFixed(1);
+                        inZone = Math.abs(L - 50) <= 1;
                     }
                 }
             }
-            var _svg = '<svg width="76" height="30" viewBox="0 0 76 30" style="display:block;">'
-                    +   '<line x1="4" y1="28.5" x2="72" y2="28.5" stroke="var(--det-border)" stroke-width="1"/>'
-                    +   '<polygon points="32,26 44,26 38,17" fill="var(--det-lbl-accent)" opacity=".55"/>'
-                    +   '<g transform="translate(38,15) rotate(' + angle.toFixed(2) + ')">'
-                    +     '<rect x="-32" y="-3" width="64" height="6" rx="2.5" fill="var(--det-tw)" opacity=".92"/>'
-                    +     '<text x="-24" y="1.6" text-anchor="middle" font-size="6.2" fill="var(--det-bg)" font-weight="800" font-family="var(--f)">I</text>'
-                    +     '<text x="24" y="1.6" text-anchor="middle" font-size="6.2" fill="var(--det-bg)" font-weight="800" font-family="var(--f)">D</text>'
-                    +   '</g>'
+            // Marker position (0-100 %). Escala ×8 amplifica el rango realista.
+            // D=50 → 50 (centro), D=55 → 90, D=45 → 10. Clamped a 6-94 para no
+            // pegarse al borde con las letras I/D.
+            var markerPct = 50;
+            if (D !== null) {
+                markerPct = 50 + (D - 50) * 8;
+                markerPct = Math.max(6, Math.min(94, markerPct));
+            }
+            var svgW = 88, svgH = 12, barR = 3;
+            var greenX = svgW * 0.42;         // 42% (equivalente ±1% con escala ×8)
+            var greenW = svgW * 0.16;         //  16% ancho (42→58)
+            var markerX = svgW * markerPct / 100;
+            // Color del número según cumple ±1%
+            var numColor = (valTxt === '—') ? 'var(--det-tw)' : (inZone ? '#16a34a' : '#dc2626');
+            var _svg = '<svg width="' + svgW + '" height="' + svgH + '" viewBox="0 0 ' + svgW + ' ' + svgH + '" style="display:block;">'
+                    +   '<rect x="0" y="0" width="' + svgW + '" height="' + svgH + '" rx="' + barR + '" ry="' + barR + '" fill="#dc2626"/>'
+                    +   '<rect x="' + greenX.toFixed(1) + '" y="0" width="' + greenW.toFixed(1) + '" height="' + svgH + '" fill="#16a34a"/>'
+                    +   '<text x="4" y="' + (svgH/2 + 2.8) + '" font-size="8" font-weight="800" fill="#fff" font-family="var(--f)" style="paint-order:stroke;stroke:rgba(0,0,0,.5);stroke-width:.5px;">I</text>'
+                    +   '<text x="' + (svgW - 8) + '" y="' + (svgH/2 + 2.8) + '" font-size="8" font-weight="800" fill="#fff" font-family="var(--f)" style="paint-order:stroke;stroke:rgba(0,0,0,.5);stroke-width:.5px;">D</text>'
+                    +   (valTxt !== '—' ? '<circle cx="' + markerX.toFixed(1) + '" cy="' + (svgH/2) + '" r="4.5" fill="#ffffff" stroke="#000000" stroke-width="2"/>' : '')
                     + '</svg>';
-            return '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+            return '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">'
                 +    _svg
-                +    '<div style="font-size:12px;font-weight:700;letter-spacing:-.2px;line-height:1.1;color:var(--det-tw);font-family:var(--f);font-variant-numeric:tabular-nums;">'+valTxt+(valTxt!=='—'?'<span style="font-size:8px;font-weight:400;opacity:.5;"> %</span>':'')+'</div>'
+                +    '<div style="font-size:12px;font-weight:800;letter-spacing:-.2px;line-height:1.1;color:'+numColor+';font-family:var(--f);font-variant-numeric:tabular-nums;">'+valTxt+(valTxt!=='—'?'<span style="font-size:8px;font-weight:400;opacity:.55;"> %</span>':'')+'</div>'
                 +    '<div style="font-size:8.5px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);text-align:center;font-family:var(--f);">Eq. I/D</div>'
                 + '</div>';
         }
