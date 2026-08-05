@@ -27863,15 +27863,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // map + one for the modal; both torn down on close (see _detCleanup / modal close),
     // so the number of activities in the library is irrelevant (library uses 2D canvas).
     var _MR_MAPLIBRE_VER = '5.3.0';
-    // v2.30.1-p18 · Cambio de CartoDB Voyager → MapTiler Streets v4 por look
-    // premium comercial (colores vivos, POI muy destacados, tipografía Ubuntu,
-    // sombreado edificios 3D). Free tier 100k tile loads/mes (uso personal Álvaro
-    // muy por debajo). API key restringida por HTTP referrer a misterrunner.vercel.app
-    // + localhost:*. Mismo protocolo MapLibre GL, attribution automática © MapTiler
-    // + © OpenStreetMap. Historial cambios: OpenFreeMap Bright → CartoDB Voyager (p16)
-    // → MapTiler Streets v4 (p18). Rollback trivial a Bright si no convence:
-    // 'https://tiles.openfreemap.org/styles/bright' — 1 línea.
-    var _MR_MAP_STYLE    = 'https://api.maptiler.com/maps/streets-v4/style.json?key=vs0bmJq4uzSbACtjbFb6';
+    // v2.30.1-p19 · ROLLBACK a OpenFreeMap Bright por VELOCIDAD DE CARGA. MapTiler
+    // Streets v4 (p18) tenía look premium comercial pero tardaba mucho al abrir
+    // Card 1 y al ampliar el modal (sprites ~600KB, muchas capas vectoriales,
+    // auth query en cada tile). Bright va directo desde CDN Cloudflare sin auth,
+    // estilo ligero (~150KB sprites), casi instantáneo. En app deportiva la
+    // velocidad manda sobre el look. Historial: OpenFreeMap Bright → CartoDB
+    // Voyager (p16) → MapTiler Streets v4 (p18) → OpenFreeMap Bright (p19).
+    // API key MapTiler queda inutilizada pero Álvaro la mantiene en cuenta free.
+    var _MR_MAP_STYLE    = 'https://tiles.openfreemap.org/styles/bright';
     var _mrMapLibrePromise = null;
 
     // Lazy-load MapLibre GL JS (+ its CSS). Resolves with window.maplibregl.
@@ -28582,6 +28582,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // se usa en contextos claros (Plan tab, biblioteca, home). El lavanda
         // destaca legiblemente sobre rgba(0,0,0,.55) del pill del mapa.
         const typeColor = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#a78bfa',race:'#e879f9'}[act.type]||'#aaa';
+        // v2.30.1-p19 · Colores DEEP del tipo para texto sobre pill BLANCA en cabecera
+        // (Opción C: fecha + pill juntas centradas). Los pastel de typeColor pierden
+        // contraste sobre blanco → aquí saturados/oscuros. TEST usa dorado oscuro para
+        // el texto y dorado premium #C9A84C para el dot (visible mejor).
+        const typeColorDeep    = {easy:'#15803d',recovery:'#1d4ed8',series:'#b91c1c',long:'#6d28d9',race:'#a21caf',test:'#8b6914'}[String(act.type||'').toLowerCase()]||'#333';
+        const typeColorDeepDot = {easy:'#15803d',recovery:'#1d4ed8',series:'#b91c1c',long:'#6d28d9',race:'#a21caf',test:'#C9A84C'}[String(act.type||'').toLowerCase()]||'#333';
+        var _validTypes = ['easy','recovery','series','long','race','test'];
 
         // [Efectos UI] El visor real se crea SIEMPRE desde cero con slide-up,
         // tanto en apertura directa (cacheada) como tras el spinner. El spinner
@@ -28647,7 +28654,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         hdr.innerHTML =
               '<button class="det-back-btn" id="det-close" aria-label="Volver"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>'
             + '<div class="det-hdr-center">'
-            +   '<div style="font-size:9px;color:var(--det-lbl-accent);font-weight:700;letter-spacing:1.6px;text-transform:uppercase;font-family:var(--f);opacity:.95;line-height:1;">'+ dfS +'</div>'
+            +   '<div style="display:flex;align-items:center;justify-content:center;gap:8px;">'
+            +     '<div style="font-size:9px;color:var(--det-lbl-accent);font-weight:700;letter-spacing:1.6px;text-transform:uppercase;font-family:var(--f);opacity:.95;line-height:1;">'+ dfS +'</div>'
+            +     (_validTypes.indexOf(String(act.type||'').toLowerCase()) >= 0
+                    ? '<div style="display:inline-flex;align-items:center;gap:4px;background:#fff;padding:3px 8px;border-radius:5px;font-size:9.5px;font-weight:800;letter-spacing:1.1px;text-transform:uppercase;font-family:var(--f);line-height:1;color:'+typeColorDeep+';box-shadow:0 1px 3px rgba(0,0,0,.15);white-space:nowrap;flex-shrink:0;">'
+                        + '<span style="width:6px;height:6px;border-radius:50%;background:'+typeColorDeepDot+';flex-shrink:0;"></span>'
+                        + getTypeLabel(act.type)
+                      + '</div>'
+                    : '')
+            +   '</div>'
             +   '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:3px;max-width:100%;">'
             +     '<span style="font-size:15px;font-weight:800;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:currentColor;">'+ (act.name||_detTitleFallback) +'</span>'
             +     ((act.type==='test' && window._mrTestBadge) ? window._mrTestBadge('m') : '')
@@ -28737,28 +28752,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [v2.13.0] Sin overlay oscurecedor: el mapa MapLibre "Bright" ocupa todo el
         // wrap y va crudo (sin tinte) en light y en dark (decisión 3A). El río/verde
         // los resuelve el casing oscuro del propio track.
-        // [FASE 5.7.4-c] Pill blanca para la distancia + tipo entreno wrap
-        // v2.30.1-p14 · Wrap con pill distancia (redondeada) + pill tipo
-        // (esquinas cuadradas radius 5, más discreta) SEPARADAS con gap 8px.
-        // Ambas en bottom-left para no chocar con el header flotante glass.
+        // [FASE 5.7.4-c] Pill blanca para la distancia en bottom-left del mapa.
+        // v2.30.1-p19 · Pill tipo entreno REMOVIDA de aquí (ahora vive en la
+        // cabecera glass junto a la fecha, Opción C, con fondo blanco y texto
+        // en color deep del tipo). Antes el wrap tenía distancia + tipo separadas
+        // con gap:8. Ahora solo distancia.
         var _bottomLeftHTML = '<div style="position:absolute;bottom:10px;left:12px;display:flex;align-items:end;gap:8px;">'
             + '<div style="background:rgba(255,255,255,.94);border-radius:12px;padding:8px 14px 7px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:baseline;gap:4px;box-shadow:0 3px 10px rgba(0,0,0,.35);">'
             +   '<span style="font-size:30px;font-weight:800;color:#0d1520;font-family:var(--f);line-height:1;letter-spacing:-0.8px;font-variant-numeric:tabular-nums;">'+(act.distKm>0?act.distKm.toFixed(2):'—')+'</span>'
             +   '<span style="font-size:11px;color:#666;font-family:var(--f);font-weight:700;">km</span>'
             + '</div>';
-        // Tipo entreno con esquinas cuadradas + separado de la pill de distancia por el gap del wrap.
-        // v2.30.1-p15 · Antes solo se pintaba en single (_source !== 'bulk') por
-        // heurística poco fiable. Ahora tras editar activity el tipo está
-        // confirmado por el usuario en TODAS las sources → mostrar siempre que
-        // el tipo esté en la lista conocida (easy/recovery/series/long/race/test).
-        var _validTypes = ['easy','recovery','series','long','race','test'];
-        if (act.type && _validTypes.indexOf(String(act.type).toLowerCase()) >= 0) {
-            var _typeLabel = getTypeLabel(act.type);
-            // typeColor definido arriba L28564 solo cubre easy/recovery/series/long/race
-            // (no test). Fallback dorado para test.
-            var _tCol = (String(act.type).toLowerCase() === 'test') ? '#C9A84C' : typeColor;
-            _bottomLeftHTML += '<div style="background:rgba(0,0,0,.55);color:'+_tCol+';border:1px solid '+_tCol+';font-size:9.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;padding:5px 9px;border-radius:5px;font-family:var(--f);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.35);margin-bottom:3px;">'+_typeLabel+'</div>';
-        }
         _bottomLeftHTML += '</div>';
         mapWrap.insertAdjacentHTML('beforeend', _bottomLeftHTML);
         // [FASE 5.7.4-d] Pill blanca con nombre de zapatilla (esquina inferior
