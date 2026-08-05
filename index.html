@@ -3573,6 +3573,11 @@
         color: #ffffff;
         box-shadow: 0 4px 14px rgba(0,0,0,.30);
     }
+    /* v2.30.1-p14 · Attribution de MapLibre dentro del visor: bajar 58px para
+       que no quede tapado por el header flotante (top:12 + 40 pill + 6 aire). */
+    .det-overlay .maplibregl-ctrl-top-right {
+        margin-top: 58px !important;
+    }
     .det-cards-wrap { flex: 1; overflow: hidden; position: relative; }
     .det-cards-track {
         display: flex;
@@ -27950,7 +27955,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var ref = { map:null, dead:false };
         _mrEnsureMapLibre().then(function(maplibregl){
             if (ref.dead || !container.isConnected) return;
-            var pad = opts.interactive ? 56 : 34;
+            // v2.30.1-p14 · Padding asimétrico en fitBounds cuando NO es
+            // interactivo (Card 1 del visor): top:70 deja aire al header
+            // flotante glass (top:12 + 40 pill + 18 margen) para que el track
+            // NUNCA quede tapado por la cabecera independientemente del recorrido.
+            // Bottom:34 mantiene espacio para pills distancia/tipo/zapatilla.
+            var pad = opts.interactive
+                ? 56
+                : { top: 70, bottom: 34, left: 24, right: 24 };
             var map = new maplibregl.Map({
                 container: container,
                 style: _MR_MAP_STYLE,
@@ -28691,7 +28703,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // en la esquina inferior derecha del mapa, simétrica a la pill de
         // distancia (inferior izquierda).
         const mapOutfitRow = document.createElement('div');
-        mapOutfitRow.style.cssText = 'display:flex;height:400px;flex-shrink:0;background:var(--det-bg);';
+        // v2.30.1-p14 · Altura mapa 400→420 (+5%) para que la fila de datos de
+        // elevación (D+/D-/Máx/Mín/Media) NO aparezca sin scroll bajo la línea
+        // TIEMPO/RITMO/R.ESFUERZO. Los primeros datos siempre visibles al abrir.
+        mapOutfitRow.style.cssText = 'display:flex;height:420px;flex-shrink:0;background:var(--det-bg);';
 
         // GPS map — anchura completa
         const mapWrap = document.createElement('div');
@@ -28702,13 +28717,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [v2.13.0] Sin overlay oscurecedor: el mapa MapLibre "Bright" ocupa todo el
         // wrap y va crudo (sin tinte) en light y en dark (decisión 3A). El río/verde
         // los resuelve el casing oscuro del propio track.
-        // [FASE 5.7.4-c] Pill blanca para la distancia (coherente con biblioteca
-        // y con la pill de nombre de zapatillas).
-        mapWrap.insertAdjacentHTML('beforeend',
-            '<div style="position:absolute;bottom:10px;left:12px;background:rgba(255,255,255,.94);border-radius:12px;padding:8px 14px 7px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:baseline;gap:4px;box-shadow:0 3px 10px rgba(0,0,0,.35);">'
-            +'<span style="font-size:30px;font-weight:800;color:#0d1520;font-family:var(--f);line-height:1;letter-spacing:-0.8px;font-variant-numeric:tabular-nums;">'+(act.distKm>0?act.distKm.toFixed(2):'—')+'</span>'
-            +'<span style="font-size:11px;color:#666;font-family:var(--f);font-weight:700;">km</span>'
-            +'</div>');
+        // [FASE 5.7.4-c] Pill blanca para la distancia + tipo entreno wrap
+        // v2.30.1-p14 · Wrap con pill distancia (redondeada) + pill tipo
+        // (esquinas cuadradas radius 5, más discreta) SEPARADAS con gap 8px.
+        // Ambas en bottom-left para no chocar con el header flotante glass.
+        var _bottomLeftHTML = '<div style="position:absolute;bottom:10px;left:12px;display:flex;align-items:end;gap:8px;">'
+            + '<div style="background:rgba(255,255,255,.94);border-radius:12px;padding:8px 14px 7px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:baseline;gap:4px;box-shadow:0 3px 10px rgba(0,0,0,.35);">'
+            +   '<span style="font-size:30px;font-weight:800;color:#0d1520;font-family:var(--f);line-height:1;letter-spacing:-0.8px;font-variant-numeric:tabular-nums;">'+(act.distKm>0?act.distKm.toFixed(2):'—')+'</span>'
+            +   '<span style="font-size:11px;color:#666;font-family:var(--f);font-weight:700;">km</span>'
+            + '</div>';
+        // Tipo entreno solo para single (bulk sin heurística fiable, ver FASE 5.6.1).
+        // Esquinas cuadradas + separada de la pill de distancia por el gap del wrap.
+        if (act._source !== 'bulk') {
+            _bottomLeftHTML += '<div style="background:rgba(0,0,0,.55);color:'+typeColor+';border:1px solid '+typeColor+';font-size:9.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;padding:5px 9px;border-radius:5px;font-family:var(--f);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.35);margin-bottom:3px;">'+getTypeLabel(act.type)+'</div>';
+        }
+        _bottomLeftHTML += '</div>';
+        mapWrap.insertAdjacentHTML('beforeend', _bottomLeftHTML);
         // [FASE 5.7.4-d] Pill blanca con nombre de zapatilla (esquina inferior
         // derecha), simétrica a la pill de distancia. Se muestra siempre que
         // exista shoeName, independientemente de la fuente (bulk o single).
@@ -28718,16 +28742,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +'<span style="font-size:10px;color:#0d1520;font-family:var(--f);font-weight:600;letter-spacing:.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">'+act.shoeName+'</span>'
                 +'</div>');
         }
-        // Type badge top-left of map
-        // [FASE 5.6.1] Bulk de Strava: NO mostrar pastilla del tipo (la heurística
-        // por km no es fiable y queda incoherente). Solo single mantiene la
-        // pastilla, donde el usuario elige el tipo conscientemente.
-        // [FASE 5.7.4-d] Variante dark premium: fondo oscuro semi-transparente,
-        // borde y texto del color del tipo. Más coherente con el lenguaje
-        // dark+dorado del visor que la versión sólida anterior.
-        if (act._source !== 'bulk') {
-            mapWrap.insertAdjacentHTML('beforeend','<div style="position:absolute;top:8px;left:10px;"><span style="background:rgba(0,0,0,.55);color:'+typeColor+';border:1px solid '+typeColor+';font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:999px;font-family:var(--f);backdrop-filter:blur(4px);">'+getTypeLabel(act.type)+'</span></div>');
-        }
+        // v2.30.1-p14 · Type badge top-left ELIMINADO. Ahora va junto a la
+        // pill de distancia en bottom-left (arriba). El bloque anterior era:
+        // if (act._source !== 'bulk') { mapWrap.insertAdjacentHTML('beforeend','<div style="position:absolute;top:8px;left:10px;">...'+getTypeLabel(act.type)+'</span></div>'); }
         mapOutfitRow.appendChild(mapWrap);
 
         // [FASE 5.7.4-d] Outfit panel eliminado. El mapa ocupa toda la anchura.
