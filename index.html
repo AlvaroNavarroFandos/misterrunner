@@ -26433,6 +26433,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         deleteActivityFromIDB(id);
         // FASE 6.1.b: filter también tolerante
         activities = activities.filter(a => String(a.id) !== String(id));
+        // v2.30.1-p11 · [BUG FIX zombie delete] Registrar el id borrado en
+        // blacklist temporal (30s) para bloquear que _refreshActivitiesFromBD
+        // (invocado por _rebuildAllPRsAndMilestones fire-and-forget de abajo)
+        // resucite la activity si su query a BD gana la carrera al delete
+        // Supabase fire-and-forget. Se auto-limpia por edad.
+        try {
+            if (!window.__mrRecentDeletedIds) window.__mrRecentDeletedIds = new Map();
+            var _delKey = actSnapshot && actSnapshot._dbActivityId ? String(actSnapshot._dbActivityId) : String(id);
+            window.__mrRecentDeletedIds.set(_delKey, Date.now());
+            // Registrar también el id local por si difieren (belt-and-suspenders)
+            window.__mrRecentDeletedIds.set(String(id), Date.now());
+        } catch(_){}
         // v2.28.0-p3 · Push 7 · Diff quirúrgico: solo remueve la card
         // afectada del DOM en vez de rebuild completo de 291+ cards.
         // Recomputa el total del month wrap (o lo purga si queda vacío).
@@ -40071,9 +40083,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 activities.map(function(a){ return a._dbActivityId || a.id; })
                           .filter(function(v){ return typeof v === 'string' && v.length > 0; })
             );
+            // v2.30.1-p11 · [BUG FIX zombie delete] Blacklist de ids borrados
+            // en los últimos 30s. Sin esto, el delete Supabase fire-and-forget
+            // podía perder la carrera contra este refresh y la activity resucita.
+            var _delBl = window.__mrRecentDeletedIds || new Map();
+            var _nowT  = Date.now();
+            try {
+                // Purgar entradas viejas (>30s) del blacklist para no acumular.
+                var _toDrop = [];
+                _delBl.forEach(function(ts, k){ if (_nowT - ts > 30000) _toDrop.push(k); });
+                _toDrop.forEach(function(k){ _delBl.delete(k); });
+            } catch(_){}
             var newFromBd = bdActs.filter(function(a){
-                if (a.externalId && localExtIds.has(a.externalId)) return false;
+                // Blacklist: activity recién borrada localmente → NO resucitar aunque BD
+                // aún no haya confirmado el DELETE (delete Supabase fire-and-forget).
                 var dbId = a._dbActivityId || a.id;
+                if (dbId && _delBl.has(String(dbId))) return false;
+                if (a.id && _delBl.has(String(a.id))) return false;
+                if (a.externalId && localExtIds.has(a.externalId)) return false;
                 if (dbId && localDbIds.has(dbId)) return false;
                 return true;
             });
@@ -52255,9 +52282,24 @@ function _applyDark(on, save) {
     // Re-renderiza zapatillas para reevaluar el color del título cuando el color
     // elegido es muy oscuro (en dark-mode pasa a var(--tw) para legibilidad).
     try { if (typeof renderShoes === 'function') renderShoes(); } catch(e) {}
-    // [v5 P.Biblioteca] Re-renderizar biblioteca para repintar mapas + tracks
-    // con el JPEG y los colores del tema correcto.
-    try { if (typeof renderActivities === 'function') renderActivities(); } catch(e) {}
+    // v2.30.1-p11 · [BUG FIX track color] Forzar RESET completo del DOM de biblio
+    // + doble rAF antes del re-render. Esto garantiza que los canvas de tracks
+    // (drawTrackForLibrary) lean el `dark-mode` YA aplicado al `<body>`. Sin este
+    // reset, en algunos edge cases los canvas quedaban pintados con el color del
+    // tema anterior (crimson en dark cuando debería ser amarillo, etc.).
+    try {
+        var _lst = document.getElementById('activities-list');
+        if (_lst) _lst.innerHTML = '';
+        // Doble rAF para asegurar reflow con la nueva clase antes de repintar.
+        requestAnimationFrame(function(){
+            requestAnimationFrame(function(){
+                try { if (typeof renderActivities === 'function') renderActivities(); } catch(e) {}
+            });
+        });
+    } catch(e) {
+        // Fallback: llamada directa si algo rompe en el reset.
+        try { if (typeof renderActivities === 'function') renderActivities(); } catch(_) {}
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════
