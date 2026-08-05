@@ -1236,10 +1236,11 @@
         border-radius: 20px;
         overflow: hidden;
         border: 1px solid var(--gold-bd);
-        /* v2.30.1-p24 · Padding vertical aumentado 13→18 para acomodar MEMBER
-           (absolute top:-13 del ring) y FLAG (absolute bottom:-14 del ring)
-           sin que el overflow:hidden del wrap los recorte. */
-        padding: 18px 14px 18px;
+        /* v2.30.1-p26 · Padding vertical bajado 18→14 (simétrico con el right)
+           para que el logo tenga la misma distancia al borde superior (14px)
+           que al borde derecho (14px). Ya no hace falta el 18 de p24 porque
+           en p26 MEMBER y BANDERA ya no sobresalen del wrap - están en flujo. */
+        padding: 14px 14px 14px;
         display: flex;
         align-items: center;
         gap: 16px;
@@ -1404,41 +1405,42 @@
     }
     .mr-coros-dot.on   { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.70); }
     .mr-coros-dot.off  { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,.70); }
-    /* v2.30.1-p25 · Wrapper del logo lateral en Runner: contiene el logo (75×60)
-       y le añade la bandera (absolute top:-14) encima + MEMBER badge (absolute
-       bottom:-13) debajo. Los dos badges "abrazan" al logo del app. Necesita
-       position:relative para que los hijos absolute se posicionen relativos a él. */
+    /* v2.30.1-p26 · Wrapper del logo lateral: FLEX COLUMN pegado al top del wrap
+       para que el logo tenga los mismos px al borde superior que al borde derecho
+       (14px, mismo que padding-right del wrap). Debajo del logo van MEMBER
+       (pegado) y BANDERA (con gap). Ya no hay absolutes; todo en el flujo. */
     .mr-rh-logo-wrap {
         position: relative;
         flex-shrink: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: center;
+        align-self: flex-start;
+        gap: 2px;
     }
-    /* v2.30.1-p25 · La bandera vive encima del logo lateral (antes en el ring).
-       Posición absoluta relativa a .mr-rh-logo-wrap. */
+    /* v2.30.1-p26 · Bandera al final de la columna, en flujo normal (era
+       absolute top:-14 en p25). Font-size ligeramente reducido para
+       encajar mejor en la columna sin sobresalir del wrap. */
     .mr-rh-flag {
-        position: absolute;
-        top: -14px;
-        left: 50%;
-        transform: translateX(-50%) rotate(-8deg);
-        font-size: 24px;
+        position: static;
+        font-size: 22px;
         line-height: 1;
+        transform: rotate(-8deg);
         filter: drop-shadow(0 2px 5px rgba(0,0,0,.25));
         pointer-events: none;
         user-select: none;
-        z-index: 3;
+        display: block;
+        margin-top: 3px;
     }
     body.dark-mode .mr-rh-flag {
         filter: drop-shadow(0 2px 5px rgba(0,0,0,.55));
     }
-    /* MEMBER badge debajo del logo lateral (antes encima del ring).
-       Vintage stamp look manteniendo la estética original. */
+    /* MEMBER badge debajo del logo, en flujo normal (era absolute bottom:-13
+       en p25). Se pega al logo por el gap:2 del wrap, "subido un pelín"
+       como pidió Álvaro. */
     .mr-rh-member-badge {
-        position: absolute;
-        bottom: -13px;
-        left: 50%;
-        transform: translateX(-50%);
+        position: static;
+        display: block;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
         font-size: 7px;
         font-weight: 700;
@@ -1448,7 +1450,7 @@
         white-space: nowrap;
         pointer-events: none;
         user-select: none;
-        z-index: 3;
+        margin-top: 1px;
     }
     /* [v2.x] Icono de reloj dorado en la fila del reloj + dot COROS en su esquina sup-der */
     .mr-rh-watch-ic {
@@ -6944,30 +6946,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  club-btn · home-strava-dot · home-club-dot. -->
             <div style="display:flex;align-items:stretch;gap:10px;padding:12px 15px 6px;flex-shrink:0;">
                 <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:7px;min-width:0;">
-                    <!-- COLUMNA 1 · Import stack (2 botones horizontales apilados) -->
-                    <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">
-                        <!-- Import Manual (verde, arriba) -->
-                        <button type="button" id="open-import-manual-btn" aria-label="Importar entreno manual"
-                            onclick="openImportManualWizard()"
-                            style="box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:8px;padding:0 10px;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(34,197,94,.35);min-width:0;overflow:hidden;">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;" aria-hidden="true">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                            <span style="font-size:11px;font-weight:800;color:#fff;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;">Import Manual</span>
-                        </button>
-
-                        <!-- Import Strava (A1=C · fondo card, border naranja, texto+rayo naranja bold, dot inline) -->
-                        <div style="position:relative;flex:1;min-width:0;display:flex;">
-                            <button type="button" id="home-strava-btn" aria-label="Importar de Strava"
-                                onclick="if(window._stravaHomeTap)_stravaHomeTap();else if(window.openStravaImport)openStravaImport()"
-                                style="box-sizing:border-box;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;background:var(--card);border:1.5px solid #FC4C02;border-radius:8px;padding:0 10px;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(252,76,2,.20);overflow:hidden;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="#FC4C02" stroke="none" style="flex-shrink:0;" aria-hidden="true">
+                    <!-- v2.30.1-p26 · COLUMNA 1 · Un solo botón AUTO-SYNC grande
+                         (60px, mismo alto que Club). Antes stack con Import Manual
+                         (verde) arriba + Import Strava (naranja) abajo. Import
+                         Manual ahora vive dentro del sheet Strava (footer). -->
+                    <div style="position:relative;min-width:0;">
+                        <button type="button" id="home-strava-btn" aria-label="Auto-sync Strava"
+                            onclick="if(window._stravaHomeTap)_stravaHomeTap();else if(window.openStravaImport)openStravaImport()"
+                            style="box-sizing:border-box;width:100%;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:var(--card);border:1.5px solid #FC4C02;border-radius:8px;padding:6px 10px;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(252,76,2,.20);overflow:hidden;">
+                            <span style="font-size:15px;font-weight:900;color:#FC4C02;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;line-height:1;">Auto-sync</span>
+                            <span style="display:flex;align-items:center;gap:4px;">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="#FC4C02" stroke="none" style="flex-shrink:0;" aria-hidden="true">
                                     <path d="M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z"/>
                                 </svg>
-                                <span style="font-size:11px;font-weight:900;color:#FC4C02;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;">Import Strava</span>
-                                <div id="home-strava-dot" class="strava-dot-alert" aria-hidden="true" style="display:none;"></div>
-                            </button>
-                        </div>
+                                <span style="font-size:9px;font-weight:800;color:#FC4C02;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;line-height:1;opacity:.85;">Strava</span>
+                            </span>
+                            <div id="home-strava-dot" class="strava-dot-alert" aria-hidden="true" style="display:none;"></div>
+                        </button>
                     </div>
 
                     <!-- COLUMNA 2 · Club (dorado, hero · idéntico al v2 salvo border-radius 8) -->
@@ -7680,15 +7675,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             <span id="watch-display">Coros Pace 2</span>
                         </div>
                     </div>
-                    <!-- v2.30.1-p25 · Wrapper para logo lateral con bandera (encima) y
-                         MEMBER badge (debajo). Antes bandera/MEMBER estaban abrazando
-                         al avatar; Álvaro los quiere abrazando al logo del app. -->
+                    <!-- v2.30.1-p26 · Wrapper del logo lateral en columna vertical:
+                         LOGO arriba (pegado al top del wrap con margen simétrico
+                         al lateral derecho = 14px), MEMBER debajo pegado al logo,
+                         BANDERA al final. Ya NO son position:absolute (era el
+                         layout p25 donde bandera/MEMBER "abrazaban" al logo). -->
                     <div class="mr-rh-logo-wrap">
-                        <div id="runner-flag-display" class="mr-rh-flag">🏃</div>
                         <div class="mr-logo">
                             <img src="" data-mr-logo="1" alt="MR" style="width:100%;height:100%;object-fit:cover;object-position:center 10%;display:block;">
                         </div>
                         <div class="mr-rh-member-badge">MEMBER</div>
+                        <div id="runner-flag-display" class="mr-rh-flag">🏃</div>
                     </div>
                 </div>
 
@@ -50300,6 +50297,23 @@ window._downsampleRecords = _downsampleRecords;
                 <div id="strava-picker-list-wrap" style="display:none;">
                     <div id="strava-picker-list" style="display:flex;flex-direction:column;gap:10px;"></div>
                     <div style="padding:14px 14px 2px;text-align:center;font-size:10px;color:var(--ts);letter-spacing:.3px;opacity:.75;">Powered by Strava · últimos 7 días</div>
+                </div>
+
+                <!-- v2.30.1-p26 · Footer con botón Import Manual (siempre visible).
+                     Antes vivía en Home junto al botón Strava; ahora Home tiene un
+                     único botón grande AUTO-SYNC y el import manual pasa aquí como
+                     alternativa cuando abres el sheet. Separador arriba para
+                     distinguirlo del contenido principal. -->
+                <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border);">
+                    <div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:1.1px;font-weight:700;text-align:center;margin-bottom:10px;">o importar manualmente</div>
+                    <button type="button" id="sheet-import-manual-btn" aria-label="Importar entreno manual"
+                        onclick="closeSheet('strava-picker-sheet');setTimeout(function(){if(typeof openImportManualWizard==='function')openImportManualWizard();},260);"
+                        style="box-sizing:border-box;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);border:none;border-radius:10px;padding:12px 14px;cursor:pointer;font-family:var(--f);box-shadow:0 2px 8px rgba(34,197,94,.30);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <span style="font-size:12.5px;font-weight:800;color:#fff;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;">Import Manual</span>
+                    </button>
                 </div>
             </div>
         </div>
