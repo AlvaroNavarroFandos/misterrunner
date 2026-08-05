@@ -27965,6 +27965,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Returns a lightweight handle { remove() } that tears down the GL context (safe to
     // call even before the async lib/map is ready). If there is no GPS, or the lib fails
     // to load, opts.onFail() is invoked so the caller can paint a flat drawTrack fallback.
+    // v2.30.1-p22 · Helper de loader sobre el mapa. Overlay semi-transparente
+    // con spinner dorado en el centro. Se muestra mientras MapLibre carga (style
+    // JSON + tiles + fitBounds) y se oculta con fade-out cuando termina. Uso:
+    //   var ldr = _mrShowMapLoader(container);
+    //   ... _mrBuildRunMap(container, ..., { onReady: function(){ ldr.hide(); } });
+    // Si el mapa falla, el onFail del caller también debería llamar ldr.hide().
+    function _mrShowMapLoader(container) {
+        if (!container) return { hide: function(){} };
+        // Inject spin keyframes una sola vez global.
+        if (!document.getElementById('mr-map-loader-style')) {
+            var st = document.createElement('style');
+            st.id = 'mr-map-loader-style';
+            st.textContent =
+                  '@keyframes mrMapSpin{to{transform:rotate(360deg)}}'
+                + '.mr-map-loader{position:absolute;inset:0;background:rgba(15,20,30,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:4;transition:opacity .22s ease;pointer-events:none;}'
+                + '.mr-map-loader.fade-out{opacity:0;}'
+                + '.mr-map-loader-spinner{width:30px;height:30px;border:2.5px solid rgba(255,255,255,.18);border-top-color:#C9A84C;border-radius:50%;animation:mrMapSpin .75s linear infinite;}';
+            document.head.appendChild(st);
+        }
+        var loader = document.createElement('div');
+        loader.className = 'mr-map-loader';
+        loader.innerHTML = '<div class="mr-map-loader-spinner"></div>';
+        container.appendChild(loader);
+        var hidden = false;
+        return {
+            hide: function() {
+                if (hidden) return;
+                hidden = true;
+                loader.classList.add('fade-out');
+                setTimeout(function(){
+                    try { if (loader.parentNode) loader.parentNode.removeChild(loader); } catch(_){}
+                }, 240);
+            }
+        };
+    }
+
     function _mrBuildRunMap(container, records, shoeColor, opts) {
         opts = opts || {};
         var td = _mrTrackData(records);
@@ -28005,6 +28041,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 try { _mrAddTrackLayers(map, td, shoeColor); } catch(_){}
                 try { map.fitBounds(td.bounds, { padding:pad, duration:0, maxZoom:16 }); } catch(_){}
                 setTimeout(function(){ try{ if(!ref.dead) map.resize(); }catch(_){} }, 60);
+                // v2.30.1-p22 · Callback onReady disparado tras load + track + fitBounds.
+                // El caller lo usa para ocultar loaders/spinners que muestran durante
+                // el arranque del mapa (visor Card 1 + modal zoom). Wrapped en try
+                // para que un error en el callback nunca rompa el flujo del mapa.
+                if (opts.onReady) { try { opts.onReady(map); } catch(_){} }
             });
             map.on('error', function(){ /* swallow transient tile errors */ });
         }).catch(function(){ if (opts.onFail) opts.onFail(); });
@@ -28137,9 +28178,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         document.addEventListener('keydown', onKey);
 
         // Interactive map. On MapLibre load failure → flat static track canvas fallback.
+        // v2.30.1-p22 · Loader sobre el mapa hasta que MapLibre carga. El modal
+        // muestra un mapa mucho más grande y por tanto la percepción de "tirón"
+        // era aún más notable; ahora hay spinner elegante hasta que el track está
+        // pintado y el fitBounds completado.
+        var _modalMapLoader = _mrShowMapLoader(mapRoot);
         mapHandle = _mrBuildRunMap(mapRoot, act.records, act.shoeColor || null, {
             interactive: true,
+            onReady: function(){ _modalMapLoader.hide(); },
             onFail: function(){
+                _modalMapLoader.hide();
                 try {
                     var cv = document.createElement('canvas');
                     var dpr = Math.min(window.devicePixelRatio||1, 2);
@@ -29575,11 +29623,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (_isIndoor) {
                     _mapFlatFallback();
                 } else {
+                    // v2.30.1-p22 · Loader sobre el mapa hasta que MapLibre carga
+                    // el style JSON + fitBounds. Evita los "tirones" visuales que
+                    // se veían al abrir la actividad (mapa gris → repinte → track).
+                    var _mapLoader = _mrShowMapLoader(mapRoot);
                     // Live inline Bright map. Gestos OFF → el swipe del carrusel queda intacto.
                     // Si falla la carga de la lib (offline), cae a drawTrack plano en el mismo div.
                     _detInlineMap = _mrBuildRunMap(mapRoot, act.records, act.shoeColor||null, {
                         interactive: false,
-                        onFail: _mapFlatFallback
+                        onReady: function(){ _mapLoader.hide(); },
+                        onFail: function(){ _mapLoader.hide(); _mapFlatFallback(); }
                     });
                     // Tap en el mapa → modal interactivo (pan/zoom/rotación/3D).
                     if (!mapWrap.dataset.zoomBound) {
