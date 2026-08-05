@@ -1470,18 +1470,17 @@
         text-align: center;
         width: 75px;
     }
-    /* v2.30.1-p27 · Override del .mr-logo cuando vive dentro del .mr-rh-logo-wrap:
+    /* v2.30.1-p28 · Override del .mr-logo cuando vive dentro del .mr-rh-logo-wrap:
        el logo va PEGADO literal a la esquina sup-der del wrap (top:0 right:0).
        Border-radius top-right sube a 20 para heredar la curva del wrap (que
        tiene border-radius:20 + overflow:hidden). Border-bottom-left mantiene
-       radius 12 (interior). Bordes T y R desaparecen (los tapa la curva del
-       wrap); bordes L y B dorados para separar visualmente del info block. */
+       radius 12 (interior). SIN bordes en ningún lado (Álvaro pidió "quitar
+       la línea negra alrededor del logo solo en Runner") — los bordes L+B
+       dorados que había en p27 daban la sensación de línea oscura por el
+       contraste con el fondo navy del logo. */
     .mr-rh-logo-wrap .mr-logo {
         border-radius: 0 20px 0 12px;
-        border-top: none;
-        border-right: none;
-        border-left: 1.5px solid var(--gold-bd);
-        border-bottom: 1.5px solid var(--gold-bd);
+        border: none;
     }
     /* [v2.x] Icono de reloj dorado en la fila del reloj + dot COROS en su esquina sup-der */
     .mr-rh-watch-ic {
@@ -7011,17 +7010,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                          homogéneos a 14px (antes AUTO-SYNC era 15 y STRAVA 9 →
                          "STRAVA muy pequeño" y "AUTO SYNC demasiado grande" según
                          Álvaro). Dot ahora en position:absolute top:4 right:4
-                         (antes 3ª fila del flex column, rompía centrado al aparecer). -->
+                         (antes 3ª fila del flex column, rompía centrado al aparecer).
+                         v2.30.1-p28 · data-attrs en spans para que
+                         _updateStravaButton(state) targetee cada span correctamente
+                         (antes el querySelector('span') genérico pisaba AUTO SYNC
+                         con STRAVA — el legacy asumía 1 solo span). -->
                     <div style="position:relative;min-width:0;">
                         <button type="button" id="home-strava-btn" aria-label="Auto-sync Strava"
                             onclick="if(window._stravaHomeTap)_stravaHomeTap();else if(window.openStravaImport)openStravaImport()"
                             style="box-sizing:border-box;width:100%;height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:#FC4C02;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-family:var(--f);box-shadow:0 3px 10px rgba(252,76,2,.35),inset 0 1px 0 rgba(255,255,255,.18);overflow:hidden;position:relative;">
-                            <span style="font-size:14px;font-weight:900;color:#ffffff;letter-spacing:.7px;text-transform:uppercase;white-space:nowrap;line-height:1;">AUTO SYNC</span>
-                            <span style="display:flex;align-items:center;gap:5px;">
+                            <span data-strava-lbl="auto" style="font-size:14px;font-weight:900;color:#ffffff;letter-spacing:.7px;text-transform:uppercase;white-space:nowrap;line-height:1;">AUTO SYNC</span>
+                            <span data-strava-row2 style="display:flex;align-items:center;gap:5px;">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="#ffffff" stroke="none" style="flex-shrink:0;" aria-hidden="true">
                                     <path d="M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z"/>
                                 </svg>
-                                <span style="font-size:14px;font-weight:800;color:#ffffff;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;line-height:1;">Strava</span>
+                                <span data-strava-lbl="brand" style="font-size:14px;font-weight:800;color:#ffffff;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;line-height:1;">Strava</span>
                             </span>
                             <div id="home-strava-dot" class="strava-dot-alert" aria-hidden="true" style="display:none;"></div>
                         </button>
@@ -7267,7 +7270,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                     <div style="text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;">
                         <div id="sum-pace" class="mr-lib-sum-val" style="font-size:21px;font-weight:900;letter-spacing:-.8px;line-height:1;font-variant-numeric:tabular-nums;">—</div>
-                        <div class="mr-lib-sum-lbl" style="font-size:8.5px;text-transform:uppercase;letter-spacing:1.3px;margin-top:6px;font-weight:700;">Ritmo med.</div>
+                        <div class="mr-lib-sum-lbl" style="font-size:8.5px;text-transform:uppercase;letter-spacing:1.3px;margin-top:6px;font-weight:700;">Ritmo</div>
                     </div>
                 </div>
                 <div id="activities-empty" style="text-align:center;padding:48px 24px 32px;color:var(--tm);">
@@ -14085,6 +14088,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <div class="sheet-title">Editar perfil</div>
             </div>
             <div class="sheet-body">
+                <!-- v2.30.1-p28 · Sección FOTO DE PERFIL (movida aquí desde el
+                     Runner card en p27). El label vincula al input file oculto
+                     y dispara handleAvatar() que a su vez actualiza el preview
+                     del modal + el avatar del Runner + persiste en IDB. El
+                     preview se rellena al abrir el modal (listener row-edit-profile). -->
+                <div style="display:flex;justify-content:center;padding:4px 0 10px;">
+                    <label for="edit-avatar-input" style="position:relative;cursor:pointer;display:inline-block;">
+                        <div id="edit-avatar-preview" style="width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,#1e3a5f,#0a1929);border:2px solid var(--gold-bd);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#f5c260;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.18);">
+                            CL
+                        </div>
+                        <div style="position:absolute;bottom:-2px;right:-2px;width:30px;height:30px;background:#c4881e;border:3px solid var(--card);border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.30);">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                        </div>
+                    </label>
+                    <input type="file" id="edit-avatar-input" accept="image/*" style="display:none" onchange="handleAvatar(this)">
+                </div>
                 <div>
                     <div class="field-label">Nombre</div>
                     <input id="edit-name" type="text" value="Carlos López" autocomplete="name">
@@ -18396,6 +18415,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(_ed('edit-hrrest'))_ed('edit-hrrest').value= profileData.hrRest|| 50;
         if(_ed('edit-weeksexp'))_ed('edit-weeksexp').value = profileData.weeksExp || 0;
         if(_ed('edit-vo2max')) _ed('edit-vo2max').value  = profileData.vo2max || '';
+        // v2.30.1-p28 · Sync preview del avatar en el modal con la foto actual
+        // del usuario. Si hay foto real (base64 en profileData.avatar o img del
+        // Runner con src) → mostrar en el preview. Si no → iniciales del avatar.
+        try {
+            var _pv = document.getElementById('edit-avatar-preview');
+            if (_pv) {
+                var _src = null;
+                if (profileData.avatar && typeof profileData.avatar === 'string' && profileData.avatar.startsWith('data:')) {
+                    _src = profileData.avatar;
+                } else {
+                    var _img = document.getElementById('avatar-img');
+                    if (_img && _img.src && _img.style.display !== 'none') _src = _img.src;
+                }
+                if (_src) {
+                    _pv.innerHTML = '<img src="' + _src + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
+                } else {
+                    var _av = document.getElementById('avatar-display');
+                    _pv.textContent = (_av && _av.textContent) ? _av.textContent : (profileData.name || 'Runner').split(' ').map(function(w){return w[0];}).join('').slice(0,2).toUpperCase();
+                }
+            }
+        } catch(_){}
         openSheet('edit-modal');
         setTimeout(() => document.getElementById('edit-name').focus(), 120);
     });
@@ -18548,6 +18588,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const div = document.getElementById('avatar-display');
             if(img){ img.src = dataUrl; img.style.display = 'block'; }
             if(div){ div.style.display = 'none'; }
+            // v2.30.1-p28 · Sync preview del modal edit-profile si está renderizado
+            // (el usuario acaba de tocar el lápiz dorado en Ajustes > Editar perfil).
+            try {
+                var _pv = document.getElementById('edit-avatar-preview');
+                if (_pv) _pv.innerHTML = '<img src="' + dataUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;">';
+            } catch(_){}
             // Store in profileData
             profileData.avatar = dataUrl;
             // [B1] Guardar en IDB en lugar de localStorage. Sin quota práctica
@@ -51630,19 +51676,29 @@ window._handleStravaReturn = _handleStravaReturn;
 
     // ────────────────────────────────────────────────────────────
     // Muta el botón home según estado de conexión Strava
+    // v2.30.1-p28 · Adaptado a la nueva estructura del botón (2 filas):
+    //   fila 1: [data-strava-lbl="auto"] con "AUTO SYNC"
+    //   fila 2: [data-strava-row2] con svg + [data-strava-lbl="brand"] "Strava"
+    // El legacy hacía btn.querySelector('span') (1 solo span) → con la nueva
+    // estructura pisaba AUTO SYNC con "STRAVA" resultando en "STRAVA / STRAVA".
+    // Ahora targetea cada span por su data-attr específico.
     // ────────────────────────────────────────────────────────────
     function _updateStravaButton(state) {
         // state: 'connected' | 'not-connected'
         var btn = document.getElementById('home-strava-btn');
         if (!btn) return;
-        var span = btn.querySelector('span');
-        var svgPath = btn.querySelector('svg path');
+        var lblAuto  = btn.querySelector('[data-strava-lbl="auto"]');
+        var lblBrand = btn.querySelector('[data-strava-lbl="brand"]');
+        var row2     = btn.querySelector('[data-strava-row2]');
+        var svgPath  = btn.querySelector('svg path');
         if (state === 'not-connected') {
+            // Fondo gris + una sola fila "CONECTAR" (ocultamos row2 con el rayito+Strava)
             btn.style.background = 'var(--bsoft)';
-            btn.style.boxShadow = 'none';
+            btn.style.boxShadow  = 'none';
             btn.setAttribute('data-strava-state', 'not-connected');
-            if (span) { span.textContent = 'CONECTAR'; span.style.color = 'var(--ts)'; }
-            if (svgPath) svgPath.setAttribute('fill', 'var(--ts)');
+            if (lblAuto)  { lblAuto.textContent  = 'CONECTAR'; lblAuto.style.color  = 'var(--ts)'; }
+            if (row2)     { row2.style.display   = 'none'; }
+            if (svgPath)  svgPath.setAttribute('fill', 'var(--ts)');
             btn.onclick = function() {
                 try {
                     if (typeof window.openSheet === 'function') openSheet('config-sheet');
@@ -51651,11 +51707,14 @@ window._handleStravaReturn = _handleStravaReturn;
             var dotNC = document.getElementById('home-strava-dot');
             if (dotNC) { dotNC.style.display = 'none'; dotNC.textContent = ''; }
         } else {
-            btn.style.background = 'linear-gradient(135deg,#FC4C02 0%,#E84500 100%)';
-            btn.style.boxShadow = '0 2px 8px rgba(252,76,2,.35)';
+            // Fondo naranja fijo + AUTO SYNC arriba + rayito + Strava abajo
+            btn.style.background = '#FC4C02';
+            btn.style.boxShadow  = '0 3px 10px rgba(252,76,2,.35),inset 0 1px 0 rgba(255,255,255,.18)';
             btn.setAttribute('data-strava-state', 'connected');
-            if (span) { span.textContent = 'STRAVA'; span.style.color = '#fff'; }
-            if (svgPath) svgPath.setAttribute('fill', '#fff');
+            if (lblAuto)  { lblAuto.textContent  = 'AUTO SYNC'; lblAuto.style.color  = '#ffffff'; }
+            if (lblBrand) { lblBrand.textContent = 'Strava';    lblBrand.style.color = '#ffffff'; }
+            if (row2)     { row2.style.display   = 'flex'; }
+            if (svgPath)  svgPath.setAttribute('fill', '#ffffff');
             btn.onclick = function() {
                 // [Strava #6 · Paso 6.2] router consumer-cola / on-demand
                 if (typeof window._stravaHomeTap === 'function') window._stravaHomeTap();
