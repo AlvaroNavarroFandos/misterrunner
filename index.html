@@ -27555,6 +27555,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } else {
             _mrLibRenderChunk();
         }
+
+        // v2.30.1-p35 · Exponer openActivityActions en window para poder
+        // invocarla desde la card "Último entreno" de Home (long-press).
+        try { window.openActivityActions = openActivityActions; } catch(_){}
     }
 
     // ── Shoe silhouette watermark for activity card GPS thumbnail ──────────────────────
@@ -44434,6 +44438,174 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     try { window._mrRenderTrainingLoadCard = _mrRenderTrainingLoadCard; window._mrRepaintTrainingLoadCard = _mrRepaintTrainingLoadCard; } catch(_){}
 
+    // ── [v2.30.1-p35] ÚLTIMO ENTRENO — mini-card en Home ────────────
+    // Copia el HTML de la card de biblioteca (mismo diseño mr-lib-card) y lo
+    // pone en Home debajo de Training Load. Click corto → openActivityDetail
+    // (visor con swipe borde izq para cerrar, mismo comportamiento que biblio).
+    // Long-press 500ms → openActivityActions (editar/eliminar, solo si biblio
+    // ya se renderizó al menos 1 vez para exponer la función en window).
+    // Patrón idéntico a _mrRenderTrainingLoadCard: renderer + repaint separados.
+    function _mrRenderLastActivityCard(container) {
+        if (!container) return;
+        var existing = container.querySelector('#home-last-activity');
+        if (existing) { _mrRepaintLastActivityCard(); return; }
+        var wrap = document.createElement('div');
+        wrap.id = 'home-last-activity';
+        wrap.setAttribute('data-ho', 'lastact');
+        wrap.style.cssText = 'display:none;flex-direction:column;gap:8px;';
+        container.appendChild(wrap);
+        _mrRepaintLastActivityCard();
+    }
+
+    function _mrRepaintLastActivityCard() {
+        var wrap = document.getElementById('home-last-activity');
+        if (!wrap) return;
+        if (!activities || !activities.length) { wrap.style.display = 'none'; return; }
+
+        // Coger la actividad más reciente por dateStr (desc)
+        var _sorted = activities.slice().sort(function(a, b) {
+            return new Date(b.dateStr + 'T12:00:00') - new Date(a.dateStr + 'T12:00:00');
+        });
+        var act = _sorted[0];
+        if (!act) { wrap.style.display = 'none'; return; }
+
+        var cId = 'home-last-canvas-' + act.id;
+        var d = new Date(act.dateStr + 'T12:00:00');
+        var df = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
+
+        // HTML idéntico al de biblioteca (_mrLibRenderOne) para consistencia total
+        var _rpeNotaRow = '';
+        if ((act.rpe != null && act.rpe !== '') || act.nota != null) {
+            _rpeNotaRow = '<div style="display:flex;align-items:center;gap:6px;line-height:1;margin-top:4px;">'
+                + ((act.rpe != null && act.rpe !== '' && typeof buildRpeBadge === 'function') ? buildRpeBadge(parseInt(act.rpe, 10)) : '')
+                + ((act.nota != null) ? (function() {
+                    var _n = act.nota;
+                    var _cn = _notaVisual(_n).color;
+                    return '<span style="display:inline-flex;align-items:center;gap:3px;background:'+_cn+'22;border:1px solid '+_cn+'55;border-radius:6px;padding:2px 6px;flex-shrink:0;"><span style="font-size:9px;font-weight:700;color:'+_cn+';font-family:var(--f);">'+_n+'</span></span>';
+                })() : '')
+                + '</div>';
+        }
+
+        wrap.innerHTML =
+            '<div style="font-size:11px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:1.3px;padding:0 4px;margin-bottom:2px;">Último entreno</div>'
+          + '<div class="act-swipe-wrap" data-act-id="' + act.id + '">'
+          +   '<div class="act-sliding act-card mr-lib-card">'
+          +     '<div class="mr-lib-card-inner" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">'
+          +       '<div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px 0 3px 4px;flex-shrink:0;">'
+          +         '<div style="width:100%;display:flex;justify-content:center;">' + buildOutfitFull(act) + '</div>'
+          +       '</div>'
+          +       '<div class="mr-lib-data" style="flex:1;padding:0 12px 0 10px;display:flex;flex-direction:column;justify-content:center;gap:0;min-width:0;">'
+          +         '<div style="display:flex;align-items:center;gap:6px;">'
+          +           '<div class="mr-lib-title" style="font-size:10px;font-weight:800;line-height:1;flex:1;min-width:0;letter-spacing:1px;text-transform:uppercase;opacity:.6;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (act.name || '—') + '</div>'
+          +           _libPRBadgeHTML(act)
+          +         '</div>'
+          +         '<div style="display:flex;align-items:center;gap:6px;">'
+          +           '<div style="display:flex;align-items:baseline;gap:2px;">'
+          +             '<span class="mr-lib-hero-km" style="font-size:25px;font-weight:800;letter-spacing:-1.1px;line-height:1;font-family:var(--f);font-variant-numeric:tabular-nums;">' + (act.distKm > 0 ? act.distKm.toFixed(2) : '—') + '</span>'
+          +             '<span class="mr-lib-hero-km-unit" style="font-size:11px;font-weight:600;margin-left:3px;font-family:var(--f);">km</span>'
+          +           '</div>'
+          +         '</div>'
+          +         '<div style="display:flex;align-items:center;gap:8px;margin-top:-3px;">'
+          +           '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + (act.durationSec > 0 ? secsToHMS(act.durationSec) : '—') + '</span>'
+          +           '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>'
+          +           '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + paceStr(act.distKm, act.durationSec) + '</span>'
+          +           '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>'
+          +           '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + (act.avgHr > 0 ? act.avgHr : '—') + '</span>'
+          +         '</div>'
+          +         '<div class="mr-lib-date-inline" style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;font-family:var(--f);line-height:1;margin-top:-1px;">' + df + '</div>'
+          +         _rpeNotaRow
+          +       '</div>'
+          +       '<div class="mr-lib-mapcol" style="position:relative;flex:0 0 33%;overflow:hidden;">'
+          +         '<canvas id="' + cId + '" width="248" height="290" style="width:100%;height:100%;display:block;"></canvas>'
+          +         _libIndoorBadgeHTML(act)
+          +       '</div>'
+          +       _libPhotoBadgeHTML(act)
+          +     '</div>'
+          +   '</div>'
+          + '</div>';
+
+        wrap.style.display = 'flex';
+
+        // Handlers: click corto → visor, long-press → actions modal (si expuesto)
+        var swipeWrap = wrap.querySelector('.act-swipe-wrap');
+        var sliding = wrap.querySelector('.act-sliding');
+        if (!sliding) return;
+        sliding.style.userSelect = 'none';
+        sliding.style.webkitUserSelect = 'none';
+        sliding.style.webkitTouchCallout = 'none';
+        sliding.style.webkitTapHighlightColor = 'transparent';
+
+        var _lpTimer = null;
+        var _lpFired = false;
+        var _lpStartX = 0;
+        var _lpStartY = 0;
+        var _lpAborted = false;
+
+        var _startLP = function(ev) {
+            _lpFired = false;
+            _lpAborted = false;
+            if (ev && ev.touches && ev.touches[0]) {
+                _lpStartX = ev.touches[0].clientX;
+                _lpStartY = ev.touches[0].clientY;
+            }
+            sliding.style.transition = 'transform .12s ease-out';
+            sliding.style.transform = 'scale(.97)';
+            _lpTimer = setTimeout(function() {
+                if (_lpAborted) return;
+                _lpFired = true;
+                if (navigator.vibrate) try { navigator.vibrate(25); } catch(_){}
+                sliding.style.transform = 'scale(1)';
+                if (typeof window.openActivityActions === 'function') {
+                    try { window.openActivityActions(act, swipeWrap, df); } catch(_){}
+                }
+            }, 500);
+        };
+        var _abortLP = function() {
+            _lpAborted = true;
+            if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+            sliding.style.transition = 'none';
+            sliding.style.transform = 'scale(1)';
+        };
+        var _cancelLP = function() {
+            if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+            sliding.style.transition = 'transform .12s ease-out';
+            sliding.style.transform = 'scale(1)';
+        };
+        var _onTouchMove = function(ev) {
+            if (!ev.touches || !ev.touches[0]) return;
+            var dx = Math.abs(ev.touches[0].clientX - _lpStartX);
+            var dy = Math.abs(ev.touches[0].clientY - _lpStartY);
+            if (dx > 8 || dy > 8) {
+                if (dx > dy * 1.2 && dx > 8) _abortLP();
+                else _cancelLP();
+            }
+        };
+        sliding.addEventListener('touchstart', _startLP, {passive:true});
+        sliding.addEventListener('touchend',   _cancelLP, {passive:true});
+        sliding.addEventListener('touchcancel',_cancelLP, {passive:true});
+        sliding.addEventListener('touchmove',  _onTouchMove, {passive:true});
+        sliding.addEventListener('mousedown',  _startLP);
+        sliding.addEventListener('mouseup',    _cancelLP);
+        sliding.addEventListener('mouseleave', _cancelLP);
+        sliding.addEventListener('contextmenu', function(e){ e.preventDefault(); }, {passive:false});
+        sliding.addEventListener('selectstart', function(e){ e.preventDefault(); }, {passive:false});
+
+        sliding.addEventListener('click', function() {
+            if (_lpFired) { _lpFired = false; return; }
+            if (typeof window.openActivityDetail === 'function') {
+                window.openActivityDetail(act);
+            }
+        });
+
+        // Pintar el canvas del mapa (rAF diferido — solo 1 card, sin IO)
+        requestAnimationFrame(function() {
+            var c = document.getElementById(cId);
+            if (!c) return;
+            try { drawTrackForLibrary(c, act.records, act.shoeColor || null); } catch(_) {}
+        });
+    }
+    try { window._mrRenderLastActivityCard = _mrRenderLastActivityCard; window._mrRepaintLastActivityCard = _mrRepaintLastActivityCard; } catch(_){}
+
     // ── VDOT (Evolución) ──
     function _mrRenderVdotCard(container){
         if (!container) return;
@@ -45969,6 +46141,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // válido. Sin "Sin datos" gris intermedio en el arranque.
         try { if (typeof window._mrRenderTrainingLoadCard === 'function') window._mrRenderTrainingLoadCard(container); } catch(_){}
 
+        // [v2.30.1-p35] ÚLTIMO ENTRENO — mini-card en Home. Copia el diseño de la
+        // card de biblioteca. Click → visor (openActivityDetail). Long-press →
+        // openActivityActions (editar/eliminar, si biblio la expuso al menos 1 vez).
+        try { if (typeof window._mrRenderLastActivityCard === 'function') window._mrRenderLastActivityCard(container); } catch(_){}
+
         // [Fase 3 · Home] Card "Evolución VDOT" (dorada) → abre modal vdot-history-sheet.
         // v2.27.0-p3 · Patrón Stamina: renderer separado que siempre crea
         // el div oculto y solo lo muestra cuando _mrFormaActual devuelve
@@ -45976,11 +46153,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try { if (typeof window._mrRenderVdotCard === 'function') window._mrRenderVdotCard(container); } catch(_){}
 
         // [v5.4 Home reorder] Orden de Home: plan → hoy(warmup/rehab) → Training load →
-        // Próximos → Carga·Fatiga·Forma → Distancia semanal → Carreras acumuladas (última).
+        // Último entreno → Próximos → Carga·Fatiga·Forma → Distancia semanal → Carreras.
+        // v2.30.1-p35 · Añadido 'lastact' entre 'training' y 'carga'.
         // Re-append por DOM (mueve nodos ya existentes); las tarjetas condicionales
         // ausentes se saltan sin romper el orden.
         try {
-            ['rehab-today','vdot','training','carga','distancia'].forEach(function(_k){
+            ['rehab-today','vdot','training','lastact','carga','distancia'].forEach(function(_k){
                 var _el = container.querySelector('[data-ho="' + _k + '"]');
                 if (_el && _el.parentNode === container) container.appendChild(_el);
             });
