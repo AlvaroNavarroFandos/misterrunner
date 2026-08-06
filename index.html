@@ -37581,6 +37581,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const todayS = localDateStr(new Date());
         let html2 = '';
 
+        // v2.30.1-p42 · Pill premium con "Nombre plan + Fuerza" al inicio de la
+        // vista MES, debajo de los botones (Álvaro: "pon el nombre del plan
+        // más fuerza si lleva debajo de los botones en una pill premium que
+        // quede bien"). Gradient dorado + border-radius pequeño + shadow con
+        // glow dorado para look premium coherente con hCard semanal.
+        var _planNameMes = '';
+        try {
+            var _rnM = (activePlan && activePlan.type !== 'strength') ? activePlan.name : null;
+            var _snM = (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? true : false;
+            if (_rnM) _planNameMes = _rnM + (_snM ? ' + Fuerza' : '');
+            else if (_snM && activeStrengthPlan.name) _planNameMes = activeStrengthPlan.name;
+        } catch(_){}
+        if (_planNameMes) {
+            html2 += `<div style="padding:10px 14px 4px;display:flex;justify-content:center;">
+                <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:6px;background:linear-gradient(135deg,#C9A84C 0%,#8B6914 100%);color:#fff;font-size:12px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;box-shadow:0 3px 12px rgba(196,136,30,.35),inset 0 1px 0 rgba(255,255,255,.25);border:1px solid rgba(232,199,106,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 2l3 6 7 1-5 4 1 7-6-3-6 3 1-7-5-4 7-1z"/></svg>
+                    <span>${_planNameMes}</span>
+                </div>
+            </div>`;
+        }
+
         Object.values(months).forEach(mo => {
             const mName = new Date(mo.year,mo.month,1).toLocaleDateString('es-ES',{month:'long',year:'numeric'});
             html2 += `<div style="padding:14px 14px 4px;"><div style="font-size:12px;font-weight:800;color:var(--crimson);text-transform:uppercase;letter-spacing:1.4px;margin-bottom:12px;">${mName}</div>`;
@@ -37628,21 +37649,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             html2 += '</div></div>';
         });
 
-        // Week load legend
-        html2 += `<div style="padding:14px;"><div style="font-size:11px;font-weight:700;color:var(--tw);margin-bottom:8px;">Semanas por carga</div><div style="display:flex;flex-direction:column;gap:4px;">`;
+        // v2.30.1-p42 · Barras semanas por carga · coherencia con app:
+        // pill row cuadrada (border-radius 8→4), barra más gruesa (4→8px) y
+        // cuadrada (border-radius 2→1), label estado en pill cuadrada con
+        // background tinted + border del color en lugar de solo texto.
+        html2 += `<div style="padding:14px;"><div style="font-size:11px;font-weight:800;color:var(--tw);margin-bottom:10px;text-transform:uppercase;letter-spacing:1.2px;">Semanas por carga</div><div style="display:flex;flex-direction:column;gap:5px;">`;
         weekLoads.forEach(({wk,km})=>{
             const isRecovery = wk.phase==='taper' || km < avgLoad*0.75;
             const isHard = km > avgLoad*1.15;
             const pillColor = isRecovery?'#60a5fa':isHard?'#f87171':'#4ade80';
             const pillLabel = isRecovery?'Descarga':isHard?'Carga alta':'Normal';
             const startDate = new Date(wk.weekStart+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'});
-            html2 += `<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--bsoft);border-radius:8px;">
-                <div style="font-size:10px;color:var(--ts);min-width:60px;">Sem ${wk.n} · ${startDate}</div>
-                <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;">
-                    <div style="width:${Math.min(100,Math.round(km/Math.max(...weekLoads.map(w=>w.km),1)*100))}%;height:100%;background:${pillColor};border-radius:2px;"></div>
+            const pct = Math.min(100,Math.round(km/Math.max(...weekLoads.map(w=>w.km),1)*100));
+            html2 += `<div style="display:flex;align-items:center;gap:9px;padding:7px 10px;background:var(--bsoft);border-radius:4px;">
+                <div style="font-size:10px;color:var(--ts);min-width:66px;font-weight:600;">Sem ${wk.n} · ${startDate}</div>
+                <div style="flex:1;height:8px;background:var(--border);border-radius:1px;overflow:hidden;">
+                    <div style="width:${pct}%;height:100%;background:${pillColor};border-radius:1px;"></div>
                 </div>
-                <div style="font-size:10px;color:${pillColor};font-weight:600;min-width:52px;text-align:right;">${km.toFixed(0)}km</div>
-                <div style="font-size:9px;color:${pillColor};font-weight:700;min-width:65px;text-align:right;">${pillLabel}</div>
+                <div style="font-size:11px;color:${pillColor};font-weight:800;min-width:44px;text-align:right;font-variant-numeric:tabular-nums;">${km.toFixed(0)}km</div>
+                <div style="font-size:8.5px;color:${pillColor};font-weight:900;min-width:64px;text-align:center;text-transform:uppercase;letter-spacing:.6px;background:${pillColor}1a;border:1px solid ${pillColor}55;border-radius:3px;padding:3px 4px;">${pillLabel}</div>
             </div>`;
         });
         html2 += '</div></div>';
@@ -38372,9 +38397,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const totalKm=Math.round(wk.sessions.reduce((a,s)=>a+(s.dist||0),0)*10)/10;
         container.innerHTML='';
 
-        // v2.30.1-p41 · Nombre del plan (+ Fuerza si hay strength) arriba del hCard.
-        // Discreto, centrado, sin molestar. Álvaro: "que se vea bien centrado en la
-        // parte de arriba sin que moleste mucho a lo que ya hay".
+        // v2.30.1-p41 · Nombre del plan (+ Fuerza si hay strength) para meterlo
+        // DENTRO del hCard como línea top pequeña.
+        // v2.30.1-p42 · Movido del div separado al interior del hCard para
+        // subir el resto (Álvaro: "va metido en la cabecera semanal y así
+        // podemos subir aun más todo el resto de cosas hacia arriba").
         var _planNameStr = '';
         try {
             var _rn = (activePlan && activePlan.type !== 'strength') ? activePlan.name : null;
@@ -38382,12 +38409,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (_rn) _planNameStr = _rn + (_sn ? ' + Fuerza' : '');
             else if (_sn && activeStrengthPlan.name) _planNameStr = activeStrengthPlan.name;
         } catch(_){}
-        if (_planNameStr) {
-            var planNameEl = document.createElement('div');
-            planNameEl.style.cssText = 'text-align:center;font-size:11px;font-weight:800;color:var(--tw);letter-spacing:.3px;padding:0 14px 6px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-            planNameEl.textContent = _planNameStr;
-            container.appendChild(planNameEl);
-        }
 
         // Week header card [v6 P.Plan compacto]
         // 1 línea con: Semana N · FASE · fechas · NN km
@@ -38448,37 +38469,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // 4 esquinas + border completo + margin-bottom para respirar del daysCard).
         // Antes: border-radius:10px 10px 0 0 y border-bottom:0 la conectaba visualmente
         // con el daysCard, ahora ambos son elementos independientes con su elevación.
+        // v2.30.1-p42 · Estructura hCard cambia de una fila (flex row) a dos
+        // filas apiladas cuando hay nombre de plan: fila superior con el
+        // nombre en pequeño centrado; fila inferior con la row original
+        // (flechas · Sem/fase/fechas · km pill · flechas). Sin nombre de plan,
+        // mantiene una sola fila.
         hCard.style.cssText = 'background:linear-gradient(135deg,'+_phaseCol+' 0%,'+_phaseDark+' 100%);'
-            + 'border:1px solid '+_phaseCol+';border-radius:10px;padding:12px 14px;margin-bottom:0;'
+            + 'border:1px solid '+_phaseCol+';border-radius:10px;padding:'+(_planNameStr?'6px 14px 10px':'12px 14px')+';margin-bottom:0;'
             + 'touch-action:pan-y;position:relative;overflow:hidden;cursor:grab;'
             + 'user-select:none;-webkit-user-select:none;will-change:transform;'
             + 'transition:transform .25s cubic-bezier(.22,.61,.36,1);'
             + 'box-shadow:0 6px 20px '+_phaseShadow+';'
-            + 'display:flex;align-items:center;justify-content:space-between;gap:10px;';
+            + 'display:flex;flex-direction:column;gap:4px;';
+
+        var _planNameLine = _planNameStr
+            ? `<div style="text-align:center;font-size:9.5px;font-weight:900;color:rgba(255,255,255,.75);letter-spacing:1.2px;text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 8px;">${_planNameStr}</div>`
+            : '';
 
         hCard.innerHTML =
             // Línea top blanca translúcida (highlight sutil)
             `<div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);pointer-events:none;"></div>
-            <!-- Flecha izquierda -->
-            <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasPrev?'.75':'.20'};transition:opacity .2s;" aria-hidden="true">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-            </div>
-            <!-- Centro: Semana + Phase + Fechas -->
-            <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;min-width:0;flex:1;justify-content:center;text-align:center;position:relative;overflow:hidden;">
-                <span style="font-size:14px;font-weight:900;color:#fff;letter-spacing:-.3px;text-shadow:0 1px 2px rgba(0,0,0,.15);white-space:nowrap;">Sem ${wk.n}</span>
-                <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
-                <span style="font-size:10px;font-weight:900;color:rgba(255,255,255,.95);text-transform:uppercase;letter-spacing:1.3px;white-space:nowrap;">${wk.phase}</span>
-                <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
-                <span style="font-size:10px;color:rgba(255,255,255,.75);font-weight:600;white-space:nowrap;">${_wDatesLbl}</span>
-            </div>
-            <!-- KM pill blanca con número tintado del color de la fase -->
-            <div style="display:inline-flex;align-items:baseline;gap:4px;background:#fff;border-radius:6px;padding:5px 12px;flex-shrink:0;box-shadow:0 3px 10px rgba(0,0,0,.20);position:relative;">
-                <span style="font-size:14px;font-weight:900;color:${_phaseCol};letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${totalKm}</span>
-                <span style="font-size:8.5px;color:#52525b;font-weight:800;letter-spacing:.8px;text-transform:uppercase;">km</span>
-            </div>
-            <!-- Flecha derecha -->
-            <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasNext?'.75':'.20'};transition:opacity .2s;position:relative;" aria-hidden="true">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+            ${_planNameLine}
+            <!-- Row principal: flechas · sem/fase/fechas · km pill · flechas -->
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                <!-- Flecha izquierda -->
+                <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasPrev?'.75':'.20'};transition:opacity .2s;" aria-hidden="true">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </div>
+                <!-- Centro: Semana + Phase + Fechas -->
+                <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;min-width:0;flex:1;justify-content:center;text-align:center;position:relative;overflow:hidden;">
+                    <span style="font-size:14px;font-weight:900;color:#fff;letter-spacing:-.3px;text-shadow:0 1px 2px rgba(0,0,0,.15);white-space:nowrap;">Sem ${wk.n}</span>
+                    <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
+                    <span style="font-size:10px;font-weight:900;color:rgba(255,255,255,.95);text-transform:uppercase;letter-spacing:1.3px;white-space:nowrap;">${wk.phase}</span>
+                    <span style="font-size:10px;color:rgba(255,255,255,.55);">·</span>
+                    <span style="font-size:10px;color:rgba(255,255,255,.75);font-weight:600;white-space:nowrap;">${_wDatesLbl}</span>
+                </div>
+                <!-- KM pill blanca con número tintado del color de la fase -->
+                <div style="display:inline-flex;align-items:baseline;gap:4px;background:#fff;border-radius:6px;padding:5px 12px;flex-shrink:0;box-shadow:0 3px 10px rgba(0,0,0,.20);position:relative;">
+                    <span style="font-size:14px;font-weight:900;color:${_phaseCol};letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${totalKm}</span>
+                    <span style="font-size:8.5px;color:#52525b;font-weight:800;letter-spacing:.8px;text-transform:uppercase;">km</span>
+                </div>
+                <!-- Flecha derecha -->
+                <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasNext?'.75':'.20'};transition:opacity .2s;position:relative;" aria-hidden="true">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
             </div>`;
 
         // ── Swipe horizontal para cambiar semana ───────────────────────
@@ -38798,7 +38832,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>`
                     : (_ICONS_PLAN_DAY[sess.type] || '<span style="width:10px;height:10px;border-radius:2px;background:'+_typeCol+';display:inline-block;flex-shrink:0;"></span>');
 
-                const _typeLabelText = _isStrengthCard ? 'STRENGTH' : getTypeLabel(sess.type).toUpperCase();
+                const _typeLabelText = _isStrengthCard ? 'FUERZA' : getTypeLabel(sess.type).toUpperCase();
 
                 // Chevron (rotará al expandir)
                 const _chev = `<svg class="mr-day-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round" style="flex-shrink:0;transition:transform .2s;"><polyline points="9 18 15 12 9 6"/></svg>`;
