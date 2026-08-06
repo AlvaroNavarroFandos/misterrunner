@@ -1016,6 +1016,20 @@
         will-change: transform, filter;
     }
 
+    /* v2.30.1-p47 · Blindaje CSS por ID (especificidad 0-1-0-0, gana sobre
+       CUALQUIER clase con o sin !important salvo otro !important en clase).
+       En p47 los spans plan-week-label/plan-title-bar/plan-sub-bar se
+       ELIMINARON del DOM porque updatePlanNav (L37795, L37809) hacía
+       title.style.display = '' que quitaba el display:none inline con
+       !important y dejaba el texto "nombre del plan + Fuerza" visible
+       encima de los botones al swipe. Esta regla es un salvavidas para
+       que, si alguna regresión reinserta esos IDs, no vuelvan a aparecer. */
+    #plan-week-label,
+    #plan-title-bar,
+    #plan-sub-bar {
+        display: none !important;
+    }
+
     /* ───────────────────────────────────────────────────────────────
        [NAV · Pieza 1 · CARRUSEL REAL] Transición entre pestañas vía SWIPE.
        Las dos vistas (saliente + entrante) coexisten posicionadas absolute
@@ -7215,21 +7229,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      con `element.hidden = false` o `removeAttribute('hidden')`,
                      que nadie llama). Sigue existiendo en el DOM para no
                      romper `if(title)` guards. -->
-                <!-- v2.30.1-p46 · FIX DEFINITIVO texto encima botones al swipe:
-                     hidden fallaba porque .mr-fx-week-pulse (L1012, aplicada
-                     al span plan-week-label en cada swipe entre semanas
-                     L38621) tiene display:inline-block que ganaba contra
-                     hidden (misma especificidad 0-1-0, CSS declarada después
-                     en el archivo). Cambio a style="display:none !important"
-                     inline: !important gana sobre CUALQUIER clase CSS
-                     (incluida .mr-fx-week-pulse). IDs vivos para que los
-                     if(lbl)/if(title)/if(sub) de updatePlanNav,
-                     renderEmptyWeekCalendar, renderEmptyMonthCalendar y
-                     resetActivePlan sigan funcionando sin fallo (skippean
-                     silenciosamente sin efecto visual). -->
-                <span id="plan-week-label" style="display:none !important;"></span>
-                <span id="plan-title-bar" style="display:none !important;"></span>
-                <span id="plan-sub-bar" style="display:none !important;"></span>
+                <!-- v2.30.1-p47 · SPANS ELIMINADOS COMPLETAMENTE (era p46
+                     con display:none !important pero updatePlanNav L37795
+                     y L37809 hacía `title.style.display = ''` que REMUEVE
+                     el estilo inline entero incluyendo el !important, causa
+                     de que el nombre del plan + " + Fuerza" siguiera saliendo
+                     encima de los botones al swipe). Ahora sin spans:
+                     document.getElementById devuelve null → if(lbl),
+                     if(title), if(sub) evalúan false → ningún JS puede
+                     tocarlos → jamás pueden aparecer. + Blindaje CSS
+                     con selector ID (L~1013) para el caso de que alguna
+                     regresión reinserte estos elementos: los ocultará
+                     con display:none !important. -->
+                <!-- (spans plan-week-label / plan-title-bar / plan-sub-bar eliminados) -->
                 <div style="display:flex;align-items:center;gap:6px;">
                     <button onclick="openCreateSession()" aria-label="Crear entrenamiento"
                         class="mr-plan-action-btn mr-plan-action-btn--entreno"
@@ -7295,7 +7307,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  se conserva: lo reutiliza el wizard manual vía vimDoImport. -->
             <button type="button" id="upload-ios-button" style="display:none">Subir archivos</button>
             <input type="file" id="activity-files-input" accept=".csv,text/csv,.gpx,application/gpx+xml,.fit,application/octet-stream" multiple style="display:none">
-            <div class="vi" style="padding-top:2px;">
+            <div class="vi" style="padding-top:2px;gap:0;">
                 <!-- Fila top: [search compacto] [botón filtros 42px] [logo MR tamaño original 75x60] -->
                 <!-- v2.30.1-p31 · Logo vuelve al tamaño original 75x60 (default
                      .mr-logo) sin overrides inline — Álvaro: "el logo tiene que
@@ -7305,7 +7317,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      que search+filtros (42px) queden centrados verticalmente
                      respecto al logo (60px). margin-bottom 12→2: casi nada de
                      aire con el bloque de stats de abajo. -->
-                <div style="display:flex;gap:8px;margin-bottom:2px;align-items:center;">
+                <div style="display:flex;gap:8px;margin-bottom:0;align-items:center;">
                     <div style="flex:1;position:relative;min-width:0;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);pointer-events:none;">
                             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -7339,7 +7351,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <!-- [v5 P.Biblioteca] Adaptativo claro/oscuro:
                      - Oscuro: fondo negro puro, números blancos, labels dorados
                      - Claro: fondo card2 cream con border, números negros, labels crimson -->
-                <div id="acts-summary" class="mr-lib-summary" style="border-radius:16px;padding:18px 14px 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+                <div id="acts-summary" class="mr-lib-summary" style="border-radius:16px;padding:18px 14px 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:4px;margin-bottom:8px;">
                     <div style="text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;">
                         <div id="sum-km" class="mr-lib-sum-val" style="font-size:21px;font-weight:900;letter-spacing:-.8px;line-height:1;font-variant-numeric:tabular-nums;">—</div>
                         <div class="mr-lib-sum-lbl" style="font-size:8.5px;text-transform:uppercase;letter-spacing:1.3px;margin-top:6px;font-weight:700;">km</div>
@@ -7923,8 +7935,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
 
                 <!-- 5. ZAPATILLAS -->
-                <div id="row-shoes" class="mr-rrow" onclick="openSheet('shoes-sheet')" style="--rrow-accent:#22c55e;--rrow-tint:rgba(34,197,94,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
-                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:24px;line-height:1;">👟</div>
+                <div id="row-shoes" class="mr-rrow" onclick="openSheet('shoes-sheet')" style="--rrow-accent:#3b82f6;--rrow-tint:rgba(59,130,246,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--tw);">
+                        <svg viewBox="0 -960 960 960" fill="currentColor" width="24" height="24" aria-hidden="true">
+                            <path d="M216-580H88q4-14 10.5-26.5T114-631l154-206q17-23 45.5-30.5T368-861l28 14q21 11 32.5 30t11.5 42v84l74-19q30-8 58 7.5t38 44.5l65 196 170 170q20 20 27.5 43t7.5 49q0 37-20 66t-52 43L354-525q-29-27-64-41t-74-14ZM566-80q-30 0-57-11t-50-31L134-417q-19-17-31-38.5T86-500h130q23 0 44.5 8t38.5 25L703-80H566Z"/>
+                        </svg>
+                    </div>
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Armas</div>
                     </div>
@@ -30390,7 +30406,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (act.evalScores) {
             const c4 = document.createElement('div');
             c4.className = 'det-card';
-            c4.style.cssText = 'overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
+            c4.style.cssText = 'overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-top:66px;';
 
             const entries = Object.entries(act.evalScores);
             const totalW  = entries.reduce((a,[,s])=>a+s.w,0)||1;
