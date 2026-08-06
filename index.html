@@ -7195,9 +7195,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      · Botón SHARE ELIMINADO (Álvaro: "eliminamos y con ello las
                        funciones que tiene"). La función _openPlanShareMenu queda
                        intacta en el JS (sin punto de llamada, sin ejecutarse). -->
-                <span id="plan-week-label" style="display:none;"></span>
-                <span id="plan-title-bar" style="display:none;"></span>
-                <span id="plan-sub-bar" style="display:none;"></span>
+                <!-- v2.30.1-p43 · Álvaro reportó que "Sevilla + Fuerza" seguía
+                     saliendo arriba de los botones. Causa: updatePlanNav hace
+                     `title.style.display = ''` en 4 sitios, lo que quita el
+                     display:none inline. Fix: usar atributo HTML `hidden`
+                     nativo — inmune a `style.display=''` (solo se desactiva
+                     con `element.hidden = false` o `removeAttribute('hidden')`,
+                     que nadie llama). Sigue existiendo en el DOM para no
+                     romper `if(title)` guards. -->
+                <span id="plan-week-label" hidden></span>
+                <span id="plan-title-bar" hidden></span>
+                <span id="plan-sub-bar" hidden></span>
                 <div style="display:flex;align-items:center;gap:6px;">
                     <button onclick="openCreateSession()" aria-label="Crear entrenamiento"
                         class="mr-plan-action-btn mr-plan-action-btn--entreno"
@@ -37552,6 +37560,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         activePlan.weeks.forEach(wk => {
             wk.sessions.forEach(s => { sessMap[s.dateStr] = s; });
         });
+        // v2.30.1-p43 · Merge strength sessions al mes (Álvaro: "lo de fuerza
+        // en vez de strength y de su color metelo también en la vista mes").
+        // Solo se pintan en días SIN running (para no pisar el bloque del tipo
+        // principal). Los días con running + strength siguen mostrando running
+        // como en la semana.
+        if (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan && activeStrengthPlan.weeks) {
+            activeStrengthPlan.weeks.forEach(function(wk) {
+                (wk.sessions || []).forEach(function(s) {
+                    if (!sessMap[s.dateStr]) sessMap[s.dateStr] = s;
+                });
+            });
+        }
 
         // Detect which weeks are "load" vs "recovery"
         const weekLoads = activePlan.weeks.map(wk=>({
@@ -37576,8 +37596,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // v2.30.1-p41 · Opción A del preview + dot verde matched + click→semana
-        const TYPE_COLOR_PLAN = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',test:'#06b6d4'};
-        const TYPE_LABEL_SHORT = {easy:'Easy',recovery:'Rec',series:'Series',long:'Long',race:'Race',test:'Test'};
+        // v2.30.1-p43 · Añadido strength con color dorado #c4881e y label 'Fuerza'
+        // (Álvaro: "lo de fuerza en vez de strength y de su color").
+        const TYPE_COLOR_PLAN = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',test:'#06b6d4',strength:'#c4881e'};
+        const TYPE_LABEL_SHORT = {easy:'Easy',recovery:'Rec',series:'Series',long:'Long',race:'Race',test:'Test',strength:'Fuerza'};
         const todayS = localDateStr(new Date());
         let html2 = '';
 
