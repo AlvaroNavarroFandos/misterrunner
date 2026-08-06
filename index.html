@@ -37575,23 +37575,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             cur = new Date(cur.getTime()+86400000);
         }
 
+        // v2.30.1-p41 · Opción A del preview + dot verde matched + click→semana
         const TYPE_COLOR_PLAN = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',test:'#06b6d4'};
+        const TYPE_LABEL_SHORT = {easy:'Easy',recovery:'Rec',series:'Series',long:'Long',race:'Race',test:'Test'};
         const todayS = localDateStr(new Date());
         let html2 = '';
 
         Object.values(months).forEach(mo => {
             const mName = new Date(mo.year,mo.month,1).toLocaleDateString('es-ES',{month:'long',year:'numeric'});
-            html2 += `<div style="padding:14px 14px 4px;"><div style="font-size:12px;font-weight:700;color:var(--crimson);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">${mName}</div>`;
+            html2 += `<div style="padding:14px 14px 4px;"><div style="font-size:12px;font-weight:800;color:var(--crimson);text-transform:uppercase;letter-spacing:1.4px;margin-bottom:12px;">${mName}</div>`;
 
             // Day-of-week headers
-            html2 += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;">`;
-            ['L','M','X','J','V','S','D'].forEach(d=>{ html2+=`<div style="text-align:center;font-size:9px;color:var(--tm);font-weight:600;">${d}</div>`; });
+            html2 += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px;">`;
+            ['L','M','X','J','V','S','D'].forEach(d=>{ html2+=`<div style="text-align:center;font-size:9.5px;color:var(--tm);font-weight:800;text-transform:uppercase;letter-spacing:1.2px;">${d}</div>`; });
             html2 += '</div>';
 
             // Pad first week
             const firstDay = new Date(mo.year,mo.month,1).getDay(); // 0=Sun
             const padDays  = (firstDay+6)%7; // Mon-based
-            html2 += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">`;
+            html2 += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">`;
             for(let p=0;p<padDays;p++) html2+=`<div></div>`;
 
             // Days
@@ -37602,13 +37604,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const sess = sessMap[ds2];
                 const isToday = ds2===todayS;
                 const matched = sess && activities.some(a=>a.dateStr===ds2&&a.type===sess.type);
-                const dotColor = sess ? TYPE_COLOR_PLAN[sess.type]||'#888' : 'transparent';
-                const bgColor  = isToday?'var(--crimson)':matched?'rgba(76,175,80,.2)':'var(--bsoft)';
+                const typeCol = sess ? (TYPE_COLOR_PLAN[sess.type]||'#888') : 'transparent';
+                const typeLbl = sess ? (TYPE_LABEL_SHORT[sess.type] || sess.type) : '';
+                const bgColor  = isToday?'var(--crimson)':'var(--bsoft)';
                 const textColor= isToday?'#fff':'var(--tw)';
-                const border   = isToday?'none':matched?'1px solid #4CAF50':'1px solid transparent';
-                html2 += `<div style="aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${bgColor};border-radius:8px;border:${border};cursor:${sess?'pointer':'default'};" ${sess?`onclick="showDayPopup('${ds2}','${sess.type}',${sess.dist||0})"`:''}>
-                    <span style="font-size:11px;font-weight:${isToday?700:400};color:${textColor};">${dayNum}</span>
-                    ${sess?`<div style="width:5px;height:5px;border-radius:50%;background:${dotColor};margin-top:1px;"></div>`:''}
+                const border   = isToday?'1px solid transparent':'1px solid transparent';
+                // Bloque tipo (nombre del tipo abajo) — solo si hay sesión
+                const blockHTML = sess
+                    ? `<div style="margin:auto 4px 4px;height:14px;border-radius:4px;background:${typeCol};color:#fff;font-size:8px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -1px 0 rgba(0,0,0,.15),0 1px 2px rgba(0,0,0,.10);white-space:nowrap;overflow:hidden;">${typeLbl}</div>`
+                    : '';
+                // Dot verde en esquina sup-der si matched (completado)
+                const matchedDot = matched
+                    ? `<div style="position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:#16a34a;box-shadow:0 0 0 1.5px ${isToday?'#fff':'var(--card2)'};z-index:2;"></div>`
+                    : '';
+                const clickHandler = sess ? `onclick="if(window._mrPlanGoToWeekFromDate)_mrPlanGoToWeekFromDate('${ds2}')"` : '';
+                html2 += `<div style="aspect-ratio:1;background:${bgColor};border-radius:8px;border:${border};cursor:${sess?'pointer':'default'};display:flex;flex-direction:column;overflow:hidden;position:relative;" ${clickHandler}>
+                    ${matchedDot}
+                    <div style="font-size:12px;font-weight:${isToday?900:700};color:${textColor};padding:4px 0 0 6px;line-height:1;letter-spacing:-.3px;">${dayNum}</div>
+                    ${blockHTML}
                 </div>`;
                 dayNum++;
             }
@@ -37643,6 +37656,41 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const d = new Date(dateStr+'T12:00:00').toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'});
         showToast(`${d} · ${typeLabels[type]||type} · ${dist}km`);
     }
+
+    // v2.30.1-p41 · Navegación mes → semana al clicar un día del calendario mes.
+    // Localiza a qué semana del activePlan pertenece el dateStr, setea
+    // planCurrentWeek = idx, cambia a modo semana con la misma transición
+    // horizontal de togglePlanView (out→in) y renderea la semana.
+    window._mrPlanGoToWeekFromDate = function(dateStr) {
+        if (!activePlan || !activePlan.weeks) return;
+        var idx = activePlan.weeks.findIndex(function(wk){
+            return (wk.sessions || []).some(function(s){ return s.dateStr === dateStr; });
+        });
+        if (idx < 0) return;
+        planCurrentWeek = idx;
+        var _pvContainer = document.getElementById('plan-view-content');
+        var _doWeek = function() {
+            planViewMode = 'week';
+            var modeSpan = document.getElementById('plan-view-toggle-mode');
+            if (modeSpan) modeSpan.textContent = 'MES';
+            if (typeof _renderActivePlanWeek === 'function') _renderActivePlanWeek(planCurrentWeek);
+            if (typeof updatePlanNav === 'function') updatePlanNav();
+        };
+        if (!_pvContainer || planViewMode === 'week') { _doWeek(); return; }
+        // Estamos en mes → transición out-derecha, in-izquierda (mismo patrón togglePlanView)
+        _pvContainer.classList.remove('mr-fx-plan-out-l','mr-fx-plan-out-r','mr-fx-plan-in-l','mr-fx-plan-in-r');
+        void _pvContainer.offsetWidth;
+        _pvContainer.classList.add('mr-fx-plan-out-r');
+        setTimeout(function() {
+            _pvContainer.classList.remove('mr-fx-plan-out-r');
+            _doWeek();
+            void _pvContainer.offsetWidth;
+            _pvContainer.classList.add('mr-fx-plan-in-l');
+            setTimeout(function() {
+                _pvContainer.classList.remove('mr-fx-plan-in-l');
+            }, 260);
+        }, 180);
+    };
 
     // ── PLAN TAB ────────────────────────────────────────────────────
     function updatePlanNav() {
@@ -38324,6 +38372,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const totalKm=Math.round(wk.sessions.reduce((a,s)=>a+(s.dist||0),0)*10)/10;
         container.innerHTML='';
 
+        // v2.30.1-p41 · Nombre del plan (+ Fuerza si hay strength) arriba del hCard.
+        // Discreto, centrado, sin molestar. Álvaro: "que se vea bien centrado en la
+        // parte de arriba sin que moleste mucho a lo que ya hay".
+        var _planNameStr = '';
+        try {
+            var _rn = (activePlan && activePlan.type !== 'strength') ? activePlan.name : null;
+            var _sn = (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) ? true : false;
+            if (_rn) _planNameStr = _rn + (_sn ? ' + Fuerza' : '');
+            else if (_sn && activeStrengthPlan.name) _planNameStr = activeStrengthPlan.name;
+        } catch(_){}
+        if (_planNameStr) {
+            var planNameEl = document.createElement('div');
+            planNameEl.style.cssText = 'text-align:center;font-size:11px;font-weight:800;color:var(--tw);letter-spacing:.3px;padding:0 14px 6px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+            planNameEl.textContent = _planNameStr;
+            container.appendChild(planNameEl);
+        }
+
         // Week header card [v6 P.Plan compacto]
         // 1 línea con: Semana N · FASE · fechas · NN km
         // Barra superior premium gradient del color de la fase (signature MR)
@@ -38758,18 +38823,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // - Si texto normal: detail estándar
                 let _detailHTML = '';
                 if (_isSkipped && _skipReasonObj) {
-                    _detailHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:5px;color:${_skipCol};background:${_skipCol}1a;border:1px solid ${_skipCol}47;">`
-                        + `<span style="font-size:10px;">${_skipReasonObj.emoji}</span>${_skipReasonObj.label}`
+                    _detailHTML = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:5px;color:${_skipCol};background:${_skipCol}1a;border:1px solid ${_skipCol}47;">`
+                        + `<span style="font-size:10.5px;">${_skipReasonObj.emoji}</span>${_skipReasonObj.label}`
                         + `</span>`;
                 } else if (_detailShort === '__REAL__') {
-                    _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">`
+                    _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">`
                         + `<b style="color:#22c55e;font-weight:700;">${_realKm} km</b>`
                         + `<span style="color:var(--tm);">·</span>`
                         + `<b style="color:#22c55e;font-weight:700;">${_realPace}</b>`
                         + (_realHr > 0 ? `<span style="color:var(--tm);">·</span><b style="color:#22c55e;font-weight:700;">FC ${_realHr}</b>` : '')
                         + `</span>`;
                 } else if (_detailShort) {
-                    _detailHTML = `<span style="font-size:10px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}</span>`;
+                    _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}</span>`;
                 }
 
                 // [Plan HOY V4] Sidebar 5px verde con glow inyectado como elemento HTML
@@ -38780,14 +38845,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     : '';
 
                 const _msHTML = _msBuild(sess, _isStrengthCard);
-                let html = _todaySidebar + _checkBadge + `<div class="mr-day-header" style="display:flex;align-items:center;padding:7px 10px 7px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
+                let html = _todaySidebar + _checkBadge + `<div class="mr-day-header" style="display:flex;align-items:center;padding:9px 10px 9px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
                     + _dateHTML
                     // [P.Plan Coherencia] Estructura columna con 2 filas fijas:
                     //   Fila 1: tipo label + pill km (horizontal)
                     //   Fila 2: desc/resumen SIEMPRE debajo (aunque quepa en la 1)
                     + `<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;">`
                     +   `<div style="display:flex;align-items:center;gap:7px;">`
-                    +     `<span style="font-size:11px;font-weight:800;color:${_typeCol};text-transform:uppercase;letter-spacing:1px;display:inline-flex;align-items:center;${_isSkipped?'text-decoration:line-through;text-decoration-color:var(--tm);text-decoration-thickness:1.5px;opacity:.72;':''}">${_typeLabelText}</span>`
+                    +     `<span style="font-size:12px;font-weight:800;color:${_typeCol};text-transform:uppercase;letter-spacing:1px;display:inline-flex;align-items:center;${_isSkipped?'text-decoration:line-through;text-decoration-color:var(--tm);text-decoration-thickness:1.5px;opacity:.72;':''}">${_typeLabelText}</span>`
                     // [FASE 6 prep · Plan premium] Pill V4 tinted:
                     //   - fondo blanco con sombra interna suave
                     //   - borde fino del color del workout (~40-45% alpha)
