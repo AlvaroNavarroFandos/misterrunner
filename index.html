@@ -44473,6 +44473,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var d = new Date(act.dateStr + 'T12:00:00');
         var df = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
 
+        // v2.30.1-p36 · Label dinámico según distancia temporal:
+        //   0 días → "HOY" · 1 → "AYER" · 2+ → "HACE N DÍAS"
+        // Comparamos por día de calendario (12:00 en ambos lados para
+        // evitar edge-case DST). Actividades con dateStr futuro caen a
+        // fallback vacío (raro; el badge se omite).
+        var _relLabel = '';
+        try {
+            var _todayCal = new Date();
+            _todayCal.setHours(12, 0, 0, 0);
+            var _actCal = new Date(act.dateStr + 'T12:00:00');
+            if (!isNaN(_actCal)) {
+                var _diffDays = Math.round((_todayCal - _actCal) / 86400000);
+                if (_diffDays === 0)      _relLabel = 'HOY';
+                else if (_diffDays === 1) _relLabel = 'AYER';
+                else if (_diffDays > 1)   _relLabel = 'HACE ' + _diffDays + ' DÍAS';
+            }
+        } catch(_){}
+
         // HTML idéntico al de biblioteca (_mrLibRenderOne) para consistencia total
         var _rpeNotaRow = '';
         if ((act.rpe != null && act.rpe !== '') || act.nota != null) {
@@ -44486,15 +44504,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</div>';
         }
 
+        // v2.30.1-p36 · Header "ÚLTIMO ENTRENO · HOY" DENTRO de la card
+        // (Álvaro: "que lo de último entreno lo ponga dentro de la minicard
+        // encima del título de la actividad"). Coherencia con el resto de
+        // widgets self-contained. Color dorado accent (var(--gold-text) light,
+        // var(--gold) dark). Sin punto separador si _relLabel vacío.
+        var _lastHeaderRow = '<div class="mr-lib-last-badge" style="font-size:8.5px;font-weight:900;letter-spacing:1.4px;text-transform:uppercase;line-height:1;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+            + '<span style="color:var(--gold-text);">Último entreno</span>'
+            + (_relLabel ? '<span style="color:var(--tm);opacity:.6;margin:0 4px;">·</span><span style="color:var(--gold-text);">' + _relLabel + '</span>' : '')
+            + '</div>';
+
         wrap.innerHTML =
-            '<div style="font-size:11px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:1.3px;padding:0 4px;margin-bottom:2px;">Último entreno</div>'
-          + '<div class="act-swipe-wrap" data-act-id="' + act.id + '">'
+            '<div class="act-swipe-wrap" data-act-id="' + act.id + '">'
           +   '<div class="act-sliding act-card mr-lib-card">'
           +     '<div class="mr-lib-card-inner" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">'
           +       '<div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px 0 3px 4px;flex-shrink:0;">'
           +         '<div style="width:100%;display:flex;justify-content:center;">' + buildOutfitFull(act) + '</div>'
           +       '</div>'
           +       '<div class="mr-lib-data" style="flex:1;padding:0 12px 0 10px;display:flex;flex-direction:column;justify-content:center;gap:0;min-width:0;">'
+          +         _lastHeaderRow
           +         '<div style="display:flex;align-items:center;gap:6px;">'
           +           '<div class="mr-lib-title" style="font-size:10px;font-weight:800;line-height:1;flex:1;min-width:0;letter-spacing:1px;text-transform:uppercase;opacity:.6;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (act.name || '—') + '</div>'
           +           _libPRBadgeHTML(act)
