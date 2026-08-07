@@ -16995,23 +16995,59 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }; })(dayData, _expId));
 
             // v2.30.1-p62 · LONG-PRESS solo en semana actual: abre modal
-            // "mover a otro día libre" / "eliminar sesión" (mismo patrón que
-            // running/fuerza pero simplificado para rehab).
+            // "mover a otro día libre" / "eliminar sesión".
+            // v2.30.1-p63 · Fix: tolerancia 10px de movimiento + mouse events +
+            // prevent contextmenu/selectstart. Mismo patrón que long-press de
+            // zapatillas (L20735) que funciona en iOS PWA.
             if (isCurrentWeek) {
-                var _lpTimer = null;
-                card.addEventListener('touchstart', (function(d, wi){ return function() {
-                    card._mrRehabLpFired = false;
-                    _lpTimer = setTimeout(function() {
-                        _lpTimer = null;
-                        card._mrRehabLpFired = true;
-                        if (navigator.vibrate) { try { navigator.vibrate(25); } catch(_){} }
-                        try { _openRehabDayActions(d, wi); } catch(_){}
-                    }, 500);
-                }; })(dayData, weekIdx), { passive: true });
-                var _lpClear = function() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
-                card.addEventListener('touchend', _lpClear, { passive: true });
-                card.addEventListener('touchcancel', _lpClear, { passive: true });
-                card.addEventListener('touchmove', _lpClear, { passive: true });
+                (function(d, wi){
+                    var _lpTimer = null;
+                    var _lpFired = false;
+                    var _lpStartX = 0, _lpStartY = 0, _lpAborted = false;
+                    var _startLP = function(ev) {
+                        _lpFired = false;
+                        _lpAborted = false;
+                        if (ev && ev.touches && ev.touches[0]) {
+                            _lpStartX = ev.touches[0].clientX;
+                            _lpStartY = ev.touches[0].clientY;
+                        } else if (ev) {
+                            _lpStartX = ev.clientX || 0;
+                            _lpStartY = ev.clientY || 0;
+                        }
+                        _lpTimer = setTimeout(function() {
+                            if (_lpAborted) return;
+                            _lpFired = true;
+                            card._mrRehabLpFired = true;
+                            if (navigator.vibrate) { try { navigator.vibrate(25); } catch(_){} }
+                            try { _openRehabDayActions(d, wi); } catch(_){}
+                        }, 500);
+                    };
+                    var _abortLP = function() {
+                        _lpAborted = true;
+                        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                    };
+                    var _cancelLP = function() {
+                        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                    };
+                    var _onLPMove = function(ev) {
+                        if (!ev.touches || !ev.touches[0]) return;
+                        var dx = Math.abs(ev.touches[0].clientX - _lpStartX);
+                        var dy = Math.abs(ev.touches[0].clientY - _lpStartY);
+                        if (dx > 10 || dy > 10) {
+                            // Movimiento significativo (scroll o swipe) → aborta
+                            _abortLP();
+                        }
+                    };
+                    card.addEventListener('touchstart', _startLP, { passive: true });
+                    card.addEventListener('touchend',   _cancelLP, { passive: true });
+                    card.addEventListener('touchcancel',_cancelLP, { passive: true });
+                    card.addEventListener('touchmove',  _onLPMove, { passive: true });
+                    card.addEventListener('mousedown',  _startLP);
+                    card.addEventListener('mouseup',    _cancelLP);
+                    card.addEventListener('mouseleave', _cancelLP);
+                    card.addEventListener('contextmenu', function(e){ e.preventDefault(); }, { passive: false });
+                    card.addEventListener('selectstart', function(e){ e.preventDefault(); }, { passive: false });
+                })(dayData, weekIdx);
             }
 
             daysCard.appendChild(card);
@@ -47127,7 +47163,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // con inset box-shadow (border-left inline se pisaba con border-color
             // !important de mr-home-card). Ahora conserva halo + border sutil + acento.
             injBanner0.className = 'mr-home-card';
-            injBanner0.style.cssText = 'border-radius:12px;padding:11px 14px 11px 18px;background:var(--card);box-shadow:inset 4px 0 0 #F44336,0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14) !important;display:flex;align-items:center;gap:10px;';
+            injBanner0.style.cssText = 'margin-top:10px;border-radius:12px;padding:11px 14px 11px 18px;background:var(--card);box-shadow:inset 4px 0 0 #F44336,0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14) !important;display:flex;align-items:center;gap:10px;';
             const injText0 = activeInj0.map(inj=>`${inj.zone} (${inj.side}) — ${inj.status}`).join(', ');
             injBanner0.innerHTML = `<div style="font-size:16px;flex-shrink:0;">⚠️</div>
                 <div><div style="font-size:11px;font-weight:800;color:#F44336;letter-spacing:.2px;">Lesión activa</div>
@@ -47263,9 +47299,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(activeRehabPlan && activeRehabPlan.status==='active') {
             const rehabCard = document.createElement('div');
             // v2.30.1-p61 · Vars CSS + profundidad + click → pestaña Plan
-            // v2.30.1-p62 · mr-hc-keep-color para preservar border rojo
-            rehabCard.className = 'mr-home-card mr-hc-keep-color';
-            rehabCard.style.cssText = 'background:var(--card);border-radius:16px;border:1.5px solid rgba(239,68,68,.35);overflow:hidden;cursor:pointer;';
+            // v2.30.1-p63 · Sin contorno rojo · border sutil estándar del resto de widgets
+            rehabCard.className = 'mr-home-card';
+            rehabCard.style.cssText = 'background:var(--card);border-radius:16px;overflow:hidden;cursor:pointer;';
             rehabCard.setAttribute('role','button');
             rehabCard.setAttribute('aria-label','Ir a plan de rehabilitación');
             const _plan = activeRehabPlan;
@@ -47295,12 +47331,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>
                 <div style="margin-bottom:12px;">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;">
                         <span style="font-size:10px;color:var(--tm);font-weight:700;text-transform:uppercase;letter-spacing:.7px;">Sesiones completadas</span>
                         <span style="font-size:12px;font-weight:800;color:${_phaseColor};font-variant-numeric:tabular-nums;font-family:var(--f);">${_doneDays} / ${_totalDays}</span>
-                    </div>
-                    <div style="height:6px;background:rgba(0,0,0,.06);border-radius:3px;overflow:hidden;">
-                        <div class="mr-fx-progressbar" data-fill="${_pct}" style="width:${_pct}%;height:100%;background:linear-gradient(90deg,#ef4444,${_phaseColor});border-radius:3px;transition:width .6s;"></div>
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;">
