@@ -16554,6 +16554,248 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(modal) modal.style.display='none';
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // v2.30.1-p62 · MODAL ACCIONES SESIÓN REHAB (long-press semana actual)
+    // Mover a otro día libre de la MISMA semana | Eliminar sesión
+    // ══════════════════════════════════════════════════════════════════
+    function _openRehabDayActions(day, weekIdx) {
+        if (!activeRehabPlan || !activeRehabPlan.days) return;
+        var existing = document.getElementById('rehab-day-actions-modal');
+        if (existing) existing.remove();
+
+        var dObj = new Date(day.dateStr + 'T12:00:00');
+        var dLabel = isNaN(dObj) ? day.dateStr : dObj.toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long' });
+
+        // Días libres de la MISMA semana (type==='rest', no incluye el propio día)
+        var wkDays = activeRehabPlan.days.slice(weekIdx*7, weekIdx*7 + 7);
+        var restDays = wkDays.filter(function(d){ return d.type === 'rest' && d.dateStr !== day.dateStr; });
+
+        var modal = document.createElement('div');
+        modal.id = 'rehab-day-actions-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:50000;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s ease-out;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+        // Botón mover: sólo si hay al menos 1 rest disponible
+        var canMove = restDays.length > 0;
+        var _btnMove = canMove
+            ? '<button id="rehab-da-move" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);transition:transform .12s;">'
+                + '<div style="width:38px;height:38px;border-radius:50%;background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                +   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 13 3 17 7 21"/><line x1="3" y1="17" x2="15" y2="17"/></svg>'
+                + '</div>'
+                + '<div style="flex:1;text-align:left;">'
+                +   '<div style="font-size:14px;font-weight:800;color:var(--tw);">Mover a otro día</div>'
+                +   '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Dentro de esta misma semana</div>'
+                + '</div>'
+                + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+              + '</button>'
+            : '';
+
+        var _btnDelete = '<button id="rehab-da-delete" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(239,68,68,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:transform .12s;">'
+            + '<div style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+            +   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>'
+            + '</div>'
+            + '<div style="flex:1;text-align:left;">'
+            +   '<div style="font-size:14px;font-weight:800;color:#ef4444;">Eliminar sesión</div>'
+            +   '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Se convierte en día de descanso</div>'
+            + '</div>'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+          + '</button>';
+
+        modal.innerHTML =
+            '<div style="background:var(--card);width:100%;max-width:500px;border-radius:20px 20px 0 0;padding:14px 16px calc(20px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);box-shadow:0 -10px 40px rgba(0,0,0,.35);" id="rehab-da-sheet">'
+          +   '<div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+          +   '<div style="text-align:center;margin-bottom:14px;">'
+          +     '<div style="font-size:10.5px;font-weight:800;color:#ef4444;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:4px;font-family:var(--f);">Sesión rehab</div>'
+          +     '<div style="font-size:15px;font-weight:800;color:var(--tw);letter-spacing:-.2px;font-family:var(--f);text-transform:capitalize;">'+dLabel+'</div>'
+          +     '<div style="font-size:11px;color:var(--tm);margin-top:2px;font-weight:600;font-family:var(--f);">'+day.exercises.length+' ejercicios · '+(day.phaseName||'Rehab')+'</div>'
+          +   '</div>'
+          +   '<div style="display:flex;flex-direction:column;gap:8px;">'
+          +     _btnMove
+          +     _btnDelete
+          +     '<button id="rehab-da-cancel" style="width:100%;padding:14px;background:var(--card2);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);letter-spacing:.3px;margin-top:4px;">Cancelar</button>'
+          +   '</div>'
+          + '</div>';
+
+        document.body.appendChild(modal);
+        // Animar entrada
+        requestAnimationFrame(function() {
+            modal.style.opacity = '1';
+            var sheet = document.getElementById('rehab-da-sheet');
+            if (sheet) sheet.style.transform = 'translateY(0)';
+        });
+
+        var _close = function() {
+            modal.style.opacity = '0';
+            var sh = document.getElementById('rehab-da-sheet');
+            if (sh) sh.style.transform = 'translateY(100%)';
+            setTimeout(function(){ try { modal.remove(); } catch(_){} }, 300);
+        };
+        modal.addEventListener('click', function(e) { if (e.target === modal) _close(); });
+        var _cancelBtn = document.getElementById('rehab-da-cancel');
+        if (_cancelBtn) _cancelBtn.addEventListener('click', _close);
+
+        // MOVER: abrir sub-modal con lista de días rest disponibles
+        var _moveBtn = document.getElementById('rehab-da-move');
+        if (_moveBtn) _moveBtn.addEventListener('click', function() {
+            _close();
+            setTimeout(function() { _openRehabMovePicker(day, weekIdx, restDays); }, 320);
+        });
+
+        // ELIMINAR: confirmación inline
+        var _delBtn = document.getElementById('rehab-da-delete');
+        if (_delBtn) _delBtn.addEventListener('click', function() {
+            _close();
+            setTimeout(function() { _confirmRehabDelete(day, weekIdx); }, 320);
+        });
+    }
+
+    // Sub-modal: seleccionar día destino para mover la sesión
+    function _openRehabMovePicker(day, weekIdx, restDays) {
+        var existing = document.getElementById('rehab-move-picker-modal');
+        if (existing) existing.remove();
+        var DAY_FULL = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+
+        var modal = document.createElement('div');
+        modal.id = 'rehab-move-picker-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:50001;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+        var restRows = restDays.map(function(rd) {
+            var dObj = new Date(rd.dateStr+'T12:00:00');
+            var dow = dObj.getDay();
+            var dayLbl = DAY_FULL[dow];
+            var dayNum = dObj.getDate();
+            var monShort = dObj.toLocaleDateString('es-ES',{month:'short'}).toUpperCase();
+            return '<button class="rehab-mp-day" data-date="'+rd.dateStr+'" style="width:100%;display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card2);border:1px solid var(--border);border-radius:12px;cursor:pointer;font-family:var(--f);transition:background .15s;">'
+                +   '<div style="width:42px;text-align:center;flex-shrink:0;">'
+                +     '<div style="font-size:9.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;line-height:1;">'+DAY_FULL[dow].slice(0,3).toUpperCase()+'</div>'
+                +     '<div style="font-size:20px;font-weight:900;color:var(--tw);line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;margin-top:2px;">'+dayNum+'</div>'
+                +     '<div style="font-size:8px;color:var(--tm);letter-spacing:.5px;text-transform:uppercase;margin-top:1px;font-weight:700;">'+monShort+'</div>'
+                +   '</div>'
+                +   '<div style="flex:1;text-align:left;">'
+                +     '<div style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:-.1px;text-transform:capitalize;">'+dayLbl+'</div>'
+                +     '<div style="font-size:10.5px;color:var(--tm);font-weight:600;margin-top:1px;">Actualmente descanso</div>'
+                +   '</div>'
+                +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                + '</button>';
+        }).join('');
+
+        modal.innerHTML =
+            '<div style="background:var(--card);width:100%;max-width:500px;border-radius:20px 20px 0 0;padding:14px 16px calc(20px + env(safe-area-inset-bottom,0px));transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);max-height:75vh;overflow-y:auto;" id="rehab-mp-sheet">'
+          +   '<div style="width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px;"></div>'
+          +   '<div style="text-align:center;margin-bottom:16px;">'
+          +     '<div style="font-size:10.5px;font-weight:800;color:#60a5fa;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:4px;font-family:var(--f);">Mover a otro día</div>'
+          +     '<div style="font-size:15px;font-weight:800;color:var(--tw);letter-spacing:-.2px;font-family:var(--f);">Elige día destino</div>'
+          +   '</div>'
+          +   '<div style="display:flex;flex-direction:column;gap:6px;">'+restRows+'</div>'
+          +   '<button id="rehab-mp-cancel" style="width:100%;padding:14px;background:var(--card2);border:1px solid var(--border);border-radius:14px;cursor:pointer;font-family:var(--f);font-size:13px;font-weight:700;color:var(--ts);letter-spacing:.3px;margin-top:12px;">Cancelar</button>'
+          + '</div>';
+
+        document.body.appendChild(modal);
+        requestAnimationFrame(function() {
+            modal.style.opacity = '1';
+            var sh = document.getElementById('rehab-mp-sheet');
+            if (sh) sh.style.transform = 'translateY(0)';
+        });
+
+        var _close = function() {
+            modal.style.opacity = '0';
+            var sh = document.getElementById('rehab-mp-sheet');
+            if (sh) sh.style.transform = 'translateY(100%)';
+            setTimeout(function(){ try { modal.remove(); } catch(_){} }, 300);
+        };
+        modal.addEventListener('click', function(e) { if (e.target === modal) _close(); });
+        var _cancelBtn = document.getElementById('rehab-mp-cancel');
+        if (_cancelBtn) _cancelBtn.addEventListener('click', _close);
+
+        modal.querySelectorAll('.rehab-mp-day').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var targetDate = btn.getAttribute('data-date');
+                _doRehabMove(day, targetDate, weekIdx);
+                _close();
+            });
+        });
+    }
+
+    // Ejecutar el intercambio: sess ↔ rest
+    function _doRehabMove(sessDay, targetDate, weekIdx) {
+        if (!activeRehabPlan || !activeRehabPlan.days) return;
+        var days = activeRehabPlan.days;
+        var srcIdx = days.findIndex(function(d){ return d.dateStr === sessDay.dateStr; });
+        var dstIdx = days.findIndex(function(d){ return d.dateStr === targetDate; });
+        if (srcIdx < 0 || dstIdx < 0) return;
+        // Intercambio de propiedades type/exercises/phaseName/phaseColor/label/status.
+        // dateStr NO se intercambia (cada día conserva su fecha real).
+        var src = days[srcIdx];
+        var dst = days[dstIdx];
+        var keys = ['type','exercises','phaseName','phaseColor','label','status','completedExercises','painLog'];
+        var temp = {};
+        keys.forEach(function(k){ temp[k] = src[k]; src[k] = dst[k]; dst[k] = temp[k]; });
+        // Guardar y re-renderizar
+        try { saveRehabPlanToStorage(); } catch(_){}
+        renderRehabPlanWeek(weekIdx);
+        renderHome();
+        if (typeof showToast === 'function') {
+            var dObj = new Date(targetDate+'T12:00:00');
+            var dNice = dObj.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'});
+            showToast('Sesión movida a ' + dNice, 2200);
+        }
+    }
+
+    // Confirmación eliminar sesión (convertir a rest)
+    function _confirmRehabDelete(day, weekIdx) {
+        var existing = document.getElementById('rehab-del-confirm-modal');
+        if (existing) existing.remove();
+        var dObj = new Date(day.dateStr+'T12:00:00');
+        var dLabel = dObj.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'});
+
+        var modal = document.createElement('div');
+        modal.id = 'rehab-del-confirm-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:50002;background:rgba(0,0,0,.60);display:flex;align-items:center;justify-content:center;padding:24px;opacity:0;transition:opacity .2s;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+        modal.innerHTML =
+            '<div style="background:var(--card);width:100%;max-width:340px;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.35);border:1px solid var(--border);">'
+          +   '<div style="text-align:center;margin-bottom:16px;">'
+          +     '<div style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%;background:rgba(239,68,68,.14);display:flex;align-items:center;justify-content:center;">'
+          +       '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>'
+          +     '</div>'
+          +     '<div style="font-size:16px;font-weight:900;color:var(--tw);letter-spacing:-.2px;font-family:var(--f);">Eliminar sesión</div>'
+          +     '<div style="font-size:12px;color:var(--tm);margin-top:6px;line-height:1.5;font-family:var(--f);text-transform:capitalize;">'+dLabel+'</div>'
+          +     '<div style="font-size:11px;color:var(--ts);margin-top:8px;line-height:1.5;font-family:var(--f);">Este día pasará a ser <b>descanso</b>. Podrás recuperar la sesión creando el plan de rehab de nuevo.</div>'
+          +   '</div>'
+          +   '<div style="display:flex;gap:8px;">'
+          +     '<button id="rehab-dc-cancel" style="flex:1;padding:12px;background:var(--card2);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-family:var(--f);font-size:12px;font-weight:700;color:var(--ts);letter-spacing:.2px;">Cancelar</button>'
+          +     '<button id="rehab-dc-ok" style="flex:1;padding:12px;background:linear-gradient(135deg,#ef4444 0%,#b91c1c 100%);border:none;border-radius:10px;cursor:pointer;font-family:var(--f);font-size:12px;font-weight:800;color:#fff;letter-spacing:.2px;box-shadow:0 4px 10px rgba(239,68,68,.28);">Eliminar</button>'
+          +   '</div>'
+          + '</div>';
+
+        document.body.appendChild(modal);
+        requestAnimationFrame(function() { modal.style.opacity = '1'; });
+
+        var _close = function() {
+            modal.style.opacity = '0';
+            setTimeout(function(){ try { modal.remove(); } catch(_){} }, 220);
+        };
+        document.getElementById('rehab-dc-cancel').addEventListener('click', _close);
+        document.getElementById('rehab-dc-ok').addEventListener('click', function() {
+            _doRehabDelete(day, weekIdx);
+            _close();
+        });
+        modal.addEventListener('click', function(e){ if (e.target === modal) _close(); });
+    }
+
+    function _doRehabDelete(day, weekIdx) {
+        if (!activeRehabPlan || !activeRehabPlan.days) return;
+        var target = activeRehabPlan.days.find(function(d){ return d.dateStr === day.dateStr; });
+        if (!target) return;
+        target.type = 'rest';
+        target.exercises = [];
+        target.status = undefined;
+        target.completedExercises = undefined;
+        target.painLog = undefined;
+        try { saveRehabPlanToStorage(); } catch(_){}
+        renderRehabPlanWeek(weekIdx);
+        renderHome();
+        if (typeof showToast === 'function') showToast('Sesión eliminada · día ahora en descanso', 2200);
+    }
+
     // ── REHAB PLAN TAB — Vista semanal ───────────────────────────────────
     // v2.30.1-p60 · Rediseño completo:
     // - Cabecera roja gradient en AMBOS modos (distinguirla de días)
@@ -16739,6 +16981,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             // Click en card: toggle expand. Click en botón IR: abrir modal.
             card.addEventListener('click', (function(d, expId){ return function(e) {
+                // Si el long-press acaba de disparar, ignora este click (evita toggle no deseado)
+                if (card._mrRehabLpFired) { card._mrRehabLpFired = false; return; }
                 if (e.target.closest('[data-goexpand]')) {
                     e.stopPropagation();
                     try { openRehabSessionModal(d); } catch(_){}
@@ -16749,6 +16993,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var _willExpand = _det.style.display === 'none';
                 _det.style.display = _willExpand ? 'block' : 'none';
             }; })(dayData, _expId));
+
+            // v2.30.1-p62 · LONG-PRESS solo en semana actual: abre modal
+            // "mover a otro día libre" / "eliminar sesión" (mismo patrón que
+            // running/fuerza pero simplificado para rehab).
+            if (isCurrentWeek) {
+                var _lpTimer = null;
+                card.addEventListener('touchstart', (function(d, wi){ return function() {
+                    card._mrRehabLpFired = false;
+                    _lpTimer = setTimeout(function() {
+                        _lpTimer = null;
+                        card._mrRehabLpFired = true;
+                        if (navigator.vibrate) { try { navigator.vibrate(25); } catch(_){} }
+                        try { _openRehabDayActions(d, wi); } catch(_){}
+                    }, 500);
+                }; })(dayData, weekIdx), { passive: true });
+                var _lpClear = function() { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+                card.addEventListener('touchend', _lpClear, { passive: true });
+                card.addEventListener('touchcancel', _lpClear, { passive: true });
+                card.addEventListener('touchmove', _lpClear, { passive: true });
+            }
 
             daysCard.appendChild(card);
         });
@@ -46859,9 +47123,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const activeInj0 = (profileData.injuries||[]).filter(inj=>inj.status!=='Resuelta');
         if(activeInj0.length>0){
             const injBanner0 = document.createElement('div');
-            // v2.30.1-p61 · Banner lesión con profundidad mr-home-card
+            // v2.30.1-p62 · Profundidad mr-home-card idéntica al resto + accent rojo
+            // con inset box-shadow (border-left inline se pisaba con border-color
+            // !important de mr-home-card). Ahora conserva halo + border sutil + acento.
             injBanner0.className = 'mr-home-card';
-            injBanner0.style.cssText = 'border-radius:12px;padding:11px 14px;border-left:4px solid #F44336;background:rgba(244,67,54,.08);display:flex;align-items:center;gap:10px;';
+            injBanner0.style.cssText = 'border-radius:12px;padding:11px 14px 11px 18px;background:var(--card);box-shadow:inset 4px 0 0 #F44336,0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14) !important;display:flex;align-items:center;gap:10px;';
             const injText0 = activeInj0.map(inj=>`${inj.zone} (${inj.side}) — ${inj.status}`).join(', ');
             injBanner0.innerHTML = `<div style="font-size:16px;flex-shrink:0;">⚠️</div>
                 <div><div style="font-size:11px;font-weight:800;color:#F44336;letter-spacing:.2px;">Lesión activa</div>
@@ -46997,7 +47263,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(activeRehabPlan && activeRehabPlan.status==='active') {
             const rehabCard = document.createElement('div');
             // v2.30.1-p61 · Vars CSS + profundidad + click → pestaña Plan
-            rehabCard.className = 'mr-home-card';
+            // v2.30.1-p62 · mr-hc-keep-color para preservar border rojo
+            rehabCard.className = 'mr-home-card mr-hc-keep-color';
             rehabCard.style.cssText = 'background:var(--card);border-radius:16px;border:1.5px solid rgba(239,68,68,.35);overflow:hidden;cursor:pointer;';
             rehabCard.setAttribute('role','button');
             rehabCard.setAttribute('aria-label','Ir a plan de rehabilitación');
@@ -47032,7 +47299,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <span style="font-size:10px;color:var(--tm);font-weight:700;text-transform:uppercase;letter-spacing:.7px;">Sesiones completadas</span>
                         <span style="font-size:12px;font-weight:800;color:${_phaseColor};font-variant-numeric:tabular-nums;font-family:var(--f);">${_doneDays} / ${_totalDays}</span>
                     </div>
-                    <div style="height:6px;background:var(--bsoft);border:1px solid var(--border);border-radius:3px;overflow:hidden;">
+                    <div style="height:6px;background:rgba(0,0,0,.06);border-radius:3px;overflow:hidden;">
                         <div class="mr-fx-progressbar" data-fill="${_pct}" style="width:${_pct}%;height:100%;background:linear-gradient(90deg,#ef4444,${_phaseColor});border-radius:3px;transition:width .6s;"></div>
                     </div>
                 </div>
@@ -47045,9 +47312,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="font-size:9.5px;color:var(--tm);text-align:right;font-weight:700;text-transform:uppercase;letter-spacing:.5px;font-variant-numeric:tabular-nums;">${_weeksTotal-_wkCurr+1} sem<br>restantes</div>
                 </div>
                 </div>`;
-            // Click → pestaña Plan
+            // Click → pestaña Plan · llevar a la SEMANA ACTUAL del plan rehab
             rehabCard.addEventListener('click', function() {
                 try {
+                    // v2.30.1-p62 · Setear semana actual antes de saltar al tab
+                    var _wkNow = (typeof getCurrentRehabWeek === 'function') ? getCurrentRehabWeek() : 1;
+                    var _wkIdx = Math.max(0, _wkNow - 1);
+                    try { if (typeof planCurrentWeek !== 'undefined') planCurrentWeek = _wkIdx; } catch(_){}
+                    // Forzar modo semana (no mes)
+                    try { if (typeof planViewMode !== 'undefined') planViewMode = 'week'; } catch(_){}
+                    var modeSpan = document.getElementById('plan-view-toggle-mode');
+                    if (modeSpan) modeSpan.textContent = 'MES';
                     var _t = document.querySelector('[data-target="cal"]');
                     if (_t) _t.click();
                 } catch(_){}
