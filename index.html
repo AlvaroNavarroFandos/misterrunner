@@ -27122,6 +27122,686 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return '';
     };
 
+    // ══════════════════════════════════════════════════════════════
+    // [v2.30.1-p55] WIDGET CLIMA PRO + SHEET EXPANDIDO + REC ZAPAS
+    // ══════════════════════════════════════════════════════════════
+    // Widget en Home con estado actual + top 3 horas para entrenar
+    // adaptado al tipo de sesión de hoy. Tap → sheet expandido con
+    // timeline horario + forecast 5 días. Bloque zapatillas reco-
+    // mendadas se inyecta en el sheet del entreno del día.
+    //
+    // Ubicación: navigator.geolocation → reverse Open-Meteo → cache 12h.
+    // Fallback: profileData.city → forward geocoding. Fallback duro
+    // Zaragoza (41.6488, -0.8891). Botón cambiar ubicación en sheet.
+
+    // Inyectar CSS solo una vez
+    (function _mrWxInjectCss() {
+        if (document.getElementById('mrwx-css')) return;
+        var css = ''
++ '.mrwx-card {position:relative;background:var(--card);border-radius:18px;border:1.5px solid rgba(0,0,0,.14);box-shadow:0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14);overflow:hidden;cursor:pointer;transition:transform .18s cubic-bezier(.32,.72,0,1);}'
++ 'body.dark-mode .mrwx-card{border-color:rgba(255,255,255,.14);box-shadow:0 10px 28px rgba(0,0,0,.65),0 3px 8px rgba(0,0,0,.42);}'
++ '.mrwx-card:active{transform:scale(.985);}'
++ '.mrwx-hdr{padding:14px 16px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border);}'
++ '.mrwx-hdr-lbl{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:800;color:#c4881e;text-transform:uppercase;letter-spacing:1.4px;}'
++ '.mrwx-hdr-lbl svg{width:12px;height:12px;}'
++ '.mrwx-hdr-loc{font-size:10px;font-weight:700;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:4px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}'
++ '.mrwx-hdr-loc svg{flex-shrink:0;}'
++ '.mrwx-current{padding:14px 16px 12px;display:grid;grid-template-columns:auto 1px 1fr;gap:14px;align-items:center;}'
++ '.mrwx-cur-main{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:72px;}'
++ '.mrwx-cur-icon{font-size:34px;line-height:1;margin-bottom:4px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.12));}'
++ '.mrwx-cur-temp{font-size:32px;font-weight:900;letter-spacing:-1.5px;color:var(--tw);line-height:1;font-variant-numeric:tabular-nums;font-family:var(--f);}'
++ '.mrwx-cur-temp sup{font-size:14px;font-weight:700;color:var(--tm);letter-spacing:-.2px;margin-left:2px;vertical-align:8px;}'
++ '.mrwx-divider{width:1px;background:var(--border);align-self:stretch;}'
++ '.mrwx-cur-info{display:flex;flex-direction:column;gap:5px;min-width:0;}'
++ '.mrwx-cur-desc{font-size:13px;font-weight:700;color:var(--tw);line-height:1.15;letter-spacing:-.2px;font-family:var(--f);}'
++ '.mrwx-cur-sub{font-size:10.5px;color:var(--tm);font-weight:600;letter-spacing:.2px;display:flex;flex-wrap:wrap;gap:4px;font-family:var(--f);}'
++ '.mrwx-cur-sub .sep{color:var(--tt);}'
++ '.mrwx-cur-sub b{color:var(--tw);font-weight:800;}'
++ '.mrwx-best{padding:12px 16px 14px;background:var(--card2);border-top:1px solid var(--border);}'
++ '.mrwx-best-title{font-size:9.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1.3px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-family:var(--f);}'
++ '.mrwx-best-title .plan-hint{color:#c4881e;font-weight:700;letter-spacing:.4px;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
++ '.mrwx-slot{display:grid;grid-template-columns:20px 44px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);}'
++ '.mrwx-slot:last-child{border-bottom:none;padding-bottom:3px;}'
++ '.mrwx-slot-medal{font-size:16px;line-height:1;text-align:center;}'
++ '.mrwx-slot-hour{font-size:14px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1;font-family:var(--f);}'
++ '.mrwx-slot-hour small{display:block;font-size:8.5px;font-weight:700;color:var(--tm);letter-spacing:.5px;text-transform:uppercase;margin-top:2px;}'
++ '.mrwx-slot-info{font-size:10.5px;color:var(--ts);font-weight:600;display:flex;gap:4px;flex-wrap:wrap;font-variant-numeric:tabular-nums;font-family:var(--f);}'
++ '.mrwx-slot-info .sep{color:var(--tt);font-weight:400;}'
++ '.mrwx-slot-info b{color:var(--tw);font-weight:800;}'
++ '.mrwx-slot-score{display:flex;flex-direction:column;align-items:flex-end;gap:2px;min-width:52px;}'
++ '.mrwx-score-num{font-size:15px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-.4px;line-height:1;font-family:var(--f);}'
++ '.mrwx-score-tag{font-size:8px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:2px 6px;border-radius:4px;line-height:1;font-family:var(--f);}'
++ '.mrwx-score-tag.ideal{background:rgba(34,197,94,.16);color:#15803d;}'
++ 'body.dark-mode .mrwx-score-tag.ideal{background:rgba(34,197,94,.20);color:#4ade80;}'
++ '.mrwx-score-tag.bueno{background:rgba(196,136,30,.16);color:#8B6914;}'
++ 'body.dark-mode .mrwx-score-tag.bueno{background:rgba(196,136,30,.20);color:#E4C97A;}'
++ '.mrwx-score-tag.medio{background:rgba(251,146,60,.16);color:#c2410c;}'
++ 'body.dark-mode .mrwx-score-tag.medio{background:rgba(251,146,60,.20);color:#fdba74;}'
++ '.mrwx-score-tag.malo{background:rgba(239,68,68,.16);color:#b91c1c;}'
++ 'body.dark-mode .mrwx-score-tag.malo{background:rgba(239,68,68,.20);color:#fca5a5;}'
++ '.mrwx-warn{padding:8px 14px;background:rgba(239,68,68,.08);border-top:1px solid rgba(239,68,68,.16);font-size:10.5px;font-weight:700;color:#b91c1c;display:flex;align-items:center;gap:6px;letter-spacing:.2px;font-family:var(--f);}'
++ 'body.dark-mode .mrwx-warn{color:#fca5a5;background:rgba(239,68,68,.10);}'
++ '.mrwx-warn svg{width:12px;height:12px;flex-shrink:0;}'
++ '.mrwx-empty{padding:24px 16px;text-align:center;color:var(--tm);font-size:11px;font-weight:600;font-family:var(--f);}'
++ '.mrwxsh-title{font-size:20px;font-weight:900;color:var(--tw);letter-spacing:-.5px;margin-bottom:2px;font-family:var(--f);}'
++ '.mrwxsh-sub{font-size:11px;color:var(--tm);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:6px;font-family:var(--f);}'
++ '.mrwxsh-sub-loc{display:flex;align-items:center;gap:5px;min-width:0;flex:1;}'
++ '.mrwxsh-sub-loc svg{flex-shrink:0;}'
++ '.mrwxsh-loc-btn{background:var(--bsoft);border:1px solid var(--border);color:var(--tp);padding:5px 9px;border-radius:16px;font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;cursor:pointer;font-family:var(--f);flex-shrink:0;}'
++ '.mrwxsh-current{background:var(--card2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;}'
++ '.mrwxsh-cur-hero{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px dashed var(--border);}'
++ '.mrwxsh-cur-icon{font-size:44px;line-height:1;filter:drop-shadow(0 3px 6px rgba(0,0,0,.15));}'
++ '.mrwxsh-cur-temp{font-size:42px;font-weight:900;letter-spacing:-2px;color:var(--tw);line-height:1;font-variant-numeric:tabular-nums;font-family:var(--f);}'
++ '.mrwxsh-cur-temp sup{font-size:16px;font-weight:700;color:var(--tm);vertical-align:12px;margin-left:2px;}'
++ '.mrwxsh-cur-info{flex:1;min-width:0;}'
++ '.mrwxsh-cur-desc{font-size:14px;font-weight:800;color:var(--tw);letter-spacing:-.2px;line-height:1.1;margin-bottom:2px;font-family:var(--f);}'
++ '.mrwxsh-cur-feels{font-size:10.5px;color:var(--tm);font-weight:700;letter-spacing:.3px;font-family:var(--f);}'
++ '.mrwxsh-metric{display:flex;flex-direction:column;gap:3px;}'
++ '.mrwxsh-metric .l{font-size:9.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:4px;font-family:var(--f);}'
++ '.mrwxsh-metric .v{font-size:15px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1;font-family:var(--f);}'
++ '.mrwxsh-metric .v small{font-size:10px;color:var(--tm);font-weight:700;}'
++ '.mrwxsh-block-title{font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1.4px;margin:4px 2px 8px;font-family:var(--f);}'
++ '.mrwxsh-timeline{display:flex;gap:3px;overflow-x:auto;padding:6px 2px 10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-bottom:12px;}'
++ '.mrwxsh-timeline::-webkit-scrollbar{display:none;}'
++ '.mrwxsh-hbar{flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:30px;}'
++ '.mrwxsh-hbar-time{font-size:9px;font-weight:800;color:var(--tm);letter-spacing:.5px;font-variant-numeric:tabular-nums;font-family:var(--f);}'
++ '.mrwxsh-hbar-fill{width:22px;height:62px;background:var(--bsoft);border-radius:4px;overflow:hidden;position:relative;border:1px solid var(--border);}'
++ '.mrwxsh-hbar-fill-inner{position:absolute;bottom:0;left:0;right:0;border-radius:0 0 3px 3px;}'
++ '.mrwxsh-hbar-t{font-size:10px;font-weight:800;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.2px;font-family:var(--f);}'
++ '.mrwxsh-hbar-icon{font-size:11px;line-height:1;}'
++ '.mrwxsh-hbar.now .mrwxsh-hbar-fill{border:1.5px solid #c4881e;box-shadow:0 0 0 2px rgba(196,136,30,.20);}'
++ '.mrwxsh-day{display:grid;grid-template-columns:60px auto 1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px dashed var(--border);}'
++ '.mrwxsh-day:last-child{border-bottom:none;}'
++ '.mrwxsh-day-lbl{font-size:11px;font-weight:800;color:var(--tw);text-transform:uppercase;letter-spacing:.5px;font-family:var(--f);}'
++ '.mrwxsh-day-lbl small{display:block;font-size:8.5px;font-weight:700;color:var(--tm);letter-spacing:.4px;margin-top:1px;}'
++ '.mrwxsh-day-ic{font-size:20px;line-height:1;}'
++ '.mrwxsh-day-range{font-size:11px;font-weight:700;color:var(--tm);display:flex;align-items:center;padding:0 4px;}'
++ '.mrwxsh-day-range .bar{height:4px;flex:1;background:linear-gradient(90deg,#60a5fa 0%,#FFC107 50%,#ef4444 100%);border-radius:2px;opacity:.35;position:relative;}'
++ '.mrwxsh-day-range .knob{position:absolute;top:-2px;height:8px;background:rgba(0,0,0,0);border-left:2px solid var(--tw);border-right:2px solid var(--tw);opacity:.9;}'
++ '.mrwxsh-day-min,.mrwxsh-day-max{font-size:12px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.3px;min-width:26px;text-align:right;font-family:var(--f);}'
++ '.mrwxsh-day-min{color:var(--tm);}'
++ '.mrwxsh-day-max{color:var(--tw);}'
++ '.mrwxsh-day-rain{font-size:9.5px;color:#2563eb;font-weight:800;padding:2px 5px;background:rgba(37,99,235,.10);border-radius:4px;letter-spacing:.3px;font-family:var(--f);}'
++ 'body.dark-mode .mrwxsh-day-rain{color:#60a5fa;background:rgba(96,165,250,.14);}'
++ '.mrrec-section{padding:4px 0 8px;margin-top:6px;}'
++ '.mrrec-section-lbl{font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1.3px;margin:0 0 4px 4px;display:flex;align-items:center;gap:6px;font-family:var(--f);}'
++ '.mrrec-section-lbl svg{width:12px;height:12px;color:#c4881e;}'
++ '.mrrec-hint{font-size:10.5px;color:var(--tm);font-weight:600;margin:0 4px 10px;letter-spacing:.1px;line-height:1.4;font-family:var(--f);}'
++ '.mrrec-hint b{color:var(--tw);font-weight:800;}'
++ '.mrrec-list{display:flex;flex-direction:column;gap:6px;}'
++ '.mrrec-shoe{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden;}'
++ '.mrrec-shoe.top{border-color:rgba(34,197,94,.32);background:linear-gradient(135deg,rgba(34,197,94,.06) 0%,var(--card) 100%);}'
++ '.mrrec-shoe.alt{border-color:rgba(196,136,30,.28);background:linear-gradient(135deg,rgba(196,136,30,.06) 0%,var(--card) 100%);}'
++ '.mrrec-shoe-emblem{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--bsoft);border:1px solid var(--border);font-size:20px;box-shadow:0 2px 4px rgba(0,0,0,.06);overflow:hidden;}'
++ '.mrrec-shoe-emblem img{width:100%;height:100%;object-fit:cover;}'
++ '.mrrec-shoe-info{min-width:0;}'
++ '.mrrec-shoe-name{font-size:12.5px;font-weight:800;color:var(--tw);letter-spacing:-.2px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;font-family:var(--f);}'
++ '.mrrec-shoe-meta{display:flex;align-items:center;gap:6px;font-size:9.5px;font-weight:700;color:var(--tm);letter-spacing:.3px;text-transform:uppercase;flex-wrap:wrap;font-family:var(--f);}'
++ '.mrrec-shoe-meta .km{color:var(--ts);font-weight:700;font-variant-numeric:tabular-nums;}'
++ '.mrrec-shoe-cat{padding:2px 6px;border-radius:4px;font-size:8.5px;font-weight:800;letter-spacing:.5px;font-family:var(--f);}'
++ '.mrrec-shoe-cat.c-daily{background:rgba(96,165,250,.14);color:#2563eb;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-daily{background:rgba(96,165,250,.18);color:#60a5fa;}'
++ '.mrrec-shoe-cat.c-super{background:rgba(139,92,246,.14);color:#6d28d9;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-super{background:rgba(139,92,246,.20);color:#a78bfa;}'
++ '.mrrec-shoe-cat.c-race-carbon{background:rgba(239,68,68,.14);color:#b91c1c;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-race-carbon{background:rgba(239,68,68,.18);color:#fca5a5;}'
++ '.mrrec-shoe-cat.c-stability{background:rgba(20,184,166,.14);color:#0f766e;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-stability{background:rgba(20,184,166,.20);color:#5eead4;}'
++ '.mrrec-shoe-cat.c-trail{background:rgba(120,53,15,.14);color:#78350f;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-trail{background:rgba(217,119,6,.20);color:#fbbf24;}'
++ '.mrrec-shoe-cat.c-minimalist{background:rgba(107,114,128,.14);color:#374151;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-minimalist{background:rgba(107,114,128,.24);color:#d1d5db;}'
++ '.mrrec-shoe-cat.c-other{background:rgba(107,114,128,.14);color:#374151;}'
++ 'body.dark-mode .mrrec-shoe-cat.c-other{background:rgba(107,114,128,.24);color:#d1d5db;}'
++ '.mrrec-shoe-badge{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}'
++ '.mrrec-shoe-badge .tag{padding:3px 8px;border-radius:6px;font-size:8.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;line-height:1;font-family:var(--f);}'
++ '.mrrec-shoe-badge .tag.rec{background:linear-gradient(135deg,#22c55e 0%,#15803d 100%);color:#fff;box-shadow:0 2px 6px rgba(34,197,94,.30);}'
++ '.mrrec-shoe-badge .tag.alt{background:linear-gradient(135deg,#c4881e 0%,#8B6914 100%);color:#fff;box-shadow:0 2px 6px rgba(196,136,30,.28);}'
++ '.mrrec-shoe-badge .tag.ok{background:var(--bsoft);color:var(--tm);}'
++ '.mrrec-empty{padding:12px 14px;text-align:center;color:var(--tm);font-size:10.5px;font-weight:600;background:var(--card2);border:1px dashed var(--border);border-radius:10px;font-family:var(--f);}';
+        var styleEl = document.createElement('style');
+        styleEl.id = 'mrwx-css';
+        styleEl.textContent = css;
+        document.head.appendChild(styleEl);
+    })();
+
+    var _MR_GEO_KEY = 'mr_geoloc_v2';
+    var _MR_GEO_TTL = 12 * 3600 * 1000;
+    var _MR_FALLBACK = { lat: 41.6488, lon: -0.8891, city: 'Zaragoza', source: 'fallback' };
+
+    async function _mrReverseGeocode(lat, lon) {
+        try {
+            var r = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='+lat+'&longitude='+lon+'&localityLanguage=es');
+            if (!r.ok) return null;
+            var j = await r.json();
+            return j.city || j.locality || j.principalSubdivision || null;
+        } catch(_) { return null; }
+    }
+
+    async function _mrForwardGeocode(name) {
+        try {
+            var r = await fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(name)+'&count=1&language=es');
+            if (!r.ok) return null;
+            var j = await r.json();
+            if (!j.results || !j.results.length) return null;
+            return { lat: Number(j.results[0].latitude), lon: Number(j.results[0].longitude), city: j.results[0].name };
+        } catch(_) { return null; }
+    }
+
+    async function _mrGetLocation(force) {
+        if (!force) {
+            try {
+                var raw = localStorage.getItem(_MR_GEO_KEY);
+                if (raw) {
+                    var c = JSON.parse(raw);
+                    if (c && (Date.now() - c.ts) < _MR_GEO_TTL) return c;
+                }
+            } catch(_){}
+        }
+        var gps = await new Promise(function(resolve) {
+            if (!navigator.geolocation) return resolve(null);
+            var done = false;
+            var timer = setTimeout(function(){ if(!done){ done=true; resolve(null); } }, 6000);
+            try {
+                navigator.geolocation.getCurrentPosition(
+                    function(pos) {
+                        if (done) return;
+                        done = true; clearTimeout(timer);
+                        resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+                    },
+                    function() {
+                        if (done) return;
+                        done = true; clearTimeout(timer);
+                        resolve(null);
+                    },
+                    { enableHighAccuracy: false, maximumAge: 300000, timeout: 5000 }
+                );
+            } catch(_) { done = true; clearTimeout(timer); resolve(null); }
+        });
+        if (gps) {
+            var city = await _mrReverseGeocode(gps.lat, gps.lon);
+            var loc = { lat: +gps.lat.toFixed(4), lon: +gps.lon.toFixed(4), city: city || 'Tu ubicación', source: 'gps', ts: Date.now() };
+            try { localStorage.setItem(_MR_GEO_KEY, JSON.stringify(loc)); } catch(_){}
+            return loc;
+        }
+        var pcity = (typeof profileData !== 'undefined' && profileData && profileData.city) ? String(profileData.city).trim() : '';
+        if (pcity) {
+            var fg = await _mrForwardGeocode(pcity);
+            if (fg) {
+                var locP = { lat: +fg.lat.toFixed(4), lon: +fg.lon.toFixed(4), city: fg.city, source: 'profile', ts: Date.now() };
+                try { localStorage.setItem(_MR_GEO_KEY, JSON.stringify(locP)); } catch(_){}
+                return locP;
+            }
+        }
+        var locF = Object.assign({ ts: Date.now() }, _MR_FALLBACK);
+        try { localStorage.setItem(_MR_GEO_KEY, JSON.stringify(locF)); } catch(_){}
+        return locF;
+    }
+    window._mrGetLocation = _mrGetLocation;
+
+    var _MR_WX_TTL = 30 * 60 * 1000;
+    async function _mrFetchWeatherPro(loc) {
+        if (!loc) loc = await _mrGetLocation();
+        var cacheKey = 'mr_wx_pro_v1_'+loc.lat+'_'+loc.lon;
+        try {
+            var raw = localStorage.getItem(cacheKey);
+            if (raw) {
+                var c = JSON.parse(raw);
+                if (c && (Date.now() - c.ts) < _MR_WX_TTL) return Object.assign({ location: loc }, c.data);
+            }
+        } catch(_){}
+        try {
+            var url = 'https://api.open-meteo.com/v1/forecast?latitude='+loc.lat+'&longitude='+loc.lon
+                + '&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,precipitation_probability,uv_index,weather_code'
+                + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,precipitation'
+                + '&daily=temperature_2m_min,temperature_2m_max,weather_code,precipitation_probability_max'
+                + '&timezone=auto&forecast_days=5';
+            var res = await fetch(url);
+            if (!res.ok) return null;
+            var data = await res.json();
+            if (!data || !data.current || !data.hourly) return null;
+            var out = { current: data.current, hourly: data.hourly, daily: data.daily || null };
+            try { localStorage.setItem(cacheKey, JSON.stringify({ data: out, ts: Date.now() })); } catch(_){}
+            return Object.assign({ location: loc }, out);
+        } catch(_) { return null; }
+    }
+    window._mrFetchWeatherPro = _mrFetchWeatherPro;
+
+    function _mrScoreHour(temp, feels, hum, wind, uv, rainProb, sessType) {
+        var s = 100;
+        var T = (feels != null ? feels : temp);
+        if (sessType === 'series' || sessType === 'test') {
+            if (T > 25) s -= (T - 25) * 10;
+            else if (T > 20) s -= (T - 20) * 4;
+            else if (T < 3) s -= (3 - T) * 6;
+            else if (T < 8) s -= (8 - T) * 2;
+        } else {
+            if (T > 27) s -= (T - 27) * 9;
+            else if (T > 22) s -= (T - 22) * 3;
+            else if (T < 2) s -= (2 - T) * 5;
+            else if (T < 7) s -= (7 - T) * 1.5;
+        }
+        if (hum > 85) s -= 25;
+        else if (hum > 75) s -= 12;
+        else if (hum > 65) s -= 4;
+        if (uv > 8) s -= 30;
+        else if (uv > 6) s -= 15;
+        else if (uv > 4) s -= 6;
+        if (wind > 35) s -= 25;
+        else if (wind > 25) s -= 12;
+        else if (wind > 18) s -= 5;
+        if (rainProb > 80) s -= 45;
+        else if (rainProb > 50) s -= 25;
+        else if (rainProb > 25) s -= 8;
+        return Math.max(0, Math.min(100, Math.round(s)));
+    }
+    function _mrScoreTag(s) {
+        if (s >= 80) return { c:'ideal', t:'Ideal' };
+        if (s >= 65) return { c:'bueno', t:'Bueno' };
+        if (s >= 45) return { c:'medio', t:'Regular' };
+        return { c:'malo', t:'Evitar' };
+    }
+    function _mrScoreCol(s) {
+        return s>=80?'#22c55e':s>=65?'#c4881e':s>=45?'#f97316':'#ef4444';
+    }
+
+    function _mrGetTodayPlanSession() {
+        if (typeof activePlan === 'undefined' || !activePlan || !activePlan.weeks) return null;
+        var todayStr = (typeof localDateStr === 'function') ? localDateStr(new Date()) : new Date().toISOString().slice(0,10);
+        for (var wi = 0; wi < activePlan.weeks.length; wi++) {
+            var wk = activePlan.weeks[wi];
+            if (!wk || !wk.sessions) continue;
+            for (var si = 0; si < wk.sessions.length; si++) {
+                var sess = wk.sessions[si];
+                if (sess && sess.dateStr === todayStr && !sess.isStrength) return sess;
+            }
+        }
+        return null;
+    }
+
+    function _mrRecommendShoes(sess) {
+        if (typeof shoes === 'undefined' || !Array.isArray(shoes)) return [];
+        var actives = shoes.filter(function(s){ return !s.retiredAt; });
+        if (actives.length === 0) return [];
+        var t = sess ? String(sess.type || '').toLowerCase() : '';
+        var isLongQuality = (t === 'long' && Array.isArray(sess.csvBlocks) && sess.csvBlocks.length > 1);
+        var pref = { top: [], alt: [] };
+        if (t === 'series' || t === 'test' || t === 'race') {
+            pref.top = ['race-carbon']; pref.alt = ['super'];
+        } else if (isLongQuality) {
+            pref.top = ['super']; pref.alt = ['daily', 'race-carbon'];
+        } else if (t === 'long') {
+            pref.top = ['daily']; pref.alt = ['super', 'stability'];
+        } else if (t === 'trail') {
+            pref.top = ['trail']; pref.alt = ['daily'];
+        } else {
+            pref.top = ['daily']; pref.alt = ['stability', 'super'];
+        }
+        var scored = actives.map(function(sh) {
+            var cat = String(sh.category || 'other');
+            var tag, order;
+            if (pref.top.indexOf(cat) >= 0) { tag = 'top'; order = 0; }
+            else if (pref.alt.indexOf(cat) >= 0) { tag = 'alt'; order = 1; }
+            else { tag = 'ok'; order = 2; }
+            return { shoe: sh, tag: tag, order: order };
+        });
+        scored.sort(function(a,b) { return a.order - b.order; });
+        return scored;
+    }
+
+    function _mrRecShoeLabel(entry, counts, sess) {
+        if (counts.total === 1) return 'Tu única';
+        if (entry.tag === 'top') return 'Recomendada';
+        if (entry.tag === 'alt') return 'Alternativa';
+        var cat = String(entry.shoe.category || '');
+        var t = sess ? String(sess.type || '').toLowerCase() : '';
+        if (cat === 'race-carbon' && (t === 'easy' || t === 'recovery' || t === 'long')) return 'Reservar';
+        return 'Sirve';
+    }
+
+    function _mrBuildShoeRecHtml(sess) {
+        var actives = (typeof shoes !== 'undefined' && Array.isArray(shoes))
+                    ? shoes.filter(function(s){ return !s.retiredAt; }) : [];
+        if (actives.length === 0) {
+            return '<div class="mrrec-section">'
+                +   '<div class="mrrec-section-lbl">'
+                +     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 15a1 1 0 0 1 1-1h2v-2l3-1 2-4 3 1 1 3 5 1a3 3 0 0 1 3 3v1a3 3 0 0 1-3 3H4a1 1 0 0 1-1-1v-3z"/></svg>'
+                +     'Armas recomendadas'
+                +   '</div>'
+                +   '<div class="mrrec-empty">No tienes armas activas. Añade tus zapatillas en Runner → Armas para ver recomendaciones.</div>'
+                + '</div>';
+        }
+        var ranked = _mrRecommendShoes(sess);
+        var counts = { total: ranked.length, top: 0, alt: 0, ok: 0 };
+        ranked.forEach(function(e){ counts[e.tag]++; });
+        var t = sess ? String(sess.type || '').toLowerCase() : 'easy';
+        var isLongQuality = (t === 'long' && Array.isArray(sess.csvBlocks) && sess.csvBlocks.length > 1);
+        var typeLbl = { easy:'Easy Run', recovery:'Recovery', series:'Series', long: (isLongQuality?'Long con RM':'Long Run'), race:'Carrera', test:'Test', trail:'Trail' }[t] || 'este entreno';
+        var hintMap = {
+            'easy':      'Para <b>'+typeLbl+'</b> · prioriza <b>Daily</b> (durabilidad + confort). Race carbon reservada para calidad.',
+            'recovery':  'Para <b>'+typeLbl+'</b> · prioriza <b>Daily</b> (confort máximo tras esfuerzo).',
+            'long':      isLongQuality
+                         ? 'Para <b>'+typeLbl+'</b> · prioriza <b>Super</b> (respuesta a RM sin destrozarte). Daily buena alternativa.'
+                         : 'Para <b>'+typeLbl+'</b> · prioriza <b>Daily</b> (durabilidad para volumen). Super buena alternativa.',
+            'series':    'Para <b>'+typeLbl+'</b> · prioriza <b>Race carbon</b> (economía + respuesta). Super buena alternativa si quieres proteger la race.',
+            'test':      'Para <b>'+typeLbl+'</b> · prioriza <b>Race carbon</b> (velocidad máxima). Super como alternativa.',
+            'race':      'Para <b>'+typeLbl+'</b> · <b>Race carbon</b> es la elección natural.',
+            'trail':     'Para <b>'+typeLbl+'</b> · prioriza <b>Trail</b> (agarre + protección).'
+        };
+        var hint = hintMap[t] || 'Zapatillas activas ordenadas por afinidad con el entreno.';
+        if (counts.total === 1) hint = 'Tu única <b>arma activa</b> para hoy.';
+        var rows = ranked.map(function(e) {
+            var sh = e.shoe;
+            var catKey = String(sh.category || 'other');
+            var catLbl = (typeof SHOE_CATEGORY_LABEL === 'object' && SHOE_CATEGORY_LABEL[catKey]) ? SHOE_CATEGORY_LABEL[catKey] : 'Other';
+            var kmVal = (typeof sh.km === 'number' && sh.km >= 0) ? Math.round(sh.km) + ' km' : '';
+            var img = (sh.photoUrl || sh.photoPath || '') ? ('<img src="'+(sh.photoUrl || sh.photoPath)+'" alt="">') : '👟';
+            var tagLabel = _mrRecShoeLabel(e, counts, sess);
+            var tagClass = e.tag === 'top' ? 'rec' : (e.tag === 'alt' ? 'alt' : 'ok');
+            var shoeClass = e.tag === 'top' ? 'top' : (e.tag === 'alt' ? 'alt' : '');
+            var nameEsc = String(sh.name || sh.brand || 'Zapatilla').replace(/</g,'&lt;');
+            return '<div class="mrrec-shoe '+shoeClass+'">'
+                +    '<div class="mrrec-shoe-emblem">'+img+'</div>'
+                +    '<div class="mrrec-shoe-info">'
+                +      '<div class="mrrec-shoe-name">'+nameEsc+'</div>'
+                +      '<div class="mrrec-shoe-meta">'
+                +        '<span class="mrrec-shoe-cat c-'+catKey+'">'+catLbl+'</span>'
+                +        (kmVal ? '<span class="km">'+kmVal+'</span>' : '')
+                +      '</div>'
+                +    '</div>'
+                +    '<div class="mrrec-shoe-badge"><div class="tag '+tagClass+'">'+tagLabel+'</div></div>'
+                +  '</div>';
+        }).join('');
+        return '<div class="mrrec-section">'
+            +   '<div class="mrrec-section-lbl">'
+            +     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 15a1 1 0 0 1 1-1h2v-2l3-1 2-4 3 1 1 3 5 1a3 3 0 0 1 3 3v1a3 3 0 0 1-3 3H4a1 1 0 0 1-1-1v-3z"/></svg>'
+            +     'Armas recomendadas'
+            +   '</div>'
+            +   '<div class="mrrec-hint">'+hint+'</div>'
+            +   '<div class="mrrec-list">'+rows+'</div>'
+            + '</div>';
+    }
+    window._mrBuildShoeRecHtml = _mrBuildShoeRecHtml;
+
+    function _mrRenderWeatherWidget(container) {
+        if (!container) return;
+        var card = document.createElement('div');
+        card.className = 'mrwx-card mr-home-card';
+        card.id = 'mr-wx-widget';
+        card.setAttribute('role','button');
+        card.setAttribute('aria-label','Clima para entrenar. Toca para ver detalles');
+        card.innerHTML =
+            '<div class="mrwx-hdr">'
+          +   '<div class="mrwx-hdr-lbl">'
+          +     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19a5 5 0 0 1-.85-9.92 7 7 0 0 1 13.7-2.16A5.5 5.5 0 0 1 18 18l-.5.01H6z"/></svg>'
+          +     'Clima para entrenar'
+          +   '</div>'
+          +   '<div class="mrwx-hdr-loc" id="mrwx-loc">'
+          +     '<svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 22s-8-7-8-13a8 8 0 0 1 16 0c0 6-8 13-8 13z"/><circle cx="12" cy="9" r="2.5"/></svg>'
+          +     '<span id="mrwx-loc-name">—</span>'
+          +   '</div>'
+          + '</div>'
+          + '<div class="mrwx-current" id="mrwx-cur">'
+          +   '<div class="mrwx-cur-main">'
+          +     '<div class="mrwx-cur-icon" id="mrwx-cur-ic">⏳</div>'
+          +     '<div class="mrwx-cur-temp" id="mrwx-cur-t">—<sup>°C</sup></div>'
+          +   '</div>'
+          +   '<div class="mrwx-divider"></div>'
+          +   '<div class="mrwx-cur-info">'
+          +     '<div class="mrwx-cur-desc" id="mrwx-cur-d">Cargando…</div>'
+          +     '<div class="mrwx-cur-sub" id="mrwx-cur-s"></div>'
+          +   '</div>'
+          + '</div>'
+          + '<div class="mrwx-best">'
+          +   '<div class="mrwx-best-title"><span>Mejores horas hoy</span><span class="plan-hint" id="mrwx-plan-hint"></span></div>'
+          +   '<div id="mrwx-slots"><div class="mrwx-empty">Calculando…</div></div>'
+          + '</div>'
+          + '<div class="mrwx-warn" id="mrwx-warn" style="display:none;">'
+          +   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+          +   '<span id="mrwx-warn-msg">—</span>'
+          + '</div>';
+        card.addEventListener('click', function() { _mrOpenWeatherSheet(); });
+        container.appendChild(card);
+        _mrHydrateWeatherWidget(card);
+    }
+    window._mrRenderWeatherWidget = _mrRenderWeatherWidget;
+
+    async function _mrHydrateWeatherWidget(card) {
+        try {
+            var wx = await _mrFetchWeatherPro();
+            if (!wx) {
+                var d = card.querySelector('#mrwx-cur-d'); if (d) d.textContent = 'No se pudo cargar el clima';
+                return;
+            }
+            var todaySess = _mrGetTodayPlanSession();
+            var sessType = todaySess ? String(todaySess.type||'') : '';
+            var typeLabelMap = { easy:'Easy Run', recovery:'Recovery', series:'Series', long:'Long Run', race:'Carrera', test:'Test' };
+            var planHint = todaySess ? ('Ajustado a '+(typeLabelMap[sessType] || 'plan')) : '';
+            var ph = card.querySelector('#mrwx-plan-hint'); if (ph) ph.textContent = planHint;
+            var locName = wx.location.city || '—';
+            var ln = card.querySelector('#mrwx-loc-name'); if (ln) ln.textContent = locName;
+            var c = wx.current;
+            var icon = (typeof _mrWeatherIcon === 'function') ? _mrWeatherIcon(c.weather_code) : '☁️';
+            var desc = (typeof _mrWeatherDesc === 'function') ? _mrWeatherDesc(c.weather_code) : 'Nublado';
+            card.querySelector('#mrwx-cur-ic').textContent = icon;
+            card.querySelector('#mrwx-cur-t').innerHTML = Math.round(c.temperature_2m) + '<sup>°C</sup>';
+            card.querySelector('#mrwx-cur-d').textContent = desc;
+            card.querySelector('#mrwx-cur-s').innerHTML =
+                '🥵 <b>' + Math.round(c.apparent_temperature) + '°</b> sensación'
+              + '<span class="sep">·</span>💧 ' + Math.round(c.relative_humidity_2m) + '%'
+              + '<span class="sep">·</span>💨 ' + Math.round(c.wind_speed_10m) + ' km/h';
+            var now = new Date();
+            var nowH = now.getHours();
+            var todayISO = now.toISOString().slice(0,10);
+            var scored = [];
+            var h = wx.hourly;
+            for (var i = 0; i < h.time.length; i++) {
+                var t = new Date(h.time[i]);
+                if (t.toISOString().slice(0,10) !== todayISO) continue;
+                if (t.getHours() < nowH) continue;
+                var s = _mrScoreHour(
+                    h.temperature_2m[i], h.apparent_temperature[i],
+                    h.relative_humidity_2m[i], h.wind_speed_10m[i],
+                    h.uv_index[i] || 0, h.precipitation_probability[i] || 0,
+                    sessType
+                );
+                scored.push({ i:i, s:s, t:t, code:h.weather_code[i],
+                    feels:h.apparent_temperature[i], hum:h.relative_humidity_2m[i], uv:h.uv_index[i]||0 });
+            }
+            var slotsEl = card.querySelector('#mrwx-slots');
+            if (scored.length === 0) {
+                slotsEl.innerHTML = '<div class="mrwx-empty">Ya no quedan horas por delante hoy. Consulta mañana en el detalle.</div>';
+            } else {
+                var top3 = scored.slice().sort(function(a,b){ return b.s - a.s; }).slice(0, 3).sort(function(a,b){ return a.t - b.t; });
+                var medals = ['🥇','🥈','🥉'];
+                slotsEl.innerHTML = top3.map(function(x, idx) {
+                    var wc = (typeof _mrWeatherIcon === 'function') ? _mrWeatherIcon(x.code) : '☁️';
+                    var tag = _mrScoreTag(x.s);
+                    var hh = String(x.t.getHours()).padStart(2,'0');
+                    var col = _mrScoreCol(x.s);
+                    return '<div class="mrwx-slot">'
+                        +    '<div class="mrwx-slot-medal">'+medals[idx]+'</div>'
+                        +    '<div class="mrwx-slot-hour">'+hh+':00<small>H</small></div>'
+                        +    '<div class="mrwx-slot-info">'
+                        +      '<span>'+wc+'</span>'
+                        +      '<span><b>'+Math.round(x.feels)+'°</b></span>'
+                        +      '<span class="sep">·</span><span>💧'+Math.round(x.hum)+'%</span>'
+                        +      '<span class="sep">·</span><span>☀️UV'+Math.round(x.uv)+'</span>'
+                        +    '</div>'
+                        +    '<div class="mrwx-slot-score">'
+                        +      '<div class="mrwx-score-num" style="color:'+col+';">'+x.s+'</div>'
+                        +      '<div class="mrwx-score-tag '+tag.c+'">'+tag.t+'</div>'
+                        +    '</div>'
+                        +  '</div>';
+                }).join('');
+            }
+            var byH = {};
+            scored.forEach(function(x){ byH[x.t.getHours()] = x.s; });
+            var startH = -1, endH = -1;
+            for (var hh2 = 10; hh2 <= 19; hh2++) {
+                if (byH[hh2] != null && byH[hh2] < 45) {
+                    if (startH < 0) startH = hh2;
+                    endH = hh2;
+                }
+            }
+            if (startH >= 0 && endH - startH >= 2) {
+                card.querySelector('#mrwx-warn').style.display = 'flex';
+                card.querySelector('#mrwx-warn-msg').textContent =
+                    String(startH).padStart(2,'0')+':00 – '+String(endH+1).padStart(2,'0')+':00 · condiciones desfavorables, evitar';
+            }
+        } catch(e) {
+            console.warn('[MR][wx] hydrate widget:', e);
+        }
+    }
+
+    var _MR_WX_SHEET_ID = 'mr-wx-sheet';
+    async function _mrOpenWeatherSheet() {
+        var existing = document.getElementById(_MR_WX_SHEET_ID);
+        if (existing) { try { existing.remove(); } catch(_){} }
+        var backdrop = document.createElement('div');
+        backdrop.id = _MR_WX_SHEET_ID;
+        backdrop.className = 'sheet-backdrop';
+        backdrop.onclick = function(e){ if(e.target === backdrop) closeSheet(_MR_WX_SHEET_ID); };
+        var sheet = document.createElement('div');
+        sheet.className = 'sheet';
+        sheet.innerHTML =
+            '<div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>'
+          + '<button onclick="closeSheet(\'' + _MR_WX_SHEET_ID + '\')" aria-label="Cerrar" style="position:absolute;top:10px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">\u00d7</button>'
+          + '<div class="sheet-body" id="mrwxsh-body" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 16px 20px;padding-bottom:env(safe-area-inset-bottom, 20px);">'
+          +   '<div class="mrwxsh-title">Clima para entrenar</div>'
+          +   '<div class="mrwxsh-sub">'
+          +     '<div class="mrwxsh-sub-loc"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 22s-8-7-8-13a8 8 0 0 1 16 0c0 6-8 13-8 13z"/><circle cx="12" cy="9" r="2.5"/></svg><span id="mrwxsh-loc-city">—</span> · <span id="mrwxsh-date">—</span></div>'
+          +     '<button class="mrwxsh-loc-btn" id="mrwxsh-loc-btn">Cambiar ubicación</button>'
+          +   '</div>'
+          +   '<div class="mrwxsh-current">'
+          +     '<div class="mrwxsh-cur-hero">'
+          +       '<div class="mrwxsh-cur-icon" id="mrwxsh-ic">⏳</div>'
+          +       '<div class="mrwxsh-cur-info">'
+          +         '<div class="mrwxsh-cur-desc" id="mrwxsh-desc">Cargando…</div>'
+          +         '<div class="mrwxsh-cur-feels" id="mrwxsh-feels">—</div>'
+          +       '</div>'
+          +       '<div class="mrwxsh-cur-temp" id="mrwxsh-temp">—<sup>°C</sup></div>'
+          +     '</div>'
+          +     '<div class="mrwxsh-metric"><div class="l">💨 Viento</div><div class="v" id="mrwxsh-wind">—<small> km/h</small></div></div>'
+          +     '<div class="mrwxsh-metric"><div class="l">💧 Humedad</div><div class="v" id="mrwxsh-hum">—<small>%</small></div></div>'
+          +     '<div class="mrwxsh-metric"><div class="l">☀️ UV índice</div><div class="v" id="mrwxsh-uv">—</div></div>'
+          +     '<div class="mrwxsh-metric"><div class="l">🌧️ Prob. lluvia</div><div class="v" id="mrwxsh-rain">—<small>%</small></div></div>'
+          +   '</div>'
+          +   '<div class="mrwxsh-block-title">Timeline hoy · scores por hora</div>'
+          +   '<div class="mrwxsh-timeline" id="mrwxsh-tl"></div>'
+          +   '<div class="mrwxsh-block-title">Próximos días</div>'
+          +   '<div id="mrwxsh-days"></div>'
+          + '</div>';
+        backdrop.appendChild(sheet);
+        document.body.appendChild(backdrop);
+        openSheet(_MR_WX_SHEET_ID);
+        var btn = document.getElementById('mrwxsh-loc-btn');
+        if (btn) btn.addEventListener('click', async function() {
+            btn.disabled = true; btn.textContent = 'Buscando…';
+            try { localStorage.removeItem(_MR_GEO_KEY); } catch(_){}
+            try {
+                for (var i = localStorage.length - 1; i >= 0; i--) {
+                    var k = localStorage.key(i);
+                    if (k && k.indexOf('mr_wx_pro_v1_') === 0) localStorage.removeItem(k);
+                }
+            } catch(_){}
+            await _mrHydrateWeatherSheet();
+            btn.disabled = false; btn.textContent = 'Cambiar ubicación';
+            var w = document.getElementById('mr-wx-widget');
+            if (w) _mrHydrateWeatherWidget(w);
+        });
+        _mrHydrateWeatherSheet();
+    }
+    window._mrOpenWeatherSheet = _mrOpenWeatherSheet;
+
+    async function _mrHydrateWeatherSheet() {
+        var wx = await _mrFetchWeatherPro();
+        if (!wx) return;
+        var todaySess = _mrGetTodayPlanSession();
+        var sessType = todaySess ? String(todaySess.type||'') : '';
+        var city = wx.location.city || '—';
+        var byId = function(id){ return document.getElementById(id); };
+        if (byId('mrwxsh-loc-city')) byId('mrwxsh-loc-city').textContent = city;
+        var d = new Date();
+        if (byId('mrwxsh-date')) byId('mrwxsh-date').textContent =
+            d.toLocaleDateString('es-ES', {weekday:'long', day:'numeric', month:'short'}).toUpperCase();
+        var c = wx.current;
+        var icon = (typeof _mrWeatherIcon === 'function') ? _mrWeatherIcon(c.weather_code) : '☁️';
+        var desc = (typeof _mrWeatherDesc === 'function') ? _mrWeatherDesc(c.weather_code) : 'Nublado';
+        if (byId('mrwxsh-ic')) byId('mrwxsh-ic').textContent = icon;
+        if (byId('mrwxsh-desc')) byId('mrwxsh-desc').textContent = desc;
+        if (byId('mrwxsh-feels')) byId('mrwxsh-feels').textContent = 'Sensación térmica ' + Math.round(c.apparent_temperature) + '°C';
+        if (byId('mrwxsh-temp')) byId('mrwxsh-temp').innerHTML = Math.round(c.temperature_2m) + '<sup>°C</sup>';
+        if (byId('mrwxsh-wind')) byId('mrwxsh-wind').innerHTML = Math.round(c.wind_speed_10m) + '<small> km/h</small>';
+        if (byId('mrwxsh-hum')) byId('mrwxsh-hum').innerHTML = Math.round(c.relative_humidity_2m) + '<small>%</small>';
+        var nowH = new Date().getHours();
+        var todayISO = new Date().toISOString().slice(0,10);
+        var nowIdx = -1;
+        for (var i = 0; i < wx.hourly.time.length; i++) {
+            var t = new Date(wx.hourly.time[i]);
+            if (t.toISOString().slice(0,10) === todayISO && t.getHours() === nowH) { nowIdx = i; break; }
+        }
+        var uvVal = nowIdx >= 0 ? Math.round(wx.hourly.uv_index[nowIdx] || 0) : 0;
+        var rainVal = nowIdx >= 0 ? Math.round(wx.hourly.precipitation_probability[nowIdx] || 0) : 0;
+        if (byId('mrwxsh-uv')) byId('mrwxsh-uv').textContent = uvVal;
+        if (byId('mrwxsh-rain')) byId('mrwxsh-rain').innerHTML = rainVal + '<small>%</small>';
+        var tlEl = byId('mrwxsh-tl');
+        if (tlEl) {
+            var bars = [];
+            var nowD = new Date();
+            for (var j = 0; j < wx.hourly.time.length && bars.length < 24; j++) {
+                var tt = new Date(wx.hourly.time[j]);
+                if (tt < nowD && !(tt.getDate()===nowD.getDate() && tt.getHours()===nowD.getHours())) continue;
+                var sc = _mrScoreHour(
+                    wx.hourly.temperature_2m[j], wx.hourly.apparent_temperature[j],
+                    wx.hourly.relative_humidity_2m[j], wx.hourly.wind_speed_10m[j],
+                    wx.hourly.uv_index[j]||0, wx.hourly.precipitation_probability[j]||0,
+                    sessType
+                );
+                var isNow = tt.getDate()===nowD.getDate() && tt.getHours()===nowD.getHours();
+                var wcIco = (typeof _mrWeatherIcon === 'function') ? _mrWeatherIcon(wx.hourly.weather_code[j]) : '☁️';
+                var col2 = _mrScoreCol(sc);
+                bars.push('<div class="mrwxsh-hbar'+(isNow?' now':'')+'">'
+                    +      '<div class="mrwxsh-hbar-time">'+String(tt.getHours()).padStart(2,'0')+'h</div>'
+                    +      '<div class="mrwxsh-hbar-fill"><div class="mrwxsh-hbar-fill-inner" style="height:'+sc+'%;background:'+col2+';"></div></div>'
+                    +      '<div class="mrwxsh-hbar-icon">'+wcIco+'</div>'
+                    +      '<div class="mrwxsh-hbar-t">'+Math.round(wx.hourly.apparent_temperature[j])+'°</div>'
+                    +    '</div>');
+            }
+            tlEl.innerHTML = bars.join('');
+        }
+        var daysEl = byId('mrwxsh-days');
+        if (daysEl && wx.daily) {
+            var days = wx.daily;
+            var dayNames = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+            var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+            var globMin = Math.min.apply(null, days.temperature_2m_min);
+            var globMax = Math.max.apply(null, days.temperature_2m_max);
+            var rows2 = [];
+            for (var k = 0; k < days.time.length; k++) {
+                var dd = new Date(days.time[k]+'T12:00:00');
+                var wcIco2 = (typeof _mrWeatherIcon === 'function') ? _mrWeatherIcon(days.weather_code[k]) : '☁️';
+                var isToday = dd.toDateString() === new Date().toDateString();
+                var lbl = isToday ? 'Hoy' : dayNames[dd.getDay()];
+                var tmin = days.temperature_2m_min[k];
+                var tmax = days.temperature_2m_max[k];
+                var range = globMax - globMin || 1;
+                var startPct = ((tmin - globMin) / range) * 100;
+                var endPct = ((tmax - globMin) / range) * 100;
+                var rainP2 = Math.round(days.precipitation_probability_max[k]||0);
+                rows2.push('<div class="mrwxsh-day">'
+                    + '<div class="mrwxsh-day-lbl">'+lbl+'<small>'+dd.getDate()+' '+months[dd.getMonth()]+'</small></div>'
+                    + '<div class="mrwxsh-day-ic">'+wcIco2+'</div>'
+                    + '<div class="mrwxsh-day-range"><div class="bar"><div class="knob" style="left:'+startPct+'%;right:'+(100-endPct)+'%;"></div></div></div>'
+                    + '<div class="mrwxsh-day-min">'+Math.round(tmin)+'°</div>'
+                    + '<div class="mrwxsh-day-max">'+Math.round(tmax)+'°</div>'
+                    + (rainP2 > 0 ? '<div style="grid-column:1/-1;text-align:right;margin-top:-4px;"><span class="mrwxsh-day-rain">💧 '+rainP2+'%</span></div>' : '')
+                    + '</div>');
+            }
+            daysEl.innerHTML = rows2.join('');
+        }
+    }
+
     // ── BIRTHDAY HELPER ────────────────────────────────────────────
     // Determina si hoy es el cumpleaños del runner según profileData.dob.
     // - Caso 29-feb en año no bisiesto → se celebra el 1-mar.
@@ -32170,6 +32850,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // Save to localStorage-compatible activities array
         renderActivities();
+
+        // [v2.30.1-p54] Persistir evaluación en IDB. Sin esto los campos
+        // act.nota / evalScores / evalComment / evalMode / evalPlanSess / notes
+        // vivían solo en memoria y se perdían al recargar. saveAppState
+        // guarda todo el array activities[] en IDB (Object.assign shallow),
+        // que incluye estos campos. _refreshActivitiesFromBD NO pisa las
+        // activities ya presentes en local (dedup por externalId/dbId, L41549),
+        // así que los campos eval sobreviven al arranque.
+        try { if (typeof saveAppState === 'function') saveAppState(); } catch(_) {}
 
         // v2.4.0-p9 · Push 9.6 · popup con gradación scoped a .ia-card
         // El popup se reinserta como hijo directo de #ia-card-root (NO de #eval-form.parent),
@@ -37889,7 +38578,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!cur) return;
         var act = cur.act;
         if (typeof openActivityDetail === 'function') {
-            try { openActivityDetail(act); } catch(err) { console.warn('[MEV] openActivityDetail failed', err); }
+            // [v2.30.1-p54] Abrir directamente en Card 4 (índice 3 = Evaluación)
+            // en lugar de Card 1 (0 = Resumen). El user ya vio la nota en el
+            // MEV y quiere ver el análisis completo.
+            try { openActivityDetail(act, 3); } catch(err) { console.warn('[MEV] openActivityDetail failed', err); }
         }
         setTimeout(function() {
             _mrEvalState.phase = 'idle';
@@ -43280,6 +43972,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         content += _sec(runSess, true);
         content += _sec(strSess, !runSess);
 
+        // [v2.30.1-p55] Armas recomendadas para el entreno de running.
+        // Se muestra solo si hay sesión de running (no en strength puro) y
+        // hay al menos una zapa activa. Ordenadas por afinidad con el tipo.
+        if (runSess && typeof window._mrBuildShoeRecHtml === 'function') {
+            try {
+                content += '<div style="padding:0 16px 8px;">' + window._mrBuildShoeRecHtml(runSess) + '</div>';
+            } catch(_){}
+        }
+
         // Actions
         content += '<div style="padding:6px 16px 12px;display:flex;flex-direction:column;gap:8px;">';
         if (isToday && runSess && _corosConnected) {
@@ -46525,6 +47226,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [Backlog D · Stamina] Widget "gasolina para hoy" DEBAJO del readiness.
         // Defensivo: si no hay dato en la caché de readiness, no se pinta nada.
         try { if (typeof window._mrRenderStaminaCard === 'function') window._mrRenderStaminaCard(container); } catch(_) {}
+
+        // [v2.30.1-p55] Widget clima para entrenar (Home) · debajo de stamina
+        // Card con profundidad mr-home-card. Tap → sheet expandido con timeline
+        // + forecast 5 días. Ubicación: geoloc → profile city → Zaragoza.
+        try { if (typeof window._mrRenderWeatherWidget === 'function') window._mrRenderWeatherWidget(container); } catch(_) {}
 
         // ── 2b. WARM UP BLOCK ──────────────────────────────────────
         // v2.30.0-p1 · ELIMINADO de Home por duplicidad con Runner tab.
