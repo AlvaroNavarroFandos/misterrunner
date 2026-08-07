@@ -27141,7 +27141,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 + '.mrwx-card {position:relative;background:var(--card);border-radius:18px;border:1.5px solid rgba(0,0,0,.14);box-shadow:0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14);overflow:hidden;cursor:pointer;transition:transform .2s cubic-bezier(.22,.61,.36,1),background-color .2s ease,border-color .2s ease;will-change:transform;}'
 + 'body.dark-mode .mrwx-card{border-color:rgba(255,255,255,.14);box-shadow:0 10px 28px rgba(0,0,0,.65),0 3px 8px rgba(0,0,0,.42);}'
 + '.mrwx-card:active,.mrwx-card.mrwx-pressing{transform:scale(.97);background-color:rgba(196,136,30,.10) !important;border-color:rgba(196,136,30,.35) !important;transition:transform .09s ease-out,background-color .09s ease-out,border-color .09s ease-out;}'
-+ '.mrwx-card:active .mrwx-hdr-lbl,.mrwx-card.mrwx-pressing .mrwx-hdr-lbl{filter:drop-shadow(0 0 6px rgba(196,136,30,.5)) brightness(1.1);transition:filter .09s ease-out;}'
++ '.mrwx-hdr-lbl svg{transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s ease;transform-origin:50% 50%;}'
++ '.mrwx-card:active .mrwx-hdr-lbl svg,.mrwx-card.mrwx-pressing .mrwx-hdr-lbl svg{transform:scale(1.22);filter:drop-shadow(0 0 6px rgba(196,136,30,.75)) brightness(1.15);}'
++ '.mrwx-cur-icon{transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s ease;transform-origin:50% 50%;}'
++ '.mrwx-card:active .mrwx-cur-icon,.mrwx-card.mrwx-pressing .mrwx-cur-icon{transform:scale(1.15);filter:drop-shadow(0 0 8px rgba(196,136,30,.4));}'
++ '.mrwx-hdr-loc{transition:transform .2s cubic-bezier(.22,.61,.36,1),color .2s ease;}'
++ '.mrwx-card:active .mrwx-hdr-loc,.mrwx-card.mrwx-pressing .mrwx-hdr-loc{transform:translateX(3px);color:#c4881e !important;}'
 + '.mrwx-hdr{padding:14px 16px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border);}'
 + '.mrwx-hdr-lbl{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:800;color:#c4881e;text-transform:uppercase;letter-spacing:1.4px;}'
 + '.mrwx-hdr-lbl svg{width:12px;height:12px;}'
@@ -27590,6 +27595,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           +   '<span id="mrwx-warn-msg">—</span>'
           + '</div>';
         card.addEventListener('click', function() { _mrOpenWeatherSheet(); });
+        card.addEventListener('touchstart', function(){ card.classList.add('mrwx-pressing'); }, { passive: true });
+        var _wxRelease = function(){ card.classList.remove('mrwx-pressing'); };
+        card.addEventListener('touchend', _wxRelease, { passive: true });
+        card.addEventListener('touchcancel', _wxRelease, { passive: true });
         container.appendChild(card);
         _mrHydrateWeatherWidget(card);
     }
@@ -43060,25 +43069,105 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) {}
     }
 
-    // Lista premium de ejercicios (círculos numerados + zona en verde). Compartida
+    // Lista premium de ejercicios (colored por fase + zona en verde). Compartida
     // por el sheet de Home (openWarmupDetailSheet) y el de Runner (renderWarmupSummaryRunner)
     // para que ambos queden idénticos. Los ejercicios 8+ (índice >= 7) son de zona.
+    // [v2.30.1-p59] Opción A · colored por fase: movilidad (azul) · activación
+    // (naranja) · estiramiento (morado) · zona (verde). Border-left del color
+    // de fase + número gradient + duración pill tintada + label de fase.
+    function _wuInjectCss() {
+        if (document.getElementById('mrwu-css')) return;
+        var css = ''
+        + '.mrwu-summary{margin:0 16px 12px;padding:10px 14px;background:linear-gradient(135deg,rgba(249,115,22,.10) 0%,rgba(196,136,30,.06) 100%);border:1px solid rgba(249,115,22,.20);border-radius:12px;display:flex;align-items:center;gap:10px;font-size:11.5px;font-weight:700;color:var(--tw);letter-spacing:-.1px;font-family:var(--f);}'
+        + 'body.dark-mode .mrwu-summary{background:linear-gradient(135deg,rgba(249,115,22,.16) 0%,rgba(196,136,30,.10) 100%);}'
+        + '.mrwu-summary svg{width:16px;height:16px;flex-shrink:0;color:#f97316;}'
+        + '.mrwu-summary b{color:#c4881e;font-weight:900;letter-spacing:-.2px;}'
+        + 'body.dark-mode .mrwu-summary b{color:#E4C97A;}'
+        + '.mrwu-list{padding:0 16px;display:flex;flex-direction:column;gap:6px;}'
+        + '.mrwu-ex{display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:flex-start;padding:10px 12px 10px 10px;background:var(--card);border:1px solid var(--border);border-radius:10px;position:relative;overflow:hidden;border-left-width:3px;font-family:var(--f);}'
+        + '.mrwu-ex.mov{border-left-color:#3b82f6;}'
+        + '.mrwu-ex.act{border-left-color:#f97316;}'
+        + '.mrwu-ex.est{border-left-color:#a855f7;}'
+        + '.mrwu-ex.zon{border-color:rgba(34,197,94,.32);border-left:3px solid #22c55e;background:linear-gradient(135deg,rgba(34,197,94,.08) 0%,var(--card) 60%);}'
+        + '.mrwu-num{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;color:#fff;line-height:1;font-variant-numeric:tabular-nums;box-shadow:0 2px 4px rgba(0,0,0,.15);margin-top:1px;font-family:var(--f);}'
+        + '.mrwu-ex.mov .mrwu-num{background:linear-gradient(135deg,#60a5fa 0%,#2563eb 100%);}'
+        + '.mrwu-ex.act .mrwu-num{background:linear-gradient(135deg,#fb923c 0%,#ea580c 100%);}'
+        + '.mrwu-ex.est .mrwu-num{background:linear-gradient(135deg,#c084fc 0%,#9333ea 100%);}'
+        + '.mrwu-ex.zon .mrwu-num{background:linear-gradient(135deg,#4ade80 0%,#16a34a 100%);box-shadow:0 2px 6px rgba(34,197,94,.30);}'
+        + '.mrwu-body{min-width:0;}'
+        + '.mrwu-head{display:flex;align-items:center;gap:6px;margin-bottom:3px;}'
+        + '.mrwu-name{font-size:12.5px;font-weight:800;color:var(--tw);letter-spacing:-.2px;line-height:1.2;flex:1;min-width:0;font-family:var(--f);}'
+        + '.mrwu-phase{font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.7px;line-height:1;display:inline-flex;align-items:center;gap:3px;font-family:var(--f);}'
+        + '.mrwu-ex.mov .mrwu-phase{color:#2563eb;}'
+        + 'body.dark-mode .mrwu-ex.mov .mrwu-phase{color:#93c5fd;}'
+        + '.mrwu-ex.act .mrwu-phase{color:#ea580c;}'
+        + 'body.dark-mode .mrwu-ex.act .mrwu-phase{color:#fdba74;}'
+        + '.mrwu-ex.est .mrwu-phase{color:#9333ea;}'
+        + 'body.dark-mode .mrwu-ex.est .mrwu-phase{color:#d8b4fe;}'
+        + '.mrwu-dur{font-size:9.5px;font-weight:800;padding:2px 6px;border-radius:4px;font-variant-numeric:tabular-nums;line-height:1;flex-shrink:0;letter-spacing:.1px;font-family:var(--f);}'
+        + '.mrwu-ex.mov .mrwu-dur{background:rgba(59,130,246,.14);color:#2563eb;}'
+        + 'body.dark-mode .mrwu-ex.mov .mrwu-dur{background:rgba(59,130,246,.20);color:#93c5fd;}'
+        + '.mrwu-ex.act .mrwu-dur{background:rgba(249,115,22,.14);color:#ea580c;}'
+        + 'body.dark-mode .mrwu-ex.act .mrwu-dur{background:rgba(249,115,22,.20);color:#fdba74;}'
+        + '.mrwu-ex.est .mrwu-dur{background:rgba(168,85,247,.14);color:#9333ea;}'
+        + 'body.dark-mode .mrwu-ex.est .mrwu-dur{background:rgba(168,85,247,.22);color:#d8b4fe;}'
+        + '.mrwu-ex.zon .mrwu-dur{background:rgba(34,197,94,.14);color:#15803d;}'
+        + 'body.dark-mode .mrwu-ex.zon .mrwu-dur{background:rgba(34,197,94,.22);color:#86efac;}'
+        + '.mrwu-desc{font-size:10.5px;color:var(--ts);line-height:1.4;font-weight:500;font-family:var(--f);}'
+        + '.mrwu-zone-badge{display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:900;padding:3px 7px;border-radius:4px;background:linear-gradient(135deg,#22c55e 0%,#15803d 100%);color:#fff;letter-spacing:.8px;text-transform:uppercase;line-height:1;box-shadow:0 2px 4px rgba(34,197,94,.30);margin-top:5px;font-family:var(--f);}';
+        var st = document.createElement('style');
+        st.id = 'mrwu-css';
+        st.textContent = css;
+        document.head.appendChild(st);
+    }
+
+    // Detecta la fase por keyword del nombre.
+    // Devuelve 'mov' | 'act' | 'est' (los de zona se marcan aparte con 'zon').
+    function _wuPhase(name) {
+        var n = String(name || '').toLowerCase();
+        if (/estiramiento|paloma|extensi[óo]n|apertura|masaje|fascia/.test(n)) return 'est';
+        if (/elevaci[óo]n|talones|zancada|abducci[óo]n|isom[ée]trica|clamshell|excéntrica|excentrica/.test(n)) return 'act';
+        if (/rotaci[óo]n|c[íi]rculos|cat-cow|balanceo/.test(n)) return 'mov';
+        return 'mov';
+    }
+    function _wuPhaseLbl(p) {
+        return p === 'mov' ? 'MOVILIDAD' : (p === 'act' ? 'ACTIVACIÓN' : 'ESTIRAMIENTO');
+    }
+
     function _buildWarmupExHtml(r) {
+        _wuInjectCss();
         function _fmtDur2(d) { return d < 60 ? d + 's' : Math.round(d/60) + 'min'; }
-        return r.exercises.map(function(e, i) {
-            var bg     = i >= 7 ? 'rgba(80,200,80,.08)' : 'var(--bsoft)';
-            var border = i >= 7 ? 'border-left:3px solid #4CAF50;' : '';
-            var cirBg  = i >= 7 ? '#4CAF50' : 'var(--border)';
-            var cirCol = i >= 7 ? '#fff' : 'var(--tw)';
-            var zoneEx = i >= 7 ? '<div style="font-size:9px;color:#4CAF50;margin-top:2px;font-weight:600;">\u2605 Ejercicio para ' + r.protectZone + '</div>' : '';
-            return '<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;background:' + bg + ';border-radius:10px;' + border + '">'
-                + '<div style="width:24px;height:24px;border-radius:50%;background:' + cirBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;color:' + cirCol + ';">' + (i+1) + '</div>'
-                + '<div style="flex:1;">'
-                + '<div style="font-size:13px;font-weight:700;color:var(--tw);">' + e.name + ' <span style="font-size:10px;font-weight:400;color:var(--tm);">' + _fmtDur2(e.dur||30) + '</span></div>'
-                + '<div style="font-size:11px;color:var(--ts);margin-top:2px;line-height:1.5;">' + e.desc + '</div>'
-                + zoneEx
-                + '</div></div>';
-        }).join('');
+        var zoneLabel = r.protectZone && r.protectZone !== 'Sin zona específica'
+                     ? String(r.protectZone).toUpperCase() : 'ZONA';
+        var listHtml = '<div class="mrwu-list">' + r.exercises.map(function(e, i) {
+            var isZone = i >= 7;
+            var phase  = isZone ? 'zon' : _wuPhase(e.name);
+            var phaseLabel = isZone ? '' : ('<span class="mrwu-phase">· ' + _wuPhaseLbl(phase) + '</span>');
+            var zoneBadge = isZone
+                ? '<div><span class="mrwu-zone-badge">\u2605 ZONA \u00b7 ' + zoneLabel + '</span></div>'
+                : '';
+            var nameEsc = String(e.name || '').replace(/</g,'&lt;');
+            var descEsc = String(e.desc || '').replace(/</g,'&lt;');
+            return '<div class="mrwu-ex ' + phase + '">'
+                +    '<div class="mrwu-num">' + (i+1) + '</div>'
+                +    '<div class="mrwu-body">'
+                +      '<div class="mrwu-head">'
+                +        '<div class="mrwu-name">' + nameEsc + (phaseLabel ? ' ' + phaseLabel : '') + '</div>'
+                +        '<div class="mrwu-dur">' + _fmtDur2(e.dur||30) + '</div>'
+                +      '</div>'
+                +      '<div class="mrwu-desc">' + descEsc + '</div>'
+                +      zoneBadge
+                +    '</div>'
+                + '</div>';
+        }).join('') + '</div>';
+        // Summary chip antes de la lista (solo si hay algo que sumar)
+        var totalSec = r.exercises.reduce(function(a,x){ return a + (x.dur||30); }, 0);
+        var minTotal = Math.round(totalSec / 60);
+        var summary = '<div class="mrwu-summary">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+            + '<span><b>' + r.exercises.length + ' ejercicios</b> \u00b7 <b>' + minTotal + ' min</b> antes de correr</span>'
+            + '</div>';
+        return summary + listHtml;
     }
 
     function renderWarmupSummaryRunner() {
