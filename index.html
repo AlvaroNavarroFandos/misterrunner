@@ -16999,7 +16999,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // v2.30.1-p63 · Fix: tolerancia 10px de movimiento + mouse events +
             // prevent contextmenu/selectstart. Mismo patrón que long-press de
             // zapatillas (L20735) que funciona en iOS PWA.
+            // v2.30.1-p64 · Feedback visual scale(.97) + user-select:none +
+            // webkit-touch-callout:none para bloquear el menú de contexto iOS
+            // que interceptaba el long-press.
             if (isCurrentWeek) {
+                // CSS anti-interferencia con selección de texto y menú iOS
+                card.style.userSelect = 'none';
+                card.style.webkitUserSelect = 'none';
+                card.style.webkitTouchCallout = 'none';
                 (function(d, wi){
                     var _lpTimer = null;
                     var _lpFired = false;
@@ -17014,10 +17021,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             _lpStartX = ev.clientX || 0;
                             _lpStartY = ev.clientY || 0;
                         }
+                        // Feedback visual inmediato (igual que long-press running L40963)
+                        card.style.transition = 'transform .12s ease-out';
+                        card.style.transform = 'scale(.97)';
                         _lpTimer = setTimeout(function() {
                             if (_lpAborted) return;
                             _lpFired = true;
                             card._mrRehabLpFired = true;
+                            card.style.transform = 'scale(1)';
                             if (navigator.vibrate) { try { navigator.vibrate(25); } catch(_){} }
                             try { _openRehabDayActions(d, wi); } catch(_){}
                         }, 500);
@@ -17025,16 +17036,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var _abortLP = function() {
                         _lpAborted = true;
                         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                        // Sin transición: para no romper swipe
+                        card.style.transition = 'none';
+                        card.style.transform = 'scale(1)';
                     };
                     var _cancelLP = function() {
                         if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+                        card.style.transition = 'transform .12s ease-out';
+                        card.style.transform = 'scale(1)';
                     };
                     var _onLPMove = function(ev) {
                         if (!ev.touches || !ev.touches[0]) return;
                         var dx = Math.abs(ev.touches[0].clientX - _lpStartX);
                         var dy = Math.abs(ev.touches[0].clientY - _lpStartY);
                         if (dx > 10 || dy > 10) {
-                            // Movimiento significativo (scroll o swipe) → aborta
                             _abortLP();
                         }
                     };
@@ -48425,6 +48440,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // (Próximos entrenamientos movidos arriba, debajo de "Hoy: sesión/descanso")
 
         // ── REHAB TODAY BLOCK ───────────────────────────────────────
+        // v2.30.1-p64 · FIX línea negra: si _rehabDay no existe (fuera de rango del
+        // plan) o está en un tipo no reconocido, la card quedaba con background:#0a0a0a
+        // (negro) sin innerHTML y sin padding → altura 0 pero fill negro = raya
+        // horizontal en Home. Ahora solo se añade al DOM si hay contenido, y
+        // los colores hardcoded se sustituyen por vars CSS para light mode.
         if(activeRehabPlan && activeRehabPlan.status==='active') {
             var _today = todayStr;
             var _rehabDay = activeRehabPlan.days.find(function(d){ return d.dateStr===_today; });
@@ -48432,33 +48452,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _rehabPh = getCurrentPhase();
 
             var rehabHomeCard = document.createElement('div'); rehabHomeCard.setAttribute('data-ho','rehab-today');
-            rehabHomeCard.className = 'mr-home-card mr-hc-keep-color';
-            rehabHomeCard.style.cssText = 'background:#0a0a0a;border-radius:16px;border:1.5px solid rgba(255,255,255,.15);overflow:hidden;';
+            rehabHomeCard.className = 'mr-home-card';
+            rehabHomeCard.style.cssText = 'background:var(--card);border-radius:16px;overflow:hidden;';
+            var _hasContent = false;
 
             if(_rehabDay && _rehabDay.type!=='rest') {
                 var _isDone = _rehabDay.status==='completed';
                 rehabHomeCard.innerHTML =
                     '<div style="padding:12px 14px;">'
-                    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
-                    +'<div><div style="font-size:10px;color:#ef4444;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Rehabilitación · Sem. '+_rehabWk+'</div>'
-                    +'<div style="font-size:14px;font-weight:800;color:#fff;">'+activeRehabPlan.injury.name+'</div></div>'
-                    +'<div style="background:'+(_isDone?'rgba(34,197,94,.15)':'rgba(239,68,68,.1)')+';border-radius:8px;padding:4px 9px;">'
-                    +'<div style="font-size:10px;font-weight:700;color:'+(_isDone?'#22c55e':'#ef4444')+';">'+(_isDone?'Completada':'Pendiente')+'</div></div></div>'
-                    +'<div style="background:rgba(255,255,255,.04);border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
-                    +'<div style="font-size:11px;font-weight:700;color:'+_rehabPh.color+';margin-bottom:2px;">'+_rehabDay.label+'</div>'
-                    +'<div style="font-size:10px;color:rgba(255,255,255,.4);">'+_rehabDay.exercises.length+' ejercicios · '+_rehabPh.name+'</div>'
+                    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;">'
+                    +'<div style="min-width:0;flex:1;"><div style="font-size:10px;color:#ef4444;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Rehabilitación · Sem. '+_rehabWk+'</div>'
+                    +'<div style="font-size:14px;font-weight:800;color:var(--tw);letter-spacing:-.2px;">'+activeRehabPlan.injury.name+'</div></div>'
+                    +'<div style="background:'+(_isDone?'rgba(34,197,94,.14)':'rgba(239,68,68,.10)')+';border:1px solid '+(_isDone?'rgba(34,197,94,.32)':'rgba(239,68,68,.22)')+';border-radius:8px;padding:4px 9px;flex-shrink:0;">'
+                    +'<div style="font-size:10px;font-weight:800;color:'+(_isDone?'#22c55e':'#ef4444')+';text-transform:uppercase;letter-spacing:.4px;">'+(_isDone?'Completada':'Pendiente')+'</div></div></div>'
+                    +'<div style="background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
+                    +'<div style="font-size:11px;font-weight:800;color:'+_rehabPh.color+';margin-bottom:2px;letter-spacing:.1px;">'+_rehabDay.label+'</div>'
+                    +'<div style="font-size:10px;color:var(--tm);font-weight:600;">'+_rehabDay.exercises.length+' ejercicios · '+_rehabPh.name+'</div>'
                     +'</div>'
-                    +(!_isDone ? '<button onclick="openTodayRehabSession()" style="width:100%;background:#ef4444;color:#fff;border:none;border-radius:10px;padding:11px;font-family:var(--f);font-size:12px;font-weight:700;cursor:pointer;">Iniciar sesión de rehabilitación</button>' : '')
+                    +(!_isDone ? '<button onclick="openTodayRehabSession()" style="width:100%;background:linear-gradient(135deg,#ef4444 0%,#b91c1c 100%);color:#fff;border:none;border-radius:10px;padding:11px;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.3px;cursor:pointer;box-shadow:0 4px 12px rgba(239,68,68,.28);">Iniciar sesión de rehabilitación</button>' : '')
                     +'</div>';
+                _hasContent = true;
             } else if(_rehabDay && _rehabDay.type==='rest') {
                 rehabHomeCard.innerHTML = '<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;">'
-                    +'<div style="flex:1;">'
-                    +'<div style="font-size:10px;color:#60a5fa;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Rehabilitación · Descanso</div>'
-                    +'<div style="font-size:13px;font-weight:700;color:#fff;">'+activeRehabPlan.injury.name+'</div>'
-                    +'<div style="font-size:11px;color:rgba(255,255,255,.4);margin-top:2px;">Hoy es día de descanso activo. Recupera bien.</div>'
+                    +'<div style="flex:1;min-width:0;">'
+                    +'<div style="font-size:10px;color:#60a5fa;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Rehabilitación · Descanso</div>'
+                    +'<div style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:-.1px;">'+activeRehabPlan.injury.name+'</div>'
+                    +'<div style="font-size:10.5px;color:var(--tm);margin-top:2px;font-weight:600;">Hoy es día de descanso activo. Recupera bien.</div>'
                     +'</div></div>';
+                _hasContent = true;
             }
-            container.appendChild(rehabHomeCard);
+            // Solo añadir al DOM si realmente hay contenido (evita raya negra fantasma)
+            if (_hasContent) container.appendChild(rehabHomeCard);
         }
 
         // (injury banner moved to top)
