@@ -487,6 +487,17 @@
     .mr-rdn .figure{flex:1;display:flex;align-items:center;justify-content:center;}
     .mr-rdn .figure img{height:54px;width:auto;filter:var(--icoshadow);}
     .mr-rdn .pill{flex-shrink:0;font-size:12px;font-weight:850;padding:5px 13px;border-radius:10px;letter-spacing:.3px;box-shadow:0 2px 7px rgba(0,0,0,.2);white-space:nowrap;}
+    /* v2.30.1-p65 · Batería recuperación (COROS recoveryPct + fullRecoveryHours) */
+    .mr-rdn .rec-box{flex-shrink:0;display:grid;grid-template-columns:auto 1fr;gap:7px;align-items:center;background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:5px 8px 5px 6px;min-width:0;max-width:140px;}
+    .mr-rdn .rec-batt{position:relative;width:14px;height:24px;border:1.5px solid var(--tw);border-radius:2.5px;background:transparent;display:flex;align-items:flex-end;overflow:hidden;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+    .mr-rdn .rec-batt::before{content:'';position:absolute;top:-2.5px;left:50%;transform:translateX(-50%);width:5px;height:2px;background:var(--tw);border-radius:1px 1px 0 0;}
+    .mr-rdn .rec-batt-fill{width:100%;border-radius:1px;transition:height .5s ease,background .3s ease;}
+    .mr-rdn .rec-info{min-width:0;display:flex;flex-direction:column;gap:1px;}
+    .mr-rdn .rec-top{display:flex;align-items:baseline;gap:3px;}
+    .mr-rdn .rec-pct{font-size:14px;font-weight:900;letter-spacing:-.4px;line-height:1;font-variant-numeric:tabular-nums;}
+    .mr-rdn .rec-lbl{font-size:7.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:.7px;line-height:1;}
+    .mr-rdn .rec-time{font-size:8.5px;font-weight:700;color:var(--ts);letter-spacing:.05px;font-variant-numeric:tabular-nums;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .mr-rdn .rec-time b{color:var(--tw);font-weight:800;}
     .mr-rdn .meter{margin-top:7px;}
     .mr-rdn .barwrap{position:relative;}
     .mr-rdn .bar-main{height:14px;border-radius:4px;display:flex;overflow:hidden;box-shadow:var(--barinset);}
@@ -57928,6 +57939,58 @@ window.addEventListener('DOMContentLoaded', function() {
             return cells + _rdnMiniBar(_RDN_GRAD_FC, pos);
         }
 
+        // v2.30.1-p65 · Helper para extraer recoveryPct + fullRecoveryHours desde
+        // COROS. El endpoint /dashboard/query (envuelto por edge /racestatus) trae:
+        //   summaryInfo.recoveryPct        (0-100)
+        //   summaryInfo.fullRecoveryHours  (horas restantes hasta 100%)
+        // Se lee con múltiples aliases por si el edge normaliza a snake_case.
+        function _mrGetRecovery() {
+            try {
+                var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                if (!rs) return null;
+                var pct = rs.recoveryPct != null ? rs.recoveryPct
+                        : rs.recovery_pct != null ? rs.recovery_pct
+                        : rs.recoveryPercent != null ? rs.recoveryPercent
+                        : rs.recovery != null && typeof rs.recovery === 'object' ? rs.recovery.pct
+                        : null;
+                var hrs = rs.fullRecoveryHours != null ? rs.fullRecoveryHours
+                        : rs.full_recovery_hours != null ? rs.full_recovery_hours
+                        : rs.recoverTime != null ? rs.recoverTime
+                        : rs.recovery != null && typeof rs.recovery === 'object' ? rs.recovery.hoursLeft
+                        : null;
+                if (pct == null && hrs == null) return null;
+                pct = pct == null ? null : Math.max(0, Math.min(100, Math.round(Number(pct))));
+                hrs = hrs == null ? null : Math.max(0, Number(hrs));
+                return { pct: pct, hrs: hrs };
+            } catch(_) { return null; }
+        }
+        window._mrGetRecovery = _mrGetRecovery;
+
+        // Formatea horas → "10h 15m" o "Listo para hard" si 0
+        function _mrFmtRecoveryTime(hrs) {
+            if (hrs == null) return '';
+            if (hrs <= 0.05) return 'Listo para hard';
+            if (hrs < 1) {
+                var mins = Math.round(hrs * 60);
+                return '<b>' + mins + 'm</b> restantes';
+            }
+            var h = Math.floor(hrs);
+            var m = Math.round((hrs - h) * 60);
+            if (m >= 60) { h += 1; m = 0; }
+            if (m === 0) return '<b>' + h + 'h</b> restantes';
+            return '<b>' + h + 'h ' + m + 'm</b> restantes';
+        }
+
+        // Colores + gradient de la batería según % de recuperación
+        // <30 rojo · 30-60 naranja · 60-85 dorado · >85 verde
+        function _mrBattColor(pct) {
+            if (pct == null) return null;
+            if (pct < 30)  return { fill: 'linear-gradient(180deg,#ef4444 0%,#b91c1c 100%)', text: '#ef4444', glow: 'rgba(239,68,68,.4)' };
+            if (pct < 60)  return { fill: 'linear-gradient(180deg,#fb923c 0%,#ea580c 100%)', text: '#ea580c', glow: 'rgba(249,115,22,.4)' };
+            if (pct < 85)  return { fill: 'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)', text: '#c4881e', glow: 'rgba(196,136,30,.4)' };
+            return { fill: 'linear-gradient(180deg,#22c55e 0%,#16a34a 100%)', text: '#16a34a', glow: 'rgba(34,197,94,.4)' };
+        }
+
         // Pinta la card con el objeto normalizado de _mrReadiness().
         function _paintReadiness(card, obj) {
             if (!card || !obj) return;
@@ -57956,12 +58019,36 @@ window.addEventListener('DOMContentLoaded', function() {
             var mk = (score == null) ? null : Math.max(2, Math.min(98, score));
             var mkHtml = (mk == null) ? '' : '<div class="mkbig" style="left:' + mk + '%;"></div>';
 
+            // v2.30.1-p65 · Bloque batería recuperación
+            //  - Se pinta si COROS conectado Y hay recoveryPct/fullRecoveryHours en cache.
+            //  - Pill "Regular/Fatiga/…" se mueve entre % y muñeco.
+            //  - Rec-box (batería + %/label + horas restantes) va a la derecha.
+            var rec = obj.connected ? _mrGetRecovery() : null;
+            var recBoxHtml = '';
+            if (rec && rec.pct != null) {
+                var bc = _mrBattColor(rec.pct);
+                var timeHtml = _mrFmtRecoveryTime(rec.hrs);
+                var isReady  = (rec.hrs != null && rec.hrs <= 0.05) || rec.pct >= 100;
+                recBoxHtml =
+                    '<div class="rec-box">' +
+                      '<div class="rec-batt"><div class="rec-batt-fill" style="height:' + rec.pct + '%;background:' + bc.fill + ';box-shadow:0 -1px 6px ' + bc.glow + ';"></div></div>' +
+                      '<div class="rec-info">' +
+                        '<div class="rec-top">' +
+                          '<div class="rec-pct" style="color:' + bc.text + ';">' + rec.pct + '%</div>' +
+                          '<div class="rec-lbl">Recovery</div>' +
+                        '</div>' +
+                        '<div class="rec-time"' + (isReady ? ' style="color:' + bc.text + ';font-weight:800;"' : '') + '>' + timeHtml + '</div>' +
+                      '</div>' +
+                    '</div>';
+            }
+
             card.innerHTML =
                 '<div class="rw" style="--rdn-accent:' + topA + ';--rdn-accent-hi:' + topB + ';">' +
                   '<div class="head">' +
                     '<div class="pctb"><div class="pct">' + pctHtml + '</div><div class="rlabel">' + rlabel + '</div></div>' +
-                    '<div class="figure">' + figHtml + '</div>' +
                     '<div class="pill" style="background:' + pillBg + ';color:' + pillTx + ';">' + label + '</div>' +
+                    '<div class="figure">' + figHtml + '</div>' +
+                    recBoxHtml +
                   '</div>' +
                   '<div class="meter">' +
                     '<div class="barwrap"><div class="bar-main">' + bars + '</div>' + mkHtml + '</div>' +
