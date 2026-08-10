@@ -484,11 +484,16 @@
     .mr-rdn .pct{font-size:40px;font-weight:850;line-height:.82;letter-spacing:-2px;color:var(--tw);font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:1px;}
     .mr-rdn .pct small{font-size:17px;font-weight:800;letter-spacing:-.5px;color:var(--ts);}
     .mr-rdn .rlabel{font-size:8px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:.5px;line-height:1.2;margin-top:3px;max-width:96px;}
+    /* Por defecto el figure ocupa el espacio central (comportamiento original,
+       sin batería). Cuando la card tiene .has-recovery, el figure se pega a la
+       pill (flex-shrink:0) y el rec-box se empuja a la derecha con margin auto. */
     .mr-rdn .figure{flex:1;display:flex;align-items:center;justify-content:center;}
+    .mr-rdn.has-recovery .figure{flex:0 0 auto;justify-content:flex-start;padding-left:2px;}
     .mr-rdn .figure img{height:54px;width:auto;filter:var(--icoshadow);}
     .mr-rdn .pill{flex-shrink:0;font-size:12px;font-weight:850;padding:5px 13px;border-radius:10px;letter-spacing:.3px;box-shadow:0 2px 7px rgba(0,0,0,.2);white-space:nowrap;}
-    /* v2.30.1-p65 · Batería recuperación (COROS recoveryPct + fullRecoveryHours) */
-    .mr-rdn .rec-box{flex-shrink:0;display:grid;grid-template-columns:auto 1fr;gap:7px;align-items:center;background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:5px 8px 5px 6px;min-width:0;max-width:140px;}
+    /* v2.30.1-p65 · Batería recuperación (COROS recoveryPct + fullRecoveryHours)
+       v2.30.1-p66 · margin-left:auto para pegar el rec-box al borde derecho. */
+    .mr-rdn .rec-box{flex-shrink:0;margin-left:auto;display:grid;grid-template-columns:auto 1fr;gap:7px;align-items:center;background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:5px 8px 5px 6px;min-width:0;max-width:140px;}
     .mr-rdn .rec-batt{position:relative;width:14px;height:24px;border:1.5px solid var(--tw);border-radius:2.5px;background:transparent;display:flex;align-items:flex-end;overflow:hidden;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.15);}
     .mr-rdn .rec-batt::before{content:'';position:absolute;top:-2.5px;left:50%;transform:translateX(-50%);width:5px;height:2px;background:var(--tw);border-radius:1px 1px 0 0;}
     .mr-rdn .rec-batt-fill{width:100%;border-radius:1px;transition:height .5s ease,background .3s ease;}
@@ -57944,17 +57949,18 @@ window.addEventListener('DOMContentLoaded', function() {
         //   summaryInfo.recoveryPct        (0-100)
         //   summaryInfo.fullRecoveryHours  (horas restantes hasta 100%)
         // Se lee con múltiples aliases por si el edge normaliza a snake_case.
+        // v2.30.1-p67 · Edge v1.8.0-p1 pasa recovery_pct + full_recovery_hours en snake_case.
         function _mrGetRecovery() {
             try {
                 var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
                 if (!rs) return null;
-                var pct = rs.recoveryPct != null ? rs.recoveryPct
-                        : rs.recovery_pct != null ? rs.recovery_pct
+                var pct = rs.recovery_pct != null ? rs.recovery_pct
+                        : rs.recoveryPct != null ? rs.recoveryPct
                         : rs.recoveryPercent != null ? rs.recoveryPercent
                         : rs.recovery != null && typeof rs.recovery === 'object' ? rs.recovery.pct
                         : null;
-                var hrs = rs.fullRecoveryHours != null ? rs.fullRecoveryHours
-                        : rs.full_recovery_hours != null ? rs.full_recovery_hours
+                var hrs = rs.full_recovery_hours != null ? rs.full_recovery_hours
+                        : rs.fullRecoveryHours != null ? rs.fullRecoveryHours
                         : rs.recoverTime != null ? rs.recoverTime
                         : rs.recovery != null && typeof rs.recovery === 'object' ? rs.recovery.hoursLeft
                         : null;
@@ -57965,6 +57971,30 @@ window.addEventListener('DOMContentLoaded', function() {
             } catch(_) { return null; }
         }
         window._mrGetRecovery = _mrGetRecovery;
+
+        // v2.30.1-p67 · Auto-invalidar cache pre-p65 sin campos recovery.
+        // Al montar el sheet/widget readiness, si el cache existe pero NO tiene
+        // recovery_pct, se hace bust + fetch fresco. Solo se ejecuta una vez
+        // por sesión (guard sessionStorage).
+        try {
+            var _rsRefreshKey = '__mrRecoveryEdgeRefresh_v1';
+            if (!sessionStorage.getItem(_rsRefreshKey)) {
+                var _rsCached = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                if (_rsCached && _rsCached.connected && _rsCached.recovery_pct == null && _rsCached.recoveryPct == null) {
+                    sessionStorage.setItem(_rsRefreshKey, '1');
+                    try { if (typeof window._mrRaceStatusBust === 'function') window._mrRaceStatusBust(); } catch(_){}
+                    // Fetch fresco async — repintará readiness cuando llegue
+                    if (typeof window._mrRaceStatusFetch === 'function') {
+                        window._mrRaceStatusFetch().then(function(){
+                            var _c = document.getElementById('mr-readiness-card');
+                            if (_c && typeof window._mrRenderReadiness === 'function') {
+                                try { window._mrRenderReadiness(); } catch(_){}
+                            }
+                        }).catch(function(){});
+                    }
+                }
+            }
+        } catch(_){}
 
         // Formatea horas → "10h 15m" o "Listo para hard" si 0
         function _mrFmtRecoveryTime(hrs) {
@@ -58020,12 +58050,16 @@ window.addEventListener('DOMContentLoaded', function() {
             var mkHtml = (mk == null) ? '' : '<div class="mkbig" style="left:' + mk + '%;"></div>';
 
             // v2.30.1-p65 · Bloque batería recuperación
-            //  - Se pinta si COROS conectado Y hay recoveryPct/fullRecoveryHours en cache.
+            //  - Se pinta si COROS conectado Y hay recovery_pct/full_recovery_hours en cache.
             //  - Pill "Regular/Fatiga/…" se mueve entre % y muñeco.
             //  - Rec-box (batería + %/label + horas restantes) va a la derecha.
+            //  v2.30.1-p66 · Añadida class .has-recovery al card para que el CSS
+            //  colapse el .figure flex:1 → flex-shrink:0 y libere el espacio derecho.
+            //  v2.30.1-p67 · Edge coros-sync v1.8.0-p1 pasa los campos limpios.
             var rec = obj.connected ? _mrGetRecovery() : null;
             var recBoxHtml = '';
             if (rec && rec.pct != null) {
+                card.classList.add('has-recovery');
                 var bc = _mrBattColor(rec.pct);
                 var timeHtml = _mrFmtRecoveryTime(rec.hrs);
                 var isReady  = (rec.hrs != null && rec.hrs <= 0.05) || rec.pct >= 100;
@@ -58040,6 +58074,8 @@ window.addEventListener('DOMContentLoaded', function() {
                         '<div class="rec-time"' + (isReady ? ' style="color:' + bc.text + ';font-weight:800;"' : '') + '>' + timeHtml + '</div>' +
                       '</div>' +
                     '</div>';
+            } else {
+                card.classList.remove('has-recovery');
             }
 
             card.innerHTML =
