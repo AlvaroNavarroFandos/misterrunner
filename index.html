@@ -4926,7 +4926,7 @@
         /* ── [v6 · Home] Minicalendario RODANTE · foco FIJO central ── */
         .mr-pc-roll-wrap { position: relative; margin: 0 -2px 12px; padding-top: 11px; }
         .mr-pc-roll-focus {
-            position: absolute; top: 11px; left: 24%; transform: translateX(-50%);
+            position: absolute; top: 11px; left: 20%; transform: translateX(-50%);
             box-sizing: border-box; width: 58px; height: 59px;
             /* v2.30.1-p73 · border sólido silver metalizado (antes: var(--pc-a) navy/silver).
                Interior naturalmente transparente por border sólido (idéntico al mecanismo
@@ -4949,7 +4949,7 @@
         /* v2.30.1-p73 · Pill "HOY" pegada al top-border del focus. top:0 = pegada al top
            del wrap. Su bottom cae en top:11 (= top-border del focus). Sin flecha, sin aire. */
         .mr-pc-hoy-pill {
-            position: absolute; top: 0; left: 24%; transform: translateX(-50%);
+            position: absolute; top: 0; left: 20%; transform: translateX(-50%);
             z-index: 3; pointer-events: none;
             font-family: var(--f); font-size: 7.5px; font-weight: 900;
             letter-spacing: 1.3px; color: #fff;
@@ -4962,9 +4962,10 @@
             display: flex; align-items: center; gap: 8px;
             overflow-x: auto; -webkit-overflow-scrolling: touch;
             scroll-snap-type: x mandatory;
-            /* v2.30.1-p73 · Padding asimétrico: 24% left · 76% right (antes: 50%/50%).
-               Snap coloca today en el 24% del clientWidth = coincide con el focus. */
-            padding: 5px calc(76% - 23px) 7px calc(24% - 23px);
+            /* v2.30.1-p74 · Padding 20%/80% (antes 24%/76%). Snap coloca today en el
+               20% del clientWidth. El JS _positionFocusOnCell reposiciona el focus
+               dinámicamente sobre la celda real (no depende del %). */
+            padding: 5px calc(80% - 23px) 7px calc(20% - 23px);
             scrollbar-width: none;
         }
         .mr-pc-roll::-webkit-scrollbar { display: none; }
@@ -47807,6 +47808,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _roll = planCard.querySelector('#mr-pc-roll');
                 const _cardHost = planCard.querySelector('#mr-pc-daycard');
                 const _wkLbl = planCard.querySelector('#mr-pc-wklbl');
+                // v2.30.1-p74 · Declaraciones movidas ARRIBA (antes: al final del bloque)
+                // para evitar TDZ en _applySel y _positionFocusOnCell que las usan.
+                const _focus = planCard.querySelector('.mr-pc-roll-focus');
+                const _pill  = planCard.querySelector('.mr-pc-hoy-pill');
+                const _FOC_B = 5;
                 if (!_roll || !_cardHost) return;
                 let _sel = _ROLL_BACK; // HOY
 
@@ -47869,19 +47875,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 function _centerIdx(idx, smooth){
                     const _el = _roll.children[idx];
-                    if (_el) _roll.scrollTo({ left: _el.offsetLeft - _roll.clientWidth*0.24 + _el.offsetWidth/2, behavior: smooth ? 'smooth' : 'auto' });
+                    if (_el) _roll.scrollTo({ left: _el.offsetLeft - _roll.clientWidth*0.20 + _el.offsetWidth/2, behavior: smooth ? 'smooth' : 'auto' });
+                }
+                // v2.30.1-p74 · Reposiciona focus y pill sobre la celda SELECCIONADA
+                // usando su offsetLeft real, independiente de bugs de calc/snap/timing.
+                // Fórmula: centro de celda en viewport = cell.offsetLeft - scrollLeft + width/2.
+                function _positionFocusOnCell(cell) {
+                    if (!cell) return;
+                    const _cx = cell.offsetLeft - _roll.scrollLeft + cell.offsetWidth/2;
+                    if (_focus) _focus.style.left = _cx + 'px';
+                    if (_pill)  _pill.style.left  = _cx + 'px';
                 }
                 function _applySel(idx){
                     _sel = idx;
                     [].forEach.call(_roll.children, function(el,i){ el.classList.toggle('sel', i === idx); });
                     _renderCard();
+                    _positionFocusOnCell(_roll.children[idx]);
                 }
                 // El día que "cae" en el frame central = seleccionado (detecta al soltar el scroll).
                 let _snapT;
                 _roll.addEventListener('scroll', function(){
+                    // Reposicionar focus en cada frame de scroll para que "siga" la celda seleccionada
+                    // (evita desalineación mientras el user swipe / snap se estabiliza).
+                    if (_sel != null && _roll.children[_sel]) _positionFocusOnCell(_roll.children[_sel]);
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
-                        const _mid = _roll.scrollLeft + _roll.clientWidth*0.24;
+                        const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
                         let _best = -1, _bd = 1e9;
                         [].forEach.call(_roll.children, function(el,i){
                             const _c = el.offsetLeft + el.offsetWidth/2, _d = Math.abs(_c - _mid);
@@ -47896,9 +47915,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
                 // Inicial: HOY en el frame central.
                 _applySel(_ROLL_BACK);
-                // [foco] Interior clavado a la celda; el plateado engorda hacia fuera (B px).
-                const _focus = planCard.querySelector('.mr-pc-roll-focus');
-                const _FOC_B = 5;
+                // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
                 function _fitFocus(){
                     const _c0 = _roll.children[0];
                     if (_focus && _c0) {
@@ -47909,7 +47926,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         _focus.style.top    = (11 + 5 - _FOC_B) + 'px';
                     }
                 }
-                setTimeout(function(){ _centerIdx(_ROLL_BACK, false); _fitFocus(); }, 40);
+                setTimeout(function(){ _centerIdx(_ROLL_BACK, false); _fitFocus(); _positionFocusOnCell(_roll.children[_ROLL_BACK]); }, 40);
             })();
         } else {
             // v2.30.1-p61 · Si hay rehab activo, NO pintar el empty "Sin plan
