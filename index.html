@@ -7552,8 +7552,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
               .pf-cheer .s{font-size:11px;color:var(--ts);margin-top:2px;}
             </style>
             <div id="onboard-pasos"></div>
-            <div class="vi" id="home-content" style="padding-top:2px;">
-                <!-- rendered by renderHome() -->
+            <div class="vi" id="home-content" style="padding:2px 15px 100px;">
+                <!-- rendered by renderHome() · v2.30.1-p80: padding-top compactado 8→2 -->
             </div>
         </section>
 
@@ -47127,6 +47127,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const dayName   = today.toLocaleDateString('es-ES',{weekday:'long'});
         const dateLabel = today.toLocaleDateString('es-ES',{day:'numeric',month:'long'});
 
+        // v2.30.1-p80 · Card de saludo — SIEMPRE el PRIMER bloque de Home.
+        // "Buenos días/tardes/noches, Nombre" con profundidad mr-home-card.
+        // Álvaro: "iria siempre siempre siempre el primer bloque o card hubiera
+        // lo que hubiera y dale profundidad".
+        try {
+            var _greetHour = today.getHours();
+            var _greetTxt = (_greetHour < 12) ? 'Buenos días'
+                          : (_greetHour < 20) ? 'Buenas tardes'
+                          : 'Buenas noches';
+            var _fnm = (runnerName || 'Runner').split(' ')[0];
+            var greetCard = document.createElement('div');
+            greetCard.className = 'mr-home-card';
+            greetCard.setAttribute('data-ho', 'greeting');
+            greetCard.style.cssText = 'padding:13px 16px;border-radius:16px;';
+            greetCard.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--tw);letter-spacing:-.3px;line-height:1.2;font-family:var(--f);">'
+                + _greetTxt + ', <span style="color:var(--gold-text);">' + _fnm + '</span>'
+                + '</div>';
+            container.appendChild(greetCard);
+        } catch(_){}
+
         // v2.30.0-p2 · Push 2 · Cabecera Home rediseñada · saludo/fecha/plan-name
         // eliminados del DOM (el plan ya sale en la card "PLAN ACTIVO"). Los
         // setters de home-plabel/ptitle/psub retirados. runnerName sigue leyendo
@@ -48612,22 +48632,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // v2.30.1-p35 · Añadido 'lastact' entre 'training' y 'carga'.
         // Re-append por DOM (mueve nodos ya existentes); las tarjetas condicionales
         // ausentes se saltan sin romper el orden.
-        // v2.30.1-p76/p77/p78 · Nuevo orden Home solicitado por Álvaro:
+        // v2.30.1-p80 · CORRECCIÓN de mapeo (antes tenía carga/training invertidos):
+        //   'training' = Training load (ACWR) — el widget con 1.51 tipo naranja/rojo
+        //   'carga'    = Fatiga · TSB (esta semana / últimas 8 semanas)
+        // Nuevo orden Home solicitado por Álvaro:
         // 1. readiness (encima del plan)
         // 2. plan activo
         // 3. rehab-today (si aplica)
         // 4. lastact (SOLO si el último entreno es de HOY; oculto si no)
         // 5. stamina (Estado de forma · COROS)
         // 6. vdot (fallback si no hay COROS)
-        // 7. carga (training load)
-        // 8. wx (clima para entrenar) — p78: bajado tras carga
-        // 9. training (esta semana / últimas 8 semanas)
+        // 7. training (Training load) — p80: era 'carga' incorrectamente
+        // 8. wx (clima para entrenar) — p78/p80: bajado tras training load
+        // 9. carga (fatiga · esta semana / últimas 8 semanas)
         // 10. distancia (distancia semanal)
         try {
-            ['readiness','plan','rehab-today','lastact','stamina','vdot','carga','wx','training','distancia'].forEach(function(_k){
+            ['readiness','plan','rehab-today','lastact','stamina','vdot','training','wx','carga','distancia'].forEach(function(_k){
                 var _el = container.querySelector('[data-ho="' + _k + '"]');
                 if (_el && _el.parentNode === container) container.appendChild(_el);
             });
+            // v2.30.1-p80 · Greeting SIEMPRE el primer bloque · insertBefore(firstChild)
+            // fuerza la posición 0 independientemente del birthday/resync banner/otros.
+            var _greet = container.querySelector('[data-ho="greeting"]');
+            if (_greet) container.insertBefore(_greet, container.firstChild);
         } catch(_) {}
 
         // ── PDF BUTTON removed — use Plan tab share button instead ──
