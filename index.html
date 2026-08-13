@@ -4924,9 +4924,9 @@
         .mr-pc-rest-sub { font-size: 10.5px; color: var(--ts); margin-top: 2px; font-style: italic; }
 
         /* ── [v6 · Home] Minicalendario RODANTE · foco FIJO central ── */
-        .mr-pc-roll-wrap { position: relative; margin: 0 -2px 12px; padding-top: 11px; }
+        .mr-pc-roll-wrap { position: relative; margin: 0 -2px 12px; }
         .mr-pc-roll-focus {
-            position: absolute; top: 11px; left: 20%; transform: translateX(-50%);
+            position: absolute; top: 0; left: 20%; transform: translateX(-50%);
             box-sizing: border-box; width: 58px; height: 59px;
             /* v2.30.1-p73 · border sólido silver metalizado (antes: var(--pc-a) navy/silver).
                Interior naturalmente transparente por border sólido (idéntico al mecanismo
@@ -4946,18 +4946,8 @@
                 inset 0 2px 0 rgba(255,255,255,.35),
                 inset 0 -2px 0 rgba(0,0,0,.35);
         }
-        /* v2.30.1-p73 · Pill "HOY" pegada al top-border del focus. top:0 = pegada al top
-           del wrap. Su bottom cae en top:11 (= top-border del focus). Sin flecha, sin aire. */
-        .mr-pc-hoy-pill {
-            position: absolute; top: 0; left: 20%; transform: translateX(-50%);
-            z-index: 3; pointer-events: none;
-            font-family: var(--f); font-size: 7.5px; font-weight: 900;
-            letter-spacing: 1.3px; color: #fff;
-            background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
-            border-radius: 4px 4px 3px 3px; padding: 2px 7px; line-height: 1;
-            box-shadow: 0 2px 5px rgba(34,197,94,.35), inset 0 1px 0 rgba(255,255,255,.35);
-            text-shadow: 0 1px 0 rgba(0,0,0,.15);
-        }
+        /* v2.30.1-p76 · Pill HOY eliminada (no aportaba cuando se seleccionaba otro día
+           y no era escalable al cambiar de today). Widget compactado en altura. */
         .mr-pc-roll {
             display: flex; align-items: center; gap: 8px;
             overflow-x: auto; -webkit-overflow-scrolling: touch;
@@ -46901,27 +46891,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var act = _sorted[0];
         if (!act) { wrap.style.display = 'none'; return; }
 
-        var cId = 'home-last-canvas-' + act.id;
-        var d = new Date(act.dateStr + 'T12:00:00');
-        var df = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
-
-        // v2.30.1-p36 · Label dinámico según distancia temporal:
-        //   0 días → "HOY" · 1 → "AYER" · 2+ → "HACE N DÍAS"
-        // Comparamos por día de calendario (12:00 en ambos lados para
-        // evitar edge-case DST). Actividades con dateStr futuro caen a
-        // fallback vacío (raro; el badge se omite).
-        var _relLabel = '';
+        // v2.30.1-p76 · SOLO mostrar si el último entreno es de HOY.
+        // Álvaro: "si no es de la fecha actual el ultimo entreno ocultamos el bloque
+        // y que solo aparezca en la biblioteca con todos los demas."
+        var _isToday = false;
         try {
-            var _todayCal = new Date();
-            _todayCal.setHours(12, 0, 0, 0);
+            var _todayCal = new Date(); _todayCal.setHours(12, 0, 0, 0);
             var _actCal = new Date(act.dateStr + 'T12:00:00');
             if (!isNaN(_actCal)) {
                 var _diffDays = Math.round((_todayCal - _actCal) / 86400000);
-                if (_diffDays === 0)      _relLabel = 'HOY';
-                else if (_diffDays === 1) _relLabel = 'AYER';
-                else if (_diffDays > 1)   _relLabel = 'HACE ' + _diffDays + ' DÍAS';
+                _isToday = (_diffDays === 0);
             }
         } catch(_){}
+        if (!_isToday) { wrap.style.display = 'none'; return; }
+
+        var cId = 'home-last-canvas-' + act.id;
+        var d = new Date(act.dateStr + 'T12:00:00');
+        var df = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
 
         // HTML idéntico al de biblioteca (_mrLibRenderOne) para consistencia total
         var _rpeNotaRow = '';
@@ -46936,35 +46922,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</div>';
         }
 
-        // v2.30.1-p36 · Header "ÚLTIMO ENTRENO · HOY" DENTRO de la card
-        // (Álvaro: "que lo de último entreno lo ponga dentro de la minicard
-        // encima del título de la actividad"). Coherencia con el resto de
-        // widgets self-contained. Color dorado accent (var(--gold-text) light,
-        // var(--gold) dark). Sin punto separador si _relLabel vacío.
-        // v2.30.1-p37 · Header en 2 líneas (permite wrap sin ellipsis) porque
-        // "HACE N DÍAS" con N grande no cabía en 1 línea con el label completo.
-        // v2.30.1-p38 · 2 líneas ahora SEPARADAS (Álvaro: "arriba último entreno,
-        // abajo Hoy/Ayer/Hace X días"). Dos <div> block-level en lugar de
-        // spans en línea con separador ·.
-        var _lastHeaderRow = '<div class="mr-lib-last-badge" style="font-size:8.5px;font-weight:900;letter-spacing:1.4px;text-transform:uppercase;line-height:1.15;margin-bottom:5px;">'
-            + '<div style="color:var(--gold-text);">Último entreno</div>'
-            + (_relLabel ? '<div style="color:var(--gold-text);margin-top:2px;">' + _relLabel + '</div>' : '')
-            + '</div>';
-
-        // v2.30.1-p37 · Wrap con clase mr-home-card para heredar el border 1.5px
-        // + box-shadow profundo que tienen todas las cards de Home (Training Load,
-        // VDOT, Distancia semanal, etc.) → integración visual total.
-        // mr-lib-data cambia justify-content:center → flex-start + padding-top:10
-        // para que el header quede pegado al borde superior de la card, no centrado.
+        // v2.30.1-p76 · Header FUERA de la card, en bloque separado grande estilo
+        // biblioteca (.mr-lib-month-name: 22px 800 letter-spacing -.7px). Álvaro:
+        // "como queda muy justo con el titulo de ultimo entreno hoy metido en la
+        // minicard vamos a meter el titulo mas grande en un bloque como el de los
+        // meses en biblioteca y asi en ese bloque mas grande que aparezca el titulo".
+        // El _lastHeaderRow interno se elimina para no duplicar el header.
         wrap.innerHTML =
-            '<div class="act-swipe-wrap mr-home-card" data-act-id="' + act.id + '" style="border-radius:12px;">'
+            '<div style="padding:0 12px;margin-bottom:2px;">'
+          +   '<div style="font-size:22px;font-weight:800;color:var(--tw);letter-spacing:-.7px;line-height:1;font-family:var(--f);">Último entreno <span style="color:var(--gold-text);">HOY</span></div>'
+          + '</div>'
+          + '<div class="act-swipe-wrap mr-home-card" data-act-id="' + act.id + '" style="border-radius:12px;">'
           +   '<div class="act-sliding act-card mr-lib-card">'
           +     '<div class="mr-lib-card-inner" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">'
           +       '<div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px 0 3px 4px;flex-shrink:0;">'
           +         '<div style="width:100%;display:flex;justify-content:center;">' + buildOutfitFull(act) + '</div>'
           +       '</div>'
           +       '<div class="mr-lib-data" style="flex:1;padding:10px 12px 0 10px;display:flex;flex-direction:column;justify-content:flex-start;gap:0;min-width:0;">'
-          +         _lastHeaderRow
           +         '<div style="display:flex;align-items:center;gap:6px;">'
           +           '<div class="mr-lib-title" style="font-size:10px;font-weight:800;line-height:1;flex:1;min-width:0;letter-spacing:1px;text-transform:uppercase;opacity:.6;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (act.name || '—') + '</div>'
           +           _libPRBadgeHTML(act)
@@ -47228,6 +47202,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const rdnCard0 = document.createElement('div');
         rdnCard0.id = 'mr-readiness-card';
         rdnCard0.className = 'mr-rdn';
+        rdnCard0.dataset.ho = 'readiness';
         // [Home reorder] El readiness se inserta DEBAJO del plan navy (mr-pc-card).
         // Se crea aquí para que #mr-readiness-card exista, pero el appendChild
         // se hace tras container.appendChild(planCard) (ver más abajo).
@@ -47396,6 +47371,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const planCard = document.createElement('div');
         // [v5.7 PC] Estilos vía clase .mr-pc-card (definida en <style> block)
         planCard.className = 'mr-pc-card';
+        planCard.dataset.ho = 'plan';
 
         // ── HOY: detección sesiones del día (running + fuerza por separado) ──
         let todayRunSess = null;
@@ -47799,7 +47775,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="mr-pc-prog-lbl"><span class="mr-pc-pct">${doneSess}/${totalSess} · ${pct}%</span></div>
                     <div class="mr-pc-prog-bar"><div class="mr-fx-progressbar mr-pc-prog-fill" data-fill="${pct}" style="width:${pct}%;"></div></div>
                     <div class="mr-pc-week-lbl"><span>Tu semana <span class="mr-pc-week-lbl-r" id="mr-pc-wklbl">Sem ${_wkN} · ${_phaseName}</span></span>${_daysLeft != null ? `<div class="mr-pc-days-pill">− ${_daysLeft} días</div>` : ''}</div>
-                    <div class="mr-pc-roll-wrap"><div class="mr-pc-hoy-pill">HOY</div><div class="mr-pc-roll-focus"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
+                    <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
@@ -47808,10 +47784,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _roll = planCard.querySelector('#mr-pc-roll');
                 const _cardHost = planCard.querySelector('#mr-pc-daycard');
                 const _wkLbl = planCard.querySelector('#mr-pc-wklbl');
-                // v2.30.1-p74 · Declaraciones movidas ARRIBA (antes: al final del bloque)
-                // para evitar TDZ en _applySel y _positionFocusOnCell que las usan.
+                // v2.30.1-p74 · Declaración movida ARRIBA (antes: al final del bloque)
+                // para evitar TDZ en _applySel y _positionFocusOnCell que la usan.
+                // v2.30.1-p76 · Pill HOY eliminada.
                 const _focus = planCard.querySelector('.mr-pc-roll-focus');
-                const _pill  = planCard.querySelector('.mr-pc-hoy-pill');
                 const _FOC_B = 5;
                 if (!_roll || !_cardHost) return;
                 let _sel = _ROLL_BACK; // HOY
@@ -47877,14 +47853,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     const _el = _roll.children[idx];
                     if (_el) _roll.scrollTo({ left: _el.offsetLeft - _roll.clientWidth*0.20 + _el.offsetWidth/2, behavior: smooth ? 'smooth' : 'auto' });
                 }
-                // v2.30.1-p74 · Reposiciona focus y pill sobre la celda SELECCIONADA
+                // v2.30.1-p74 · Reposiciona focus sobre la celda SELECCIONADA
                 // usando su offsetLeft real, independiente de bugs de calc/snap/timing.
                 // Fórmula: centro de celda en viewport = cell.offsetLeft - scrollLeft + width/2.
                 function _positionFocusOnCell(cell) {
                     if (!cell) return;
                     const _cx = cell.offsetLeft - _roll.scrollLeft + cell.offsetWidth/2;
                     if (_focus) _focus.style.left = _cx + 'px';
-                    if (_pill)  _pill.style.left  = _cx + 'px';
                 }
                 function _applySel(idx){
                     _sel = idx;
@@ -47924,9 +47899,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (_focus && _c0) {
                         _focus.style.width  = (_c0.offsetWidth  + 2*_FOC_B) + 'px';
                         _focus.style.height = (_c0.offsetHeight + 2*_FOC_B) + 'px';
-                        // v2.30.1-p73 · top:11 (era 0) = padding-top del .mr-pc-roll-wrap
-                        // para acomodar la pill HOY encima del focus sin solaparlo.
-                        _focus.style.top    = (11 + 5 - _FOC_B) + 'px';
+                        // v2.30.1-p76 · Pill HOY eliminada · top vuelve a (5 - _FOC_B) = 0.
+                        _focus.style.top    = (5 - _FOC_B) + 'px';
                     }
                 }
                 setTimeout(function(){ _centerIdx(_ROLL_BACK, false); _fitFocus(); _positionFocusOnCell(_roll.children[_ROLL_BACK]); }, 40);
@@ -48650,8 +48624,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // v2.30.1-p35 · Añadido 'lastact' entre 'training' y 'carga'.
         // Re-append por DOM (mueve nodos ya existentes); las tarjetas condicionales
         // ausentes se saltan sin romper el orden.
+        // v2.30.1-p76 · Nuevo orden Home solicitado por Álvaro:
+        // 1. readiness (encima del plan)
+        // 2. plan activo
+        // 3. rehab-today (si aplica)
+        // 4. lastact (SOLO si el último entreno es de HOY; oculto si no)
+        // 5. wx (clima para entrenar)
+        // 6. vdot (estado de forma)
+        // 7. carga (training load)
+        // 8. training (esta semana / últimas 8 semanas)
+        // 9. distancia (distancia semanal)
         try {
-            ['rehab-today','vdot','training','wx','lastact','carga','distancia'].forEach(function(_k){
+            ['readiness','plan','rehab-today','lastact','wx','vdot','carga','training','distancia'].forEach(function(_k){
                 var _el = container.querySelector('[data-ho="' + _k + '"]');
                 if (_el && _el.parentNode === container) container.appendChild(_el);
             });
