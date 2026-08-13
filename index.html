@@ -27391,46 +27391,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return { outfit: outfit, accessories: accessories };
     }
     async function _mrFetchTodayWeather() {
-        var key = 'mr_today_weather_v1';
+        // v2.30.1-p78 · Sincronizado con el widget de clima principal.
+        // Usa _mrFetchWeatherPro que resuelve ubicación via _mrGetLocation
+        // (GPS → profile city → Zaragoza fallback) y cachea 30min.
+        // Antes: solo usaba profileData.city → mostraba clima erróneo por
+        // desincronización con el widget principal.
         try {
-            var raw = localStorage.getItem(key);
-            if (raw) {
-                var c = JSON.parse(raw);
-                if (c && (Date.now() - c.ts) < 3600000) return c.data;
-            }
-        } catch(_) {}
-        var city = (typeof profileData !== 'undefined' && profileData && profileData.city) ? String(profileData.city).trim() : '';
-        if (!city) return null;
-        var lat, lon;
-        try {
-            var geoRes = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=es');
-            if (!geoRes.ok) return null;
-            var geo = await geoRes.json();
-            if (!geo.results || !geo.results.length) return null;
-            lat = Number(geo.results[0].latitude).toFixed(4);
-            lon = Number(geo.results[0].longitude).toFixed(4);
-        } catch(_) { return null; }
-        var now = new Date();
-        var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-        try {
-            var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon
-                    + '&start_date=' + dateStr + '&end_date=' + dateStr
-                    + '&hourly=temperature_2m,weathercode,windspeed_10m&timezone=auto';
-            var res = await fetch(url);
-            if (!res.ok) return null;
-            var data = await res.json();
-            if (!data || !data.hourly) return null;
-            var hour = now.getHours();
-            var temps = data.hourly.temperature_2m || [];
-            var codes = data.hourly.weathercode || [];
-            var winds = data.hourly.windspeed_10m || [];
-            if (!temps.length) return null;
-            var tempC = Math.round(Number(temps[hour]));
-            var code = Number(codes[hour]);
-            var wind = Number(winds[hour]);
-            var result = { tempC: tempC, code: code, wind: wind, city: city };
-            try { localStorage.setItem(key, JSON.stringify({ data: result, ts: Date.now() })); } catch(_){}
-            return result;
+            var pro = (typeof window._mrFetchWeatherPro === 'function')
+                ? await window._mrFetchWeatherPro()
+                : null;
+            if (!pro || !pro.current) return null;
+            return {
+                tempC: Math.round(Number(pro.current.temperature_2m)),
+                code:  Number(pro.current.weather_code),
+                wind:  Number(pro.current.wind_speed_10m || 0),
+                city:  (pro.location && pro.location.city) ? pro.location.city : ''
+            };
         } catch(_) { return null; }
     }
     window._mrWeatherIcon = _mrWeatherIcon;
@@ -48626,19 +48602,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // v2.30.1-p35 · Añadido 'lastact' entre 'training' y 'carga'.
         // Re-append por DOM (mueve nodos ya existentes); las tarjetas condicionales
         // ausentes se saltan sin romper el orden.
-        // v2.30.1-p76/p77 · Nuevo orden Home solicitado por Álvaro:
+        // v2.30.1-p76/p77/p78 · Nuevo orden Home solicitado por Álvaro:
         // 1. readiness (encima del plan)
         // 2. plan activo
         // 3. rehab-today (si aplica)
         // 4. lastact (SOLO si el último entreno es de HOY; oculto si no)
-        // 5. wx (clima para entrenar)
-        // 6. stamina (Estado de forma · COROS)
-        // 7. vdot (fallback si no hay COROS)
-        // 8. carga (training load)
+        // 5. stamina (Estado de forma · COROS)
+        // 6. vdot (fallback si no hay COROS)
+        // 7. carga (training load)
+        // 8. wx (clima para entrenar) — p78: bajado tras carga
         // 9. training (esta semana / últimas 8 semanas)
         // 10. distancia (distancia semanal)
         try {
-            ['readiness','plan','rehab-today','lastact','wx','stamina','vdot','carga','training','distancia'].forEach(function(_k){
+            ['readiness','plan','rehab-today','lastact','stamina','vdot','carga','wx','training','distancia'].forEach(function(_k){
                 var _el = container.querySelector('[data-ho="' + _k + '"]');
                 if (_el && _el.parentNode === container) container.appendChild(_el);
             });
