@@ -528,15 +528,20 @@
         line-height:1;
     }
     .mr-rdn .head{display:flex;align-items:center;gap:10px;}
-    .mr-rdn .pctb{flex-shrink:0;display:flex;align-items:baseline;gap:0;}
+    .mr-rdn .pctb{flex-shrink:0;display:flex;align-items:center;gap:0;}
     .mr-rdn .pct-num{font-size:22px;font-weight:900;color:var(--tw);letter-spacing:-1px;line-height:1;font-variant-numeric:tabular-nums;font-family:var(--f);}
     .mr-rdn .pct-u{font-size:12px;font-weight:800;color:var(--tm);margin-left:2px;font-family:var(--f);}
+    .mr-rdn .rdn-title .pct-u-title{
+        font-size:11px;font-weight:800;color:var(--tm);
+        letter-spacing:0;margin-left:4px;text-transform:none;
+        font-family:var(--f);
+    }
     .mr-rdn .pill{
         padding:5px 11px;border-radius:4px;font-size:10.5px;font-weight:900;
         letter-spacing:.5px;flex-shrink:0;white-space:nowrap;font-family:var(--f);
     }
     .mr-rdn .bar-inline{
-        flex:1;min-width:0;height:10px;border-radius:4px;position:relative;
+        flex:1;min-width:0;height:14px;border-radius:4px;position:relative;
         background:linear-gradient(90deg,#6b7280 0% 15%,#ea580c 15% 40%,#f59e0b 40% 60%,#0ea5e9 60% 82%,#22c55e 82% 100%);
         box-shadow:var(--barinset);
     }
@@ -27633,6 +27638,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return '';
     };
 
+    // v2.30.1-p85 · Emoji clima según WMO weather_code + is_day (0=noche, 1=día).
+    // Para despejado/parcialmente nublado usa variante nocturna (luna) si is_day=0.
+    // Usado por la card de saludo en Home. Expuesto en window para reutilización.
+    window._mrWxIconForCode = function(code, isDay) {
+        var c = Number(code);
+        var day = (isDay == null) ? 1 : Number(isDay);
+        if (c === 0)                 return day ? '☀️' : '🌙';
+        if (c >= 1 && c <= 2)        return day ? '🌤️' : '☁️';
+        if (c === 3)                 return '☁️';
+        if (c >= 45 && c <= 48)      return '🌫️';
+        if (c >= 51 && c <= 57)      return '🌦️';
+        if (c >= 61 && c <= 67)      return '🌧️';
+        if (c >= 71 && c <= 77)      return '🌨️';
+        if (c >= 80 && c <= 82)      return '🌧️';
+        if (c >= 85 && c <= 86)      return '❄️';
+        if (c >= 95)                 return '⛈️';
+        return day ? '☀️' : '🌙';
+    };
+
     // ══════════════════════════════════════════════════════════════
     // [v2.30.1-p55] WIDGET CLIMA PRO + SHEET EXPANDIDO + REC ZAPAS
     // ══════════════════════════════════════════════════════════════
@@ -27875,7 +27899,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             var url = 'https://api.open-meteo.com/v1/forecast?latitude='+loc.lat+'&longitude='+loc.lon
                 + '&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,precipitation_probability,uv_index,weather_code'
-                + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,precipitation'
+                + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,precipitation,is_day'
                 + '&daily=temperature_2m_min,temperature_2m_max,weather_code,precipitation_probability_max'
                 + '&timezone=auto&forecast_days=5';
             var res = await fetch(url);
@@ -47229,23 +47253,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // silencioso dentro del try/catch → no aparecía la card en absoluto).
         try {
             var _greetHour = today.getHours();
-            // v2.30.1-p82 · Ventanas fisiológicas correctas:
-            //   6:00-11:59 = Buenos días
-            //   12:00-19:59 = Buenas tardes
-            //   20:00-5:59 = Buenas noches (incluye madrugada)
-            var _greetTxt = (_greetHour >= 6 && _greetHour < 12)  ? 'Buenos días'
-                          : (_greetHour >= 12 && _greetHour < 20) ? 'Buenas tardes'
+            // v2.30.1-p85 · Franjas ajustadas por Álvaro:
+            //   6:00-14:59 = Buenos días
+            //   15:00-20:59 = Buenas tardes
+            //   21:00-5:59 = Buenas noches
+            var _greetTxt = (_greetHour >= 6 && _greetHour < 15)  ? 'Buenos días'
+                          : (_greetHour >= 15 && _greetHour < 21) ? 'Buenas tardes'
                           : 'Buenas noches';
             var _fnm = (runnerName || 'Runner').split(' ')[0];
             var greetCard = document.createElement('div');
             greetCard.className = 'mr-home-card';
             greetCard.setAttribute('data-ho', 'greeting');
-            greetCard.style.cssText = 'padding:16px 18px;border-radius:16px;';
-            // v2.30.1-p82 · Font-size subido 16→22px (petición Álvaro "fuente más grande")
-            greetCard.innerHTML = '<div style="font-size:22px;font-weight:800;color:var(--tw);letter-spacing:-.5px;line-height:1.15;font-family:var(--f);">'
-                + _greetTxt + ', <span style="color:var(--gold-text);">' + _fnm + '</span>'
-                + '</div>';
+            greetCard.style.cssText = 'padding:14px 18px;border-radius:16px;';
+            // v2.30.1-p85 · Layout con icono clima a la derecha (sol/luna+condición
+            // según is_day + weather_code). Fetch async → actualiza cuando llega.
+            // Placeholder inicial derivado de la hora local mientras no hay dato real.
+            var _isDayFallback = (_greetHour >= 6 && _greetHour < 20) ? 1 : 0;
+            var _initIcon = _isDayFallback ? '☀️' : '🌙';
+            greetCard.innerHTML =
+                '<div style="display:flex;align-items:center;gap:14px;">' +
+                  '<div style="flex:1;min-width:0;font-size:22px;font-weight:800;color:var(--tw);letter-spacing:-.5px;line-height:1.15;font-family:var(--f);">' +
+                    _greetTxt + ', <span style="color:var(--gold-text);">' + _fnm + '</span>' +
+                  '</div>' +
+                  '<div id="mr-greet-wxicon" style="font-size:30px;line-height:1;flex-shrink:0;filter:drop-shadow(0 2px 4px rgba(0,0,0,.15));">' + _initIcon + '</div>' +
+                '</div>';
             container.appendChild(greetCard);
+            // Fetch async del clima real para actualizar el emoji
+            try {
+                if (typeof window._mrFetchWeatherPro === 'function' && typeof window._mrWxIconForCode === 'function') {
+                    window._mrFetchWeatherPro().then(function(pro){
+                        if (!pro || !pro.current) return;
+                        var el = document.getElementById('mr-greet-wxicon');
+                        if (!el) return;
+                        var code = Number(pro.current.weather_code);
+                        var isDay = (pro.current.is_day != null) ? Number(pro.current.is_day) : _isDayFallback;
+                        el.textContent = window._mrWxIconForCode(code, isDay);
+                    }).catch(function(){});
+                }
+            } catch(_){}
         } catch(_){}
         // animation removed per user feedback
 
@@ -58139,8 +58184,9 @@ window.addEventListener('DOMContentLoaded', function() {
 
             var pctHtml = (score == null)
                 ? '<span class="pct-num">—</span>'
-                : '<span class="pct-num">' + score + '</span><span class="pct-u">%</span>';
-            var rlabel  = 'Readiness' + (obj.mode === 'load-only' ? ' · solo carga' : '');
+                : '<span class="pct-num">' + score + '</span>';
+            var rlabel  = 'Readiness' + (obj.mode === 'load-only' ? ' · solo carga' : '')
+                        + ' <span class="pct-u-title">%</span>';
 
             var figHtml = (obj.zone && obj.zone.icon)
                 ? '<img src="' + _RDN_ICON_BASE + obj.zone.icon + '" alt="' + label + '">'
