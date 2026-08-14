@@ -27741,6 +27741,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 + '.mrwxsh-metric .l{font-size:9.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:4px;font-family:var(--f);}'
 + '.mrwxsh-metric .v{font-size:15px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1;font-family:var(--f);}'
 + '.mrwxsh-metric .v small{font-size:10px;color:var(--tm);font-weight:700;}'
+/* v2.30.1-p86 · Bloque nowcast lluvia · pill sutil bajo el prob % con timing exacto (AROME 15min) */
++ '.mrwxsh-rain-block{cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .09s ease-out,opacity .15s;}'
++ '.mrwxsh-rain-block:active{transform:scale(.97);opacity:.85;}'
++ '.mrwxsh-nowcast{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;font-size:9.5px;font-weight:800;line-height:1;letter-spacing:.2px;margin-top:5px;font-family:var(--f);}'
++ '.mrwxsh-nowcast.dry{background:rgba(34,197,94,.14);color:#16a34a;border:1px solid rgba(34,197,94,.35);}'
++ '.mrwxsh-nowcast.wet{background:rgba(14,165,233,.14);color:#0284c7;border:1px solid rgba(14,165,233,.4);}'
++ '.mrwxsh-nowcast.imminent{background:rgba(220,38,38,.14);color:#dc2626;border:1px solid rgba(220,38,38,.4);}'
++ 'body.dark-mode .mrwxsh-nowcast.dry{color:#4ade80;}'
++ 'body.dark-mode .mrwxsh-nowcast.wet{color:#38bdf8;}'
++ 'body.dark-mode .mrwxsh-nowcast.imminent{color:#f87171;}'
 + '.mrwxsh-block-title{font-size:10px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1.4px;margin:4px 2px 8px;font-family:var(--f);}'
 + '.mrwxsh-timeline{display:flex;gap:3px;overflow-x:auto;padding:6px 2px 10px;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin-bottom:12px;}'
 + '.mrwxsh-timeline::-webkit-scrollbar{display:none;}'
@@ -27888,7 +27898,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     var _MR_WX_TTL = 30 * 60 * 1000;
     async function _mrFetchWeatherPro(loc) {
         if (!loc) loc = await _mrGetLocation();
-        var cacheKey = 'mr_wx_pro_v1_'+loc.lat+'_'+loc.lon;
+        var cacheKey = 'mr_wx_pro_v2_'+loc.lat+'_'+loc.lon;
         try {
             var raw = localStorage.getItem(cacheKey);
             if (raw) {
@@ -27900,13 +27910,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var url = 'https://api.open-meteo.com/v1/forecast?latitude='+loc.lat+'&longitude='+loc.lon
                 + '&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,precipitation_probability,uv_index,weather_code'
                 + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,precipitation,is_day'
+                + '&minutely_15=precipitation,rain,weather_code'
                 + '&daily=temperature_2m_min,temperature_2m_max,weather_code,precipitation_probability_max'
-                + '&timezone=auto&forecast_days=5';
+                + '&timezone=auto&forecast_days=5&forecast_minutely_15=8';
             var res = await fetch(url);
             if (!res.ok) return null;
             var data = await res.json();
             if (!data || !data.current || !data.hourly) return null;
-            var out = { current: data.current, hourly: data.hourly, daily: data.daily || null };
+            var out = { current: data.current, hourly: data.hourly, daily: data.daily || null, minutely_15: data.minutely_15 || null };
             try { localStorage.setItem(cacheKey, JSON.stringify({ data: out, ts: Date.now() })); } catch(_){}
             return Object.assign({ location: loc }, out);
         } catch(_) { return null; }
@@ -28260,7 +28271,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           +     '<div class="mrwxsh-metric"><div class="l">💨 Viento</div><div class="v" id="mrwxsh-wind">—<small> km/h</small></div></div>'
           +     '<div class="mrwxsh-metric"><div class="l">💧 Humedad</div><div class="v" id="mrwxsh-hum">—<small>%</small></div></div>'
           +     '<div class="mrwxsh-metric"><div class="l">☀️ UV índice</div><div class="v" id="mrwxsh-uv">—</div></div>'
-          +     '<div class="mrwxsh-metric"><div class="l">🌧️ Prob. lluvia</div><div class="v" id="mrwxsh-rain">—<small>%</small></div></div>'
+          +     '<div class="mrwxsh-metric mrwxsh-rain-block" id="mrwxsh-rain-block"><div class="l">🌧️ Prob. lluvia</div><div class="v" id="mrwxsh-rain">—<small>%</small></div><div class="mrwxsh-nowcast dry" id="mrwxsh-nowcast" style="display:none;">—</div></div>'
           +   '</div>'
           +   '<div class="mrwxsh-block-title">Timeline hoy · scores por hora</div>'
           +   '<div class="mrwxsh-timeline" id="mrwxsh-tl"></div>'
@@ -28277,7 +28288,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             try {
                 for (var i = localStorage.length - 1; i >= 0; i--) {
                     var k = localStorage.key(i);
-                    if (k && k.indexOf('mr_wx_pro_v1_') === 0) localStorage.removeItem(k);
+                    if (k && (k.indexOf('mr_wx_pro_v1_') === 0 || k.indexOf('mr_wx_pro_v2_') === 0)) localStorage.removeItem(k);
                 }
             } catch(_){}
             await _mrHydrateWeatherSheet();
@@ -28320,6 +28331,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var rainVal = nowIdx >= 0 ? Math.round(wx.hourly.precipitation_probability[nowIdx] || 0) : 0;
         if (byId('mrwxsh-uv')) byId('mrwxsh-uv').textContent = uvVal;
         if (byId('mrwxsh-rain')) byId('mrwxsh-rain').innerHTML = rainVal + '<small>%</small>';
+        // v2.30.1-p86 · Nivel 1 · Nowcast lluvia con AROME minutely_15 (nativo 1km España).
+        // Escanea próximas 2h en bloques de 15 min. Encuentra la 1ª ventana con
+        // precipitation >= 0.1mm y muestra pill: dry / imminent (<30min) / wet.
+        try {
+            var _nc = byId('mrwxsh-nowcast');
+            if (_nc && wx.minutely_15 && Array.isArray(wx.minutely_15.time)) {
+                var _m = wx.minutely_15;
+                var _now = Date.now();
+                var _firstIdx = -1;
+                var _firstMm = 0;
+                for (var _i = 0; _i < _m.time.length; _i++) {
+                    var _ts = new Date(_m.time[_i]).getTime();
+                    if (_ts + 15*60000 < _now) continue; // ventana ya pasada
+                    var _mm = Number(_m.precipitation[_i] || 0);
+                    if (_mm >= 0.1) { _firstIdx = _i; _firstMm = _mm; break; }
+                }
+                _nc.style.display = 'inline-flex';
+                _nc.classList.remove('dry','wet','imminent');
+                if (_firstIdx < 0) {
+                    _nc.classList.add('dry');
+                    _nc.textContent = '✓ Sin lluvia próximas 2h';
+                } else {
+                    var _slotTs = new Date(_m.time[_firstIdx]).getTime();
+                    var _minsTo = Math.max(0, Math.round((_slotTs - _now) / 60000));
+                    var _mmTxt = _firstMm.toFixed(1) + ' mm';
+                    if (_minsTo <= 5) {
+                        _nc.classList.add('imminent');
+                        _nc.textContent = '⚠️ Lluvia AHORA · ' + _mmTxt;
+                    } else if (_minsTo < 30) {
+                        _nc.classList.add('imminent');
+                        _nc.textContent = '⚠️ Lluvia en ' + _minsTo + ' min · ' + _mmTxt;
+                    } else {
+                        _nc.classList.add('wet');
+                        _nc.textContent = '🌧️ Lluvia en ' + _minsTo + ' min · ' + _mmTxt;
+                    }
+                }
+            }
+        } catch(_){}
         var tlEl = byId('mrwxsh-tl');
         if (tlEl) {
             var bars = [];
