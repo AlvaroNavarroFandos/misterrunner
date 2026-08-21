@@ -28416,21 +28416,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var last = frames[frames.length - 1];
             var host = rv.host;
             // Crear mapa MapLibre
+            // v2.30.1-p84 · Álvaro (21 ago 2026): zoom inicial 9 (antes 7)
+            // para ver de un vistazo las nubes en la zona más próxima al usuario.
+            // Con maxzoom:10 en el source rainviewer ya no aparece "Zoom Level
+            // Not Supported" al hacer zoom in adicional.
             var map = new maplibregl.Map({
                 container: mapEl,
                 style: (typeof _MR_MAP_STYLE !== 'undefined') ? _MR_MAP_STYLE : 'https://tiles.openfreemap.org/styles/bright',
                 center: [Number(lon), Number(lat)],
-                zoom: 7,
+                zoom: 9,
                 attributionControl: false,
                 interactive: true,
                 cooperativeGestures: false
             });
             map.on('load', function(){
                 // Añadir raster source RainViewer (color 2=Universal Blue, options 1_1=smooth+snow)
+                // v2.30.1-p84 · Álvaro (21 ago 2026): maxzoom:10 evita el placeholder
+                // "Zoom Level Not Supported" que aparecía al hacer zoom in. Los tiles /512/
+                // de RainViewer tienen zoom máximo 10; con maxzoom declarado MapLibre
+                // hace overzoom automático (escala los tiles del zoom 10) en lugar de
+                // pedir tiles inexistentes al servidor.
                 map.addSource('rainviewer', {
                     type: 'raster',
                     tiles: [host + last.path + '/512/{z}/{x}/{y}/2/1_1.png'],
-                    tileSize: 256
+                    tileSize: 256,
+                    maxzoom: 10
                 });
                 map.addLayer({
                     id: 'rainviewer-layer',
@@ -48321,8 +48331,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // v2.30.1-p75 · CRÍTICO: el focus queda FIJO durante el swipe. Solo se
                 // reposiciona cuando el snap detecta nueva sel cell (dentro de _applySel).
                 // Las celdas deslizan hasta el focus, no al revés.
+                // v2.30.1-p84 · Álvaro (21 ago 2026): flag _mounting bloquea el snap
+                // handler mientras se ejecuta la secuencia de mount inicial. Sin este
+                // guard, el scrollTo síncrono de _centerIdx dispara evento scroll →
+                // listener con setTimeout 70ms → reposiciona focus DESPUÉS de que ya se
+                // hizo visibility:visible → usuario ve un tirón visible al volver a Home.
                 let _snapT;
+                let _mounting = true;
                 _roll.addEventListener('scroll', function(){
+                    if (_mounting) return;
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
                         const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
@@ -48388,6 +48405,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         _positionFocusOnCell(_roll.children[_ROLL_BACK]);
                         if (_focus) _focus.style.visibility = 'visible';
                         try { window.__mrPlanCarouselMounted = true; } catch(_){}
+                        // Drenaje 150ms: los eventos scroll síncronos del scrollTo pueden
+                        // seguir llegando al listener tras el rAF. _mounting=true los ignora
+                        // hasta que la cola esté vacía. 150ms > 70ms del setTimeout del snap
+                        // handler → garantía de que ningún reposicionamiento suceda tras la
+                        // revelación del focus (sino el user vería tirón).
+                        setTimeout(function(){ _mounting = false; }, 150);
                     });});
                 };
                 if (_isFirstMount) setTimeout(function(){ _doMount(0); }, 40);
