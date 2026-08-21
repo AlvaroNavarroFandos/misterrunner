@@ -5031,13 +5031,6 @@
                 inset 0 2px 0 rgba(255,255,255,.45),
                 inset 0 -2px 0 rgba(0,0,0,.25);
             border-radius: 14px; pointer-events: none; z-index: 2;
-            /* v2.30.1-p84 · Álvaro (21 ago 2026): default hidden. Al cambiar de tab a
-               Home el planCard se remonta desde cero → el focus como nuevo elemento DOM
-               tiene por CSS visibility:visible en left:20%. Aunque el JS lo pone hidden
-               inmediatamente, el navegador PUEDE PINTAR un frame antes con el focus mal
-               posicionado → tirón visible. Con default hidden, el JS es responsable
-               único de mostrarlo (cuando ya está bien colocado).*/
-            visibility: hidden;
         }
         body.dark-mode .mr-pc-roll-focus {
             border-color: #c8ccd2;
@@ -28423,15 +28416,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var last = frames[frames.length - 1];
             var host = rv.host;
             // Crear mapa MapLibre
-            // v2.30.1-p84 · Álvaro (21 ago 2026): zoom inicial 9 (antes 7)
-            // para ver de un vistazo las nubes en la zona más próxima al usuario.
-            // Con maxzoom:10 en el source rainviewer ya no aparece "Zoom Level
-            // Not Supported" al hacer zoom in adicional.
+            // v2.30.1-p84 · Álvaro (21 ago 2026): zoom inicial 6 (antes 7, luego 9 mal).
+            // A zoom 9 no muestran nubes en zonas con menor densidad de RainViewer.
+            // Zoom 6 muestra vista regional amplia con cobertura garantizada. Con
+            // maxzoom:12 en el source rainviewer el user puede hacer zoom in hasta 12
+            // sin ver "Zoom Level Not Supported".
             var map = new maplibregl.Map({
                 container: mapEl,
                 style: (typeof _MR_MAP_STYLE !== 'undefined') ? _MR_MAP_STYLE : 'https://tiles.openfreemap.org/styles/bright',
                 center: [Number(lon), Number(lat)],
-                zoom: 9,
+                zoom: 6,
                 attributionControl: false,
                 interactive: true,
                 cooperativeGestures: false
@@ -48241,7 +48235,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="mr-pc-prog-lbl"><span class="mr-pc-pct">${doneSess}/${totalSess} · ${pct}%</span></div>
                     <div class="mr-pc-prog-bar"><div class="${window.__mrPlanBarSeen?'':'mr-fx-progressbar '}mr-pc-prog-fill" data-fill="${pct}" style="width:${pct}%;"></div></div>
                     <div class="mr-pc-week-lbl"><span>Tu semana <span class="mr-pc-week-lbl-r" id="mr-pc-wklbl">Sem ${_wkN} · ${_phaseName}</span></span>${_daysLeft != null ? `<div class="mr-pc-days-pill">− ${_daysLeft} días</div>` : ''}</div>
-                    <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
+                    <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus" style="${window.__mrPlanFocusStyle||''}"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
@@ -48317,16 +48311,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 function _centerIdx(idx, smooth){
                     const _el = _roll.children[idx];
-                    if (_el) _roll.scrollTo({ left: _el.offsetLeft - _roll.clientWidth*0.20 + _el.offsetWidth/2, behavior: smooth ? 'smooth' : 'auto' });
+                    if (_el) {
+                        var _target = _el.offsetLeft - _roll.clientWidth*0.20 + _el.offsetWidth/2;
+                        _roll.scrollTo({ left: _target, behavior: smooth ? 'smooth' : 'auto' });
+                        // v2.30.1-p84 · Cachear scroll para siguiente remount (cambio de tab).
+                        // Al aplicar el scrollLeft ANTES del _doMount, el roll arranca ya
+                        // en la posición correcta desde el primer paint (celdas no se ven
+                        // scrollear al remount).
+                        try { window.__mrPlanRollScrollLeft = _target; } catch(_){}
+                    }
                 }
                 // v2.30.1-p74 · Reposiciona focus sobre la celda SELECCIONADA
                 // usando su offsetLeft real, independiente de bugs de calc/snap/timing.
                 // Fórmula: centro de celda en viewport = cell.offsetLeft - scrollLeft + width/2.
                 // v2.30.1-p84 · Guard: si cell.offsetWidth=0 (layout colapsado), NO tocar.
+                // v2.30.1-p84 (Álvaro 21 ago 2026): además cachea el estilo COMPLETO
+                // (left+width+height+top) en window.__mrPlanFocusStyle para aplicarlo
+                // inline en el HTML template del próximo remount → focus nace desde el
+                // PRIMER PAINT en la posición correcta, sin esperar rAF ni scrollTo → cero
+                // tirón visible al cambiar de tab (renderHome vacía innerHTML y remonta).
                 function _positionFocusOnCell(cell) {
                     if (!cell || cell.offsetWidth === 0) return;
                     const _cx = cell.offsetLeft - _roll.scrollLeft + cell.offsetWidth/2;
-                    if (_focus) _focus.style.left = _cx + 'px';
+                    if (!_focus) return;
+                    _focus.style.left = _cx + 'px';
+                    // Cachear estilo completo para próximos remounts (cambio de tab).
+                    try {
+                        var _w = _focus.style.width || '';
+                        var _h = _focus.style.height || '';
+                        var _t = _focus.style.top || '';
+                        window.__mrPlanFocusStyle = 'left:' + _cx + 'px'
+                            + (_w ? ';width:' + _w : '')
+                            + (_h ? ';height:' + _h : '')
+                            + (_t ? ';top:' + _t : '');
+                    } catch(_){}
                 }
                 function _applySel(idx){
                     _sel = idx;
@@ -48394,7 +48412,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 //      __mrPlanCarouselMounted ejecuta _doMount sync inmediato (layout caliente)
                 //      pero el doble rAF sigue vigente para evitar el titubeo.
                 var _isFirstMount = !window.__mrPlanCarouselMounted;
-                if (_focus) _focus.style.visibility = 'hidden';
+                // v2.30.1-p84 · Aplicar scroll cacheado SÍNCRONO antes del _doMount.
+                // El roll arranca ya scrolleado al día HOY desde el primer paint tras
+                // remount (cambio de tab) → celdas NO se ven scrollear + focus (que ya
+                // está en su posición via inline style cacheado) queda alineado con
+                // ellas al vuelo. Cero tirón visible.
+                try {
+                    if (window.__mrPlanRollScrollLeft != null && _roll) {
+                        _roll.scrollLeft = window.__mrPlanRollScrollLeft;
+                    }
+                } catch(_){}
+                // Solo ocultar focus si es FIRST mount (sin cache). En re-mount el focus
+                // ya arranca visible en la posición correcta desde el inline style
+                // del template HTML — no hay nada que esconder.
+                if (_isFirstMount && _focus) _focus.style.visibility = 'hidden';
                 var _doMount = function(_retry) {
                     _retry = _retry || 0;
                     var _c0 = _roll.children[0];
