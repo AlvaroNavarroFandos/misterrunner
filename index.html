@@ -48311,13 +48311,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // v2.30.1-p75 · CRÍTICO: el focus queda FIJO durante el swipe. Solo se
                 // reposiciona cuando el snap detecta nueva sel cell (dentro de _applySel).
                 // Las celdas deslizan hasta el focus, no al revés.
-                // v2.30.1-p84 · Álvaro (21 ago 2026): flag _mounting bloquea el snap
-                // handler mientras se ejecuta la secuencia de mount inicial (evita
-                // dobles reposicionamientos del focus tras el scrollTo síncrono).
                 let _snapT;
-                let _mounting = true;
                 _roll.addEventListener('scroll', function(){
-                    if (_mounting) return;
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
                         const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
@@ -48347,24 +48342,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 }
                 // v2.30.1-p84 · Mount sin tirones (Álvaro 21 ago 2026):
-                // Antes: _applySel inicial con scrollLeft=0 posicionaba mal el focus,
-                //        luego setTimeout(40) reajustaba → se veía "salto".
-                // Ahora: focus oculto (opacity 0), fitFocus + centerIdx SÍNCRONOS,
-                //        applySel, doble rAF para asegurar layout, reveal + _mounting=false.
-                //        En re-renders posteriores (bootApp llama renderHome 2-3 veces)
-                //        el usuario nunca ve el focus mal colocado.
-                if (_focus) {
-                    _focus.style.opacity = '0';
-                    _focus.style.transition = 'opacity .18s ease';
-                }
-                _fitFocus();
-                _centerIdx(_ROLL_BACK, false);
-                _applySel(_ROLL_BACK);
-                requestAnimationFrame(function(){ requestAnimationFrame(function(){
+                //   Bug detectado en push anterior: _fitFocus() ejecutado ANTES del setTimeout
+                //   leía offsetWidth=0 (layout aún no aplicado) → focus quedaba de 10px pintado
+                //   como "puntito" arriba a la izquierda. Además al aplicar opacity fade se veía
+                //   ese puntito antes de desaparecer.
+                //
+                //   Fix:
+                //   - visibility:hidden (no opacity fade) durante el mount → invisible sin animación.
+                //   - Primer mount: setTimeout(40) como el OG (layout tiempo a estabilizarse).
+                //   - Re-mounts (renderHome disparado 2-3 veces en boot): flag
+                //     __mrPlanCarouselMounted permite ejecutar sync ya que el layout está caliente
+                //     y offsetWidth se calcula al vuelo → cero flash entre re-renders.
+                //   - _applySel inicial y _positionFocusOnCell ejecutados dentro del mismo bloque
+                //     que _fitFocus para que el focus solo se pinte una vez, ya bien dimensionado
+                //     y posicionado.
+                var _isFirstMount = !window.__mrPlanCarouselMounted;
+                if (_focus) _focus.style.visibility = 'hidden';
+                var _doMount = function() {
+                    _fitFocus();
+                    _centerIdx(_ROLL_BACK, false);
+                    _applySel(_ROLL_BACK);
                     _positionFocusOnCell(_roll.children[_ROLL_BACK]);
-                    if (_focus) _focus.style.opacity = '1';
-                    _mounting = false;
-                });});
+                    if (_focus) _focus.style.visibility = 'visible';
+                    try { window.__mrPlanCarouselMounted = true; } catch(_){}
+                };
+                if (_isFirstMount) setTimeout(_doMount, 40);
+                else _doMount();
             })();
         } else {
             // v2.30.1-p61 · Si hay rehab activo, NO pintar el empty "Sin plan
