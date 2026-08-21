@@ -48296,8 +48296,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // v2.30.1-p74 · Reposiciona focus sobre la celda SELECCIONADA
                 // usando su offsetLeft real, independiente de bugs de calc/snap/timing.
                 // Fórmula: centro de celda en viewport = cell.offsetLeft - scrollLeft + width/2.
+                // v2.30.1-p84 · Guard: si cell.offsetWidth=0 (layout colapsado), NO tocar.
                 function _positionFocusOnCell(cell) {
-                    if (!cell) return;
+                    if (!cell || cell.offsetWidth === 0) return;
                     const _cx = cell.offsetLeft - _roll.scrollLeft + cell.offsetWidth/2;
                     if (_focus) _focus.style.left = _cx + 'px';
                 }
@@ -48332,33 +48333,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     el.addEventListener('click', function(){ _centerIdx(+el.dataset.ri, true); });
                 });
                 // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
+                // v2.30.1-p84 · Guards defensivos: si offsetWidth=0 (layout no aplicado),
+                // NO tocar el focus (queda visibility:hidden hasta que retry lo posicione bien).
                 function _fitFocus(){
                     const _c0 = _roll.children[0];
-                    if (_focus && _c0) {
-                        _focus.style.width  = (_c0.offsetWidth  + 2*_FOC_B) + 'px';
-                        _focus.style.height = (_c0.offsetHeight + 2*_FOC_B) + 'px';
-                        // v2.30.1-p76 · Pill HOY eliminada · top vuelve a (5 - _FOC_B) = 0.
-                        _focus.style.top    = (5 - _FOC_B) + 'px';
-                    }
+                    if (!_focus || !_c0 || _c0.offsetWidth === 0) return;
+                    _focus.style.width  = (_c0.offsetWidth  + 2*_FOC_B) + 'px';
+                    _focus.style.height = (_c0.offsetHeight + 2*_FOC_B) + 'px';
+                    // v2.30.1-p76 · Pill HOY eliminada · top vuelve a (5 - _FOC_B) = 0.
+                    _focus.style.top    = (5 - _FOC_B) + 'px';
                 }
-                // v2.30.1-p84 · Mount sin tirones (Álvaro 21 ago 2026):
-                //   Bug detectado en push anterior: _fitFocus() ejecutado ANTES del setTimeout
-                //   leía offsetWidth=0 (layout aún no aplicado) → focus quedaba de 10px pintado
-                //   como "puntito" arriba a la izquierda. Además al aplicar opacity fade se veía
-                //   ese puntito antes de desaparecer.
+                // v2.30.1-p84 · Mount robusto (Álvaro 21 ago 2026):
+                //   Diagnóstico: en primer mount (Safari iOS + Home recién montado)
+                //   _fitFocus se ejecutaba con _roll.children[0].offsetWidth=0 → focus quedaba
+                //   width=10px height=10px (solo el border) pintado como "puntito gris" arriba-izq.
                 //
-                //   Fix:
-                //   - visibility:hidden (no opacity fade) durante el mount → invisible sin animación.
-                //   - Primer mount: setTimeout(40) como el OG (layout tiempo a estabilizarse).
-                //   - Re-mounts (renderHome disparado 2-3 veces en boot): flag
-                //     __mrPlanCarouselMounted permite ejecutar sync ya que el layout está caliente
-                //     y offsetWidth se calcula al vuelo → cero flash entre re-renders.
-                //   - _applySel inicial y _positionFocusOnCell ejecutados dentro del mismo bloque
-                //     que _fitFocus para que el focus solo se pinte una vez, ya bien dimensionado
-                //     y posicionado.
+                //   Fix combinado:
+                //   1) Guards en _fitFocus y _positionFocusOnCell: NO tocan focus si offsetWidth=0.
+                //   2) Retry loop en _doMount: reintenta cada 50ms hasta 10 veces (500ms max)
+                //      si el layout no está listo. Focus permanece visibility:hidden mientras.
+                //   3) Solo cuando todo está OK se llama visibility:visible → focus aparece de golpe
+                //      ya bien dimensionado y posicionado (marco silver premium encima de HOY).
+                //   4) Re-renders (renderHome llamado 2-3 veces en boot): flag
+                //      __mrPlanCarouselMounted ejecuta _doMount sync inmediato (layout caliente).
                 var _isFirstMount = !window.__mrPlanCarouselMounted;
                 if (_focus) _focus.style.visibility = 'hidden';
-                var _doMount = function() {
+                var _doMount = function(_retry) {
+                    _retry = _retry || 0;
+                    var _c0 = _roll.children[0];
+                    if (!_c0 || _c0.offsetWidth === 0) {
+                        if (_retry < 10) setTimeout(function(){ _doMount(_retry + 1); }, 50);
+                        return;
+                    }
                     _fitFocus();
                     _centerIdx(_ROLL_BACK, false);
                     _applySel(_ROLL_BACK);
@@ -48366,8 +48372,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (_focus) _focus.style.visibility = 'visible';
                     try { window.__mrPlanCarouselMounted = true; } catch(_){}
                 };
-                if (_isFirstMount) setTimeout(_doMount, 40);
-                else _doMount();
+                if (_isFirstMount) setTimeout(function(){ _doMount(0); }, 40);
+                else _doMount(0);
             })();
         } else {
             // v2.30.1-p61 · Si hay rehab activo, NO pintar el empty "Sin plan
