@@ -42347,7 +42347,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         document.body.appendChild(modal);
     }
 
-    function savePlanToStorage(){try{localStorage.setItem(_uk('mr_plan'),JSON.stringify(activePlan));}catch(e){} try{ if(typeof window._corosCheckPlanChanged==='function') window._corosCheckPlanChanged(); }catch(_){}}
+    // v2.30.1-p84 · [Fix persistencia] savePlanToStorage sincroniza SIEMPRE con
+    // saveAppState() (debounced 500ms), porque bootApp restaura activePlan
+    // desde localStorage[APP_KEY] via loadAppState(); loadPlanFromStorage NO
+    // se llama en el arranque. Sin esta línea, mover sesiones actualizaba
+    // mr_plan pero no APP_KEY → al reabrir la PWA el plan retrocedía.
+    function savePlanToStorage(){try{localStorage.setItem(_uk('mr_plan'),JSON.stringify(activePlan));}catch(e){} try{ if(typeof saveAppState==='function') saveAppState(); }catch(_){} try{ if(typeof window._corosCheckPlanChanged==='function') window._corosCheckPlanChanged(); }catch(_){}}
     function saveStrengthPlanToStorage(){try{localStorage.setItem(_uk('mr_strength_plan'),JSON.stringify(activeStrengthPlan));}catch(e){}}
     function loadPlanFromStorage(){
         try{const s=localStorage.getItem(_uk('mr_plan'));if(s){activePlan=JSON.parse(s);renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();}}catch(e){}
@@ -48208,7 +48213,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                     </div>
                     <div class="mr-pc-prog-lbl"><span class="mr-pc-pct">${doneSess}/${totalSess} · ${pct}%</span></div>
-                    <div class="mr-pc-prog-bar"><div class="mr-fx-progressbar mr-pc-prog-fill" data-fill="${pct}" style="width:${pct}%;"></div></div>
+                    <div class="mr-pc-prog-bar"><div class="${window.__mrPlanBarSeen?'':'mr-fx-progressbar '}mr-pc-prog-fill" data-fill="${pct}" style="width:${pct}%;"></div></div>
                     <div class="mr-pc-week-lbl"><span>Tu semana <span class="mr-pc-week-lbl-r" id="mr-pc-wklbl">Sem ${_wkN} · ${_phaseName}</span></span>${_daysLeft != null ? `<div class="mr-pc-days-pill">− ${_daysLeft} días</div>` : ''}</div>
                     <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
                     <div id="mr-pc-daycard"></div>
@@ -48306,8 +48311,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // v2.30.1-p75 · CRÍTICO: el focus queda FIJO durante el swipe. Solo se
                 // reposiciona cuando el snap detecta nueva sel cell (dentro de _applySel).
                 // Las celdas deslizan hasta el focus, no al revés.
+                // v2.30.1-p84 · Álvaro (21 ago 2026): flag _mounting bloquea el snap
+                // handler mientras se ejecuta la secuencia de mount inicial (evita
+                // dobles reposicionamientos del focus tras el scrollTo síncrono).
                 let _snapT;
+                let _mounting = true;
                 _roll.addEventListener('scroll', function(){
+                    if (_mounting) return;
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
                         const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
@@ -48326,8 +48336,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 [].forEach.call(_roll.children, function(el){
                     el.addEventListener('click', function(){ _centerIdx(+el.dataset.ri, true); });
                 });
-                // Inicial: HOY en el frame central.
-                _applySel(_ROLL_BACK);
                 // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
                 function _fitFocus(){
                     const _c0 = _roll.children[0];
@@ -48338,7 +48346,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         _focus.style.top    = (5 - _FOC_B) + 'px';
                     }
                 }
-                setTimeout(function(){ _centerIdx(_ROLL_BACK, false); _fitFocus(); _positionFocusOnCell(_roll.children[_ROLL_BACK]); }, 40);
+                // v2.30.1-p84 · Mount sin tirones (Álvaro 21 ago 2026):
+                // Antes: _applySel inicial con scrollLeft=0 posicionaba mal el focus,
+                //        luego setTimeout(40) reajustaba → se veía "salto".
+                // Ahora: focus oculto (opacity 0), fitFocus + centerIdx SÍNCRONOS,
+                //        applySel, doble rAF para asegurar layout, reveal + _mounting=false.
+                //        En re-renders posteriores (bootApp llama renderHome 2-3 veces)
+                //        el usuario nunca ve el focus mal colocado.
+                if (_focus) {
+                    _focus.style.opacity = '0';
+                    _focus.style.transition = 'opacity .18s ease';
+                }
+                _fitFocus();
+                _centerIdx(_ROLL_BACK, false);
+                _applySel(_ROLL_BACK);
+                requestAnimationFrame(function(){ requestAnimationFrame(function(){
+                    _positionFocusOnCell(_roll.children[_ROLL_BACK]);
+                    if (_focus) _focus.style.opacity = '1';
+                    _mounting = false;
+                });});
             })();
         } else {
             // v2.30.1-p61 · Si hay rehab activo, NO pintar el empty "Sin plan
@@ -49023,6 +49049,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [Candidato 4] Rellenar las barras de progreso: arrancan a width:0
         // (clase mr-fx-progressbar) y les ponemos el width real en el siguiente
         // frame → la transition:width que ya tienen las anima de 0 al valor.
+        // v2.30.1-p84 · Álvaro (21 ago 2026): tras la primera animación marcamos
+        // window.__mrPlanBarSeen=true para que en re-renders de renderHome
+        // durante el boot (IDB → BD) la barra nazca ya en su pct sin resetear
+        // a 0 (que causaba "tirones" al terminar el loading).
         try {
             var _bars = document.querySelectorAll('#home-content .mr-fx-progressbar');
             if (_bars.length) {
@@ -49034,7 +49064,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             bar.style.width = _f + '%';
                         }
                     });
+                    try { window.__mrPlanBarSeen = true; } catch(_){}
                 });});
+            } else {
+                // No hay barras que animar en este render (p.ej. sin plan) →
+                // marcamos flag igualmente para no arrancar animación en el
+                // siguiente re-render inesperado.
+                try { window.__mrPlanBarSeen = true; } catch(_){}
             }
         } catch(_) {}
 
@@ -59761,12 +59797,19 @@ window.addEventListener('DOMContentLoaded', function() {
                 _corosHideResyncBanner();
                 return;
             }
-            if (current !== known) _corosShowResyncBanner();
-            else _corosHideResyncBanner();
+            // v2.30.1-p84 · Álvaro (21 ago 2026): banner molesta al mover
+            // entrenos. Detección conservada; en vez de mostrar banner,
+            // actualizamos silenciosamente el hash conocido para que el
+            // tracking siga limpio (útil si se decide reactivar en el futuro).
+            if (current !== known) _corosSetPlanHashKnown(current);
+            _corosHideResyncBanner();
         }
 
         // 2d · Banner render (inserta como primer hijo de #home-content)
-        function _corosShowResyncBanner() {
+        // v2.30.1-p84 · No-op defensivo (banner desactivado). Cualquier trigger
+        // legacy que aún llame a esta función queda silenciado sin romper flujo.
+        function _corosShowResyncBanner() { return; /* banner deshabilitado */ }
+        function _corosShowResyncBanner_LEGACY_DISABLED() {
             var container = document.getElementById('home-content');
             if (!container) return;
             // Idempotente: si ya está, no re-crear (evita re-animar en cada render)
