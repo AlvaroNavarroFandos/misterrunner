@@ -24628,11 +24628,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         outfitState.shirtStyle = style;
         updateOutfitShirtButtons();
         const wrap = document.getElementById('shirt-color2-wrap');
-        if (wrap) wrap.style.display = (style !== 'plain') ? '' : 'none';
+        // v2.30.1-p85 · plain y longsleeve son mono-color → ocultar Color 2.
+        if (wrap) wrap.style.display = (style === 'plain' || style === 'longsleeve') ? 'none' : '';
         renderOutfitPreview();
     }
     function updateOutfitShirtButtons() {
-        ['plain','vstripes','hstripes'].forEach(s => {
+        ['plain','vstripes','hstripes','longsleeve'].forEach(s => {
             const btn = document.getElementById('outfit-shirt-' + s);
             if (!btn) return;
             const active = outfitState.shirtStyle === s;
@@ -24668,12 +24669,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // ── T-SHIRT SVG — diagonal sleeves, flat round collar ──
+    // v2.30.1-p85 · Álvaro (22 ago 2026): style 'longsleeve' añadido — mangas
+    // largas que bajan hasta cerca del bajo del torso (y=100 vs y=52 en corta).
+    // Mismo viewBox 100x104 para no romper llamadores existentes.
     function shirtSVG(style, c1, c2, w=48, h=52) {
         const id = 'sh' + Math.random().toString(36).slice(2,7);
         // Collar fix: shoulder points start at y=8 (not y=0) so the collar
         // sides are low and flat — no sharp peak at the shoulders.
         // Collar dip goes to y=18 at centre, giving a gentle round U shape.
-        const p = `
+        const pShort = `
           M 34,8
           L 5,22
           Q 0,25 0,30 L 0,48 Q 0,52 4,52
@@ -24686,6 +24690,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           Q 64,6 64,8 Q 62,18 50,20 Q 38,18 36,8 Q 36,6 34,8
           Z
         `;
+        // v2.30.1-p85 · Manga larga: mismo hombro y cuello, mangas bajan hasta
+        // y=100 (2u por encima del bajo del torso y=102 para un pequeño escalón
+        // natural que evita solapamiento visual). Encaja en el mismo viewBox.
+        const pLong = `
+          M 34,8
+          L 5,22
+          Q 0,25 0,30 L 0,95 Q 0,100 5,100
+          L 26,100
+          L 26,102 Q 26,104 28,104 L 72,104 Q 74,104 74,102
+          L 74,100
+          L 95,100 Q 100,100 100,95
+          L 100,30 Q 100,25 95,22
+          L 66,8
+          Q 64,6 64,8 Q 62,18 50,20 Q 38,18 36,8 Q 36,6 34,8
+          Z
+        `;
+        const p = (style === 'longsleeve') ? pLong : pShort;
         let fillDef = '', fillAttr = c1;
         if (style === 'vstripes') {
             fillDef = `<pattern id="${id}p" x="0" y="0" width="14" height="110" patternUnits="userSpaceOnUse">
@@ -27756,7 +27777,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 /* v2.30.1-p85 · Álvaro (22 ago 2026): badge visual "VER RADAR" en la esquina
    superior del bloque prob. lluvia para hacer evidente que es clicable y abre
    el sub-sheet con el radar. Pulse suave (2.4s) sin ser molesto. */
-+ '.mrwxsh-rain-badge{position:absolute;top:8px;right:8px;background:rgba(14,165,233,.15);color:#0284c7;border:1px solid rgba(14,165,233,.38);border-radius:7px;padding:4px 8px;font-size:9px;font-weight:900;letter-spacing:.5px;pointer-events:none;display:inline-flex;align-items:center;gap:3px;font-family:var(--f);text-transform:uppercase;box-shadow:0 0 0 0 rgba(14,165,233,.35);animation:mrwxRainBadgePulse 2.4s ease-in-out infinite;}'
++ '.mrwxsh-rain-badge{position:absolute;bottom:44px;right:8px;background:rgba(14,165,233,.15);color:#0284c7;border:1px solid rgba(14,165,233,.38);border-radius:7px;padding:4px 8px;font-size:9px;font-weight:900;letter-spacing:.5px;pointer-events:none;display:inline-flex;align-items:center;gap:3px;font-family:var(--f);text-transform:uppercase;box-shadow:0 0 0 0 rgba(14,165,233,.35);animation:mrwxRainBadgePulse 2.4s ease-in-out infinite;}'
 + 'body.dark-mode .mrwxsh-rain-badge{color:#38bdf8;background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.40);}'
 + '@keyframes mrwxRainBadgePulse{0%,100%{box-shadow:0 0 0 0 rgba(14,165,233,.35);}50%{box-shadow:0 0 0 5px rgba(14,165,233,0);}}'
 + '.mrwxsh-nowcast{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;font-size:9.5px;font-weight:800;line-height:1;letter-spacing:.2px;margin-top:5px;font-family:var(--f);}'
@@ -30580,9 +30601,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="background:var(--surface);border-radius:12px;padding:12px;border:1px solid var(--border);">
                         <div style="font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;">Outfit de la actividad</div>
                         <div style="margin-bottom:10px;">
-                            <div class="field-label">Camiseta manga corta</div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
+                            <div class="field-label">Camiseta</div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
                                 <button type="button" id="aedit-shirt-plain" onclick="aeditSetShirt('plain')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--crimson);background:var(--crimson);color:#fff;font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Lisa</button>
+                                <button type="button" id="aedit-shirt-longsleeve" onclick="aeditSetShirt('longsleeve')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">M. larga</button>
                                 <button type="button" id="aedit-shirt-vstripes" onclick="aeditSetShirt('vstripes')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Rayas V</button>
                                 <button type="button" id="aedit-shirt-hstripes" onclick="aeditSetShirt('hstripes')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Rayas H</button>
                             </div>
@@ -30640,7 +30662,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         window.aeditSetShirt = function(style) {
             window._aeditOutfit.shirtStyle = style;
-            ['plain','vstripes','hstripes'].forEach(s => {
+            ['plain','vstripes','hstripes','longsleeve'].forEach(s => {
                 const b = document.getElementById('aedit-shirt-'+s);
                 if(!b) return;
                 const active = style===s;
@@ -30648,7 +30670,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 b.style.color = active?'#fff':'var(--ts)';
                 b.style.borderColor = active?'var(--crimson)':'var(--border)';
             });
-            document.getElementById('aedit-shirt2-wrap').style.display = style!=='plain'?'':'none';
+            // v2.30.1-p85 · longsleeve es mono-color como plain → ocultar Color 2.
+            document.getElementById('aedit-shirt2-wrap').style.display = (style==='plain'||style==='longsleeve')?'none':'';
             aeditRenderPreview();
         };
         function _refreshShirt1(hex) {
@@ -53902,9 +53925,10 @@ window._downsampleRecords = _downsampleRecords;
                     <div style="font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:10px;">Outfit de la actividad</div>
                     <!-- CAMISETA -->
                     <div style="margin-bottom:10px;">
-                        <div class="field-label">Camiseta manga corta</div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
+                        <div class="field-label">Camiseta</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
                             <button type="button" id="outfit-shirt-plain" onclick="setShirtStyle('plain')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--crimson);background:var(--crimson);color:#fff;font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;line-height:1.3;">Lisa</button>
+                            <button type="button" id="outfit-shirt-longsleeve" onclick="setShirtStyle('longsleeve')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;line-height:1.3;">Manga<br>larga</button>
                             <button type="button" id="outfit-shirt-vstripes" onclick="setShirtStyle('vstripes')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;line-height:1.3;">Rayas<br>verticales</button>
                             <button type="button" id="outfit-shirt-hstripes" onclick="setShirtStyle('hstripes')" style="padding:7px 4px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;line-height:1.3;">Rayas<br>horizontales</button>
                         </div>
