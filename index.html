@@ -45774,20 +45774,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── Track ─────────────────────────────────────────────────────────────
         drawTrackSilhouette(act.records, trackX, trackY, trackW, TRACK_H);
 
-        // ── Stats: distance + pace + time · Opción D (Álvaro 21 ago 2026) ───
-        //   Rubik 900 (fuente global de la app) · contorno NEGRO 10px potente
-        //   para verse sobre cualquier foto de fondo · pace en DORADO brand
-        //   (#c4881e) como acento de identidad · time en blanco.
-        //   Pace SIN '/km' (más limpio).
+        // ── Stats: labels DISTANCIA/RITMO/TIEMPO doradas + valores premium ───
+        //   v2.30.1-p85 · Álvaro (22 ago 2026): estilo B refinado. Labels
+        //   UPPERCASE en dorado brand (#c4881e) con letter-spacing amplio letra
+        //   por letra (canvas 2D no soporta letter-spacing nativo estable) ·
+        //   valores Rubik 900 130px con contorno negro 10px potente para verse
+        //   sobre cualquier foto · ritmo en dorado brand como acento ·
+        //   distancia y tiempo en blanco · pace sin '/km'.
         ctx.textAlign = 'center';
         const DIST_SIZE = 130;
-        const REST_SIZE = 130;    // pace/time igualados en tamaño con distance (grande + grueso)
-        const STROKE_W  = 10;     // contorno negro (canvas ~1080 wide)
-        const TIME_LOGO_GAP = 18;
+        const REST_SIZE = 130;
+        const STROKE_W  = 10;
+        const LABEL_SIZE = 42;
+        const LABEL_STROKE_W = 4;
+        const LABEL_LETTER_SPACING = 7;
+        const LABEL_GAP = 8;              // gap entre label y valor debajo
+        const GROUP_GAP = 22;             // gap entre grupos (label+valor)
+        const LABEL_COLOR = '#c4881e';    // dorado brand MR
+        const TIME_LOGO_GAP = 22;
         const F_STATS = '900 ' + DIST_SIZE + 'px Rubik, "Arial Black", "Helvetica Neue", sans-serif';
         const F_REST  = '900 ' + REST_SIZE + 'px Rubik, "Arial Black", "Helvetica Neue", sans-serif';
+        const F_LABEL = '700 ' + LABEL_SIZE + 'px Rubik, "Helvetica Neue", sans-serif';
 
-        // Helper: stroke primero (negro) + fill después (color) — contorno nítido premium
+        // Helper: valor grande stroke + fill (contorno nítido)
         function drawStrokedText(text, x, y, font, fillColor) {
             ctx.save();
             ctx.font = font;
@@ -45802,14 +45811,45 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.restore();
         }
 
-        let statY = STATS_TOP + DIST_SIZE;
-        // Distance — Rubik 900 blanco con contorno negro
+        // Helper: label UPPERCASE con letter-spacing manual (letra por letra) +
+        // contorno negro. Canvas 2D no expone letter-spacing estable en Safari.
+        function drawLetterSpacedText(text, cx, y, spacing, font, fillColor, strokeW) {
+            ctx.save();
+            ctx.font = font;
+            ctx.textBaseline = 'alphabetic';
+            ctx.textAlign = 'left';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = strokeW;
+            ctx.strokeStyle = '#000';
+            ctx.fillStyle = fillColor;
+            const chars = text.split('');
+            const widths = chars.map(c => ctx.measureText(c).width);
+            const totalWidth = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+            let cursorX = cx - totalWidth / 2;
+            for (let i = 0; i < chars.length; i++) {
+                ctx.strokeText(chars[i], cursorX, y);
+                ctx.fillText(chars[i], cursorX, y);
+                cursorX += widths[i] + spacing;
+            }
+            ctx.restore();
+        }
+
+        // Layout: 3 grupos label+valor apilados
+        let statY = STATS_TOP;
+        // Grupo 1 · DISTANCIA (label) + 12.24km (blanco)
+        statY += LABEL_SIZE;
+        drawLetterSpacedText('DISTANCIA', CX, statY, LABEL_LETTER_SPACING, F_LABEL, LABEL_COLOR, LABEL_STROKE_W);
+        statY += LABEL_GAP + DIST_SIZE;
         drawStrokedText(distVal, CX, statY, F_STATS, '#ffffff');
-        // Pace — Rubik 900 DORADO brand con contorno negro (SIN '/km')
-        statY += (REST_SIZE + STAT_SPACING);
+        // Grupo 2 · RITMO (label) + 5'33" (dorado, sin /km)
+        statY += GROUP_GAP + LABEL_SIZE;
+        drawLetterSpacedText('RITMO', CX, statY, LABEL_LETTER_SPACING, F_LABEL, LABEL_COLOR, LABEL_STROKE_W);
+        statY += LABEL_GAP + REST_SIZE;
         drawStrokedText(paceRaw, CX, statY, F_REST, '#c4881e');
-        // Time — Rubik 900 blanco con contorno negro
-        statY += (REST_SIZE + STAT_SPACING);
+        // Grupo 3 · TIEMPO (label) + 1:07:50 (blanco)
+        statY += GROUP_GAP + LABEL_SIZE;
+        drawLetterSpacedText('TIEMPO', CX, statY, LABEL_LETTER_SPACING, F_LABEL, LABEL_COLOR, LABEL_STROKE_W);
+        statY += LABEL_GAP + REST_SIZE;
         drawStrokedText(timeVal, CX, statY, F_REST, '#ffffff');
 
         // ── Logo · gorra MR oficial (window.__MR_LOGO_DATA_URI__) ──────────────
