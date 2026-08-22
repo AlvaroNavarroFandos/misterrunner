@@ -41880,9 +41880,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // Acción centralizada: borrar una sesión del plan (running + strength linked).
     // Se invoca desde el modal openSessionActions (long-press en la card).
-    function _planDeleteSession(weekIdx, sessDate) {
+    // v2.30.1-p85 · BUG CRÍTICO Álvaro (22 ago 2026): al long-press sobre entreno
+    // de FUERZA y darle Eliminar, se borraba el de RUNNING (misma fecha) y la
+    // fuerza quedaba viva en activeStrengthPlan. Causa: la función no recibía
+    // isStrengthHint, .find() devolvía la primera (running tras sort), y .filter()
+    // eliminaba AMBAS. Fix: propagar hint desde openSessionActions y filtrar solo
+    // la sesión de la categoría correcta (running XOR strength).
+    function _planDeleteSession(weekIdx, sessDate, isStrengthHint) {
+        // Modo solo-strength (sin plan de running activo)
         if (!activePlan || !activePlan.weeks || !activePlan.weeks[weekIdx]) {
-            // Modo solo-strength: borrar del plan independiente
             if (activeStrengthPlan && activeStrengthPlan.weeks && activeStrengthPlan.weeks[weekIdx]) {
                 activeStrengthPlan.weeks[weekIdx].sessions =
                     activeStrengthPlan.weeks[weekIdx].sessions.filter(s => s.dateStr !== sessDate);
@@ -41891,13 +41897,34 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
             return;
         }
-        const _delSess = activePlan.weeks[weekIdx].sessions.find(s => s.dateStr === sessDate);
-        activePlan.weeks[weekIdx].sessions = activePlan.weeks[weekIdx].sessions.filter(s => s.dateStr !== sessDate);
-        if (_delSess && _delSess.isStrength && activeStrengthPlan && activeStrengthPlan.weeks[weekIdx]) {
+
+        // Determinar categoría a eliminar. Con hint explícito lo usamos; sin hint
+        // (compat legacy) caemos a la primera sesión encontrada.
+        var wk = activePlan.weeks[weekIdx];
+        var isStrDel;
+        if (typeof isStrengthHint === 'boolean') {
+            isStrDel = isStrengthHint;
+        } else {
+            var _found = wk.sessions.find(s => s.dateStr === sessDate);
+            isStrDel = _found ? !!(_found.isStrength || _found.type === 'strength') : false;
+        }
+
+        // Filtrar SOLO la sesión con la categoría correcta (running XOR strength).
+        // Si en el mismo día hay running + strength, la otra se preserva intacta.
+        wk.sessions = wk.sessions.filter(function(s) {
+            if (s.dateStr !== sessDate) return true;
+            var sIsStr = !!(s.isStrength || s.type === 'strength');
+            return sIsStr !== isStrDel;
+        });
+
+        // Si es strength también hay que limpiar activeStrengthPlan (fuente
+        // independiente que persiste por su cuenta).
+        if (isStrDel && activeStrengthPlan && activeStrengthPlan.weeks && activeStrengthPlan.weeks[weekIdx]) {
             activeStrengthPlan.weeks[weekIdx].sessions =
                 activeStrengthPlan.weeks[weekIdx].sessions.filter(s => s.dateStr !== sessDate);
             saveStrengthPlanToStorage();
         }
+
         savePlanToStorage();
         renderPlanWeek(weekIdx);
     }
@@ -42218,7 +42245,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</div>';
             document.getElementById('plan-sa-del-cancel').onclick = closeModal;
             document.getElementById('plan-sa-del-ok').onclick = function() {
-                _planDeleteSession(weekIdx, sessDate);
+                _planDeleteSession(weekIdx, sessDate, isStrengthHint);
                 closeModal();
             };
         };
@@ -45843,9 +45870,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         drawLetterSpacedText('DISTANCIA', CX, statY, LABEL_LETTER_SPACING, F_LABEL, LABEL_COLOR, LABEL_STROKE_W);
         statY += LABEL_GAP + DIST_SIZE;
         drawStrokedText(distVal, CX, statY, F_STATS, '#ffffff');
-        // Grupo 2 · RITMO (label blanco) + 5'33" (valor DORADO, sin /km)
+        // Grupo 2 · RITMO (label DORADO) + 5'33" (valor DORADO, sin /km)
+        //   Álvaro (22 ago 2026): label RITMO en dorado (coherente con valor).
         statY += GROUP_GAP + LABEL_SIZE;
-        drawLetterSpacedText('RITMO', CX, statY, LABEL_LETTER_SPACING, F_LABEL, LABEL_COLOR, LABEL_STROKE_W);
+        drawLetterSpacedText('RITMO', CX, statY, LABEL_LETTER_SPACING, F_LABEL, '#c4881e', LABEL_STROKE_W);
         statY += LABEL_GAP + REST_SIZE;
         drawStrokedText(paceRaw, CX, statY, F_REST, '#c4881e');
         // Grupo 3 · TIEMPO (label blanco) + 1:07:50 (valor blanco)
