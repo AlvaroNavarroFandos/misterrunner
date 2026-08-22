@@ -48443,6 +48443,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // ya arranca visible en la posición correcta desde el inline style
                 // del template HTML — no hay nada que esconder.
                 if (_isFirstMount && _focus) _focus.style.visibility = 'hidden';
+
+                // v2.30.1-p84 · Álvaro (21 ago 2026): _applySel SÍNCRONO INMEDIATO.
+                // El _cardHost nace vacío en el template — sin este _applySel sync,
+                // _renderCard no se llama hasta el _doMount (que tiene setTimeout 40ms
+                // o retry loop) → la card del entreno queda vacía ese tiempo → user
+                // veía "ocultar y enseñar" al cambiar de tab. Al llamarlo aquí SÍNCRONO,
+                // la card se pinta desde el primer paint del DOM nuevo, sin flash.
+                // Seguro porque _renderCard no depende del layout (solo del DOM y datos)
+                // y _positionFocusOnCell (llamado internamente) tiene guard para
+                // offsetWidth=0 → retorna sin tocar el focus si layout aún no listo.
+                _applySel(_ROLL_BACK);
+
                 var _doMount = function(_retry) {
                     _retry = _retry || 0;
                     var _c0 = _roll.children[0];
@@ -48452,7 +48464,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     _fitFocus();
                     _centerIdx(_ROLL_BACK, false);
-                    _applySel(_ROLL_BACK);
+                    // _applySel ya se ejecutó SÍNCRONO al inicio de la IIFE — solo
+                    // refinar posición del focus (ya cacheada, esto es ajuste fino).
                     // Doble rAF: primer rAF espera al próximo commit del layout (scrollTo aplicado),
                     // segundo rAF espera al paint. Solo entonces reposicionamos focus con scrollLeft
                     // REAL y hacemos visible → sin titubeo al volver a Home desde otra pestaña.
