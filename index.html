@@ -24712,18 +24712,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function shortsSVG(color, w=38, h=28) {
         // Width matches shirt waist (26–74 on 100 scale → 48 units centred)
         // [FASE 5.7.4-b] stroke adaptativo para shorts oscuros
-        return `<svg width="${w}" height="${h}" viewBox="0 0 100 74" xmlns="http://www.w3.org/2000/svg">
-          <path d="M18,0 L82,0 L88,74 L56,74 L50,38 L44,74 L12,74 Z"
+        // v2.30.1-p84 · Álvaro (21 ago 2026): short un poco más corto → viewBox
+        // 100x60 (antes 100x74, -19%) · path bajo y=60 (antes 74) · centro y=30
+        // (antes 38). Cintura y ancho intactos. Aspect viewBox 1.67 vs llamadas
+        // ~1.35-1.53 → letterbox horizontal mínimo aceptable.
+        return `<svg width="${w}" height="${h}" viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18,0 L82,0 L88,60 L56,60 L50,30 L44,60 L12,60 Z"
             fill="${color}" stroke="${_outfitStroke(color,'rgba(0,0,0,.75)')}" stroke-width="5" stroke-linejoin="round"/>
           <rect x="18" y="0" width="64" height="16" fill="rgba(255,255,255,.14)"/>
         </svg>`;
     }
 
     // ── SOCKS SVG — par al mismo lado, totalmente lisos ──
+    // v2.30.1-p84 · Álvaro (21 ago 2026): calcetines más largos → tubeH 66
+    // (antes 52, +27%). Segundo sock con ty=8 llega a y=88 justo (viewBox 90 OK).
     function socksSVG(color, w=44, h=36) {
         const sk = (ox, oy, sc) => {
             const tx = ox + 10, ty = oy;
-            const tw = 22, tubeH = 52;
+            const tw = 22, tubeH = 66;
             const footY = ty + tubeH - 8;
             const footH = 22, footW = 56;
             const r = 11;
@@ -24795,15 +24801,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
 
     // Short/low socks pair — two tiny socks, left foot pointing left, right foot pointing right
+    // v2.30.1-p84 · Álvaro (21 ago 2026): calcetines más largos → rect height
+    // 20 (antes 16, +25%) · viewBox 30x32 (antes 30x28) · svg h 13 (antes 11)
+    // · path pie shift +4 en y para acomodar el tubo más largo.
     function buildLowSockPair(color) {
         // [FASE 5.7.4-b] stroke adaptativo para calcetines oscuros
         var sk = _outfitStroke(color, 'rgba(0,0,0,.78)');
         function lowSock(flip) {
             var m = flip ? 'transform="scale(-1,1) translate(-30,0)"' : '';
-            return '<svg width="13" height="11" viewBox="0 0 30 28" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;">'
+            return '<svg width="13" height="13" viewBox="0 0 30 32" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;">'
                 + '<g ' + m + '>'
-                + '<rect x="6" y="0" width="14" height="16" rx="7" fill="' + color + '" stroke="' + sk + '" stroke-width="3.5"/>'
-                + '<path d="M6,13 L6,20 Q6,28 16,28 L24,28 Q28,28 28,24 L28,19 Q28,15 24,15 L20,15 L20,13 Z"'
+                + '<rect x="6" y="0" width="14" height="20" rx="7" fill="' + color + '" stroke="' + sk + '" stroke-width="3.5"/>'
+                + '<path d="M6,17 L6,24 Q6,32 16,32 L24,32 Q28,32 28,28 L28,23 Q28,19 24,19 L20,19 L20,17 Z"'
                 + ' fill="' + color + '" stroke="' + sk + '" stroke-width="3.5" stroke-linejoin="round"/>'
                 + '</g></svg>';
         }
@@ -48235,7 +48244,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="mr-pc-prog-lbl"><span class="mr-pc-pct">${doneSess}/${totalSess} · ${pct}%</span></div>
                     <div class="mr-pc-prog-bar"><div class="${window.__mrPlanBarSeen?'':'mr-fx-progressbar '}mr-pc-prog-fill" data-fill="${pct}" style="width:${pct}%;"></div></div>
                     <div class="mr-pc-week-lbl"><span>Tu semana <span class="mr-pc-week-lbl-r" id="mr-pc-wklbl">Sem ${_wkN} · ${_phaseName}</span></span>${_daysLeft != null ? `<div class="mr-pc-days-pill">− ${_daysLeft} días</div>` : ''}</div>
-                    <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus" style="${window.__mrPlanFocusStyle||''}"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
+                    <div class="mr-pc-roll-wrap"><div class="mr-pc-roll-focus" style="${window.__mrPlanFocusStyle||'visibility:hidden'}"></div><div class="mr-pc-roll" id="mr-pc-roll">${_rollStripHtml}</div></div>
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
@@ -48326,10 +48335,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Fórmula: centro de celda en viewport = cell.offsetLeft - scrollLeft + width/2.
                 // v2.30.1-p84 · Guard: si cell.offsetWidth=0 (layout colapsado), NO tocar.
                 // v2.30.1-p84 (Álvaro 21 ago 2026): además cachea el estilo COMPLETO
-                // (left+width+height+top) en window.__mrPlanFocusStyle para aplicarlo
-                // inline en el HTML template del próximo remount → focus nace desde el
-                // PRIMER PAINT en la posición correcta, sin esperar rAF ni scrollTo → cero
-                // tirón visible al cambiar de tab (renderHome vacía innerHTML y remonta).
+                // (left+width+height+top+visibility:visible) en window.__mrPlanFocusStyle
+                // para aplicarlo inline en el HTML template del próximo remount → focus
+                // nace desde el PRIMER PAINT en la posición correcta Y visible → cero
+                // tirón al cambiar de tab. En primer mount post-close (sin cache) el
+                // template aplica visibility:hidden por defecto.
                 function _positionFocusOnCell(cell) {
                     if (!cell || cell.offsetWidth === 0) return;
                     const _cx = cell.offsetLeft - _roll.scrollLeft + cell.offsetWidth/2;
@@ -48343,7 +48353,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         window.__mrPlanFocusStyle = 'left:' + _cx + 'px'
                             + (_w ? ';width:' + _w : '')
                             + (_h ? ';height:' + _h : '')
-                            + (_t ? ';top:' + _t : '');
+                            + (_t ? ';top:' + _t : '')
+                            + ';visibility:visible';
                     } catch(_){}
                 }
                 function _applySel(idx){
@@ -48417,9 +48428,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // remount (cambio de tab) → celdas NO se ven scrollear + focus (que ya
                 // está en su posición via inline style cacheado) queda alineado con
                 // ellas al vuelo. Cero tirón visible.
+                // v2.30.1-p84 · Forzar layout con offsetWidth ANTES de asignar
+                // scrollLeft. Sin esto Safari iOS puede revertir el scrollLeft al
+                // calcular el layout final del nuevo DOM (Plan → Home reproduce el bug).
                 try {
-                    if (window.__mrPlanRollScrollLeft != null && _roll) {
-                        _roll.scrollLeft = window.__mrPlanRollScrollLeft;
+                    if (_roll) {
+                        void _roll.offsetWidth;
+                        if (window.__mrPlanRollScrollLeft != null) {
+                            _roll.scrollLeft = window.__mrPlanRollScrollLeft;
+                        }
                     }
                 } catch(_){}
                 // Solo ocultar focus si es FIRST mount (sin cache). En re-mount el focus
