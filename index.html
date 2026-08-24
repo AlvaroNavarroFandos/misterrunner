@@ -4512,6 +4512,7 @@
             margin-bottom: 6px;
         }
         .mr-str-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .mr-str-grid-eq3 { display: flex; flex-direction: column; gap: 6px; }
         .mr-str-pill {
             padding: 9px 6px;
             border-radius: 10px;
@@ -8178,12 +8179,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="strength-card-body" class="mr-str-body" style="display:none;">
                         <div>
                             <div class="mr-str-label">Equipamiento</div>
-                            <div class="mr-str-grid-2">
+                            <div class="mr-str-grid-eq3">
                                 <button type="button" id="se-gym" class="mr-str-pill active" onclick="setStrengthEquip('gym')">
                                     Gimnasio<br><span>máquinas · pesas · pesos libres</span>
                                 </button>
+                                <button type="button" id="se-home_band" class="mr-str-pill" onclick="setStrengthEquip('home_band')">
+                                    Casa · con banda<br><span>banda elástica corta (recomendado)</span>
+                                </button>
                                 <button type="button" id="se-home" class="mr-str-pill" onclick="setStrengthEquip('home')">
-                                    Casa<br><span>bandas · peso corporal</span>
+                                    Casa · sin equipo<br><span>solo peso corporal</span>
                                 </button>
                             </div>
                         </div>
@@ -39148,7 +39152,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(activeStrengthPlan && activeStrengthPlan.strengthDays && activeStrengthPlan.strengthDays.length) {
             var days     = activeStrengthPlan.strengthDays;
             var equip    = activeStrengthPlan.strengthEquip || 'gym';
-            var equipLbl = (equip === 'gym') ? 'Gimnasio' : 'Casa';
+            var equipLbl = _strengthEquipLabel(equip);
             var session  = buildStrengthSession(equip);
             var startDate = (activePlan.weeks && activePlan.weeks[0]) ? activePlan.weeks[0].weekStart : localDateStr(new Date());
             var numWeeks  = activePlan.weeks ? activePlan.weeks.length : 52;
@@ -40378,7 +40382,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } else {
             if(lbl)   lbl.textContent   = `Semana ${planCurrentWeek+1}`;
             if(title) { title.textContent = 'Plan de Fuerza'; title.style.display = ''; }
-            if(sub)   sub.textContent   = `${activeStrengthPlan.weeks.length} semanas · ${activeStrengthPlan.strengthEquip==='gym'?'Gimnasio':'Casa'}`;
+            if(sub)   sub.textContent   = `${activeStrengthPlan.weeks.length} semanas · ${_strengthEquipLabel(activeStrengthPlan.strengthEquip)}`;
         }
     }
 
@@ -40723,7 +40727,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _dowLabel = _isToday ? 'HOY' : DAY_SHORT[dow];
             var _dayNum = dtDate.getDate();
             var _monthShort = dtDate.toLocaleDateString('es-ES',{month:'short'}).toUpperCase();
-            var _equipLabel = (sess.strengthEquip === 'gym') ? 'Gym' : 'Casa';
+            var _equipLabel = _strengthEquipLabelShort(sess.strengthEquip);
 
             var outerWrap = document.createElement('div');
             if (_isToday) {
@@ -41501,7 +41505,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var _realPace = _pace;
                     var _realHr   = _hr;
                 } else if (_isStrengthCard) {
-                    _detailShort = sess.strengthEquip === 'gym' ? 'Gym' : 'Casa';
+                    _detailShort = _strengthEquipLabelShort(sess.strengthEquip);
                 } else if (sess.desc) {
                     _detailShort = sess.desc.replace(/^[^a-záéíóúñ0-9]+/i,'').slice(0, 60);
                 }
@@ -45253,7 +45257,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var icon = _TYPE_ICON_WHITE[t] || '';
             var typeLbl = (typeof getTypeLabel === 'function') ? getTypeLabel(t) : (t.charAt(0).toUpperCase()+t.slice(1));
             var distLbl = isStr ? '30 min' : (sess.dist || 0) + ' km';
-            var equipLbl = isStr && sess.strengthEquip ? (sess.strengthEquip === 'gym' ? 'Gimnasio' : 'Casa') : '';
+            var equipLbl = isStr && sess.strengthEquip ? _strengthEquipLabel(sess.strengthEquip) : '';
 
             var durTxt = '';
             if (sess.durStr) durTxt = sess.durStr;
@@ -48265,7 +48269,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _pillNum  = _isStr ? '30'  : String(sess.dist||0);
                 const _pillUnit = _isStr ? 'min' : 'km';
                 const _equipLbl= _isStr && sess.strengthEquip
-                    ? (sess.strengthEquip==='gym'?'Gimnasio':'Casa') : '';
+                    ? _strengthEquipLabel(sess.strengthEquip) : '';
                 const _rowId   = _isStr ? 'hero-str-row' : 'hero-run-row';
 
                 // Gradient por tipo (mismo look que Home Próximos Entrenamientos)
@@ -48959,7 +48963,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // Meta descriptiva línea 2
                     let _meta;
                     if (s.type === 'strength') {
-                        _meta = (s.strengthEquip === 'gym' ? 'Gym' : 'Casa') + ' · ' + _distLbl;
+                        _meta = _strengthEquipLabelShort(s.strengthEquip) + ' · ' + _distLbl;
                     } else if (s.desc) {
                         const _shortDesc = s.desc.replace(/^[^a-záéíóúñ0-9]+/i,'').slice(0, 32);
                         _meta = _distLbl + ' · ' + _shortDesc;
@@ -49893,7 +49897,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         //     (que llama a toggleStrengthCard() y muestra el form).
         if(chevron) chevron.style.display = hasStr ? 'none' : 'flex';
         if(hasStr) {
-            const eq = (activeStrengthPlan.strengthEquip === 'gym') ? 'Gimnasio' : 'Casa';
+            const eq = _strengthEquipLabel(activeStrengthPlan.strengthEquip);
             const nDays = activeStrengthPlan.strengthDays ? activeStrengthPlan.strengthDays.length : '?';
             const nWk = (activeStrengthPlan.weeks && activeStrengthPlan.weeks.length) ? activeStrengthPlan.weeks.length : '—';
             const sync = (activeStrengthPlan.strengthSyncRunning !== false);
@@ -49913,13 +49917,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     function setStrengthEquip(equip) {
         // [v5.6.1] Usa classList.toggle('active') — los estilos vienen del CSS class-based.
+        // v2.30.1-p87 · Álvaro (22 ago 2026): 3ª opción 'home_band' (casa con banda).
         strengthEquip = equip;
-        ['gym','home'].forEach(function(e) {
+        ['gym','home','home_band'].forEach(function(e) {
             var btn = document.getElementById('se-'+e);
             if(!btn) return;
             btn.classList.toggle('active', e === equip);
         });
     }
+    // v2.30.1-p87 · Helper para label uniforme en todos los lugares donde se
+    // muestra la modalidad de equipamiento.
+    function _strengthEquipLabel(eq) {
+        if (eq === 'gym') return 'Gimnasio';
+        if (eq === 'home_band') return 'Casa con banda';
+        return 'Casa';
+    }
+    window._strengthEquipLabel = _strengthEquipLabel;
+    // Helper corto para display compacto en cards de plan
+    function _strengthEquipLabelShort(eq) {
+        if (eq === 'gym') return 'Gym';
+        if (eq === 'home_band') return 'Banda';
+        return 'Casa';
+    }
+    window._strengthEquipLabelShort = _strengthEquipLabelShort;
 
     function setStrengthDays(n) {
         // [v5.6.1] Usa classList.toggle('active') — los estilos vienen del CSS class-based.
@@ -50201,6 +50221,56 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         {name:'Plancha con toque de hombro',         sets:'3',reps:'12/lado',     cue:'Plancha alta, toca el hombro contrario sin mover la cadera',                         phase:'E',videoUrl:MR_VIDEO_BASE+'wx_3699.gif'},
     ];
 
+    // ══════════════════════════════════════════════════════════════
+    // [v2.30.1-p87 · Casa · CON BANDA ELÁSTICA CORTA] (Álvaro 22 ago 2026)
+    // ══════════════════════════════════════════════════════════════
+    // Esquema DÍA A / DÍA B alternantes con 6 ejercicios fuerza runner
+    // + 2 pliometría por sesión. Todos los de fuerza requieren banda
+    // elástica corta (mini band). Sin core (Álvaro lo hace por libre).
+    //
+    // Alternancia:
+    //   · 1 día/sem: semana par → A, impar → B
+    //   · 2 días/sem: L=A, J=B (default)
+    //   · 3 días/sem: L=A, X=B, V=A → semana siguiente empieza por B
+    //
+    // Progresión (aplicada vía setsMultiplier del STRENGTH_SYNC_MAP):
+    //   Base   → 2×10  (setsMultiplier=1.0 sobre base 2)
+    //   Build  → 3×12  (aumento sets vía multiplier)
+    //   Peak   → 3×15
+    //   Taper  → 2×8   (reducción sets)
+    //
+    // videoUrl: reutilizo GIFs existentes cuando el ejercicio es
+    // visualmente idéntico. Los demás quedan sin URL (sin botón demo)
+    // hasta que Álvaro suba los GIFs específicos a bucket exercise-demos.
+    // ══════════════════════════════════════════════════════════════
+    var STRENGTH_HOME_BAND = [
+        // ── DÍA A · cadena posterior + horizontal ─────────────────
+        {name:'Squat con banda',              day:'A',sets:'3',reps:'12 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
+        {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:MR_VIDEO_BASE+'wx_1460.gif'},
+        {name:'Hip thrust con banda',         day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, cadera alta 1 seg arriba, aprieta el gluteo',                   phase:'A',videoUrl:''},
+        {name:'Monster walks laterales',      day:'A',sets:'3',reps:'12/lado',    cue:'Banda encima de rodillas, postura atletica, pasos amplios sin colapsar rodillas',         phase:'C',videoUrl:MR_VIDEO_BASE+'wx_0628.gif'},
+        {name:'Clamshell con banda',          day:'A',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
+        {name:'Kickbacks con banda',          day:'A',sets:'3',reps:'12/pierna',  cue:'Cuadrupedia, banda entre pie y mano opuesta, patada atras extendiendo la cadera',         phase:'A',videoUrl:''},
+        {name:'A-skips (skipping alto)',      day:'A',sets:'3',reps:'20 pasos',   cue:'Rodilla arriba al pecho, brazos activos, ritmo constante, aterrizaje mediopie',           phase:'D',videoUrl:''},
+        {name:'Pogo hops',                    day:'A',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
+        // ── DÍA B · unilateral + estabilidad + movilidad ──────────
+        {name:'Split squat con banda',        day:'B',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'A',videoUrl:MR_VIDEO_BASE+'wx_2368.gif'},
+        {name:'Standing hip abduction',       day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, abre pierna lateral sin inclinar el tronco',                   phase:'C',videoUrl:''},
+        {name:'Fire hydrants con banda',      day:'B',sets:'3',reps:'12/lado',    cue:'Cuadrupedia, banda encima rodillas, abre pierna lateral manteniendo cadera cuadrada',     phase:'C',videoUrl:''},
+        {name:'Band knee drive',              day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, sube una rodilla al pecho contra la resistencia de la banda',  phase:'A',videoUrl:''},
+        {name:'Bird dog con banda',           day:'B',sets:'3',reps:'10/lado',    cue:'Cuadrupedia, banda entre mano y pie opuesto, extiende brazo y pierna contrarios',         phase:'C',videoUrl:''},
+        {name:'Estiramiento cadera con banda',day:'B',sets:'2',reps:'30 seg/lado',cue:'Tumbado, banda alrededor del pie, estira pierna arriba manteniendo lumbar en el suelo',   phase:'A',videoUrl:''},
+        {name:'Bounding',                     day:'B',sets:'3',reps:'12 pasos',   cue:'Zancadas amplias saltando de un pie a otro, brazos activos, maxima distancia por salto',  phase:'D',videoUrl:''},
+        {name:'Single leg hop',               day:'B',sets:'3',reps:'8/pierna',   cue:'Saltos verticales a una pierna, aterrizaje suave y estable sin caer rodilla adentro',     phase:'D',videoUrl:''},
+    ];
+
+    // Helper alternancia día A/B según semana + posición sesión en la semana.
+    // Regla Álvaro: semana par empieza por A, impar por B.
+    function _homeBandDayLetter(weekIdx, sessionIdxInWeek) {
+        var offset = (weekIdx % 2 === 0) ? 0 : 1;
+        return ((sessionIdxInWeek + offset) % 2 === 0) ? 'A' : 'B';
+    }
+
     var BLOCK_DESC = {
         A:{label:'Cadena posterior (Gluteo + Isquios)',   color:'#f59e0b'},
         B:{label:'Fuerza de rodilla (Cuadriceps + Excentrico)', color:'#10b981'},
@@ -50285,7 +50355,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     // Devuelve una lista de ejercicios ajustada al modo (bloques activos + count).
     // Si mode es null → comportamiento actual: 2 ejercicios por bloque A-E completos.
-    function buildStrengthSession(equip, mode) {
+    // v2.30.1-p87 · equip='home_band' (Álvaro 22 ago 2026): esquema día A/B
+    // alternante, retorna directamente los 8 ejercicios del día (6 fuerza + 2 plyo).
+    function buildStrengthSession(equip, mode, dayLetter) {
+        // Modalidad casa con banda: día A o B según dayLetter (default A)
+        if (equip === 'home_band') {
+            var day = dayLetter || 'A';
+            return STRENGTH_HOME_BAND.filter(function(e){ return e.day === day; });
+        }
         var lib = (equip === 'gym') ? STRENGTH_GYM : STRENGTH_HOME;
         var result = [];
         var blocks = mode ? mode.activeBlocks : ['A','B','C','D','E'];
@@ -50330,7 +50407,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var weekStartStr = localDateStr(_weekStart);
             var weekSessions = [];
 
-            days.forEach(function(dow) { // dow: 0=Sun, 1=Mon..6=Sat (JS convention)
+            days.forEach(function(dow, sessIdxInWeek) { // dow: 0=Sun, 1=Mon..6=Sat (JS convention)
                 var offset = (dow === 0) ? 6 : dow - 1;
                 var sessDate = new Date(_weekStart);
                 sessDate.setDate(_weekStart.getDate() + offset);
@@ -50346,8 +50423,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (mode && mode.skip) return; // no añadir sesión este día
                 }
 
+                // v2.30.1-p87 · [Casa · con banda] día A/B alternante (Álvaro 22 ago 2026)
+                // Semana par empieza por A, impar por B. Dentro de la semana alterna
+                // A,B,A,B... — para 1/2/3 días/sem funciona igual.
+                var dayLetter = (strengthEquip === 'home_band')
+                    ? _homeBandDayLetter(w, sessIdxInWeek) : null;
                 // Generar ejercicios según el modo
-                var session = buildStrengthSession(strengthEquip, mode);
+                var session = buildStrengthSession(strengthEquip, mode, dayLetter);
                 // Ajustar sets según multiplicador si hay modo
                 var adjustedSession = session.map(function(e){
                     if (!mode) return e;
@@ -50355,7 +50437,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
 
                 // Blocks visuales para el card (solo activeBlocks del modo, o los 5 si no hay sync)
-                var activeBlocks = mode ? mode.activeBlocks : ['A','B','C','D','E'];
+                // v2.30.1-p87 · home_band deriva activeBlocks de los phases reales
+                // de los 8 ejercicios seleccionados (no E de core; Álvaro lo hace aparte).
+                var activeBlocks;
+                if (strengthEquip === 'home_band') {
+                    var seen = {};
+                    adjustedSession.forEach(function(e){ if (e.phase) seen[e.phase]=1; });
+                    activeBlocks = Object.keys(seen).sort();
+                } else {
+                    activeBlocks = mode ? mode.activeBlocks : ['A','B','C','D','E'];
+                }
                 var blocks = activeBlocks.map(function(ph) {
                     var bd  = BLOCK_DESC[ph];
                     var exs = adjustedSession.filter(function(e){ return e.phase===ph; });
@@ -50407,8 +50498,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  : (strengthDays === 1 ? [2] : (strengthDays === 3 ? [2,4,6] : [2,4]));
         if(!days.length) { alert('Selecciona al menos un dia de fuerza.'); return; }
 
-        var session  = buildStrengthSession(strengthEquip);
-        var equipLbl = (strengthEquip === 'gym') ? 'Gimnasio' : 'Casa';
+        // v2.30.1-p87 · Preview home_band muestra Día A como ejemplo
+        var sampleDayLetter = (strengthEquip === 'home_band') ? 'A' : null;
+        var session  = buildStrengthSession(strengthEquip, null, sampleDayLetter);
+        var equipLbl = _strengthEquipLabel(strengthEquip);
 
         // Build preview HTML — show one sample week
         var dayNames = ['','L','M','X','J','V','S','D'];
@@ -50417,14 +50510,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!prev) return;
 
         var html2 = '<div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">'
-            +'<div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:8px;">Vista previa — sesión semanal ('+equipLbl+')</div>';
+            +'<div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:8px;">Vista previa — sesión semanal ('+equipLbl+(sampleDayLetter?' · Día '+sampleDayLetter+' de ejemplo':'')+')</div>';
+
+        // Bloques dinámicos: derivar de los ejercicios reales (no fijos ABCDE)
+        var previewBlocks = {};
+        session.forEach(function(e){ if (e.phase) previewBlocks[e.phase] = 1; });
+        var previewBlockList = Object.keys(previewBlocks).sort();
 
         days.forEach(function(dow) {
             html2 += '<div style="margin-bottom:8px;">'
                 +'<div style="font-size:11px;font-weight:700;color:var(--tw);margin-bottom:4px;">'+dayNames[dow]+' — Fuerza 30min</div>';
-            ['A','B','C','D','E'].forEach(function(ph) {
+            previewBlockList.forEach(function(ph) {
                 var bd  = BLOCK_DESC[ph];
+                if (!bd) return;
                 var exs = session.filter(function(e){ return e.phase===ph; });
+                if (!exs.length) return;
                 html2 += '<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:3px;">'
                     +'<div style="width:8px;height:8px;border-radius:2px;background:'+bd.color+';flex-shrink:0;margin-top:2px;"></div>'
                     +'<div style="font-size:10px;color:var(--ts);">'
@@ -50465,7 +50565,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 : (strengthDays === 1 ? [2] : (strengthDays === 3 ? [2,4,6] : [2,4])));
         if (!days.length) days = [2, 4]; // fallback mínimo
         var session  = buildStrengthSession(strengthEquip);
-        var equipLbl = (strengthEquip === 'gym') ? 'Gimnasio' : 'Casa';
+        var equipLbl = _strengthEquipLabel(strengthEquip);
         var today    = localDateStr(new Date());
 
         // Always create/update the standalone strength plan
