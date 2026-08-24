@@ -5328,8 +5328,11 @@ async function _ensurePostMapImage(basePost) {
     if (!ad || ad._mapImg) return;                                  // ya tiene o sin datos
     if (!Array.isArray(ad.records) || ad.records.length <= 10) return; // igual que hasT
     if (typeof window._mrMapSnapshotDataURL !== 'function') return;    // index.html no cargado aún
-    // 1) Snapshot MapLibre → dataURL PNG (600×400 neutro; el feed hace cover-fit)
-    var dataUrl = await window._mrMapSnapshotDataURL(ad.records, ad.shoeColor || null, 600, 400);
+    // 1) Snapshot MapLibre → dataURL PNG (1200×800 = más resolución para que
+    //    el post se vea nítido en el feed y también en el lightbox fullscreen.
+    //    v2.30.1-p87 · Álvaro (23 ago 2026): antes 600×400 → salía pixelado.
+    //    Con dpr=3 aplicado en _mrMapSnapshotDataURL → PNG ~3600×2400 físicos.
+    var dataUrl = await window._mrMapSnapshotDataURL(ad.records, ad.shoeColor || null, 1200, 800);
     if (!dataUrl || dataUrl.indexOf('data:image') !== 0) return;
     // 2) Subir a Storage bucket 'media' (mismo bucket que las fotos del post)
     var sess = (await sb.auth.getSession()).data.session;
@@ -5346,8 +5349,20 @@ async function _ensurePostMapImage(basePost) {
 // Pinta el mapa del post en su canvas: si el post trae act_data._mapImg (posts
 // nuevos) dibuja la imagen de calles; si no (posts antiguos) cae a la silueta
 // plana window.drawTrack — igual que antes. Imagen cover-fit al tamaño del canvas.
+// v2.30.1-p87 · Álvaro (23 ago 2026): resize del canvas backing store al dpr
+// real ANTES de dibujar. Antes cv.width era ~200 px físicos → super pixelado.
+// Ahora cv.width = displayW × dpr → nítido en cualquier densidad de pantalla.
 function _renderPostMap(cv, actData, shoeColor) {
     if (!cv) return;
+    // Resize backing store del canvas al dpr real (cap 3)
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var cssW = cv.clientWidth || cv.getBoundingClientRect().width || 300;
+    var cssH = cv.clientHeight || cv.getBoundingClientRect().height || 200;
+    var targetW = Math.round(cssW * dpr);
+    var targetH = Math.round(cssH * dpr);
+    if (targetW > 0 && cv.width !== targetW) cv.width = targetW;
+    if (targetH > 0 && cv.height !== targetH) cv.height = targetH;
+
     var url = actData && actData._mapImg;
     function fallback() {
         try {
@@ -8880,27 +8895,75 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         card.appendChild(raceBn);
     }
 
-    /* Media */
+    /* Media — v2.30.1-p87 · Álvaro (23 ago 2026)
+       · Foto + mapa: carrusel horizontal deslizable con snap (estilo Strava)
+         en vez de split side-by-side. Dots indicadores debajo.
+       · Track: clicable → abre fullscreen igual que la foto (_openPhotoZoom).
+       · Sin _mapImg (post antiguo o sin cobertura de tiles): silueta plana,
+         no clicable (no hay imagen a la que hacer zoom). */
     if (hasP || hasT) {
         var mw = document.createElement('div');
-        if (hasP && hasT) {
-            mw.style.cssText = 'position:relative;display:flex;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;gap:2px;';
-            var photoSide = document.createElement('div');
-            photoSide.style.cssText = 'flex:1;position:relative;overflow:hidden;cursor:zoom-in;';
-            var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
+        var mapImgUrl = act._mapImg || '';
+
+        function _buildSlideCanvas() {
+            var slide = document.createElement('div');
+            slide.style.cssText = 'flex:0 0 100%;position:relative;height:100%;background:#0d1520;overflow:hidden;scroll-snap-align:start;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
+            var cv = document.createElement('canvas');
+            cv.id = 'club-map-' + post.id;
+            cv.style.cssText = 'width:100%;height:100%;display:block;';
+            slide.appendChild(cv);
+            if (mapImgUrl) {
+                (function(_url){ slide.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
+            }
+            return slide;
+        }
+        function _buildSlidePhoto() {
+            var slide = document.createElement('div');
+            slide.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;cursor:zoom-in;background:#0d1520;scroll-snap-align:start;';
+            var ph = document.createElement('img');
+            ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
-            photoSide.appendChild(ph);
-            (function(_url){ photoSide.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-            mw.appendChild(photoSide);
-            var trackSide = document.createElement('div');
-            trackSide.style.cssText = 'flex:1;overflow:hidden;background:#0d1520;';
-            var cvo = document.createElement('canvas');
-            cvo.id = 'club-map-' + post.id;
-            cvo.width = Math.round(window.innerWidth / 2); cvo.height = 200;
-            cvo.style.cssText = 'width:100%;height:100%;display:block;';
-            trackSide.appendChild(cvo); mw.appendChild(trackSide);
+            slide.appendChild(ph);
+            (function(_url){ slide.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            return slide;
+        }
+
+        if (hasP && hasT) {
+            // Carrusel horizontal con snap → foto y mapa en slides separados
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            var scroller = document.createElement('div');
+            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
+            // Ocultar scrollbar
+            var _hideScroll = document.createElement('style');
+            if (!document.getElementById('_mrCarStyle')) {
+                _hideScroll.id = '_mrCarStyle';
+                _hideScroll.textContent = '._mrCar::-webkit-scrollbar{display:none;}';
+                document.head.appendChild(_hideScroll);
+            }
+            scroller.classList.add('_mrCar');
+            var slidePhoto = _buildSlidePhoto();
+            var slideMap = _buildSlideCanvas();
+            scroller.appendChild(slidePhoto);
+            scroller.appendChild(slideMap);
+            mw.appendChild(scroller);
+            // Dots indicadores estilo Strava
+            var dots = document.createElement('div');
+            dots.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:4px 8px;background:rgba(0,0,0,.35);border-radius:999px;pointer-events:none;z-index:2;';
+            var dot1 = document.createElement('div');
+            dot1.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#fff;transition:opacity .2s;';
+            var dot2 = document.createElement('div');
+            dot2.style.cssText = 'width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);transition:opacity .2s;';
+            dots.appendChild(dot1); dots.appendChild(dot2);
+            mw.appendChild(dots);
+            // Actualizar dots al scrollear
+            scroller.addEventListener('scroll', function() {
+                var half = scroller.scrollWidth / 2;
+                var isSecond = scroller.scrollLeft > half * 0.45;
+                dot1.style.background = isSecond ? 'rgba(255,255,255,.45)' : '#fff';
+                dot2.style.background = isSecond ? '#fff' : 'rgba(255,255,255,.45)';
+            }, { passive: true });
         } else if (hasP) {
-            mw.style.cssText = 'position:relative;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
             ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
             mw.appendChild(ph);
@@ -8909,13 +8972,15 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             mw.appendChild(gb);
             (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
-            mw.style.cssText = 'position:relative;width:100%;height:200px;background:#0d1520;overflow:hidden;flex-shrink:0;';
+            // Solo track
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
-            cvFull.width = Math.round(window.innerWidth);
-            cvFull.height = 200;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
+            if (mapImgUrl) {
+                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
+            }
         }
         // PR overlay: medalla flotante en esquina superior derecha del media.
         // - 1 PR  → medalla específica del tipo (10K, HM, M, etc.)
