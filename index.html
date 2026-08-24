@@ -30530,9 +30530,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return new Promise(function(resolve){
             var td = _mrTrackData(records);
             if (!td) { resolve(null); return; }
-            var W = Math.max(2, Math.round(wCss || 300));
-            var H = Math.max(2, Math.round(hCss || 220));
-            var dpr = Math.min(window.devicePixelRatio || 1, 2);
+            // v2.30.1-p86 · Álvaro (22 ago 2026): hi-res para el share al club.
+            // Antes el PNG se generaba al tamaño del visor (~350 CSS px) con dpr
+            // cap 2 → 700 pixels físicos → se veía pixelado en el feed. Ahora:
+            // tamaño mínimo 900 CSS px (manteniendo aspect ratio del original) +
+            // dpr cap 3 → PNG mínimo ~2700 pixels físicos. Nítido en cualquier
+            // tamaño de renderizado en el feed. Perf: es one-shot al compartir.
+            var wIn = Math.max(2, Math.round(wCss || 300));
+            var hIn = Math.max(2, Math.round(hCss || 220));
+            var W, H;
+            if (wIn < 900) {
+                W = 900;
+                H = Math.round(hIn * (900 / wIn));
+            } else {
+                W = wIn; H = hIn;
+            }
+            var dpr = Math.min(window.devicePixelRatio || 1, 3);
             var holder = null, map = null, settled = false, to = null;
             function flatFallback(){
                 try {
@@ -30554,7 +30567,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 document.body.appendChild(holder);
                 map = new maplibregl.Map({
                     container: holder, style: _MR_MAP_STYLE, interactive:false,
-                    attributionControl:false, preserveDrawingBuffer:true, fadeDuration:0
+                    attributionControl:false, preserveDrawingBuffer:true, fadeDuration:0,
+                    pixelRatio: dpr
                 });
                 map.on('error', function(){});
                 map.on('load', function(){
@@ -30570,7 +30584,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
             }).catch(function(){ if(!settled){ settled=true; cleanup(); flatFallback(); } });
             // Safety timeout: if the map never goes idle (offline/slow tiles), fall back.
-            to = setTimeout(function(){ if(!settled){ settled=true; cleanup(); flatFallback(); } }, 6000);
+            to = setTimeout(function(){ if(!settled){ settled=true; cleanup(); flatFallback(); } }, 8000);
         });
     }
     // Exposed so the lazy-loaded club chunk (club.js) can bake a static street-map PNG
