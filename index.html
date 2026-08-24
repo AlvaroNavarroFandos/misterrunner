@@ -30534,22 +30534,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return new Promise(function(resolve){
             var td = _mrTrackData(records);
             if (!td) { resolve(null); return; }
-            // v2.30.1-p86 · Álvaro (22 ago 2026): hi-res para el share al club.
-            // Antes el PNG se generaba al tamaño del visor (~350 CSS px) con dpr
-            // cap 2 → 700 pixels físicos → se veía pixelado en el feed. Ahora:
-            // tamaño mínimo 900 CSS px (manteniendo aspect ratio del original) +
-            // dpr cap 3 → PNG mínimo ~2700 pixels físicos. Nítido en cualquier
-            // tamaño de renderizado en el feed. Perf: es one-shot al compartir.
+            // v2.30.1-p87 · Álvaro (22 ago 2026): hi-res MÁXIMO para el share al
+            // club. Antes 900 CSS px + dpr cap 3 → ~2700 px físicos. Ahora
+            // 1200 CSS px mínimo + dpr FIJO 3 → ~3600 px físicos → nítido
+            // en cualquier tamaño del feed y en fullscreen (lightbox).
             var wIn = Math.max(2, Math.round(wCss || 300));
             var hIn = Math.max(2, Math.round(hCss || 220));
             var W, H;
-            if (wIn < 900) {
-                W = 900;
-                H = Math.round(hIn * (900 / wIn));
+            if (wIn < 1200) {
+                W = 1200;
+                H = Math.round(hIn * (1200 / wIn));
             } else {
                 W = wIn; H = hIn;
             }
-            var dpr = Math.min(window.devicePixelRatio || 1, 3);
+            var dpr = 3;
             var holder = null, map = null, settled = false, to = null;
             function flatFallback(){
                 try {
@@ -41879,22 +41877,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     detail += `</div>`;
                     html += detail;
                 } else if (sess.exercises && sess.exercises.length > 0) {
-                    // Strength con ejercicios [v2.5.0-p2] botón ▶ condicional si videoUrl
+                    // v2.30.1-p87 · Álvaro (22 ago 2026): plan B — botón INFO
+                    // (i azul) siempre presente en cada ejercicio. Abre modal
+                    // con descripción ampliada del ejercicio (MR_EX_DESC).
                     let detail = `<div class="mr-day-detail" style="display:none;padding:0 12px 10px 12px;background:var(--bsoft);flex-direction:column;gap:4px;padding-top:8px;">`;
                     sess.exercises.forEach((e, i) => {
-                        const _hasVid = !!e.videoUrl;
-                        const _bodyPad = _hasVid ? 'padding-right:44px;' : '';
                         const _escapeAttr = (s) => (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-                        const _playBtn = _hasVid
-                            ? `<button data-vurl="${_escapeAttr(e.videoUrl)}" data-vname="${_escapeAttr(e.name||'')}" data-vmeta="${_escapeAttr((e.sets||0)+'×'+(e.reps||0))}" data-vcue="${_escapeAttr(e.cue||'')}" onclick="event.stopPropagation();window._openMrVideoDemo(this.dataset.vname,this.dataset.vmeta,this.dataset.vcue,this.dataset.vurl)" aria-label="Ver demo del ejercicio" style="position:absolute;top:50%;right:6px;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;color:#fff;-webkit-tap-highlight-color:transparent;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><path d="M8 5v14l11-7z"/></svg></button>`
-                            : '';
+                        const _infoBtn = `<button data-iname="${_escapeAttr(e.name||'')}" data-imeta="${_escapeAttr((e.sets||0)+'×'+(e.reps||0))}" data-icue="${_escapeAttr(e.cue||'')}" onclick="event.stopPropagation();window._openMrExInfo(this.dataset.iname,this.dataset.imeta,this.dataset.icue)" aria-label="Info del ejercicio" style="position:absolute;top:50%;right:6px;transform:translateY(-50%);width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,.18);border:1.5px solid rgba(59,130,246,.55);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;color:#3b82f6;font-family:Georgia,serif;font-weight:900;font-style:italic;font-size:16px;-webkit-tap-highlight-color:transparent;">i</button>`;
                         detail += `<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 9px;background:rgba(250,204,21,.10);border-left:2px solid #facc15;border-radius:0 6px 6px 0;position:relative;">`
                             + `<div style="width:18px;height:18px;border-radius:50%;background:#facc15;color:#000;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${i+1}</div>`
-                            + `<div style="flex:1;min-width:0;${_bodyPad}">`
+                            + `<div style="flex:1;min-width:0;padding-right:40px;">`
                             +   `<div style="font-size:10.5px;font-weight:700;color:var(--tw);">${e.name||''} <span style="font-size:9.5px;color:var(--ts);font-weight:500;">${e.sets||0}×${e.reps||0}</span></div>`
                             +   (e.cue ? `<div style="font-size:9.5px;color:var(--ts);margin-top:2px;line-height:1.3;">${e.cue}</div>` : '')
                             + `</div>`
-                            + _playBtn
+                            + _infoBtn
                             + `</div>`;
                     });
                     detail += `</div>`;
@@ -50059,6 +50055,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 '.mr-ex-line{display:flex;align-items:center;gap:8px;padding:3px 0;}' +
                 '.mr-ex-line + .mr-ex-line{border-top:1px dotted var(--border);padding-top:4px;margin-top:2px;}' +
                 '.mr-ex-text{flex:1;min-width:0;font-size:10px;color:var(--ts);font-weight:500;line-height:1.35;}' +
+                // v2.30.1-p87 · botón INFO (i azul) — reemplaza .mr-ex-play (video demo eliminado)
+                '.mr-ex-info{width:22px;height:22px;border-radius:50%;background:rgba(59,130,246,.18);color:#3b82f6;border:1.5px solid rgba(59,130,246,.55);margin-right:5px;' +
+                'display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;padding:0;' +
+                'font-family:Georgia,serif;font-weight:900;font-style:italic;font-size:13px;line-height:1;' +
+                '-webkit-tap-highlight-color:transparent;transition:transform .12s ease;}' +
+                '.mr-ex-info:hover,.mr-ex-info:active{transform:scale(.92);}' +
                 '.mr-ex-play{width:20px;height:20px;border-radius:6px;background:#dc2626;color:#fff;border:0;margin-right:5px;' +
                 'display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;padding:0;' +
                 'box-shadow:0 1px 3px rgba(220,38,38,.35);-webkit-tap-highlight-color:transparent;' +
@@ -50143,6 +50145,82 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             loading.style.display = 'block';
             loading.textContent = 'Cargando GIF…';
             img.src = url;
+
+        // v2.30.1-p87 · Álvaro (22 ago 2026): plan B — quitados todos los videos
+        // (bucket no cubría todos los slugs). Sustituido por botón info que abre
+        // modal con descripción ampliada del ejercicio. Descripciones curadas
+        // por ejercicio; fallback a cue si no hay entrada específica.
+        window.MR_EX_DESC = {
+            // Fuerza runner (con o sin banda)
+            'Squat con banda':                     'Ponte de pie con los pies a la anchura de los hombros y la banda por encima de las rodillas. Baja como si fueras a sentarte, empujando siempre las rodillas hacia fuera contra la banda durante todo el movimiento. Espalda recta, pecho arriba. Sube apretando glúteos.',
+            'Zancadas con banda':                  'Da un paso amplio hacia delante manteniendo la banda por encima de las rodillas. Baja hasta que la rodilla trasera casi toque el suelo, con la delantera alineada sobre el tobillo. Empuja con el talón delantero para volver. Alterna piernas.',
+            'Zancada caminando':                   'Camina dando zancadas amplias hacia delante. Rodilla trasera casi al suelo, rodilla delantera alineada sobre el tobillo, tronco erguido. Empuja con el talón delantero al volver a subir. Alterna piernas.',
+            'Hip thrust con banda':                'Apoya la parte alta de la espalda en un sofá o banco, banda por encima de las rodillas. Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aprieta glúteos arriba 1 segundo, empujando las rodillas hacia fuera contra la banda. Baja controlado.',
+            'Monster walks laterales':             'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro. Va y ven, 12 pasos por lado.',
+            'Monster Walk con banda corta':        'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro.',
+            'Monster Walk con banda':              'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro.',
+            'Clamshell con banda':                 'Túmbate de lado con las rodillas dobladas 90° y la banda por encima de las rodillas. Manteniendo los pies juntos, abre la pierna de arriba como una almeja, sin rotar la cadera ni mover la pelvis. Aguanta arriba 1 segundo. Baja controlado.',
+            'Kickbacks con banda':                 'Cuadrupedia (a cuatro patas) con la banda entre el pie de una pierna y la mano del brazo opuesto. Manteniendo la rodilla doblada, patea hacia atrás y arriba extendiendo la cadera. Aguanta 1 segundo arriba. Vuelve controlado.',
+            'A-skips (skipping alto)':             'Skipping donde subes la rodilla hasta la altura de la cadera (o más) en cada paso, con brazos activos coordinados. Ritmo constante, aterrizaje con el mediopié. Piensa en "pisar y despegar rápido". 20 pasos alternados.',
+            'Pogo hops':                           'Saltos verticales cortos y seguidos sin flexionar apenas las rodillas — todo el impulso viene de los tobillos. Aterriza silencioso y rebota inmediatamente. Como si fueras un muelle. Piensa en tiempo mínimo de contacto con el suelo.',
+            'Split squat con banda':               'Postura de zancada estática (una pierna delante, otra detrás) con banda por encima de las rodillas. Baja recto 3 segundos, rodilla delantera sobre el tobillo. Aguanta abajo 1 segundo, sube apretando el glúteo. Cambia de pierna.',
+            'Split squat':                         'Postura de zancada estática (una pierna delante, otra detrás). Baja recto 3 segundos, rodilla delantera sobre el tobillo, tronco erguido. Sube apretando el glúteo. Cambia de pierna.',
+            'Standing hip abduction':              'De pie con la banda alrededor de los tobillos, agárrate a algo estable si necesitas equilibrio. Abre una pierna lateralmente contra la resistencia de la banda, sin inclinar el tronco. Baja controlado. Cambia de pierna.',
+            'Fire hydrants con banda':             'Cuadrupedia con banda por encima de las rodillas. Manteniendo la rodilla doblada 90°, abre la pierna lateralmente (como un perro en una boca de incendios) sin rotar la pelvis. La cadera se queda cuadrada al suelo. Aguanta 1 segundo arriba.',
+            'Band knee drive':                     'De pie con la banda alrededor de los tobillos. Sube una rodilla al pecho contra la resistencia de la banda, brazo contrario activo. Aguanta 1 segundo arriba. Baja controlado. Ideal para activar flexores de cadera.',
+            'Bird dog con banda':                  'Cuadrupedia con banda entre la mano y el pie opuestos. Extiende simultáneamente el brazo hacia delante y la pierna hacia atrás hasta línea recta, manteniendo la cadera estable y la lumbar neutra. Aguanta 2 segundos. Alterna lados.',
+            'Estiramiento cadera con banda':       'Túmbate boca arriba con la banda alrededor de la planta del pie. Estira la pierna hacia arriba tirando suavemente de la banda, manteniendo la lumbar pegada al suelo. Aguanta 30 segundos por pierna sin rebotar. Respira.',
+            'Bounding':                            'Zancadas amplias saltando de un pie al otro, buscando máxima distancia y suspensión en el aire. Brazos coordinados, aterrizaje con el mediopié. Piensa "cubre más terreno con menos pasos". 12 pasos por serie.',
+            'Single leg hop':                      'Saltos verticales a una sola pierna. Aterrizaje suave y estable sin dejar caer la rodilla hacia dentro. Absorbe con cadera y rodilla, rebota controlado. Cambia de pierna cada serie.',
+            // Fuerza casa sin equipo (STRENGTH_HOME clásicos)
+            'Puente unilateral (pierna extendida)':'Túmbate boca arriba, una pierna doblada con el pie plantado, la otra estirada al aire. Sube la cadera empujando con el talón de la pierna doblada hasta línea recta hombro-cadera-rodilla. Aguanta 1 segundo arriba, sin dejar caer la cadera lateralmente.',
+            'Nordic Curl (excentrico)':            'De rodillas con los talones enganchados bajo el sofá (o alguien te sujeta). Con el cuerpo recto de rodillas a hombros, baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo.',
+            'Puente de gluteos con marcha':        'Túmbate boca arriba con las rodillas dobladas y los pies plantados. Sube la cadera hasta línea recta y aguanta esa posición. Alterna llevando una rodilla hacia el pecho sin dejar caer la pelvis. Cadera siempre alta y quieta.',
+            'Puente de gluteos en suelo':          'Túmbate boca arriba con las rodillas dobladas y los pies cerca del glúteo. Sube la cadera empujando con los talones hasta línea recta hombro-cadera-rodilla. Aprieta glúteos 1 segundo arriba, baja controlado.',
+            'Elevacion de gemelo':                 'De pie, sube en puntillas todo lo alto que puedas usando la fuerza del gemelo. Aguanta 1 segundo arriba. Baja controlado hasta el suelo (o por debajo si estás en un escalón). Rango completo cada repetición.',
+            'Abduccion sentado con banda corta':   'Sentado en una silla con la banda por encima de las rodillas. Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
+            'Abduccion sentado con banda':         'Sentado en una silla con la banda por encima de las rodillas. Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
+            'Abduccion lateral tumbado':           'Túmbate de lado con las piernas estiradas, cadera apilada. Sube la pierna de arriba lateralmente sin rotar la cadera ni inclinar el tronco. Aguanta 1 segundo arriba. Baja controlado. La banda en tobillos añade resistencia.',
+            'Skater Jumps laterales':              'Salta lateralmente sobre una pierna, aterriza estable en la otra. La pierna que no aterriza puede quedar cruzada atrás como un patinador. Aterrizaje suave con rodilla flexionada, absorbe con la cadera. Repite hacia el otro lado.',
+            'Salto horizontal frontal':            'De pie, salta lo más lejos posible hacia delante usando los brazos como impulso. Aterriza suave a dos pies con las rodillas flexionadas absorbiendo el impacto en la cadera. Estabiliza antes del siguiente salto.',
+            'Caida de escalon con estabilizacion': 'Sube a un escalón bajo. Baja saltando y aterriza a una sola pierna. Aguanta 2 segundos en la posición de aterrizaje sin mover la rodilla ni la cadera. Sube de nuevo. Alterna piernas.',
+            'Jump Squat':                          'Sentadilla profunda completa, luego explosión máxima hacia arriba saltando. Aterrizaje silencioso con las rodillas flexionadas, absorbiendo el impacto. Encadena inmediatamente el siguiente salto.',
+            'Dead Bug':                            'Túmbate boca arriba con brazos y piernas apuntando al techo. Extiende un brazo por detrás de la cabeza y la pierna contraria hacia delante simultáneamente, manteniendo la lumbar pegada al suelo. Exhala al bajar. Vuelve. Alterna.',
+            'Plancha lateral':                     'Apóyate sobre el antebrazo y el borde exterior del pie inferior, cuerpo en línea recta desde los tobillos hasta la cabeza. Cadera alta (no dejes caer). Activa glúteo medio del lado que trabaja. Aguanta el tiempo indicado por lado.',
+            'Plancha con toque de hombro':         'Plancha alta (sobre las manos). Levanta una mano y toca el hombro contrario sin dejar que la cadera rote o se hunda hacia el lado. Vuelve controlado. Alterna manos. Piensa "cadera cuadrada al suelo".',
+            // Fuerza gym (STRENGTH_GYM)
+            'Hip Thrust con barra':                'Apoya la parte alta de la espalda en un banco, barra sobre las caderas (con almohadilla). Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aprieta glúteos 1 segundo arriba. Baja controlado.',
+            'Romanian Deadlift (RDL)':             'De pie con la barra o mancuernas delante. Bisagra de cadera (empuja el culo hacia atrás), baja el peso rozando las piernas manteniendo la espalda recta. Baja hasta media espinilla o hasta donde llegue el rango. Sube apretando glúteos.',
+            'Bulgarian Split Squat':               'Pie de atrás elevado en un banco, pie delantero adelantado. Baja recto 3 segundos hasta que la rodilla trasera casi toque el suelo. Rodilla delantera alineada sobre el tobillo. Empuja para volver. Cambia de pierna.',
+            'Step-up con mancuernas':              'Mancuernas en las manos, pie sobre un cajón o step. Sube empujando solo con la pierna del cajón (sin impulso de la de abajo). Sube completo, aguanta arriba, baja controlado. Cambia de pierna.',
+            'Sentadilla goblet':                   'Sujeta una mancuerna o pesa rusa contra el pecho. Pies a la anchura de los hombros. Baja hasta profundidad completa manteniendo los talones en el suelo, pecho erguido. Sube con fuerza.',
+            'Leg Press en maquina':                'Sentado en la máquina, pies a la anchura de los hombros. Baja controlado a rango completo (rodillas hacia el pecho). Empuja hasta casi extensión sin bloquear la rodilla. Controla la excéntrica.',
+            'Single-leg RDL con mancuerna':        'Mancuerna en una mano. Sobre una sola pierna, haz bisagra de cadera bajando la mancuerna hacia el suelo mientras la pierna libre se estira por detrás. Cadera cuadrada al suelo, control total del tronco. Sube con glúteo.',
+            'Box Jump con caida estabilizada':     'Sube al cajón con un salto potente. Aterriza suave arriba con las rodillas flexionadas. Baja del cajón caminando (no saltando) y aterriza a una sola pierna con rodilla flexionada absorbiendo. Aguanta 2 segundos.',
+            'Squat Jump':                          'Sentadilla profunda, luego explosión máxima hacia arriba con salto vertical. Aterrizaje suave con rodillas flexionadas. Enlaza el siguiente salto sin pausa.',
+            'Pallof Press':                        'De pie de lado a una polea o banda anclada a la altura del pecho. Sujeta con ambas manos. Empuja las manos rectas hacia delante alejándolas del pecho sin dejar que el tronco rote hacia la polea. Core tenso todo el rato. Vuelve controlado.',
+            'Plancha lateral con abduccion':       'Plancha lateral clásica (apoyo antebrazo + borde exterior del pie inferior). Eleva la pierna de arriba lateralmente sin rotar la cadera. Aguanta 1 segundo arriba. Baja. Repite por el lado.',
+        };
+
+        // Modal INFO ampliada del ejercicio (reemplaza el video demo que ya no existe).
+        window._openMrExInfo = function(name, meta, cue) {
+            _ensureModal();
+            document.getElementById('mrVideoTitle').textContent = name || '–';
+            document.getElementById('mrVideoMeta').textContent  = meta || '–';
+            var img     = document.getElementById('mrVideoImg');
+            var loading = document.getElementById('mrVideoLoading');
+            img.style.display = 'none';
+            loading.style.display = 'block';
+            loading.style.textAlign = 'left';
+            loading.style.padding = '18px 22px';
+            loading.style.fontSize = '13px';
+            loading.style.lineHeight = '1.55';
+            loading.style.color = '#e5e7eb';
+            var desc = (window.MR_EX_DESC && window.MR_EX_DESC[name]) || (cue || 'Sin descripción disponible.');
+            loading.textContent = desc;
+            document.getElementById('mrVideoCue').textContent = '';
+            document.getElementById('mrVideoModal').classList.add('open');
+        };
             document.getElementById('mrVideoBackdrop').classList.add('active');
             document.body.style.overflow = 'hidden';
         };
@@ -50173,52 +50251,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function _mrBuildStrengthDetailHtml(exs) {
         var _esc = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         return '<div class="mr-ex-lines">' + exs.map(function(e){
-            var _vBtn = '';
-            if (e.videoUrl) {
-                _vBtn = '<button class="mr-ex-play" data-vurl="'+_esc(e.videoUrl)+'" data-vname="'+_esc(e.name)+'" data-vmeta="'+_esc(e.sets+'x'+e.reps)+'" data-vcue="'+_esc(e.cue)+'" onclick="event.stopPropagation();window._openMrVideoDemo(this.dataset.vname,this.dataset.vmeta,this.dataset.vcue,this.dataset.vurl)" aria-label="Ver demo del ejercicio"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-left:1px;"><path d="M8 5v14l11-7z"/></svg></button>';
-            }
-            return '<div class="mr-ex-line"><div class="mr-ex-text">'+_esc(e.name)+' '+_esc(e.sets+'x'+e.reps)+'</div>'+_vBtn+'</div>';
+            // v2.30.1-p87 · Álvaro (22 ago 2026): botón INFO siempre presente.
+            var _iBtn = '<button class="mr-ex-info" data-iname="'+_esc(e.name)+'" data-imeta="'+_esc(e.sets+'x'+e.reps)+'" data-icue="'+_esc(e.cue||'')+'" onclick="event.stopPropagation();window._openMrExInfo(this.dataset.iname,this.dataset.imeta,this.dataset.icue)" aria-label="Info del ejercicio">i</button>';
+            return '<div class="mr-ex-line"><div class="mr-ex-text">'+_esc(e.name)+' '+_esc(e.sets+'x'+e.reps)+'</div>'+_iBtn+'</div>';
         }).join('') + '</div>';
     }
     window._mrBuildStrengthDetailHtml = _mrBuildStrengthDetailHtml;
 
     var STRENGTH_GYM = [
-        {name:'Hip Thrust con barra',         sets:'4',reps:'8 reps',   cue:'Pausa 1 seg arriba, aprieta gluteos, espalda en banco',              phase:'A',videoUrl:MR_VIDEO_BASE+'wx_1409.gif'},
-        {name:'Romanian Deadlift (RDL)',       sets:'3',reps:'10 reps',  cue:'Bisagra de cadera, espalda recta, peso moderado',                    phase:'A',videoUrl:MR_VIDEO_BASE+'wx_0085.gif'},
-        {name:'Bulgarian Split Squat',         sets:'3',reps:'8/pierna', cue:'Descenso 3 seg controlado, rodilla delantera sobre tobillo',          phase:'A',videoUrl:MR_VIDEO_BASE+'wx_0410.gif'},
-        {name:'Step-up con mancuernas',        sets:'3',reps:'10/pierna',cue:'Empuje con el talon, sin impulso de pierna trasera',                  phase:'A',videoUrl:MR_VIDEO_BASE+'wx_0431.gif'},
-        {name:'Sentadilla goblet',             sets:'3',reps:'12 reps',  cue:'Talones en suelo, pecho erguido, profundidad completa',               phase:'B',videoUrl:MR_VIDEO_BASE+'wx_1760.gif'},
-        {name:'Leg Press en maquina',          sets:'3',reps:'12 reps',  cue:'Rango completo, no bloquear rodilla en extension',                    phase:'B',videoUrl:MR_VIDEO_BASE+'wx_0760.gif'},
-        {name:'Nordic Curl (excentrico)',      sets:'3',reps:'5 reps',   cue:'Bajada muy lenta 4-5 seg, prevencion isquio',                        phase:'B',videoUrl:MR_VIDEO_BASE+'wx_3193.gif'},
-        {name:'Abduccion sentado con banda',   sets:'3',reps:'20 reps',  cue:'Sentado, banda sobre rodillas, abre contra la banda y aguanta 1 seg', phase:'C',videoUrl:MR_VIDEO_BASE+'wx_3006.gif'},
-        {name:'Monster Walk con banda',        sets:'3',reps:'15 pasos', cue:'Banda sobre rodillas, postura atletica, pasos controlados',            phase:'C',videoUrl:MR_VIDEO_BASE+'wx_0628.gif'},
-        {name:'Single-leg RDL con mancuerna',  sets:'3',reps:'8/pierna', cue:'Cadera cuadrada al suelo, control total del tronco',                  phase:'C',videoUrl:MR_VIDEO_BASE+'wx_1757.gif'},
-        {name:'Box Jump con caida estabilizada',sets:'4',reps:'5 saltos',cue:'Baja del cajon y aterriza a una pierna, absorbe con cadera y rodilla',phase:'D',videoUrl:MR_VIDEO_BASE+'wx_1374.gif'},
-        {name:'Squat Jump',                    sets:'3',reps:'8 saltos', cue:'Sentadilla completa, explosion, aterrizaje suave',                    phase:'D',videoUrl:MR_VIDEO_BASE+'wx_0514.gif'},
-        {name:'Salto horizontal frontal',      sets:'3',reps:'8 saltos', cue:'Maxima distancia, aterrizaje suave a dos pies, absorbe con caderas',  phase:'D',videoUrl:MR_VIDEO_BASE+'wx_1472.gif'},
-        {name:'Pallof Press',                  sets:'3',reps:'12/lado',  cue:'Core tenso, no rotar la cadera',                                     phase:'E',videoUrl:MR_VIDEO_BASE+'wx_0979.gif'},
-        {name:'Dead Bug',                      sets:'3',reps:'10 alt.',  cue:'Lumbar pegada al suelo, movimiento lento',                           phase:'E',videoUrl:MR_VIDEO_BASE+'wx_0276.gif'},
-        {name:'Plancha lateral con abduccion', sets:'3',reps:'12/lado',  cue:'Cadera alta, cuerpo en linea, eleva la pierna de arriba sin rotar',    phase:'E',videoUrl:MR_VIDEO_BASE+'wx_1774.gif'},
+        {name:'Hip Thrust con barra',         sets:'4',reps:'8 reps',   cue:'Pausa 1 seg arriba, aprieta gluteos, espalda en banco',              phase:'A',videoUrl:''},
+        {name:'Romanian Deadlift (RDL)',       sets:'3',reps:'10 reps',  cue:'Bisagra de cadera, espalda recta, peso moderado',                    phase:'A',videoUrl:''},
+        {name:'Bulgarian Split Squat',         sets:'3',reps:'8/pierna', cue:'Descenso 3 seg controlado, rodilla delantera sobre tobillo',          phase:'A',videoUrl:''},
+        {name:'Step-up con mancuernas',        sets:'3',reps:'10/pierna',cue:'Empuje con el talon, sin impulso de pierna trasera',                  phase:'A',videoUrl:''},
+        {name:'Sentadilla goblet',             sets:'3',reps:'12 reps',  cue:'Talones en suelo, pecho erguido, profundidad completa',               phase:'B',videoUrl:''},
+        {name:'Leg Press en maquina',          sets:'3',reps:'12 reps',  cue:'Rango completo, no bloquear rodilla en extension',                    phase:'B',videoUrl:''},
+        {name:'Nordic Curl (excentrico)',      sets:'3',reps:'5 reps',   cue:'Bajada muy lenta 4-5 seg, prevencion isquio',                        phase:'B',videoUrl:''},
+        {name:'Abduccion sentado con banda',   sets:'3',reps:'20 reps',  cue:'Sentado, banda sobre rodillas, abre contra la banda y aguanta 1 seg', phase:'C',videoUrl:''},
+        {name:'Monster Walk con banda',        sets:'3',reps:'15 pasos', cue:'Banda sobre rodillas, postura atletica, pasos controlados',            phase:'C',videoUrl:''},
+        {name:'Single-leg RDL con mancuerna',  sets:'3',reps:'8/pierna', cue:'Cadera cuadrada al suelo, control total del tronco',                  phase:'C',videoUrl:''},
+        {name:'Box Jump con caida estabilizada',sets:'4',reps:'5 saltos',cue:'Baja del cajon y aterriza a una pierna, absorbe con cadera y rodilla',phase:'D',videoUrl:''},
+        {name:'Squat Jump',                    sets:'3',reps:'8 saltos', cue:'Sentadilla completa, explosion, aterrizaje suave',                    phase:'D',videoUrl:''},
+        {name:'Salto horizontal frontal',      sets:'3',reps:'8 saltos', cue:'Maxima distancia, aterrizaje suave a dos pies, absorbe con caderas',  phase:'D',videoUrl:''},
+        {name:'Pallof Press',                  sets:'3',reps:'12/lado',  cue:'Core tenso, no rotar la cadera',                                     phase:'E',videoUrl:''},
+        {name:'Dead Bug',                      sets:'3',reps:'10 alt.',  cue:'Lumbar pegada al suelo, movimiento lento',                           phase:'E',videoUrl:''},
+        {name:'Plancha lateral con abduccion', sets:'3',reps:'12/lado',  cue:'Cadera alta, cuerpo en linea, eleva la pierna de arriba sin rotar',    phase:'E',videoUrl:''},
     ];
 
     var STRENGTH_HOME = [
-        {name:'Puente unilateral (pierna extendida)',sets:'4',reps:'12/pierna',  cue:'Una pierna estirada en el aire, sube la cadera con la otra, pausa 1 seg arriba',       phase:'A',videoUrl:MR_VIDEO_BASE+'wx_3645.gif'},
-        {name:'Nordic Curl (excentrico)',            sets:'3',reps:'5 reps',      cue:'Talones enganchados bajo el sofa, bajada muy lenta 4-5 seg, prevencion isquio',      phase:'A',videoUrl:MR_VIDEO_BASE+'wx_3193.gif'},
-        {name:'Puente de gluteos con marcha',        sets:'3',reps:'10/lado',     cue:'Cadera alta y quieta, levanta una rodilla sin caer la pelvis · banda corta opcional', phase:'A',videoUrl:MR_VIDEO_BASE+'wx_3561.gif'},
-        {name:'Puente de gluteos en suelo',          sets:'3',reps:'15 reps',     cue:'Pies cerca del gluteo, pausa 1 seg arriba · banda corta opcional',                   phase:'A',videoUrl:MR_VIDEO_BASE+'wx_3013.gif'},
-        {name:'Split squat',                         sets:'3',reps:'10/pierna',   cue:'Descenso 3 seg, rodilla delantera sobre el tobillo · banda corta opcional',          phase:'B',videoUrl:MR_VIDEO_BASE+'wx_2368.gif'},
-        {name:'Zancada caminando',                   sets:'3',reps:'12/pierna',   cue:'Paso amplio, tronco erguido, empuja con el talon delantero',                         phase:'B',videoUrl:MR_VIDEO_BASE+'wx_1460.gif'},
-        {name:'Elevacion de gemelo',                 sets:'3',reps:'20 reps',     cue:'Rango completo, pausa 1 seg arriba, bajada controlada',                              phase:'B',videoUrl:MR_VIDEO_BASE+'wx_0284.gif'},
-        {name:'Monster Walk con banda corta',        sets:'3',reps:'15 pasos',    cue:'Banda sobre rodillas, postura atletica, pasos controlados',                          phase:'C',videoUrl:MR_VIDEO_BASE+'wx_0628.gif'},
-        {name:'Abduccion sentado con banda corta',   sets:'3',reps:'20 reps',     cue:'Sentado, banda sobre rodillas, abre contra la banda y aguanta 1 seg',                phase:'C',videoUrl:MR_VIDEO_BASE+'wx_3006.gif'},
-        {name:'Abduccion lateral tumbado',           sets:'3',reps:'15/lado',     cue:'De lado, pierna estirada, sube sin rotar la cadera · banda corta en tobillos',       phase:'C',videoUrl:MR_VIDEO_BASE+'wx_0710.gif'},
-        {name:'Skater Jumps laterales',              sets:'4',reps:'10/lado',     cue:'Salto lateral a un pie, aterrizaje estable, fuerza gluteo medio',                    phase:'D',videoUrl:MR_VIDEO_BASE+'wx_3361.gif'},
-        {name:'Salto horizontal frontal',            sets:'3',reps:'8 saltos',    cue:'Maxima distancia, aterrizaje suave a dos pies, absorbe con caderas',                 phase:'D',videoUrl:MR_VIDEO_BASE+'wx_1472.gif'},
-        {name:'Caida de escalon con estabilizacion', sets:'3',reps:'6/pierna',    cue:'Baja del escalon, aterriza a una pierna y aguanta 2 seg sin mover la rodilla',       phase:'D',videoUrl:MR_VIDEO_BASE+'wx_1374.gif'},
-        {name:'Jump Squat',                          sets:'3',reps:'8 saltos',    cue:'Sentadilla completa, explosion maxima, aterrizaje silencioso',                       phase:'D',videoUrl:MR_VIDEO_BASE+'wx_0514.gif'},
-        {name:'Dead Bug',                            sets:'3',reps:'10 alt.',     cue:'Lumbar pegada al suelo durante todo el movimiento, exhala al bajar',                 phase:'E',videoUrl:MR_VIDEO_BASE+'wx_0276.gif'},
-        {name:'Plancha lateral',                     sets:'3',reps:'40 seg/lado', cue:'Cadera alta, cuerpo en linea recta, activa gluteo medio',                            phase:'E',videoUrl:MR_VIDEO_BASE+'wx_3544.gif'},
-        {name:'Plancha con toque de hombro',         sets:'3',reps:'12/lado',     cue:'Plancha alta, toca el hombro contrario sin mover la cadera',                         phase:'E',videoUrl:MR_VIDEO_BASE+'wx_3699.gif'},
+        {name:'Puente unilateral (pierna extendida)',sets:'4',reps:'12/pierna',  cue:'Una pierna estirada en el aire, sube la cadera con la otra, pausa 1 seg arriba',       phase:'A',videoUrl:''},
+        {name:'Nordic Curl (excentrico)',            sets:'3',reps:'5 reps',      cue:'Talones enganchados bajo el sofa, bajada muy lenta 4-5 seg, prevencion isquio',      phase:'A',videoUrl:''},
+        {name:'Puente de gluteos con marcha',        sets:'3',reps:'10/lado',     cue:'Cadera alta y quieta, levanta una rodilla sin caer la pelvis · banda corta opcional', phase:'A',videoUrl:''},
+        {name:'Puente de gluteos en suelo',          sets:'3',reps:'15 reps',     cue:'Pies cerca del gluteo, pausa 1 seg arriba · banda corta opcional',                   phase:'A',videoUrl:''},
+        {name:'Split squat',                         sets:'3',reps:'10/pierna',   cue:'Descenso 3 seg, rodilla delantera sobre el tobillo · banda corta opcional',          phase:'B',videoUrl:''},
+        {name:'Zancada caminando',                   sets:'3',reps:'12/pierna',   cue:'Paso amplio, tronco erguido, empuja con el talon delantero',                         phase:'B',videoUrl:''},
+        {name:'Elevacion de gemelo',                 sets:'3',reps:'20 reps',     cue:'Rango completo, pausa 1 seg arriba, bajada controlada',                              phase:'B',videoUrl:''},
+        {name:'Monster Walk con banda corta',        sets:'3',reps:'15 pasos',    cue:'Banda sobre rodillas, postura atletica, pasos controlados',                          phase:'C',videoUrl:''},
+        {name:'Abduccion sentado con banda corta',   sets:'3',reps:'20 reps',     cue:'Sentado, banda sobre rodillas, abre contra la banda y aguanta 1 seg',                phase:'C',videoUrl:''},
+        {name:'Abduccion lateral tumbado',           sets:'3',reps:'15/lado',     cue:'De lado, pierna estirada, sube sin rotar la cadera · banda corta en tobillos',       phase:'C',videoUrl:''},
+        {name:'Skater Jumps laterales',              sets:'4',reps:'10/lado',     cue:'Salto lateral a un pie, aterrizaje estable, fuerza gluteo medio',                    phase:'D',videoUrl:''},
+        {name:'Salto horizontal frontal',            sets:'3',reps:'8 saltos',    cue:'Maxima distancia, aterrizaje suave a dos pies, absorbe con caderas',                 phase:'D',videoUrl:''},
+        {name:'Caida de escalon con estabilizacion', sets:'3',reps:'6/pierna',    cue:'Baja del escalon, aterriza a una pierna y aguanta 2 seg sin mover la rodilla',       phase:'D',videoUrl:''},
+        {name:'Jump Squat',                          sets:'3',reps:'8 saltos',    cue:'Sentadilla completa, explosion maxima, aterrizaje silencioso',                       phase:'D',videoUrl:''},
+        {name:'Dead Bug',                            sets:'3',reps:'10 alt.',     cue:'Lumbar pegada al suelo durante todo el movimiento, exhala al bajar',                 phase:'E',videoUrl:''},
+        {name:'Plancha lateral',                     sets:'3',reps:'40 seg/lado', cue:'Cadera alta, cuerpo en linea recta, activa gluteo medio',                            phase:'E',videoUrl:''},
+        {name:'Plancha con toque de hombro',         sets:'3',reps:'12/lado',     cue:'Plancha alta, toca el hombro contrario sin mover la cadera',                         phase:'E',videoUrl:''},
     ];
 
     // ══════════════════════════════════════════════════════════════
@@ -50246,15 +50322,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     var STRENGTH_HOME_BAND = [
         // ── DÍA A · cadena posterior + horizontal ─────────────────
         {name:'Squat con banda',              day:'A',sets:'3',reps:'12 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
-        {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:MR_VIDEO_BASE+'wx_1460.gif'},
+        {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:''},
         {name:'Hip thrust con banda',         day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, cadera alta 1 seg arriba, aprieta el gluteo',                   phase:'A',videoUrl:''},
-        {name:'Monster walks laterales',      day:'A',sets:'3',reps:'12/lado',    cue:'Banda encima de rodillas, postura atletica, pasos amplios sin colapsar rodillas',         phase:'C',videoUrl:MR_VIDEO_BASE+'wx_0628.gif'},
+        {name:'Monster walks laterales',      day:'A',sets:'3',reps:'12/lado',    cue:'Banda encima de rodillas, postura atletica, pasos amplios sin colapsar rodillas',         phase:'C',videoUrl:''},
         {name:'Clamshell con banda',          day:'A',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
         {name:'Kickbacks con banda',          day:'A',sets:'3',reps:'12/pierna',  cue:'Cuadrupedia, banda entre pie y mano opuesta, patada atras extendiendo la cadera',         phase:'A',videoUrl:''},
         {name:'A-skips (skipping alto)',      day:'A',sets:'3',reps:'20 pasos',   cue:'Rodilla arriba al pecho, brazos activos, ritmo constante, aterrizaje mediopie',           phase:'D',videoUrl:''},
         {name:'Pogo hops',                    day:'A',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
         // ── DÍA B · unilateral + estabilidad + movilidad ──────────
-        {name:'Split squat con banda',        day:'B',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'A',videoUrl:MR_VIDEO_BASE+'wx_2368.gif'},
+        {name:'Split squat con banda',        day:'B',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'A',videoUrl:''},
         {name:'Standing hip abduction',       day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, abre pierna lateral sin inclinar el tronco',                   phase:'C',videoUrl:''},
         {name:'Fire hydrants con banda',      day:'B',sets:'3',reps:'12/lado',    cue:'Cuadrupedia, banda encima rodillas, abre pierna lateral manteniendo cadera cuadrada',     phase:'C',videoUrl:''},
         {name:'Band knee drive',              day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, sube una rodilla al pecho contra la resistencia de la banda',  phase:'A',videoUrl:''},
