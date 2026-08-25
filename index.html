@@ -20490,57 +20490,70 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const barColor = pct >= 85 ? '#ef4444'
                            : pct >= 65 ? '#f97316'
                            : '#22c55e';
-            const remColor = pct >= 85 ? '#b91c1c'
-                           : pct >= 65 ? '#c2410c'
-                           : '#15803d';
+            const remColor = pct >= 85 ? '#fca5a5'
+                           : pct >= 65 ? '#fed7aa'
+                           : '#86efac';
 
-            // Color título: usa shoe.colorHex con fallback adaptativo claro/oscuro
-            let titleColor = shoe.colorHex || 'var(--tw)';
-            if (shoe.colorHex) {
-                const _h = shoe.colorHex.replace('#','');
-                if (_h.length === 6) {
-                    const _r = parseInt(_h.slice(0,2),16)/255;
-                    const _g = parseInt(_h.slice(2,4),16)/255;
-                    const _b = parseInt(_h.slice(4,6),16)/255;
-                    const _lin = c => c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4);
-                    const _L = 0.2126*_lin(_r) + 0.7152*_lin(_g) + 0.0722*_lin(_b);
-                    const dark = document.body.classList.contains('dark-mode');
-                    // En oscuro luminancia <0.18 → texto claro; en claro luminancia >0.78 → texto oscuro
-                    if (dark && _L < 0.18) titleColor = 'var(--tw)';
-                    else if (!dark && _L > 0.78) titleColor = 'var(--tw)';
-                }
+            // v2.30.1-p88 · Álvaro (24 ago 2026): rediseño V2 Trading Card Premium
+            // — card 200×280 con fondo gradient del color de la zapatilla, imagen
+            // manteniendo aspect ratio original 2.16:1 (92px sobre 200 ancho) para
+            // no deformar la foto. Info block con fondo negro semi-transparente
+            // (glass). Funcionalidad intacta.
+            const stripeColor = shoe.colorHex || '#c4881e';
+            // Oscurecer el color hex para el gradient (multiplicando cada canal por 0.35)
+            function _darken(hex, mul) {
+                var h = hex.replace('#','');
+                if (h.length !== 6) return hex;
+                var r = Math.round(parseInt(h.slice(0,2),16) * mul);
+                var g = Math.round(parseInt(h.slice(2,4),16) * mul);
+                var b = Math.round(parseInt(h.slice(4,6),16) * mul);
+                return '#' + [r,g,b].map(function(v){ var s = v.toString(16); return s.length===1?'0'+s:s; }).join('');
             }
-            const stripeColor = shoe.colorHex || '#22c55e';
+            function _rgba(hex, a) {
+                var h = hex.replace('#','');
+                if (h.length !== 6) return 'rgba(0,0,0,' + a + ')';
+                var r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+                return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+            }
+            var darkColor = _darken(stripeColor, 0.35);
+            var cardShadow = _rgba(stripeColor, 0.35);
 
             const card = document.createElement('div');
             card.setAttribute('data-shoe-id', shoe.id);
-            card.style.cssText = 'flex:0 0 138px;background:var(--cream);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;position:relative;';
+            card.style.cssText = 'flex:0 0 200px;height:280px;background:linear-gradient(180deg,' + stripeColor + ' 0%,' + darkColor + ' 100%);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 8px 24px ' + cardShadow + ';cursor:pointer;transition:transform .18s ease;';
 
-            // Botón cerrar pequeño esquina superior derecha
-            // [S26.C] El × ahora abre un action-sheet con dos opciones:
-            // "Jubilar al Mausoleo" (papelera blanda, conserva historial)
-            // o "Eliminar para siempre" (definitivo, ruta legacy deleteShoe).
+            // Shine overlay (efecto brillo diagonal sutil, feel premium)
+            const shine = document.createElement('div');
+            shine.style.cssText = 'position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.18) 0%,transparent 40%);pointer-events:none;z-index:1;';
+            card.appendChild(shine);
+
+            // Botón cerrar (×) — abre action-sheet Jubilar/Eliminar (S26.C)
             const closeBtn = document.createElement('button');
-            closeBtn.style.cssText = 'position:absolute;top:6px;right:6px;background:rgba(0,0,0,.35);border:none;color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;line-height:1;cursor:pointer;z-index:2;padding:0;display:flex;align-items:center;justify-content:center;';
+            closeBtn.style.cssText = 'position:absolute;top:10px;right:10px;background:rgba(0,0,0,.55);border:none;color:#fff;width:24px;height:24px;border-radius:50%;font-size:11px;line-height:1;cursor:pointer;z-index:3;padding:0;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);-webkit-tap-highlight-color:transparent;';
             closeBtn.textContent = '✕';
             closeBtn.addEventListener('click', (e) => { e.stopPropagation(); _openRetireChoice(shoe.id); });
             card.appendChild(closeBtn);
 
-            // Stripe color superior
-            const stripe = document.createElement('div');
-            stripe.style.cssText = 'height:5px;background:' + stripeColor + ';flex-shrink:0;';
-            card.appendChild(stripe);
+            // Tag categoría en top-left (si aplica)
+            if (shoe.category && SHOE_CATEGORY_LABEL[shoe.category]) {
+                const catBadge = document.createElement('div');
+                catBadge.style.cssText = 'position:absolute;top:10px;left:10px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font-size:9px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;backdrop-filter:blur(6px);z-index:3;font-family:var(--f);';
+                catBadge.textContent = SHOE_CATEGORY_LABEL[shoe.category];
+                card.appendChild(catBadge);
+            }
 
-            // Imagen rectangular grande
+            // Zona imagen · altura 92px = manteniendo aspect ratio 200:92 ≈ 2.17:1
+            // (igual que la card actual 138:64 = 2.16:1). Si el usuario sube una
+            // foto con otra proporción, object-fit:cover recorta sin deformar.
             const imgWrap = document.createElement('label');
-            imgWrap.style.cssText = 'height:64px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0;';
+            imgWrap.style.cssText = 'height:92px;background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0;position:relative;z-index:2;';
             if (shoe.img) {
                 const img = document.createElement('img');
                 img.src = shoe.img;
                 img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
                 imgWrap.appendChild(img);
             } else {
-                imgWrap.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,.25)" stroke-width="1.4" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+                imgWrap.innerHTML = '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" stroke-width="1.4" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
             }
             const fi = document.createElement('input');
             fi.type = 'file';
@@ -20550,46 +20563,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             imgWrap.appendChild(fi);
             card.appendChild(imgWrap);
 
-            // [S26.B] Tag de categoría (Daily / Race carbon / Super / etc.)
-            // Renderizado solo si shoe.category está poblada (zapas pre-S26.B
-            // o "Otra" sin clasificar no muestran tag).
-            var catHtml = '';
-            if (shoe.category && SHOE_CATEGORY_LABEL[shoe.category]) {
-                catHtml = '<span class="mr-shoe-tag cat-' + shoe.category + '">'
-                        + SHOE_CATEGORY_LABEL[shoe.category]
-                        + '</span>';
-            }
-
-            // Info bloque inferior
-            // [S26.C fix] El botón ✏ usa data-action + addEventListener (no
-            // onclick inline) porque tras S26.A los `shoe.id` son UUID strings:
-            // inyectarlos sin comillas en onclick="editShoeKm(<uuid>)" rompía
-            // el parser (a1b2c3d4-e5f6-... se interpretaba como restas de
-            // identificadores no declarados → ReferenceError). Además
-            // `editShoeKm` vive dentro de un IIFE closure y no está en
-            // `window`, así que el inline onclick fallaría incluso quoteando
-            // el UUID. Patrón canónico: addEventListener con closure como el
-            // botón × (línea 12583) y el input file (línea 12606).
-            // v2.29 · Bloque info ligeramente más alto para ganar aire vertical:
-            //   - padding vertical 9→11px (arriba y abajo)
-            //   - gap interno 4→5px
-            //   - barra km: height 3→6px (doble grosor) + radius 2→3
-            //   - km restantes: 9→9.5px
-            // El ancho de la card no cambia (flex:0 0 138px); sólo crece la altura
-            // del info-block, engrosando visualmente la barra de progreso.
+            // Info bloque · glass (fondo negro semi-transparente + blur), ocupa el resto
             const info = document.createElement('div');
-            info.style.cssText = 'padding:11px 10px;display:flex;flex-direction:column;gap:5px;flex:1;';
+            info.style.cssText = 'padding:14px 16px 16px;background:rgba(0,0,0,.55);backdrop-filter:blur(12px);flex:1;display:flex;flex-direction:column;gap:10px;position:relative;z-index:2;border-top:1px solid rgba(255,255,255,.12);';
             info.innerHTML =
-                '<div style="font-size:12px;font-weight:700;color:' + titleColor + ';font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.2;min-height:28.8px;word-break:break-word;">' + shoe.name + '</div>'
-                + catHtml
-                + '<div style="display:flex;align-items:center;gap:5px;">'
-                +   '<span style="font-size:9px;color:var(--ts);font-family:var(--f);">' + shoe.km + '/' + shoe.maxKm + ' km</span>'
-                +   '<button data-action="edit-km" style="background:none;border:1px solid var(--border);border-radius:4px;padding:0 4px;font-size:8px;color:var(--ts);cursor:pointer;font-family:var(--f);">✏</button>'
+                '<div style="font-size:15px;font-weight:900;color:#fff;font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.15;letter-spacing:-.2px;">' + shoe.name + '</div>'
+                + '<div style="display:flex;align-items:baseline;justify-content:space-between;">'
+                +   '<div>'
+                +     '<span style="font-size:20px;font-weight:900;color:#fff;font-variant-numeric:tabular-nums;letter-spacing:-.5px;line-height:1;font-family:var(--f);">' + shoe.km + '</span>'
+                +     '<span style="font-size:10px;font-weight:700;color:rgba(255,255,255,.65);margin-left:3px;font-family:var(--f);">km</span>'
+                +   '</div>'
+                +   '<div style="display:flex;align-items:center;gap:6px;">'
+                +     '<span style="font-size:10.5px;color:rgba(255,255,255,.55);font-weight:600;font-family:var(--f);">de ' + shoe.maxKm + ' km</span>'
+                +     '<button data-action="edit-km" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:2px 6px;font-size:9px;color:#fff;cursor:pointer;font-family:var(--f);-webkit-tap-highlight-color:transparent;">✏</button>'
+                +   '</div>'
                 + '</div>'
-                + '<div style="height:6px;background:rgba(0,0,0,.12);border-radius:3px;overflow:hidden;">'
-                +   '<div style="width:' + pct + '%;height:100%;background:' + barColor + ';"></div>'
-                + '</div>'
-                + '<div style="font-size:9.5px;color:' + remColor + ';font-weight:600;font-family:var(--f);">' + rem + ' km restantes</div>';
+                + '<div style="display:flex;align-items:center;gap:8px;padding-top:2px;">'
+                +   '<div style="flex:1;height:5px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;">'
+                +     '<div style="width:' + pct + '%;height:100%;background:' + barColor + ';border-radius:3px;"></div>'
+                +   '</div>'
+                +   '<span style="font-size:11px;font-weight:800;color:' + remColor + ';font-family:var(--f);">' + rem + '</span>'
+                + '</div>';
             card.appendChild(info);
 
             // Bind del botón ✏ tras inyectar el HTML (closure captura shoe.id)
@@ -48303,13 +48297,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [v2.11.1] El desc de fuerza es multilínea (cabecera + un ejercicio
                 // por línea) y desbordaba con "…". Nos quedamos con la cabecera y
                 // quitamos lo que ya se ve en la pill (duración) y en _equipLbl.
+                // v2.30.1-p88 · Álvaro (24 ago 2026): línea inferior widget Home
+                // simplificada · emoji del ejercicio principal + "Fuerza runner
+                // con [equipamiento]" con la preposición correcta. Antes venía
+                // del sess.desc con filtros complejos que dejaban duración y
+                // etiquetas duplicadas ("Fuerza runner 30 min · Casa con banda").
                 let _descLine = '';
                 if (_isStr) {
-                    _descLine = String(sess.desc||'').split('\n')[0]
-                        .split('·').map(x => x.trim())
-                        .filter(x => x && !/^\d+\s*min$/i.test(x) && !/^(casa|gimnasio)$/i.test(x))
-                        .map(x => x.replace(/\s*\([^)]*\)\s*$/, ''))
-                        .join(' · ');
+                    // Preservar el emoji inicial del sess.desc si existe (viene del
+                    // ejercicio dominante — glúteo/pierna/pliometría/etc.), sino 💪.
+                    var _rawDesc = String(sess.desc||'').split('\n')[0].trim();
+                    var _emojiMatch = _rawDesc.match(/^(\S+)\s+/);
+                    var _emoji = (_emojiMatch && _emojiMatch[1].charCodeAt(0) > 127) ? _emojiMatch[1] : '💪';
+                    // Preposición adaptada al equipamiento
+                    var _equipTxt;
+                    if (sess.strengthEquip === 'gym') _equipTxt = 'en gimnasio';
+                    else if (sess.strengthEquip === 'home_band') _equipTxt = 'con banda elástica';
+                    else _equipTxt = 'en casa';
+                    _descLine = _emoji + ' Fuerza runner ' + _equipTxt;
                 } else {
                     _descLine = (window._mrDescOneLine ? window._mrDescOneLine(sess.desc||'') : '');
                 }
