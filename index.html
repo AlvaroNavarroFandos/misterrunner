@@ -50456,9 +50456,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
 
         // Modal INFO ampliada del ejercicio (reemplaza el video demo que ya no existe).
-        // v2.30.1-p88 · Álvaro (23 ago 2026): Formato V2 elegido — cards por
-        // bloques (Postura inicial · Movimiento · Clave) con icono del músculo.
-        // Si MR_EX_DESC[name] es OBJECT {setup, movement, key, muscle} → V2 cards.
+        // v2.30.1-p88 · Álvaro (23 ago 2026): Formato V2 con hero premium
+        // (icono grande en gradient dorado) + cards por bloques (Postura ·
+        // Movimiento · Clave). Si MR_EX_DESC[name] es OBJECT → V2 cards.
         // Si es STRING (legacy) → fallback a un solo bloque.
         window._openMrExInfo = function(name, meta, cue) {
             _ensureModal();
@@ -50466,9 +50466,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             document.getElementById('mrVideoMeta').textContent  = meta || '–';
             var img     = document.getElementById('mrVideoImg');
             var loading = document.getElementById('mrVideoLoading');
+            // ─ Fix X-imagen-rota: limpiar src del img y ocultar TODO el
+            //   contenedor .mr-video-gif (el X aparecía porque el navegador
+            //   ya había iniciado la carga fallida antes del display:none).
+            img.removeAttribute('src');
             img.style.display = 'none';
+            var gifBox = img.parentElement;
+            if (gifBox) gifBox.style.display = 'none';
+            // Reset estilos del loading (que reutilizo como contenedor V2)
             loading.style.display = 'block';
-            // Reset estilos inline previos
             loading.style.textAlign = 'left';
             loading.style.padding = '0';
             loading.style.fontSize = '';
@@ -50477,13 +50483,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             loading.style.color = '';
             loading.style.background = 'transparent';
             loading.style.borderRadius = '0';
-            loading.style.margin = '10px 12px 14px';
+            loading.style.margin = '0';
 
             var entry = window.MR_EX_DESC && window.MR_EX_DESC[name];
             var html = '';
             if (entry && typeof entry === 'object' && (entry.setup || entry.movement || entry.key)) {
-                // ── V2 · Cards por bloques ─────────────────────────
+                // ── HERO premium · emoji grande en gradient dorado ──
                 var muscleIcon = entry.muscle || '💪';
+                // Subtitulo desde meta (ej. "3×5 reps") + info opcional
+                var subLine = _escHtml(meta || '');
+                html += '<div class="mr-exi-hero">'
+                    +   '<div class="mr-exi-hero-icon">' + muscleIcon + '</div>'
+                    +   '<div class="mr-exi-hero-txt">'
+                    +     '<div class="mr-exi-hero-title">' + _escHtml(name || '') + '</div>'
+                    +     (subLine ? '<div class="mr-exi-hero-sub">' + subLine + '</div>' : '')
+                    +   '</div>'
+                    + '</div>';
+                // ── V2 · Cards por bloques ─────────────────────────
+                html += '<div class="mr-exi-cards">';
                 if (entry.setup) {
                     html += '<div class="mr-exi-card mr-exi-c1">'
                         + '<div class="mr-exi-icon">1</div>'
@@ -50502,10 +50519,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         + '<div class="mr-exi-body"><div class="mr-exi-title">Clave</div>'
                         + '<div class="mr-exi-text">' + _escHtml(entry.key) + '</div></div></div>';
                 }
+                html += '</div>';
             } else {
                 // ── Fallback legacy · un solo bloque texto plano ────
                 var desc = (typeof entry === 'string') ? entry : (cue || 'Sin descripción disponible.');
-                html = '<div style="padding:20px 22px;background:var(--card);border-radius:14px;'
+                html = '<div style="padding:20px 22px;margin:12px;background:var(--card);border-radius:14px;'
                     + 'font-size:14.5px;line-height:1.6;font-weight:500;color:var(--tw);">'
                     + _escHtml(desc) + '</div>';
             }
@@ -50518,19 +50536,34 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function _escHtml(s) {
             return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         }
-        // ── CSS V2 cards (una sola inyección al montar la modal) ──
+        // ── CSS V2 cards + hero premium (una sola inyección al montar la modal) ──
         if (!document.getElementById('mrExiV2Css')) {
             var _css = document.createElement('style');
             _css.id = 'mrExiV2Css';
             _css.textContent =
-                '.mr-exi-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--card);border-left:3px solid;border-radius:0 10px 10px 0;margin-bottom:8px;}'
-              + '.mr-exi-card:last-child{margin-bottom:0;}'
-              + '.mr-exi-icon{flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#0a0a0a;}'
+                // HERO premium con gradient dorado + emoji grande
+                '.mr-exi-hero{display:flex;align-items:center;gap:14px;padding:18px 20px;'
+              + 'background:linear-gradient(135deg, rgba(196,136,30,.18), rgba(139,105,20,.06));'
+              + 'border-bottom:1px solid rgba(196,136,30,.25);margin-bottom:14px;}'
+              + '.mr-exi-hero-icon{flex-shrink:0;width:56px;height:56px;border-radius:16px;'
+              + 'background:linear-gradient(135deg,#c4881e,#8B6914);'
+              + 'display:flex;align-items:center;justify-content:center;'
+              + 'font-size:30px;line-height:1;'
+              + 'font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;'
+              + 'box-shadow:0 4px 14px rgba(196,136,30,.35);}'
+              + '.mr-exi-hero-txt{flex:1;min-width:0;}'
+              + '.mr-exi-hero-title{font-size:17px;font-weight:900;line-height:1.2;color:var(--tw);margin-bottom:4px;letter-spacing:-.2px;}'
+              + '.mr-exi-hero-sub{font-size:11.5px;font-weight:700;letter-spacing:.4px;color:#c4881e;text-transform:uppercase;}'
+                // Container cards
+              + '.mr-exi-cards{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px;}'
+                // Card individual
+              + '.mr-exi-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--card);border-left:3px solid;border-radius:0 10px 10px 0;}'
+              + '.mr-exi-icon{flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#fff;}'
               + '.mr-exi-body{flex:1;min-width:0;}'
               + '.mr-exi-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;color:var(--tm);}'
               + '.mr-exi-text{font-size:13.5px;font-weight:500;line-height:1.5;color:var(--tw);}'
-              + '.mr-exi-c1{border-color:#3b82f6;} .mr-exi-c1 .mr-exi-icon{background:#3b82f6;color:#fff;}'
-              + '.mr-exi-c2{border-color:#10b981;} .mr-exi-c2 .mr-exi-icon{background:#10b981;color:#fff;}'
+              + '.mr-exi-c1{border-color:#3b82f6;} .mr-exi-c1 .mr-exi-icon{background:#3b82f6;}'
+              + '.mr-exi-c2{border-color:#10b981;} .mr-exi-c2 .mr-exi-icon{background:#10b981;}'
               + '.mr-exi-c3{border-color:#c4881e;} .mr-exi-c3 .mr-exi-icon{background:#c4881e;color:#0a0a0a;}';
             document.head.appendChild(_css);
         }
@@ -50541,7 +50574,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             document.body.style.overflow = '';
             setTimeout(function() {
                 var img = document.getElementById('mrVideoImg');
-                if (img) img.src = '';
+                if (img) {
+                    img.removeAttribute('src');
+                    // v2.30.1-p88 · restaurar visibilidad del gif container para
+                    // que la próxima vez que se abra el modal (info o demo) no
+                    // arrastre el display:none del modo info anterior.
+                    var gifBox = img.parentElement;
+                    if (gifBox) gifBox.style.display = '';
+                }
+                // Limpiar contenido custom del loading (cards V2) para que la
+                // próxima apertura como demo GIF vea 'Cargando GIF...' de nuevo.
+                var loading = document.getElementById('mrVideoLoading');
+                if (loading) {
+                    loading.innerHTML = 'Cargando GIF…';
+                    loading.style.background = '';
+                    loading.style.margin = '';
+                    loading.style.padding = '';
+                }
             }, 300);
         };
 
