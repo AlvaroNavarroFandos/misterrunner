@@ -8045,10 +8045,16 @@ async function _loadClubHeaderStats() {
 
 // Photo zoom modal — fullscreen image viewer for club post photos.
 // Click anywhere or ESC closes. Reuses _avFade animation if available.
+// v2.30.1-p88 · Álvaro (23 ago 2026): fullscreen con ZOOM real:
+//  · pinch-to-zoom (2 dedos)
+//  · doble tap → toggle zoom 2×
+//  · pan (arrastrar) cuando está zoomada
+//  · botón X flotante para cerrar (el click en el fondo también cierra,
+//    pero solo cuando la imagen está a escala 1 para no cortar el pinch).
 function _openPhotoZoom(url) {
     if (!url) return;
     var ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);animation:_avFade .18s ease-out;cursor:zoom-out;';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);animation:_avFade .18s ease-out;overflow:hidden;touch-action:none;';
     // Ensure the fade keyframe exists (might not be loaded yet if avatar wasn't tapped)
     if (!document.getElementById('_avFadeStyle')) {
         var st = document.createElement('style');
@@ -8058,15 +8064,152 @@ function _openPhotoZoom(url) {
     }
     var img = document.createElement('img');
     img.src = url;
-    img.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
+    img.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;transform-origin:center center;transition:transform .18s ease-out;will-change:transform;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;';
+    img.draggable = false;
     ov.appendChild(img);
+
+    // Botón cerrar flotante (siempre visible, gestualmente independiente del pan/zoom)
+    var closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label','Cerrar');
+    closeBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.style.cssText = 'position:fixed;top:calc(env(safe-area-inset-top,0) + 14px);right:calc(env(safe-area-inset-right,0) + 14px);z-index:2;width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(6px);';
+    ov.appendChild(closeBtn);
+
+    // ── Estado del zoom/pan ────────────────────────────────────
+    var scale = 1, minScale = 1, maxScale = 5;
+    var tx = 0, ty = 0;
+    var lastDist = 0;
+    var lastCX = 0, lastCY = 0;      // centro del pinch anterior
+    var lastTap = 0;
+    var isPanning = false;
+    var panStartX = 0, panStartY = 0;
+    var panStartTX = 0, panStartTY = 0;
+    var didMove = false;
+
+    function _applyTransform(smooth) {
+        img.style.transition = smooth ? 'transform .18s ease-out' : 'none';
+        img.style.transform = 'translate(' + tx + 'px, ' + ty + 'px) scale(' + scale + ')';
+    }
+    function _dist(t1, t2) {
+        var dx = t1.clientX - t2.clientX;
+        var dy = t1.clientY - t2.clientY;
+        return Math.sqrt(dx*dx + dy*dy);
+    }
+    function _center(t1, t2) {
+        return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+    }
+    function _clampPan() {
+        // Limita el pan a los bordes de la imagen escalada — evita que se salga completamente
+        var rect = img.getBoundingClientRect();
+        var maxX = (rect.width  * scale - window.innerWidth)  / 2;
+        var maxY = (rect.height * scale - window.innerHeight) / 2;
+        if (maxX < 0) tx = 0; else tx = Math.max(-maxX, Math.min(maxX, tx));
+        if (maxY < 0) ty = 0; else ty = Math.max(-maxY, Math.min(maxY, ty));
+    }
+
+    // Touch events
+    img.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            lastDist = _dist(e.touches[0], e.touches[1]);
+            var c = _center(e.touches[0], e.touches[1]);
+            lastCX = c.x; lastCY = c.y;
+            isPanning = false;
+        } else if (e.touches.length === 1) {
+            var now = Date.now();
+            // Doble tap → toggle zoom
+            if (now - lastTap < 300 && !didMove) {
+                e.preventDefault();
+                if (scale > 1) {
+                    scale = 1; tx = 0; ty = 0;
+                } else {
+                    scale = 2.5;
+                    var rect = img.getBoundingClientRect();
+                    var cx = e.touches[0].clientX - (rect.left + rect.width  / 2);
+                    var cy = e.touches[0].clientY - (rect.top  + rect.height / 2);
+                    tx = -cx * (scale - 1);
+                    ty = -cy * (scale - 1);
+                    _clampPan();
+                }
+                _applyTransform(true);
+                lastTap = 0;
+                return;
+            }
+            lastTap = now;
+            didMove = false;
+            if (scale > 1) {
+                isPanning = true;
+                panStartX = e.touches[0].clientX;
+                panStartY = e.touches[0].clientY;
+                panStartTX = tx;
+                panStartTY = ty;
+            }
+        }
+    }, { passive: false });
+
+    img.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            var newDist = _dist(e.touches[0], e.touches[1]);
+            if (lastDist > 0) {
+                var factor = newDist / lastDist;
+                scale = Math.max(minScale, Math.min(maxScale, scale * factor));
+                _clampPan();
+                _applyTransform(false);
+            }
+            lastDist = newDist;
+            didMove = true;
+        } else if (e.touches.length === 1 && isPanning) {
+            e.preventDefault();
+            var dx = e.touches[0].clientX - panStartX;
+            var dy = e.touches[0].clientY - panStartY;
+            tx = panStartTX + dx;
+            ty = panStartTY + dy;
+            _clampPan();
+            _applyTransform(false);
+            if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didMove = true;
+        }
+    }, { passive: false });
+
+    img.addEventListener('touchend', function(e) {
+        if (e.touches.length < 2) lastDist = 0;
+        if (e.touches.length === 0) {
+            isPanning = false;
+            // Auto-snap si scale < 1.05 (evita zooms residuales mínimos)
+            if (scale < 1.05) { scale = 1; tx = 0; ty = 0; _applyTransform(true); }
+        }
+    }, { passive: true });
+
+    // Desktop: wheel para zoom, click en fondo para cerrar (solo si scale === 1)
+    img.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        var factor = e.deltaY < 0 ? 1.12 : 0.89;
+        scale = Math.max(minScale, Math.min(maxScale, scale * factor));
+        _clampPan();
+        _applyTransform(false);
+    }, { passive: false });
+    // Doble click desktop
+    img.addEventListener('dblclick', function(e) {
+        e.preventDefault();
+        if (scale > 1) { scale = 1; tx = 0; ty = 0; }
+        else { scale = 2.5; tx = 0; ty = 0; }
+        _applyTransform(true);
+    });
 
     var close = function() {
         ov.style.animation = '_avFade .14s ease-out reverse';
         setTimeout(function(){ if(ov.parentNode) ov.remove(); document.removeEventListener('keydown', onKey); }, 130);
     };
     var onKey = function(e) { if (e.key === 'Escape') close(); };
-    ov.onclick = close;
+    // Click en el fondo cierra (solo si scale === 1 → si estás zoomada no se cierra por accidente al soltar dedo)
+    ov.addEventListener('click', function(e) {
+        if (e.target === img || e.target === closeBtn) return;
+        if (scale === 1) close();
+    });
+    closeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        close();
+    });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(ov);
 }
