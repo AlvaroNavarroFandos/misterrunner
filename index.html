@@ -40746,8 +40746,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var chevSvg = '<svg class="mr-day-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round" style="flex-shrink:0;transition:transform .2s;"><polyline points="9 18 15 12 9 6"/></svg>';
 
             // Bloques (colapsable): tint suave + barra lateral del color + texto legible
+            // v2.30.1-p87 · Álvaro (23 ago 2026): filtro defensivo · omite bloques
+            // sin ejercicios (aplica a planes ya guardados con los 5 bloques fijos).
             var blocksHtml = '';
-            (sess.blocks||[]).forEach(function(b) {
+            (sess.blocks||[]).filter(function(b){
+                if (!b) return false;
+                var hasDetail = !!(b.detail && String(b.detail).trim());
+                var hasHtml   = !!(b.detailHtml && String(b.detailHtml).indexOf('mr-ex-') > -1);
+                return hasDetail || hasHtml;
+            }).forEach(function(b) {
                 blocksHtml += '<div style="position:relative;background:var(--bg);border-radius:8px;padding:7px 10px 7px 12px;margin-bottom:5px;overflow:hidden;">'
                     + '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:'+(b.color||'#c4881e')+';"></div>'
                     + '<div style="font-size:10px;font-weight:800;color:var(--tw);margin-bottom:3px;">'+b.label+'</div>'
@@ -50154,61 +50161,305 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // modal con descripción ampliada del ejercicio. Descripciones curadas
         // por ejercicio; fallback a cue si no hay entrada específica.
         window.MR_EX_DESC = {
-            // Fuerza runner (con o sin banda)
-            'Squat con banda':                     'Ponte de pie con los pies a la anchura de los hombros y la banda por encima de las rodillas. Baja como si fueras a sentarte, empujando siempre las rodillas hacia fuera contra la banda durante todo el movimiento. Espalda recta, pecho arriba. Sube apretando glúteos.',
-            'Zancadas con banda':                  'Da un paso amplio hacia delante manteniendo la banda por encima de las rodillas. Baja hasta que la rodilla trasera casi toque el suelo, con la delantera alineada sobre el tobillo. Empuja con el talón delantero para volver. Alterna piernas.',
-            'Zancada caminando':                   'Camina dando zancadas amplias hacia delante. Rodilla trasera casi al suelo, rodilla delantera alineada sobre el tobillo, tronco erguido. Empuja con el talón delantero al volver a subir. Alterna piernas.',
-            'Hip thrust con banda':                'Apoya la parte alta de la espalda en un sofá o banco, banda por encima de las rodillas. Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aprieta glúteos arriba 1 segundo, empujando las rodillas hacia fuera contra la banda. Baja controlado.',
-            'Monster walks laterales':             'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro. Va y ven, 12 pasos por lado.',
-            'Monster Walk con banda corta':        'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro.',
-            'Monster Walk con banda':              'Postura semi-sentadilla con banda por encima de las rodillas. Da pasos amplios laterales manteniendo tensión constante en la banda, sin colapsar las rodillas hacia dentro.',
-            'Clamshell con banda':                 'Túmbate de lado con las rodillas dobladas 90° y la banda por encima de las rodillas. Manteniendo los pies juntos, abre la pierna de arriba como una almeja, sin rotar la cadera ni mover la pelvis. Aguanta arriba 1 segundo. Baja controlado.',
-            'Kickbacks con banda':                 'Cuadrupedia (a cuatro patas) con la banda entre el pie de una pierna y la mano del brazo opuesto. Manteniendo la rodilla doblada, patea hacia atrás y arriba extendiendo la cadera. Aguanta 1 segundo arriba. Vuelve controlado.',
-            'A-skips (skipping alto)':             'Skipping donde subes la rodilla hasta la altura de la cadera (o más) en cada paso, con brazos activos coordinados. Ritmo constante, aterrizaje con el mediopié. Piensa en "pisar y despegar rápido". 20 pasos alternados.',
-            'Pogo hops':                           'Saltos verticales cortos y seguidos sin flexionar apenas las rodillas — todo el impulso viene de los tobillos. Aterriza silencioso y rebota inmediatamente. Como si fueras un muelle. Piensa en tiempo mínimo de contacto con el suelo.',
-            'Split squat con banda':               'Postura de zancada estática (una pierna delante, otra detrás) con banda por encima de las rodillas. Baja recto 3 segundos, rodilla delantera sobre el tobillo. Aguanta abajo 1 segundo, sube apretando el glúteo. Cambia de pierna.',
-            'Split squat':                         'Postura de zancada estática (una pierna delante, otra detrás). Baja recto 3 segundos, rodilla delantera sobre el tobillo, tronco erguido. Sube apretando el glúteo. Cambia de pierna.',
-            'Standing hip abduction':              'De pie con la banda alrededor de los tobillos, agárrate a algo estable si necesitas equilibrio. Abre una pierna lateralmente contra la resistencia de la banda, sin inclinar el tronco. Baja controlado. Cambia de pierna.',
-            'Fire hydrants con banda':             'Cuadrupedia con banda por encima de las rodillas. Manteniendo la rodilla doblada 90°, abre la pierna lateralmente (como un perro en una boca de incendios) sin rotar la pelvis. La cadera se queda cuadrada al suelo. Aguanta 1 segundo arriba.',
-            'Band knee drive':                     'De pie con la banda alrededor de los tobillos. Sube una rodilla al pecho contra la resistencia de la banda, brazo contrario activo. Aguanta 1 segundo arriba. Baja controlado. Ideal para activar flexores de cadera.',
-            'Bird dog con banda':                  'Cuadrupedia con banda entre la mano y el pie opuestos. Extiende simultáneamente el brazo hacia delante y la pierna hacia atrás hasta línea recta, manteniendo la cadera estable y la lumbar neutra. Aguanta 2 segundos. Alterna lados.',
-            'Estiramiento cadera con banda':       'Túmbate boca arriba con la banda alrededor de la planta del pie. Estira la pierna hacia arriba tirando suavemente de la banda, manteniendo la lumbar pegada al suelo. Aguanta 30 segundos por pierna sin rebotar. Respira.',
-            'Bounding':                            'Zancadas amplias saltando de un pie al otro, buscando máxima distancia y suspensión en el aire. Brazos coordinados, aterrizaje con el mediopié. Piensa "cubre más terreno con menos pasos". 12 pasos por serie.',
-            'Single leg hop':                      'Saltos verticales a una sola pierna. Aterrizaje suave y estable sin dejar caer la rodilla hacia dentro. Absorbe con cadera y rodilla, rebota controlado. Cambia de pierna cada serie.',
-            // Fuerza casa sin equipo (STRENGTH_HOME clásicos)
-            'Puente unilateral (pierna extendida)':'Túmbate boca arriba, una pierna doblada con el pie plantado, la otra estirada al aire. Sube la cadera empujando con el talón de la pierna doblada hasta línea recta hombro-cadera-rodilla. Aguanta 1 segundo arriba, sin dejar caer la cadera lateralmente.',
-            'Nordic Curl (excentrico)':            'De rodillas con los talones enganchados bajo el sofá (o alguien te sujeta). Con el cuerpo recto de rodillas a hombros, baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo.',
-            'Puente de gluteos con marcha':        'Túmbate boca arriba con las rodillas dobladas y los pies plantados. Sube la cadera hasta línea recta y aguanta esa posición. Alterna llevando una rodilla hacia el pecho sin dejar caer la pelvis. Cadera siempre alta y quieta.',
-            'Puente de gluteos en suelo':          'Túmbate boca arriba con las rodillas dobladas y los pies cerca del glúteo. Sube la cadera empujando con los talones hasta línea recta hombro-cadera-rodilla. Aprieta glúteos 1 segundo arriba, baja controlado.',
-            'Elevacion de gemelo':                 'De pie, sube en puntillas todo lo alto que puedas usando la fuerza del gemelo. Aguanta 1 segundo arriba. Baja controlado hasta el suelo (o por debajo si estás en un escalón). Rango completo cada repetición.',
-            'Abduccion sentado con banda corta':   'Sentado en una silla con la banda por encima de las rodillas. Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
-            'Abduccion sentado con banda':         'Sentado en una silla con la banda por encima de las rodillas. Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
-            'Abduccion lateral tumbado':           'Túmbate de lado con las piernas estiradas, cadera apilada. Sube la pierna de arriba lateralmente sin rotar la cadera ni inclinar el tronco. Aguanta 1 segundo arriba. Baja controlado. La banda en tobillos añade resistencia.',
-            'Skater Jumps laterales':              'Salta lateralmente sobre una pierna, aterriza estable en la otra. La pierna que no aterriza puede quedar cruzada atrás como un patinador. Aterrizaje suave con rodilla flexionada, absorbe con la cadera. Repite hacia el otro lado.',
-            'Salto horizontal frontal':            'De pie, salta lo más lejos posible hacia delante usando los brazos como impulso. Aterriza suave a dos pies con las rodillas flexionadas absorbiendo el impacto en la cadera. Estabiliza antes del siguiente salto.',
-            'Caida de escalon con estabilizacion': 'Sube a un escalón bajo. Baja saltando y aterriza a una sola pierna. Aguanta 2 segundos en la posición de aterrizaje sin mover la rodilla ni la cadera. Sube de nuevo. Alterna piernas.',
-            'Jump Squat':                          'Sentadilla profunda completa, luego explosión máxima hacia arriba saltando. Aterrizaje silencioso con las rodillas flexionadas, absorbiendo el impacto. Encadena inmediatamente el siguiente salto.',
-            'Dead Bug':                            'Túmbate boca arriba con brazos y piernas apuntando al techo. Extiende un brazo por detrás de la cabeza y la pierna contraria hacia delante simultáneamente, manteniendo la lumbar pegada al suelo. Exhala al bajar. Vuelve. Alterna.',
-            'Plancha lateral':                     'Apóyate sobre el antebrazo y el borde exterior del pie inferior, cuerpo en línea recta desde los tobillos hasta la cabeza. Cadera alta (no dejes caer). Activa glúteo medio del lado que trabaja. Aguanta el tiempo indicado por lado.',
-            'Plancha con toque de hombro':         'Plancha alta (sobre las manos). Levanta una mano y toca el hombro contrario sin dejar que la cadera rote o se hunda hacia el lado. Vuelve controlado. Alterna manos. Piensa "cadera cuadrada al suelo".',
-            // Fuerza gym (STRENGTH_GYM)
-            'Hip Thrust con barra':                'Apoya la parte alta de la espalda en un banco, barra sobre las caderas (con almohadilla). Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aprieta glúteos 1 segundo arriba. Baja controlado.',
-            'Romanian Deadlift (RDL)':             'De pie con la barra o mancuernas delante. Bisagra de cadera (empuja el culo hacia atrás), baja el peso rozando las piernas manteniendo la espalda recta. Baja hasta media espinilla o hasta donde llegue el rango. Sube apretando glúteos.',
-            'Bulgarian Split Squat':               'Pie de atrás elevado en un banco, pie delantero adelantado. Baja recto 3 segundos hasta que la rodilla trasera casi toque el suelo. Rodilla delantera alineada sobre el tobillo. Empuja para volver. Cambia de pierna.',
-            'Step-up con mancuernas':              'Mancuernas en las manos, pie sobre un cajón o step. Sube empujando solo con la pierna del cajón (sin impulso de la de abajo). Sube completo, aguanta arriba, baja controlado. Cambia de pierna.',
-            'Sentadilla goblet':                   'Sujeta una mancuerna o pesa rusa contra el pecho. Pies a la anchura de los hombros. Baja hasta profundidad completa manteniendo los talones en el suelo, pecho erguido. Sube con fuerza.',
-            'Leg Press en maquina':                'Sentado en la máquina, pies a la anchura de los hombros. Baja controlado a rango completo (rodillas hacia el pecho). Empuja hasta casi extensión sin bloquear la rodilla. Controla la excéntrica.',
-            'Single-leg RDL con mancuerna':        'Mancuerna en una mano. Sobre una sola pierna, haz bisagra de cadera bajando la mancuerna hacia el suelo mientras la pierna libre se estira por detrás. Cadera cuadrada al suelo, control total del tronco. Sube con glúteo.',
-            'Box Jump con caida estabilizada':     'Sube al cajón con un salto potente. Aterriza suave arriba con las rodillas flexionadas. Baja del cajón caminando (no saltando) y aterriza a una sola pierna con rodilla flexionada absorbiendo. Aguanta 2 segundos.',
-            'Squat Jump':                          'Sentadilla profunda, luego explosión máxima hacia arriba con salto vertical. Aterrizaje suave con rodillas flexionadas. Enlaza el siguiente salto sin pausa.',
-            'Pallof Press':                        'De pie de lado a una polea o banda anclada a la altura del pecho. Sujeta con ambas manos. Empuja las manos rectas hacia delante alejándolas del pecho sin dejar que el tronco rote hacia la polea. Core tenso todo el rato. Vuelve controlado.',
-            'Plancha lateral con abduccion':       'Plancha lateral clásica (apoyo antebrazo + borde exterior del pie inferior). Eleva la pierna de arriba lateralmente sin rotar la cadera. Aguanta 1 segundo arriba. Baja. Repite por el lado.',
+            // ═══ Fuerza runner con banda (STRENGTH_HOME_BAND · DÍA A) ═══
+            'Squat con banda': {
+                muscle: '🦵',
+                setup: 'De pie con los pies a la anchura de los hombros y la banda por encima de las rodillas.',
+                movement: 'Baja como si fueras a sentarte, con espalda recta y pecho arriba. Sube apretando glúteos.',
+                key: 'Empuja siempre las rodillas hacia fuera contra la banda durante todo el movimiento.'
+            },
+            'Zancadas con banda': {
+                muscle: '🦵',
+                setup: 'De pie con la banda por encima de las rodillas, tronco erguido.',
+                movement: 'Da un paso amplio hacia delante. Baja hasta que la rodilla trasera casi toque el suelo, con la delantera alineada sobre el tobillo. Empuja con el talón delantero para volver.',
+                key: 'Alterna piernas cada repetición y mantén siempre las rodillas presionando la banda hacia fuera.'
+            },
+            'Hip thrust con banda': {
+                muscle: '🍑',
+                setup: 'Apoya la parte alta de la espalda en un sofá o banco, con la banda por encima de las rodillas y los pies plantados.',
+                movement: 'Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aguanta 1 segundo arriba. Baja controlado.',
+                key: 'Aprieta glúteos arriba y empuja las rodillas hacia fuera contra la banda todo el rato.'
+            },
+            'Nordic Curl (excéntrico)': {
+                muscle: '🦵',
+                setup: 'De rodillas con los talones enganchados bajo el sofá o algo pesado (o alguien te sujeta los tobillos). Cuerpo recto de rodillas a hombros.',
+                movement: 'Baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo justo antes de tocar.',
+                key: 'Es el ejercicio con más evidencia científica para prevenir lesiones de isquios en corredores (Van Dyk 2019).'
+            },
+            'Nordic Curl (excentrico)': {
+                muscle: '🦵',
+                setup: 'De rodillas con los talones enganchados bajo el sofá (o alguien te sujeta). Cuerpo recto de rodillas a hombros.',
+                movement: 'Baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo.',
+                key: 'Es el ejercicio con más evidencia científica para prevenir lesiones de isquios en corredores.'
+            },
+            'Kickbacks con banda': {
+                muscle: '🍑',
+                setup: 'Cuadrupedia (a cuatro patas) con la banda entre el pie de una pierna y la mano del brazo opuesto.',
+                movement: 'Manteniendo la rodilla doblada, patea hacia atrás y arriba extendiendo la cadera. Aguanta 1 segundo arriba. Vuelve controlado.',
+                key: 'La cadera se queda cuadrada al suelo — no rotes la pelvis para ganar rango.'
+            },
+            'Monster walks laterales': {
+                muscle: '🍑',
+                setup: 'Postura semi-sentadilla con banda por encima de las rodillas.',
+                movement: 'Da pasos amplios laterales manteniendo tensión constante en la banda. 12 pasos por lado.',
+                key: 'No colapses las rodillas hacia dentro — presiónalas hacia fuera todo el rato.'
+            },
+            'Monster Walk con banda corta': {
+                muscle: '🍑',
+                setup: 'Postura semi-sentadilla con banda por encima de las rodillas.',
+                movement: 'Da pasos amplios laterales manteniendo tensión constante en la banda.',
+                key: 'No colapses las rodillas hacia dentro — presiónalas hacia fuera todo el rato.'
+            },
+            'Monster Walk con banda': {
+                muscle: '🍑',
+                setup: 'Postura semi-sentadilla con banda por encima de las rodillas.',
+                movement: 'Da pasos amplios laterales manteniendo tensión constante en la banda.',
+                key: 'No colapses las rodillas hacia dentro — presiónalas hacia fuera todo el rato.'
+            },
+            'Clamshell con banda': {
+                muscle: '🍑',
+                setup: 'Túmbate de lado con las rodillas dobladas 90° y la banda por encima de las rodillas. Pies juntos.',
+                movement: 'Abre la pierna de arriba como una almeja, sin rotar la cadera ni mover la pelvis. Aguanta arriba 1 segundo. Baja controlado.',
+                key: 'La pelvis siempre estable — no ruedes hacia atrás para ganar rango.'
+            },
+            'A-skips (skipping alto)': {
+                muscle: '⚡',
+                setup: 'De pie, en marcha ligera. Brazos coordinados con las piernas.',
+                movement: 'Skipping donde subes la rodilla hasta la altura de la cadera (o más) en cada paso. Ritmo constante, aterrizaje con el mediopié.',
+                key: 'Piensa "pisar y despegar rápido" — tiempo mínimo de contacto con el suelo.'
+            },
+            'Pogo hops': {
+                muscle: '⚡',
+                setup: 'De pie con los pies juntos, brazos ligeramente doblados a los lados.',
+                movement: 'Saltos verticales cortos y seguidos sin flexionar apenas las rodillas — todo el impulso viene de los tobillos. Aterriza silencioso y rebota inmediatamente.',
+                key: 'Como si fueras un muelle — mínimo tiempo de contacto con el suelo, máxima rigidez del tobillo.'
+            },
+            // ═══ Fuerza runner con banda (STRENGTH_HOME_BAND · DÍA B) ═══
+            'Bulgarian Split Squat cargado': {
+                muscle: '🦵',
+                setup: 'Pie de atrás elevado en un banco/silla/sofá, pie delantero adelantado. Sujeta una mochila cargada (5-15 kg) o dos mancuernas a los lados.',
+                movement: 'Baja recto 3 segundos hasta que la rodilla trasera casi toque el suelo, rodilla delantera alineada sobre el tobillo. Empuja con el talón delantero para volver. Cambia de pierna.',
+                key: 'Este ejercicio pesado unilateral mejora la economía de carrera 2-4% en corredores entrenados (Blagrove 2018 meta-análisis).'
+            },
+            'Split squat con banda': {
+                muscle: '🦵',
+                setup: 'Postura de zancada estática (una pierna delante, otra detrás) con banda por encima de las rodillas.',
+                movement: 'Baja recto 3 segundos, rodilla delantera sobre el tobillo. Aguanta abajo 1 segundo, sube apretando el glúteo. Cambia de pierna.',
+                key: 'Empuja las rodillas hacia fuera contra la banda para activar glúteo medio también.'
+            },
+            'Split squat': {
+                muscle: '🦵',
+                setup: 'Postura de zancada estática (una pierna delante, otra detrás).',
+                movement: 'Baja recto 3 segundos, rodilla delantera sobre el tobillo, tronco erguido. Sube apretando el glúteo. Cambia de pierna.',
+                key: 'Rodilla delantera SIEMPRE alineada con el tobillo — no dejes que se colapse hacia dentro.'
+            },
+            'Band knee drive': {
+                muscle: '🦵',
+                setup: 'De pie con la banda alrededor de los tobillos. Agárrate a algo si necesitas equilibrio.',
+                movement: 'Sube una rodilla al pecho contra la resistencia de la banda, brazo contrario activo. Aguanta 1 segundo arriba. Baja controlado.',
+                key: 'Ideal para activar flexores de cadera — clave en el mecanismo del skipping y la potencia de zancada.'
+            },
+            'Standing hip abduction': {
+                muscle: '🍑',
+                setup: 'De pie con la banda alrededor de los tobillos. Agárrate a algo estable si necesitas equilibrio.',
+                movement: 'Abre una pierna lateralmente contra la resistencia de la banda, sin inclinar el tronco. Baja controlado. Cambia de pierna.',
+                key: 'El tronco se queda vertical — no te ladees hacia el otro lado para hacer trampa.'
+            },
+            'Fire hydrants con banda': {
+                muscle: '🍑',
+                setup: 'Cuadrupedia con banda por encima de las rodillas.',
+                movement: 'Manteniendo la rodilla doblada 90°, abre la pierna lateralmente (como un perro en una boca de incendios) sin rotar la pelvis. Aguanta 1 segundo arriba.',
+                key: 'La cadera se queda cuadrada al suelo — no rotes la pelvis para ganar rango.'
+            },
+            'Bird dog con banda': {
+                muscle: '🧘',
+                setup: 'Cuadrupedia con banda entre la mano y el pie opuestos.',
+                movement: 'Extiende simultáneamente el brazo hacia delante y la pierna hacia atrás hasta línea recta, manteniendo la cadera estable y la lumbar neutra. Aguanta 2 segundos. Alterna lados.',
+                key: 'Mantén la cadera cuadrada al suelo — es un ejercicio de estabilidad, no de rango.'
+            },
+            'Estiramiento cadera con banda': {
+                muscle: '🧘',
+                setup: 'Túmbate boca arriba con la banda alrededor de la planta de un pie, con las manos sujetando el otro extremo.',
+                movement: 'Estira la pierna hacia arriba tirando suavemente de la banda, manteniendo la lumbar pegada al suelo. Aguanta 30 segundos por pierna sin rebotar.',
+                key: 'Respira profundo y relaja el músculo cada exhalación — no fuerces el estiramiento.'
+            },
+            'Bounding': {
+                muscle: '⚡',
+                setup: 'De pie, en marcha ligera. Brazos activos coordinados.',
+                movement: 'Zancadas amplias saltando de un pie al otro, buscando máxima distancia y suspensión en el aire. Aterrizaje con el mediopié. 12 pasos por serie.',
+                key: 'Piensa "cubre más terreno con menos pasos" — busca amplitud y potencia máxima en cada salto.'
+            },
+            'Single leg hop': {
+                muscle: '⚡',
+                setup: 'De pie sobre una pierna, la otra ligeramente levantada.',
+                movement: 'Saltos verticales a una sola pierna. Aterrizaje suave y estable sin dejar caer la rodilla hacia dentro. Absorbe con cadera y rodilla, rebota controlado.',
+                key: 'La rodilla NUNCA se debe colapsar hacia dentro — sí lo hace, reduce altura del salto.'
+            },
+            // ═══ Fuerza casa sin equipo (STRENGTH_HOME clásicos) ═══
+            'Puente unilateral (pierna extendida)': {
+                muscle: '🍑',
+                setup: 'Túmbate boca arriba, una pierna doblada con el pie plantado, la otra estirada al aire.',
+                movement: 'Sube la cadera empujando con el talón de la pierna doblada hasta línea recta hombro-cadera-rodilla. Aguanta 1 segundo arriba.',
+                key: 'No dejes caer la cadera lateralmente — mantén la pelvis nivelada todo el rato.'
+            },
+            'Puente de gluteos con marcha': {
+                muscle: '🍑',
+                setup: 'Túmbate boca arriba con las rodillas dobladas y los pies plantados.',
+                movement: 'Sube la cadera hasta línea recta y aguanta esa posición. Alterna llevando una rodilla hacia el pecho sin dejar caer la pelvis.',
+                key: 'Cadera SIEMPRE alta y quieta durante toda la marcha — la pelvis no debe caer al cambiar de pierna.'
+            },
+            'Puente de gluteos en suelo': {
+                muscle: '🍑',
+                setup: 'Túmbate boca arriba con las rodillas dobladas y los pies cerca del glúteo.',
+                movement: 'Sube la cadera empujando con los talones hasta línea recta hombro-cadera-rodilla. Aprieta glúteos 1 segundo arriba. Baja controlado.',
+                key: 'Aprieta glúteos ARRIBA, no arriba estirar la lumbar — la extensión viene de la cadera.'
+            },
+            'Elevacion de gemelo': {
+                muscle: '🦶',
+                setup: 'De pie, opcional con las puntas de los pies en un escalón para más rango.',
+                movement: 'Sube en puntillas todo lo alto que puedas usando la fuerza del gemelo. Aguanta 1 segundo arriba. Baja controlado hasta el suelo (o por debajo si estás en escalón).',
+                key: 'Rango COMPLETO cada repetición — no hagas medio movimiento por ir rápido.'
+            },
+            'Abduccion sentado con banda corta': {
+                muscle: '🍑',
+                setup: 'Sentado en una silla con la banda por encima de las rodillas.',
+                movement: 'Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
+                key: 'Mantén el tronco vertical — no te eches hacia atrás para hacer trampa.'
+            },
+            'Abduccion sentado con banda': {
+                muscle: '🍑',
+                setup: 'Sentado en una silla con la banda por encima de las rodillas.',
+                movement: 'Abre las rodillas contra la resistencia de la banda tanto como puedas. Aguanta 1 segundo abierto. Cierra controlado.',
+                key: 'Mantén el tronco vertical — no te eches hacia atrás para hacer trampa.'
+            },
+            'Abduccion lateral tumbado': {
+                muscle: '🍑',
+                setup: 'Túmbate de lado con las piernas estiradas, cadera apilada. Con banda corta en tobillos añade resistencia.',
+                movement: 'Sube la pierna de arriba lateralmente sin rotar la cadera ni inclinar el tronco. Aguanta 1 segundo arriba. Baja controlado.',
+                key: 'No rotes la cadera hacia atrás — la punta del pie mira hacia delante durante todo el movimiento.'
+            },
+            'Skater Jumps laterales': {
+                muscle: '⚡',
+                setup: 'De pie sobre una pierna, la otra cruzada atrás como un patinador.',
+                movement: 'Salta lateralmente sobre una pierna, aterriza estable en la otra. La pierna que no aterriza queda cruzada atrás. Aterrizaje suave con rodilla flexionada.',
+                key: 'Absorbe con la cadera en cada aterrizaje — no dejes que la rodilla se colapse hacia dentro.'
+            },
+            'Salto horizontal frontal': {
+                muscle: '⚡',
+                setup: 'De pie con los pies a la anchura de los hombros, brazos atrás preparados para impulso.',
+                movement: 'Salta lo más lejos posible hacia delante usando los brazos como impulso. Aterriza suave a dos pies con las rodillas flexionadas absorbiendo el impacto.',
+                key: 'Estabiliza completamente antes del siguiente salto — busca calidad, no velocidad.'
+            },
+            'Caida de escalon con estabilizacion': {
+                muscle: '⚡',
+                setup: 'Sube a un escalón bajo. Prepárate para bajar.',
+                movement: 'Baja saltando y aterriza a una sola pierna. Aguanta 2 segundos en la posición de aterrizaje sin mover la rodilla ni la cadera. Sube de nuevo. Alterna piernas.',
+                key: 'La rodilla NUNCA se colapsa hacia dentro — ese es todo el sentido del ejercicio.'
+            },
+            'Jump Squat': {
+                muscle: '⚡',
+                setup: 'Sentadilla profunda con los pies a la anchura de los hombros.',
+                movement: 'Sentadilla completa, luego explosión máxima hacia arriba saltando. Aterrizaje silencioso con las rodillas flexionadas, absorbiendo el impacto. Encadena inmediatamente el siguiente salto.',
+                key: 'Silencioso en el aterrizaje — si haces ruido es que no absorbes bien con las caderas.'
+            },
+            'Dead Bug': {
+                muscle: '🧘',
+                setup: 'Túmbate boca arriba con brazos y piernas apuntando al techo.',
+                movement: 'Extiende un brazo por detrás de la cabeza y la pierna contraria hacia delante simultáneamente, manteniendo la lumbar pegada al suelo. Vuelve. Alterna lados.',
+                key: 'Exhala al bajar los miembros — la lumbar siempre pegada al suelo, sin arquear.'
+            },
+            'Plancha lateral': {
+                muscle: '🧘',
+                setup: 'Apóyate sobre el antebrazo y el borde exterior del pie inferior, cuerpo en línea recta desde los tobillos hasta la cabeza.',
+                movement: 'Cadera alta (no dejes caer). Activa glúteo medio del lado que trabaja. Aguanta el tiempo indicado por lado.',
+                key: 'La cadera SIEMPRE alta — si empieza a caer, para y descansa antes de continuar.'
+            },
+            'Plancha con toque de hombro': {
+                muscle: '🧘',
+                setup: 'Plancha alta sobre las manos, cuerpo en línea recta.',
+                movement: 'Levanta una mano y toca el hombro contrario sin dejar que la cadera rote o se hunda hacia el lado. Vuelve controlado. Alterna manos.',
+                key: 'Piensa "cadera cuadrada al suelo" — el ejercicio real está en NO moverla, no en tocar el hombro.'
+            },
+            // ═══ Fuerza gym (STRENGTH_GYM) ═══
+            'Zancada caminando': {
+                muscle: '🦵',
+                setup: 'De pie, tronco erguido, sin peso o con mancuernas ligeras.',
+                movement: 'Camina dando zancadas amplias hacia delante. Rodilla trasera casi al suelo, rodilla delantera alineada sobre el tobillo. Empuja con el talón delantero al volver a subir.',
+                key: 'Alterna piernas fluidamente — no des saltitos entre zancadas, camina de verdad.'
+            },
+            'Hip Thrust con barra': {
+                muscle: '🍑',
+                setup: 'Apoya la parte alta de la espalda en un banco, barra sobre las caderas con almohadilla.',
+                movement: 'Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aprieta glúteos 1 segundo arriba. Baja controlado.',
+                key: 'La extensión viene de la cadera, no de la lumbar — aprieta glúteos con fuerza arriba.'
+            },
+            'Romanian Deadlift (RDL)': {
+                muscle: '🍑',
+                setup: 'De pie con la barra o mancuernas delante, pies a la anchura de las caderas.',
+                movement: 'Bisagra de cadera (empuja el culo hacia atrás), baja el peso rozando las piernas manteniendo la espalda recta. Baja hasta media espinilla o donde llegue el rango. Sube apretando glúteos.',
+                key: 'No es una sentadilla — el movimiento es bisagra de cadera, las rodillas apenas se flexionan.'
+            },
+            'Bulgarian Split Squat': {
+                muscle: '🦵',
+                setup: 'Pie de atrás elevado en un banco, pie delantero adelantado. Sujeta mancuernas si añades carga.',
+                movement: 'Baja recto 3 segundos hasta que la rodilla trasera casi toque el suelo. Rodilla delantera alineada sobre el tobillo. Empuja para volver. Cambia de pierna.',
+                key: 'El trabajo lo hace la pierna delantera — la trasera solo mantiene el equilibrio.'
+            },
+            'Step-up con mancuernas': {
+                muscle: '🦵',
+                setup: 'Mancuernas en las manos, pie sobre un cajón o step de altura media.',
+                movement: 'Sube empujando solo con la pierna del cajón (sin impulso de la de abajo). Sube completo, aguanta arriba, baja controlado. Cambia de pierna.',
+                key: 'No te ayudes con la pierna de abajo — todo el trabajo es de la pierna que está en el cajón.'
+            },
+            'Sentadilla goblet': {
+                muscle: '🦵',
+                setup: 'Sujeta una mancuerna o pesa rusa contra el pecho. Pies a la anchura de los hombros.',
+                movement: 'Baja hasta profundidad completa manteniendo los talones en el suelo, pecho erguido. Sube con fuerza.',
+                key: 'Los talones no se levantan del suelo — si te faltan movilidad de tobillo, eleva un poco los talones sobre discos.'
+            },
+            'Leg Press en maquina': {
+                muscle: '🦵',
+                setup: 'Sentado en la máquina, pies a la anchura de los hombros en el plato.',
+                movement: 'Baja controlado a rango completo (rodillas hacia el pecho). Empuja hasta casi extensión sin bloquear la rodilla.',
+                key: 'Controla la bajada — no dejes que el peso te aplaste sin hacer excéntrica activa.'
+            },
+            'Single-leg RDL con mancuerna': {
+                muscle: '🍑',
+                setup: 'Mancuerna en una mano. Sobre una sola pierna con la libre ligeramente atrás.',
+                movement: 'Haz bisagra de cadera bajando la mancuerna hacia el suelo mientras la pierna libre se estira por detrás. Cadera cuadrada al suelo, control total del tronco. Sube con glúteo.',
+                key: 'Cadera cuadrada al suelo — no rotes hacia el lado de la mancuerna al bajar.'
+            },
+            'Box Jump con caida estabilizada': {
+                muscle: '⚡',
+                setup: 'De pie frente a un cajón de altura moderada, brazos preparados.',
+                movement: 'Sube al cajón con un salto potente. Aterriza suave arriba con las rodillas flexionadas. Baja del cajón CAMINANDO (no saltando) y aterriza a una sola pierna con rodilla flexionada absorbiendo. Aguanta 2 segundos.',
+                key: 'BAJA caminando, no saltando — la parte importante es la caída estabilizada a una pierna abajo.'
+            },
+            'Squat Jump': {
+                muscle: '⚡',
+                setup: 'Sentadilla profunda con los pies a la anchura de los hombros.',
+                movement: 'Sentadilla profunda, luego explosión máxima hacia arriba con salto vertical. Aterrizaje suave con rodillas flexionadas.',
+                key: 'Enlaza el siguiente salto sin pausa — busca ritmo continuo y explosivo.'
+            },
+            'Pallof Press': {
+                muscle: '🧘',
+                setup: 'De pie de lado a una polea o banda anclada a la altura del pecho. Sujeta con ambas manos.',
+                movement: 'Empuja las manos rectas hacia delante alejándolas del pecho sin dejar que el tronco rote hacia la polea. Vuelve controlado.',
+                key: 'Core tenso todo el rato — el ejercicio real es NO dejar que el tronco rote hacia la polea.'
+            },
+            'Plancha lateral con abduccion': {
+                muscle: '🧘',
+                setup: 'Plancha lateral clásica: apoyo antebrazo + borde exterior del pie inferior, cuerpo en línea recta.',
+                movement: 'Eleva la pierna de arriba lateralmente sin rotar la cadera. Aguanta 1 segundo arriba. Baja. Repite por el lado.',
+                key: 'Cadera alta durante toda la serie — combina estabilidad lateral y abducción activa.'
+            },
         };
 
         // Modal INFO ampliada del ejercicio (reemplaza el video demo que ya no existe).
-        // v2.30.1-p87 · Álvaro (23 ago 2026): texto legible en light + dark
-        // (usa var(--tw) del theme), tamaño 15px, line-height cómodo, padding
-        // generoso para llenar mejor el modal sin espacios blancos raros.
+        // v2.30.1-p88 · Álvaro (23 ago 2026): Formato V2 elegido — cards por
+        // bloques (Postura inicial · Movimiento · Clave) con icono del músculo.
+        // Si MR_EX_DESC[name] es OBJECT {setup, movement, key, muscle} → V2 cards.
+        // Si es STRING (legacy) → fallback a un solo bloque.
         window._openMrExInfo = function(name, meta, cue) {
             _ensureModal();
             document.getElementById('mrVideoTitle').textContent = name || '–';
@@ -50217,21 +50468,72 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var loading = document.getElementById('mrVideoLoading');
             img.style.display = 'none';
             loading.style.display = 'block';
+            // Reset estilos inline previos
             loading.style.textAlign = 'left';
-            loading.style.padding = '22px 26px 26px';
-            loading.style.fontSize = '15px';
-            loading.style.lineHeight = '1.6';
-            loading.style.fontWeight = '500';
-            loading.style.color = 'var(--tw)';
-            loading.style.background = 'var(--card)';
-            loading.style.borderRadius = '14px';
-            loading.style.margin = '8px 12px 14px';
-            var desc = (window.MR_EX_DESC && window.MR_EX_DESC[name]) || (cue || 'Sin descripción disponible.');
-            loading.textContent = desc;
+            loading.style.padding = '0';
+            loading.style.fontSize = '';
+            loading.style.lineHeight = '';
+            loading.style.fontWeight = '';
+            loading.style.color = '';
+            loading.style.background = 'transparent';
+            loading.style.borderRadius = '0';
+            loading.style.margin = '10px 12px 14px';
+
+            var entry = window.MR_EX_DESC && window.MR_EX_DESC[name];
+            var html = '';
+            if (entry && typeof entry === 'object' && (entry.setup || entry.movement || entry.key)) {
+                // ── V2 · Cards por bloques ─────────────────────────
+                var muscleIcon = entry.muscle || '💪';
+                if (entry.setup) {
+                    html += '<div class="mr-exi-card mr-exi-c1">'
+                        + '<div class="mr-exi-icon">1</div>'
+                        + '<div class="mr-exi-body"><div class="mr-exi-title">Postura inicial</div>'
+                        + '<div class="mr-exi-text">' + _escHtml(entry.setup) + '</div></div></div>';
+                }
+                if (entry.movement) {
+                    html += '<div class="mr-exi-card mr-exi-c2">'
+                        + '<div class="mr-exi-icon">2</div>'
+                        + '<div class="mr-exi-body"><div class="mr-exi-title">Movimiento</div>'
+                        + '<div class="mr-exi-text">' + _escHtml(entry.movement) + '</div></div></div>';
+                }
+                if (entry.key) {
+                    html += '<div class="mr-exi-card mr-exi-c3">'
+                        + '<div class="mr-exi-icon">★</div>'
+                        + '<div class="mr-exi-body"><div class="mr-exi-title">Clave</div>'
+                        + '<div class="mr-exi-text">' + _escHtml(entry.key) + '</div></div></div>';
+                }
+            } else {
+                // ── Fallback legacy · un solo bloque texto plano ────
+                var desc = (typeof entry === 'string') ? entry : (cue || 'Sin descripción disponible.');
+                html = '<div style="padding:20px 22px;background:var(--card);border-radius:14px;'
+                    + 'font-size:14.5px;line-height:1.6;font-weight:500;color:var(--tw);">'
+                    + _escHtml(desc) + '</div>';
+            }
+            loading.innerHTML = html;
             document.getElementById('mrVideoCue').textContent = '';
             document.getElementById('mrVideoBackdrop').classList.add('active');
             document.body.style.overflow = 'hidden';
         };
+        // Helper de escape básico
+        function _escHtml(s) {
+            return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+        // ── CSS V2 cards (una sola inyección al montar la modal) ──
+        if (!document.getElementById('mrExiV2Css')) {
+            var _css = document.createElement('style');
+            _css.id = 'mrExiV2Css';
+            _css.textContent =
+                '.mr-exi-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--card);border-left:3px solid;border-radius:0 10px 10px 0;margin-bottom:8px;}'
+              + '.mr-exi-card:last-child{margin-bottom:0;}'
+              + '.mr-exi-icon{flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#0a0a0a;}'
+              + '.mr-exi-body{flex:1;min-width:0;}'
+              + '.mr-exi-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;color:var(--tm);}'
+              + '.mr-exi-text{font-size:13.5px;font-weight:500;line-height:1.5;color:var(--tw);}'
+              + '.mr-exi-c1{border-color:#3b82f6;} .mr-exi-c1 .mr-exi-icon{background:#3b82f6;color:#fff;}'
+              + '.mr-exi-c2{border-color:#10b981;} .mr-exi-c2 .mr-exi-icon{background:#10b981;color:#fff;}'
+              + '.mr-exi-c3{border-color:#c4881e;} .mr-exi-c3 .mr-exi-icon{background:#c4881e;color:#0a0a0a;}';
+            document.head.appendChild(_css);
+        }
 
         window._closeMrVideoDemo = function() {
             var bd = document.getElementById('mrVideoBackdrop');
@@ -50332,16 +50634,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         {name:'Squat con banda',              day:'A',sets:'3',reps:'12 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
         {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:''},
         {name:'Hip thrust con banda',         day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, cadera alta 1 seg arriba, aprieta el gluteo',                   phase:'A',videoUrl:''},
+        // v2.30.1-p87 · Álvaro (23 ago 2026): Nordic Curl añadido — mejor ejercicio
+        // con evidencia para prevención isquios en runners (Van Dyk 2019).
+        {name:'Nordic Curl (excéntrico)',     day:'A',sets:'3',reps:'5 reps',     cue:'Talones enganchados bajo el sofa, bajada muy lenta 4-5 seg, amortigua con las manos abajo', phase:'B',videoUrl:''},
+        {name:'Kickbacks con banda',          day:'A',sets:'3',reps:'12/pierna',  cue:'Cuadrupedia, banda entre pie y mano opuesta, patada atras extendiendo la cadera',         phase:'A',videoUrl:''},
         {name:'Monster walks laterales',      day:'A',sets:'3',reps:'12/lado',    cue:'Banda encima de rodillas, postura atletica, pasos amplios sin colapsar rodillas',         phase:'C',videoUrl:''},
         {name:'Clamshell con banda',          day:'A',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
-        {name:'Kickbacks con banda',          day:'A',sets:'3',reps:'12/pierna',  cue:'Cuadrupedia, banda entre pie y mano opuesta, patada atras extendiendo la cadera',         phase:'A',videoUrl:''},
         {name:'A-skips (skipping alto)',      day:'A',sets:'3',reps:'20 pasos',   cue:'Rodilla arriba al pecho, brazos activos, ritmo constante, aterrizaje mediopie',           phase:'D',videoUrl:''},
         {name:'Pogo hops',                    day:'A',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
         // ── DÍA B · unilateral + estabilidad + movilidad ──────────
+        // v2.30.1-p87 · Álvaro (23 ago 2026): Bulgarian Split Squat cargado añadido
+        // — fuerza pesada unilateral, +2-4% economía de carrera (Blagrove 2018).
+        {name:'Bulgarian Split Squat cargado',day:'B',sets:'3',reps:'8/pierna',   cue:'Pie trasero elevado, mochila cargada (5-15kg) o mancuernas, descenso 3 seg, empuja con el talon',phase:'B',videoUrl:''},
         {name:'Split squat con banda',        day:'B',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'A',videoUrl:''},
+        {name:'Band knee drive',              day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, sube una rodilla al pecho contra la resistencia de la banda',  phase:'A',videoUrl:''},
         {name:'Standing hip abduction',       day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, abre pierna lateral sin inclinar el tronco',                   phase:'C',videoUrl:''},
         {name:'Fire hydrants con banda',      day:'B',sets:'3',reps:'12/lado',    cue:'Cuadrupedia, banda encima rodillas, abre pierna lateral manteniendo cadera cuadrada',     phase:'C',videoUrl:''},
-        {name:'Band knee drive',              day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, sube una rodilla al pecho contra la resistencia de la banda',  phase:'A',videoUrl:''},
         {name:'Bird dog con banda',           day:'B',sets:'3',reps:'10/lado',    cue:'Cuadrupedia, banda entre mano y pie opuesto, extiende brazo y pierna contrarios',         phase:'C',videoUrl:''},
         {name:'Estiramiento cadera con banda',day:'B',sets:'2',reps:'30 seg/lado',cue:'Tumbado, banda alrededor del pie, estira pierna arriba manteniendo lumbar en el suelo',   phase:'A',videoUrl:''},
         {name:'Bounding',                     day:'B',sets:'3',reps:'12 pasos',   cue:'Zancadas amplias saltando de un pie a otro, brazos activos, maxima distancia por salto',  phase:'D',videoUrl:''},
