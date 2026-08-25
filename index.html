@@ -20515,8 +20515,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
                 return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
             }
+            // v2.30.1-p88 · Álvaro (25 ago 2026): fix contraste barra/% en cards
+            // con color de zapa muy oscuro (ej. adidas negras) sobre el info block
+            // glass (rgba(0,0,0,.55)) → invisibles. Si luma < 0.35 lo aclaramos
+            // mezclando con blanco un 60% para preservar el tint pero garantizar
+            // legibilidad. Aplica en dark y light (el fondo del info block es
+            // siempre oscuro por diseño, no cambia con theme).
+            function _luma(hex) {
+                var h = hex.replace('#','');
+                if (h.length !== 6) return 0.5;
+                var r = parseInt(h.slice(0,2),16)/255;
+                var g = parseInt(h.slice(2,4),16)/255;
+                var b = parseInt(h.slice(4,6),16)/255;
+                function _lin(c){ return c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+                return 0.2126*_lin(r) + 0.7152*_lin(g) + 0.0722*_lin(b);
+            }
+            function _lighten(hex, mix) {
+                var h = hex.replace('#','');
+                if (h.length !== 6) return hex;
+                var r = Math.round(parseInt(h.slice(0,2),16) + (255 - parseInt(h.slice(0,2),16)) * mix);
+                var g = Math.round(parseInt(h.slice(2,4),16) + (255 - parseInt(h.slice(2,4),16)) * mix);
+                var b = Math.round(parseInt(h.slice(4,6),16) + (255 - parseInt(h.slice(4,6),16)) * mix);
+                return '#' + [r,g,b].map(function(v){ var s = v.toString(16); return s.length===1?'0'+s:s; }).join('');
+            }
             var darkColor = _darken(stripeColor, 0.35);
             var cardShadow = _rgba(stripeColor, 0.35);
+            // Color legible sobre fondo glass oscuro. Umbral 0.35 pillado tras
+            // pruebas: negros puros (#000, #0a0a0a), grises oscuros, azules
+            // marino cerrados quedan casi invisibles por debajo.
+            var displayColor = (_luma(stripeColor) < 0.35) ? _lighten(stripeColor, 0.60) : stripeColor;
+            var displayShadow = _rgba(displayColor, 0.5);
 
             const card = document.createElement('div');
             card.setAttribute('data-shoe-id', shoe.id);
@@ -20581,12 +20609,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +   '</div>'
                 +   '<button data-action="edit-km" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:3px 7px;font-size:10px;color:#fff;cursor:pointer;font-family:var(--f);-webkit-tap-highlight-color:transparent;">✏</button>'
                 + '</div>'
-                // Barra + porcentaje (color de la zapatilla)
+                // Barra + porcentaje (color de la zapatilla, con contraste adaptativo)
                 + '<div style="display:flex;align-items:center;gap:8px;">'
                 +   '<div style="flex:1;height:5px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;">'
-                +     '<div style="width:' + pct + '%;height:100%;background:' + stripeColor + ';border-radius:3px;box-shadow:0 0 6px ' + _rgba(stripeColor, 0.5) + ';"></div>'
+                +     '<div style="width:' + pct + '%;height:100%;background:' + displayColor + ';border-radius:3px;box-shadow:0 0 6px ' + displayShadow + ';"></div>'
                 +   '</div>'
-                +   '<span style="font-size:11px;font-weight:800;color:' + stripeColor + ';font-family:var(--f);text-shadow:0 1px 2px rgba(0,0,0,.3);">' + pct + '%</span>'
+                +   '<span style="font-size:11px;font-weight:800;color:' + displayColor + ';font-family:var(--f);text-shadow:0 1px 2px rgba(0,0,0,.3);">' + pct + '%</span>'
                 + '</div>';
             card.appendChild(info);
 
