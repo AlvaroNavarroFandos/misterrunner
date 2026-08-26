@@ -48429,10 +48429,142 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         function _rdSaveToStorage(strategy) {
             try {
+                strategy._updatedAt = new Date().toISOString();
                 localStorage.setItem(_rdStorageKey(), JSON.stringify(strategy));
                 if (window.profileData) window.profileData.raceStrategy = strategy;
+                // [v2.30.1-p95] Fire & forget Supabase sync
+                _rdSaveToSupabase(strategy);
             } catch(e) {
                 console.warn('[Race Day] Save error:', e);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // p95 · Persistencia Supabase (tabla user_race_strategies)
+        // ═══════════════════════════════════════════════════════════════════
+        // Merge policy: local es fuente de verdad. Al arrancar hacemos fetch
+        // remoto en background; si remoto es más nuevo, adoptamos. Si local es
+        // más nuevo, push. Save siempre escribe local + Supabase (fire&forget).
+        // Points del gpx se downsamplean a 200 max para no inflar la row.
+        // ═══════════════════════════════════════════════════════════════════
+        function _rdDownsamplePoints(pts, MAX) {
+            if (!pts || pts.length === 0) return [];
+            MAX = MAX || 200;
+            if (pts.length <= MAX) return pts.map(function(p){
+                return { lat:+p.lat.toFixed(6), lon:+p.lon.toFixed(6),
+                         ele:Math.round((p.ele||0)*10)/10, dist:Math.round(p.dist||0) };
+            });
+            var step = Math.max(1, Math.ceil(pts.length / MAX));
+            var out = [];
+            for (var i = 0; i < pts.length; i += step) {
+                var p = pts[i];
+                out.push({ lat:+p.lat.toFixed(6), lon:+p.lon.toFixed(6),
+                           ele:Math.round((p.ele||0)*10)/10, dist:Math.round(p.dist||0) });
+            }
+            // Asegurar que el último punto siempre esté (distancia total exacta)
+            var last = pts[pts.length-1];
+            var lastOut = out[out.length-1];
+            if (Math.abs((lastOut.dist||0) - Math.round(last.dist||0)) > 5) {
+                out.push({ lat:+last.lat.toFixed(6), lon:+last.lon.toFixed(6),
+                           ele:Math.round((last.ele||0)*10)/10, dist:Math.round(last.dist||0) });
+            }
+            return out;
+        }
+
+        function _rdSaveToSupabase(strategy) {
+            try {
+                var sb = window._sbClient;
+                if (!sb || !sb.auth) return Promise.resolve({error:'no client'});
+                return sb.auth.getSession().then(function(res){
+                    var session = res && res.data && res.data.session;
+                    if (!session || !session.user) return {error:'no session'};
+                    var ap = _rdGetActivePlan();
+                    var planId = (ap && ap.createdAt) ? String(ap.createdAt) : null;
+                    var gpx = strategy.gpx || {};
+                    var info = strategy.raceInfo || {};
+                    var payload = {
+                        user_id: session.user.id,
+                        plan_id: planId,
+                        race_name: info.name || null,
+                        race_date: info.date || null,
+                        race_start_time: info.startTime || null,
+                        race_location: (info.location && info.location.name) || null,
+                        target_time_secs: strategy.targetTimeSecs || null,
+                        total_km: gpx.totalKm ? +gpx.totalKm.toFixed(3) : null,
+                        elev_gain: gpx.elevGain || null,
+                        elev_loss: gpx.elevLoss || null,
+                        gpx_meta: {
+                            name: gpx.name || '',
+                            minEle: gpx.minEle || 0,
+                            maxEle: gpx.maxEle || 0,
+                            points: _rdDownsamplePoints(gpx.points, 200)
+                        },
+                        splits: strategy.splits || null,
+                        aid_stations: strategy.aidStations || [],
+                        updated_at: new Date().toISOString()
+                    };
+                    return sb.from('user_race_strategies')
+                        .upsert(payload, { onConflict:'user_id' })
+                        .then(function(r){
+                            if (r.error) console.warn('[Race Day] Supabase upsert error:', r.error.message);
+                            return r;
+                        });
+                }).catch(function(e){
+                    console.warn('[Race Day] Supabase save error:', e);
+                    return {error:e};
+                });
+            } catch(e) {
+                console.warn('[Race Day] Supabase save unexpected:', e);
+                return Promise.resolve({error:e});
+            }
+        }
+
+        function _rdLoadFromSupabase() {
+            try {
+                var sb = window._sbClient;
+                if (!sb || !sb.auth) return Promise.resolve(null);
+                return sb.auth.getSession().then(function(res){
+                    var session = res && res.data && res.data.session;
+                    if (!session || !session.user) return null;
+                    return sb.from('user_race_strategies')
+                        .select('*')
+                        .eq('user_id', session.user.id)
+                        .maybeSingle()
+                        .then(function(r){
+                            if (r.error) { console.warn('[Race Day] Supabase load error:', r.error.message); return null; }
+                            if (!r.data) return null;
+                            var row = r.data;
+                            var meta = row.gpx_meta || {};
+                            return {
+                                gpx: {
+                                    points: meta.points || [],
+                                    totalKm: row.total_km || 0,
+                                    elevGain: row.elev_gain || 0,
+                                    elevLoss: row.elev_loss || 0,
+                                    name: meta.name || '',
+                                    minEle: meta.minEle || 0,
+                                    maxEle: meta.maxEle || 0
+                                },
+                                splits: row.splits || [],
+                                targetTimeSecs: row.target_time_secs || null,
+                                raceInfo: {
+                                    name: row.race_name || '',
+                                    date: row.race_date || '',
+                                    startTime: row.race_start_time || '',
+                                    location: { name: row.race_location || '' }
+                                },
+                                aidStations: row.aid_stations || [],
+                                _updatedAt: row.updated_at,
+                                _remotePlanId: row.plan_id
+                            };
+                        });
+                }).catch(function(e){
+                    console.warn('[Race Day] Supabase load error:', e);
+                    return null;
+                });
+            } catch(e) {
+                console.warn('[Race Day] Supabase load unexpected:', e);
+                return Promise.resolve(null);
             }
         }
         function _rdGetStrategy() {
@@ -48604,7 +48736,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 // GAP: subida penaliza más que bajada beneficia
                 // Base: +6s/km por metro subida, -3s/km por metro bajada
-                var paceAdjust = elevChange > 0 ? elevChange * 6 : elevChange * 3;
+                // [v2.30.1-p94-fix7] GAP "suave B": subida +3s/m · bajada -1.5s/m
+                // (antes +6/-3, era demasiado agresivo para carreras llanas).
+                // Ritmos ahora dentro de rango 24s aprox en Valencia vs 48s antes.
+                var paceAdjust = elevChange > 0 ? elevChange * 3 : elevChange * 1.5;
                 var pace = Math.round(basePace + paceAdjust);
                 pace = Math.max(180, Math.min(480, pace)); // clamp 3:00-8:00
 
@@ -48618,7 +48753,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var eleStart2 = pts[lastIdx].ele;
                 var eleEnd2 = pts[pts.length - 1].ele;
                 var elevChange2 = Math.round(eleEnd2 - eleStart2);
-                var paceAdjust2 = elevChange2 > 0 ? elevChange2 * 6 : elevChange2 * 3;
+                var paceAdjust2 = elevChange2 > 0 ? elevChange2 * 3 : elevChange2 * 1.5;
                 var pace2 = Math.round(basePace + paceAdjust2);
                 pace2 = Math.max(180, Math.min(480, pace2));
                 splits.push({ km:wholeKm + partialKm, pace:pace2, elevChange:elevChange2, cumTime:0, partial:true, partialKm:partialKm });
@@ -49059,13 +49194,41 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
         };
 
-        // Init: carga desde localStorage al arrancar
+        // Init: carga desde localStorage al arrancar + sync Supabase en background
         function _rdBoot() {
             try {
                 var s = _rdLoadFromStorage();
                 if (s && window.profileData) window.profileData.raceStrategy = s;
                 try { window._raceDayRefreshRow(); } catch(_){}
             } catch(_){}
+
+            // [v2.30.1-p95] Sync Supabase en background (2s tras boot para dar tiempo al auth)
+            setTimeout(function(){
+                try {
+                    _rdLoadFromSupabase().then(function(remote){
+                        if (!remote) return; // Sin remoto o sin session
+                        var local = _rdLoadFromStorage();
+                        var localTs = (local && local._updatedAt) ? new Date(local._updatedAt).getTime() : 0;
+                        var remoteTs = remote._updatedAt ? new Date(remote._updatedAt).getTime() : 0;
+                        if (!local || remoteTs > localTs) {
+                            // Remoto es más nuevo → adoptar
+                            localStorage.setItem(_rdStorageKey(), JSON.stringify(remote));
+                            if (window.profileData) window.profileData.raceStrategy = remote;
+                            // Re-render si el sheet ya está abierto
+                            var loaded = document.getElementById('raceday-loaded-state');
+                            if (loaded && loaded.style.display !== 'none') {
+                                try { window._raceDayRenderLoaded(); } catch(_){}
+                            }
+                            try { window._raceDayRefreshRow(); } catch(_){}
+                            console.log('[Race Day] Sync desde Supabase aplicado (remoto más nuevo)');
+                        } else if (local && localTs > remoteTs) {
+                            // Local es más nuevo → push
+                            _rdSaveToSupabase(local);
+                            console.log('[Race Day] Push a Supabase (local más nuevo)');
+                        }
+                    });
+                } catch(_){}
+            }, 2000);
         }
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', _rdBoot);
@@ -60006,7 +60169,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p94';
+        window.__mrCorosVersion = 'v2.30.1-p95';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
