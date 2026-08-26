@@ -6853,12 +6853,15 @@ function _openPRsSheet(userId, displayName, isSelf) {
         'padding-bottom:max(16px,env(safe-area-inset-bottom,0px) + 14px)'
     ].join(';');
 
-    // ── Grid de PRs ────────────────────────────────────────────────────
+    // ── Lista de PRs (filas horizontales) ───────────────────────────────
+    // v2.30.1-p89 · Álvaro (26 ago 2026): layout V2 elegido — filas
+    // horizontales con accent bar del color del tier + medalla con ribbon +
+    // pill dorado con la fecha. Antes: grid 3 columnas.
     var grid = document.createElement('div');
     grid.id = 'mr-prs-grid';
     grid.style.cssText = [
-        'display:grid',
-        'grid-template-columns:repeat(3,1fr)',
+        'display:flex',
+        'flex-direction:column',
         'gap:8px',
         'padding:4px 14px 16px'
     ].join(';');
@@ -6884,12 +6887,12 @@ function _openPRsSheet(userId, displayName, isSelf) {
         '</div>';
     scrollArea.appendChild(section2Title);
 
-    // ── Grid de hitos ──────────────────────────────────────────────────
+    // ── Lista de hitos (filas horizontales) ─────────────────────────────
     var gridMs = document.createElement('div');
     gridMs.id = 'mr-prs-milestones-grid';
     gridMs.style.cssText = [
-        'display:grid',
-        'grid-template-columns:repeat(3,1fr)',
+        'display:flex',
+        'flex-direction:column',
         'gap:8px',
         'padding:0 14px 6px'
     ].join(';');
@@ -6913,12 +6916,12 @@ function _openPRsSheet(userId, displayName, isSelf) {
         '</div>';
     scrollArea.appendChild(section3Title);
 
-    // ── Grid de hitos de racha (3 columnas, 1 fila) ───────────────────
+    // ── Lista de hitos de racha (filas horizontales) ────────────────────
     var gridStreak = document.createElement('div');
     gridStreak.id = 'mr-prs-streak-grid';
     gridStreak.style.cssText = [
-        'display:grid',
-        'grid-template-columns:repeat(3,1fr)',
+        'display:flex',
+        'flex-direction:column',
         'gap:8px',
         'padding:0 14px 6px'
     ].join(';');
@@ -7097,8 +7100,8 @@ function _openPRsSheet(userId, displayName, isSelf) {
                         + '<span style="width:3px;height:3px;border-radius:50%;background:var(--gold);animation:mrPrsDot 1.4s infinite;animation-delay:.4s;"></span>'
                     + '</span>';
                 // Volver a los grids originales y relanzar
-                grid.style.display = 'grid';
-                grid.style.flexDirection = '';
+                grid.style.display = 'flex';
+                grid.style.flexDirection = 'column';
                 grid.style.alignItems = '';
                 grid.style.gap = '8px';
                 grid.style.padding = '4px 14px 16px';
@@ -7145,16 +7148,21 @@ function _openPRsSheet(userId, displayName, isSelf) {
     back.addEventListener('click', function(e) { if (e.target === back) closeMe(); });
 }
 
-// ── Card individual del grid ─────────────────────────────────────────
+// ── Fila individual de la lista de PRs (V2 + ribbon + pill dorado) ────
+// v2.30.1-p89 · Álvaro (26 ago 2026): rediseño de grid 3-col → fila
+// horizontal. Medallas y fuente SIN TOCAR (siguen viniendo de
+// window._buildMedalSVG intacto). Añadido: ribbon superpuesto encima del
+// círculo (color del tier) para look "más de medalla real" pedido por
+// Álvaro, accent bar vertical a la izquierda, y pill dorado con la fecha
+// (mismo estilo visual que las pills premium del resto de la app).
 // rec: null (sin marcar) o { value, formatted, activity_local_id, activity_datestr }
 function _buildPRGridCard(type, rec, isDark) {
     var meta = (typeof window._getPRMeta === 'function') ? window._getPRMeta(type) : null;
     if (!meta) meta = { tier:'gold', label:type, centerText:'PR' };
     var marked = !!rec;
 
-    // [P.Records Opción A] Mapping tier → color del accent bar superior.
-    // Cada card tiene una línea corta de 2px del color del tier (fade a los lados)
-    // que da identidad visual sin sobrecargar. Cubre todos los tiers de PR_META.
+    // [P.Records Opción A] Mapping tier → color identidad (accent bar +
+    // ribbon). Cubre todos los tiers de PR_META.
     var TIER_ACCENT = {
         trophy_dark:'#a16207', trophy_navy:'#1e40af',
         gold:'#c4881e', silver:'#a8afb8', track:'#a56236',
@@ -7169,48 +7177,62 @@ function _buildPRGridCard(type, rec, isDark) {
     };
     var accentCol = TIER_ACCENT[meta.tier] || '#a1a1aa';
 
-    var card = document.createElement('div');
-    card.style.cssText = [
-        'position:relative','overflow:hidden',
+    // ¿Es un hito kilométrico acumulado o un hito de racha?
+    var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0 || type.indexOf('streak_') === 0);
+
+    // ── Row container ────────────────────────────────────────────────
+    var row = document.createElement('div');
+    row.style.cssText = [
+        'position:relative','display:flex','align-items:stretch','gap:12px',
+        'padding:8px 12px 8px 10px',
         'background:' + (marked ? 'var(--card)' : (isDark ? 'rgba(255,255,255,.03)' : 'var(--bsoft)')),
         'border:1px solid var(--border)',
-        'border-radius:14px',
-        'padding:14px 8px 12px',
-        'display:flex','flex-direction:column','align-items:center',
-        'gap:4px','min-width:0',
+        'border-radius:12px',
+        'min-width:0',
         'transition:transform .15s ease, box-shadow .15s ease',
         marked ? 'cursor:pointer' : 'cursor:default',
         marked ? 'box-shadow:0 1px 3px rgba(0,0,0,.05), 0 0 0 1px rgba(0,0,0,.04)' : ''
     ].filter(Boolean).join(';');
 
-    // [P.Records Opción A] Accent bar superior con color del tier
-    // (fade a los lados). Opacity reducido si no marked → sutil identificador.
-    var accent = document.createElement('div');
-    accent.style.cssText = 'position:absolute;top:0;left:20%;right:20%;height:2px;background:linear-gradient(90deg, transparent, ' + accentCol + ', transparent);' + (marked ? '' : 'opacity:.25;');
-    card.appendChild(accent);
+    // Accent bar vertical (color del tier) — identidad visual a la izquierda
+    var accentBar = document.createElement('div');
+    accentBar.style.cssText = 'flex-shrink:0;width:3px;border-radius:3px;background:' + accentCol + ';margin:4px 0;' + (marked ? '' : 'opacity:.35;');
+    row.appendChild(accentBar);
 
-    // Medalla SVG
+    // ── Medalla + RIBBON superpuesto ────────────────────────────────
+    // La medalla en sí (window._buildMedalSVG) NO se toca — mismo diseño
+    // exacto. Se le añade un ribbon de 2 colas encima (mismo color del
+    // tier) que se solapa ligeramente con el borde superior del círculo,
+    // dando el efecto "medalla con cinta" que pidió Álvaro.
     var medalWrap = document.createElement('div');
-    medalWrap.style.cssText = 'width:48px;height:54px;display:flex;align-items:center;justify-content:center;margin-top:4px;' + (marked ? '' : 'filter:grayscale(1) opacity(.45);');
+    medalWrap.style.cssText = 'position:relative;width:42px;height:56px;flex-shrink:0;margin-left:2px;' + (marked ? '' : 'filter:grayscale(1) opacity(.45);');
+    var ribbonSvg =
+        '<svg width="22" height="16" viewBox="0 0 22 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" ' +
+        'style="position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:1;">' +
+            '<path d="M3 0 L9 0 L9 12 L6 16 L3 12 Z" fill="' + accentCol + '" opacity="0.92"/>' +
+            '<path d="M13 0 L19 0 L19 12 L16 16 L13 12 Z" fill="' + accentCol + '" opacity="0.72"/>' +
+        '</svg>';
+    var medalHtml = '';
     if (typeof window._buildMedalSVG === 'function') {
         var svg = window._buildMedalSVG(meta);
-        medalWrap.innerHTML = svg.replace('width="56" height="64"', 'width="48" height="54"');
+        medalHtml = svg.replace('width="56" height="64"', 'width="42" height="48"');
     }
-    card.appendChild(medalWrap);
+    medalWrap.innerHTML = ribbonSvg
+        + '<div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);z-index:2;">' + medalHtml + '</div>';
+    row.appendChild(medalWrap);
 
-    // Label del tipo
+    // ── Info (label + valor) ─────────────────────────────────────────
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px;';
+
     var lblEl = document.createElement('div');
-    lblEl.style.cssText = 'font-size:9px;font-weight:800;color:' + (marked ? 'var(--ts)' : 'var(--tm)') + ';text-align:center;letter-spacing:.9px;text-transform:uppercase;line-height:1.15;min-height:22px;display:flex;align-items:center;justify-content:center;';
+    lblEl.style.cssText = 'font-size:10px;font-weight:800;color:' + (marked ? 'var(--ts)' : 'var(--tm)') + ';letter-spacing:1.1px;text-transform:uppercase;line-height:1;';
     lblEl.textContent = meta.label || type;
-    card.appendChild(lblEl);
-
-    // ¿Es un hito kilométrico acumulado o un hito de racha?
-    // [FASE 8] Incluimos también streak_* en la categoría hito
-    var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0 || type.indexOf('streak_') === 0);
+    info.appendChild(lblEl);
 
     // Valor · XL con tabular-nums y letter-spacing negativo para elegancia
     var valEl = document.createElement('div');
-    valEl.style.cssText = 'font-size:19px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.6px;line-height:1;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums;';
+    valEl.style.cssText = 'font-size:19px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.6px;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;';
     if (marked && typeof window._formatRecordValue === 'function') {
         valEl.textContent = window._formatRecordValue(type, rec.value);
     } else if (isMilestone && typeof window._formatRecordValue === 'function') {
@@ -7219,33 +7241,33 @@ function _buildPRGridCard(type, rec, isDark) {
     } else {
         valEl.textContent = '—';
     }
-    card.appendChild(valEl);
+    info.appendChild(valEl);
+    row.appendChild(info);
 
-    // Subtítulo (fecha en pill sutil / "Sin marcar" / "Sin desbloquear")
-    var subEl = document.createElement('div');
+    // ── Pill derecha (fecha dorada / "Sin marcar" / "Sin desbloquear") ─
+    var pill = document.createElement('div');
     if (marked && rec.activity_datestr) {
-        // Fecha en pill bg-soft con letter-spacing y uppercase (jerarquía)
-        subEl.style.cssText = 'display:inline-block;margin-top:8px;padding:2px 8px;background:var(--bsoft);border-radius:10px;font-size:9px;color:var(--ts);font-weight:700;letter-spacing:.4px;text-transform:uppercase;line-height:1.3;white-space:nowrap;';
-        subEl.textContent = _prsPrettyDate(rec.activity_datestr);
+        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:5px 10px;border-radius:999px;background:rgba(196,136,30,.14);border:1px solid rgba(196,136,30,.32);font-size:9.5px;font-weight:800;color:var(--gold,#c4881e);letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;';
+        pill.textContent = _prsPrettyDate(rec.activity_datestr);
     } else {
-        subEl.style.cssText = 'margin-top:8px;font-size:9px;color:var(--tm);text-align:center;opacity:.85;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;';
-        subEl.textContent = isMilestone ? 'Sin desbloquear' : 'Sin marcar';
+        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:5px 10px;border-radius:999px;background:transparent;border:1px solid var(--border);font-size:9.5px;font-weight:700;color:var(--tm);letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;opacity:.85;';
+        pill.textContent = isMilestone ? 'Sin desbloquear' : 'Sin marcar';
     }
-    card.appendChild(subEl);
+    row.appendChild(pill);
 
     // Click (solo si marcado) — E4 implementará la apertura de actividad
     if (marked) {
-        card.addEventListener('click', function() {
+        row.addEventListener('click', function() {
             // Hook para E4: abrir actividad si está disponible localmente
             if (typeof window._openPRActivity === 'function') {
                 window._openPRActivity(rec);
             }
         });
-        card.addEventListener('touchstart', function() { card.style.transform = 'scale(.97)'; }, { passive:true });
-        card.addEventListener('touchend',   function() { card.style.transform = '';            }, { passive:true });
+        row.addEventListener('touchstart', function() { row.style.transform = 'scale(.98)'; }, { passive:true });
+        row.addEventListener('touchend',   function() { row.style.transform = '';            }, { passive:true });
     }
 
-    return card;
+    return row;
 }
 
 // Helper de fecha bonita "YYYY-MM-DD" → "18 abr 2026"
@@ -8045,16 +8067,10 @@ async function _loadClubHeaderStats() {
 
 // Photo zoom modal — fullscreen image viewer for club post photos.
 // Click anywhere or ESC closes. Reuses _avFade animation if available.
-// v2.30.1-p88 · Álvaro (23 ago 2026): fullscreen con ZOOM real:
-//  · pinch-to-zoom (2 dedos)
-//  · doble tap → toggle zoom 2×
-//  · pan (arrastrar) cuando está zoomada
-//  · botón X flotante para cerrar (el click en el fondo también cierra,
-//    pero solo cuando la imagen está a escala 1 para no cortar el pinch).
 function _openPhotoZoom(url) {
     if (!url) return;
     var ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);animation:_avFade .18s ease-out;overflow:hidden;touch-action:none;';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.96);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);animation:_avFade .18s ease-out;cursor:zoom-out;';
     // Ensure the fade keyframe exists (might not be loaded yet if avatar wasn't tapped)
     if (!document.getElementById('_avFadeStyle')) {
         var st = document.createElement('style');
@@ -8064,152 +8080,15 @@ function _openPhotoZoom(url) {
     }
     var img = document.createElement('img');
     img.src = url;
-    img.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;transform-origin:center center;transition:transform .18s ease-out;will-change:transform;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;';
-    img.draggable = false;
+    img.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
     ov.appendChild(img);
-
-    // Botón cerrar flotante (siempre visible, gestualmente independiente del pan/zoom)
-    var closeBtn = document.createElement('button');
-    closeBtn.setAttribute('aria-label','Cerrar');
-    closeBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    closeBtn.style.cssText = 'position:fixed;top:calc(env(safe-area-inset-top,0) + 14px);right:calc(env(safe-area-inset-right,0) + 14px);z-index:2;width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(6px);';
-    ov.appendChild(closeBtn);
-
-    // ── Estado del zoom/pan ────────────────────────────────────
-    var scale = 1, minScale = 1, maxScale = 5;
-    var tx = 0, ty = 0;
-    var lastDist = 0;
-    var lastCX = 0, lastCY = 0;      // centro del pinch anterior
-    var lastTap = 0;
-    var isPanning = false;
-    var panStartX = 0, panStartY = 0;
-    var panStartTX = 0, panStartTY = 0;
-    var didMove = false;
-
-    function _applyTransform(smooth) {
-        img.style.transition = smooth ? 'transform .18s ease-out' : 'none';
-        img.style.transform = 'translate(' + tx + 'px, ' + ty + 'px) scale(' + scale + ')';
-    }
-    function _dist(t1, t2) {
-        var dx = t1.clientX - t2.clientX;
-        var dy = t1.clientY - t2.clientY;
-        return Math.sqrt(dx*dx + dy*dy);
-    }
-    function _center(t1, t2) {
-        return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
-    }
-    function _clampPan() {
-        // Limita el pan a los bordes de la imagen escalada — evita que se salga completamente
-        var rect = img.getBoundingClientRect();
-        var maxX = (rect.width  * scale - window.innerWidth)  / 2;
-        var maxY = (rect.height * scale - window.innerHeight) / 2;
-        if (maxX < 0) tx = 0; else tx = Math.max(-maxX, Math.min(maxX, tx));
-        if (maxY < 0) ty = 0; else ty = Math.max(-maxY, Math.min(maxY, ty));
-    }
-
-    // Touch events
-    img.addEventListener('touchstart', function(e) {
-        if (e.touches.length === 2) {
-            e.preventDefault();
-            lastDist = _dist(e.touches[0], e.touches[1]);
-            var c = _center(e.touches[0], e.touches[1]);
-            lastCX = c.x; lastCY = c.y;
-            isPanning = false;
-        } else if (e.touches.length === 1) {
-            var now = Date.now();
-            // Doble tap → toggle zoom
-            if (now - lastTap < 300 && !didMove) {
-                e.preventDefault();
-                if (scale > 1) {
-                    scale = 1; tx = 0; ty = 0;
-                } else {
-                    scale = 2.5;
-                    var rect = img.getBoundingClientRect();
-                    var cx = e.touches[0].clientX - (rect.left + rect.width  / 2);
-                    var cy = e.touches[0].clientY - (rect.top  + rect.height / 2);
-                    tx = -cx * (scale - 1);
-                    ty = -cy * (scale - 1);
-                    _clampPan();
-                }
-                _applyTransform(true);
-                lastTap = 0;
-                return;
-            }
-            lastTap = now;
-            didMove = false;
-            if (scale > 1) {
-                isPanning = true;
-                panStartX = e.touches[0].clientX;
-                panStartY = e.touches[0].clientY;
-                panStartTX = tx;
-                panStartTY = ty;
-            }
-        }
-    }, { passive: false });
-
-    img.addEventListener('touchmove', function(e) {
-        if (e.touches.length === 2) {
-            e.preventDefault();
-            var newDist = _dist(e.touches[0], e.touches[1]);
-            if (lastDist > 0) {
-                var factor = newDist / lastDist;
-                scale = Math.max(minScale, Math.min(maxScale, scale * factor));
-                _clampPan();
-                _applyTransform(false);
-            }
-            lastDist = newDist;
-            didMove = true;
-        } else if (e.touches.length === 1 && isPanning) {
-            e.preventDefault();
-            var dx = e.touches[0].clientX - panStartX;
-            var dy = e.touches[0].clientY - panStartY;
-            tx = panStartTX + dx;
-            ty = panStartTY + dy;
-            _clampPan();
-            _applyTransform(false);
-            if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didMove = true;
-        }
-    }, { passive: false });
-
-    img.addEventListener('touchend', function(e) {
-        if (e.touches.length < 2) lastDist = 0;
-        if (e.touches.length === 0) {
-            isPanning = false;
-            // Auto-snap si scale < 1.05 (evita zooms residuales mínimos)
-            if (scale < 1.05) { scale = 1; tx = 0; ty = 0; _applyTransform(true); }
-        }
-    }, { passive: true });
-
-    // Desktop: wheel para zoom, click en fondo para cerrar (solo si scale === 1)
-    img.addEventListener('wheel', function(e) {
-        e.preventDefault();
-        var factor = e.deltaY < 0 ? 1.12 : 0.89;
-        scale = Math.max(minScale, Math.min(maxScale, scale * factor));
-        _clampPan();
-        _applyTransform(false);
-    }, { passive: false });
-    // Doble click desktop
-    img.addEventListener('dblclick', function(e) {
-        e.preventDefault();
-        if (scale > 1) { scale = 1; tx = 0; ty = 0; }
-        else { scale = 2.5; tx = 0; ty = 0; }
-        _applyTransform(true);
-    });
 
     var close = function() {
         ov.style.animation = '_avFade .14s ease-out reverse';
         setTimeout(function(){ if(ov.parentNode) ov.remove(); document.removeEventListener('keydown', onKey); }, 130);
     };
     var onKey = function(e) { if (e.key === 'Escape') close(); };
-    // Click en el fondo cierra (solo si scale === 1 → si estás zoomada no se cierra por accidente al soltar dedo)
-    ov.addEventListener('click', function(e) {
-        if (e.target === img || e.target === closeBtn) return;
-        if (scale === 1) close();
-    });
-    closeBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        close();
-    });
+    ov.onclick = close;
     document.addEventListener('keydown', onKey);
     document.body.appendChild(ov);
 }
