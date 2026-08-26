@@ -8930,8 +8930,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     </div>
                 </div>
 
-                <!-- Input file oculto para cargar GPX -->
-                <input type="file" id="raceday-gpx-input" accept=".gpx,application/gpx+xml,text/xml,application/xml" style="display:none;" onchange="window._raceDayHandleGpxFile && window._raceDayHandleGpxFile(this.files && this.files[0])">
+                <!-- Input file oculto para cargar GPX
+                     v2.30.1-p94-fix1: accept="*/*" porque iOS grisa archivos .gpx
+                     cuando el accept es específico (no tiene UTI estándar). La
+                     validación real es por extensión/contenido en el handler. -->
+                <input type="file" id="raceday-gpx-input" accept="*/*" style="display:none;" onchange="window._raceDayHandleGpxFile && window._raceDayHandleGpxFile(this.files && this.files[0])">
 
                 <!-- Modal editar detalles carrera (Fase 1) -->
                 <div class="rd-edit-backdrop" id="raceday-edit-modal" onclick="if(event.target===this)window._raceDayCloseEditModal && window._raceDayCloseEditModal()">
@@ -48871,9 +48874,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ---- Handler carga GPX ----------------------------------------------
         window._raceDayHandleGpxFile = function(file) {
             if (!file) return;
+            // Validación 1: tamaño
             if (file.size === 0) {
-                if (window.fxToast) window.fxToast('Archivo GPX vacío');
-                else alert('Archivo GPX vacío');
+                if (window.fxToast) window.fxToast('Archivo vacío. Intenta compartirlo desde otra app o descárgalo primero.');
+                else alert('Archivo vacío');
+                var input0 = document.getElementById('raceday-gpx-input');
+                if (input0) input0.value = '';
                 return;
             }
             if (file.size > 5 * 1024 * 1024) {
@@ -48881,10 +48887,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 else alert('GPX demasiado grande');
                 return;
             }
+            // Validación 2: extensión (permite .gpx, .xml, .tcx por extensión, avisa si no)
+            var fname = String(file.name || '').toLowerCase();
+            var extOk = /\.(gpx|xml)$/.test(fname);
+            if (!extOk) {
+                // No abortamos: seguimos con validación por contenido (algunas veces
+                // el nombre no tiene extensión pero el contenido es GPX válido)
+                console.warn('[Race Day] Extensión no reconocida:', fname);
+            }
             var reader = new FileReader();
             reader.onload = function(e) {
                 try {
                     var xmlText = e.target.result;
+                    // Validación 3: magic bytes → primeros ~500 chars deben tener <gpx o <?xml
+                    var head = String(xmlText || '').substring(0, 500).toLowerCase();
+                    if (head.indexOf('<gpx') === -1 && head.indexOf('<?xml') === -1) {
+                        throw new Error('No parece un GPX válido (falta la cabecera <gpx>)');
+                    }
                     var gpx = window._raceParseGPX(xmlText);
                     var targetSecs = _rdGetTargetSecs();
                     if (!targetSecs) {
