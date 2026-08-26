@@ -48625,20 +48625,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
 
             // Normalizar: suma total = targetTimeSecs
+            // [v2.30.1-p94-fix5] SIEMPRE normalizar. El guard anterior (diff<N*5)
+            // fallaba con recorridos de desnivel notable donde el GAP acumula
+            // 200+ segundos extra o menos. El usuario ha fijado un tiempo
+            // objetivo y la suma DEBE coincidir; si el objetivo es irrealista
+            // para el desnivel, es problema del user, no de la normalización.
             var rawTotal = 0;
             splits.forEach(function(s){ rawTotal += s.partial ? s.pace * s.partialKm : s.pace; });
             var diff = targetTimeSecs - rawTotal;
-            // Repartir diff redondeado sobre splits enteros
             var wholeSplits = splits.filter(function(s){return !s.partial;});
-            if (wholeSplits.length > 0 && Math.abs(diff) < wholeSplits.length * 5) {
+            if (wholeSplits.length > 0) {
                 var per = Math.round(diff / wholeSplits.length);
                 for (var i = 0; i < wholeSplits.length; i++) wholeSplits[i].pace += per;
-                // Ajuste fino residuo
+                // Ajuste fino residuo (segundos que quedan por la división entera)
                 var recheck = 0;
                 splits.forEach(function(s){ recheck += s.partial ? s.pace * s.partialKm : s.pace; });
                 var residuo = Math.round(targetTimeSecs - recheck);
                 for (var j = 0; j < Math.abs(residuo); j++) {
                     wholeSplits[j % wholeSplits.length].pace += (residuo > 0 ? 1 : -1);
+                }
+                // Log si el ajuste fue muy grande (>20s/km promedio → user tiene target irrealista)
+                if (Math.abs(per) > 20) {
+                    console.warn('[Race Day] Normalización agresiva: ' + per + 's/km. Objetivo probablemente irrealista para el desnivel del recorrido.');
                 }
             }
 
