@@ -8567,12 +8567,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
 
                 <!-- 11. ZONAS DE RITMO -->
-                <div id="row-pacezones" class="mr-rrow" onclick="openSheet('pace-sheet')" style="--rrow-accent:#f59e0b;--rrow-tint:rgba(245,158,11,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;">
+                <div id="row-pacezones" class="mr-rrow" onclick="openSheet('pace-sheet')" style="--rrow-accent:#f59e0b;--rrow-tint:rgba(245,158,11,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
                     <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 2h6"/><path d="M19 5l-1.5 1.5"/></svg>
                     </div>
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Zonas de ritmo</div>
+                    </div>
+                    <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
+                </div>
+
+                <!-- 12. RACE DAY (v2.30.1-p93) · Fila condicional: solo visible con plan
+                     activo maratón/media. Accent pink #e879f9 (mismo color que 'race' en
+                     tipos de entrenamiento del plan). Display se controla desde
+                     window._raceDayRefreshRow() → oculta si !window._raceDayIsEligible().
+                     Subtitle dinámico en #row-raceday-sub (nombre carrera · días · estado).
+                     Sheet base en #raceday-sheet (Fase 1 MVP · llenar en p94-p95). -->
+                <div id="row-raceday" class="mr-rrow" onclick="openRaceDaySheet()" style="display:none;--rrow-accent:#e879f9;--rrow-tint:rgba(232,121,249,.10);padding:12px 14px;align-items:center;gap:14px;cursor:pointer;">
+                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e879f9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4"/><path d="M4 4h11l-1.5 3.5L15 11H4"/></svg>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Race day</div>
+                        <div id="row-raceday-sub" style="font-size:11.5px;color:var(--ts);margin-top:2px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
                     </div>
                     <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                 </div>
@@ -8726,6 +8743,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div class="sheet">
                         <div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>
                         <div class="sheet-body"><div id="vdot-history-sheet-body"></div></div>
+                    </div>
+                </div>
+
+                <!-- ═══ RACE DAY SHEET (v2.30.1-p93) ═════════════════════════════
+                     Sheet base Fase 1 MVP · abre desde #row-raceday (fila condicional
+                     al plan activo maratón/media). Effect estándar (openSheet/closeSheet
+                     con .show/.closing). Hero pink #e879f9 + glow. En p93 solo el shell
+                     con hero + CTA "Cargar GPX oficial". Splits + chart elevación se
+                     llenan en p94. Persistencia + Supabase en p95. -->
+                <div id="raceday-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('raceday-sheet')">
+                    <div class="sheet">
+                        <!-- Overlay glow radial dorado -->
+                        <div style="position:absolute;inset:0;background:radial-gradient(circle at 82% 22%,rgba(232,121,249,.18) 0%,transparent 55%);pointer-events:none;border-radius:inherit;z-index:0;"></div>
+
+                        <div class="sheet-handle-wrap" style="position:relative;z-index:1;">
+                            <div class="sheet-handle"></div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;min-width:0;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e879f9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 21V4"/><path d="M4 4h11l-1.5 3.5L15 11H4"/></svg>
+                                    <span style="flex-shrink:0;">Race day</span>
+                                    <span id="raceday-sheet-race-name" style="font-weight:500;color:var(--ts);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+                                </div>
+                                <button onclick="closeSheet('raceday-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
+                            </div>
+                        </div>
+
+                        <div class="sheet-body" id="raceday-sheet-body" style="position:relative;z-index:1;">
+                            <!-- Placeholder Fase 1 · reemplazado en p94 por hero + chart + splits -->
+                            <div id="raceday-empty-state" style="padding:40px 20px;text-align:center;">
+                                <div style="width:72px;height:72px;margin:0 auto 18px;border-radius:50%;background:linear-gradient(135deg,rgba(232,121,249,.22) 0%,rgba(162,28,175,.15) 100%);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(232,121,249,.35);box-shadow:0 6px 20px rgba(232,121,249,.18);">
+                                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#e879f9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4"/><path d="M4 4h11l-1.5 3.5L15 11H4"/></svg>
+                                </div>
+                                <div style="font-size:17px;font-weight:800;color:var(--tw);letter-spacing:-.3px;margin-bottom:6px;">War room de tu carrera</div>
+                                <div id="raceday-empty-race-info" style="font-size:12.5px;color:var(--ts);line-height:1.5;margin-bottom:22px;">Carga el GPX oficial de la carrera y la app generará splits ajustados por elevación, estrategia de nutrición y plan de avituallamientos.</div>
+                                <button id="raceday-load-gpx-btn" onclick="if(window._mrToast)window._mrToast('Cargador GPX disponible en el próximo patch (p94)');else alert('Próximamente (p94)');" style="background:linear-gradient(135deg,#e879f9 0%,#a21caf 100%);color:#fff;border:none;padding:14px 28px;border-radius:12px;font-size:14px;font-weight:800;letter-spacing:.3px;cursor:pointer;box-shadow:0 6px 20px rgba(232,121,249,.35),inset 0 1px 0 rgba(255,255,255,.25);display:inline-flex;align-items:center;gap:8px;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                    Cargar GPX oficial
+                                </button>
+                                <div style="margin-top:14px;font-size:10.5px;color:var(--tm);letter-spacing:.4px;text-transform:uppercase;font-weight:700;">Fase 1 MVP · p93</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -39242,6 +39300,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         planCurrentWeek = 0;
         savePlanToStorage(); saveAppState();
         _renderActivePlanWeek(0); updatePlanNav(); renderMisterPlanCard();
+        // v2.30.1-p93 · Race Day: refresh fila (nuevo plan puede activarla si es maratón/media)
+        try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
         // Reset form state so next open starts clean
         _resetRunningPlanForm();
         generatedPlanData = null;
@@ -39881,6 +39941,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // eliminado (hash + syncedKeys + banner). Zero side-effects si COROS
         // desconectado o si _corosResetPlanHash no existe (defensiva).
         try { if (typeof window._corosResetPlanHash === 'function') window._corosResetPlanHash(); } catch(_){}
+        // v2.30.1-p93 · Race Day: refresh fila (sin plan → oculta)
+        try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
     }
 
     function deleteActivePlan() {
@@ -47954,7 +48016,158 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
         try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
         try { if (typeof window._mrRenderEvalIABlock === 'function') window._mrRenderEvalIABlock(); } catch(_){}
+        // v2.30.1-p93 · Race Day: refresca la fila condicional en Runner (visible/sub)
+        try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
     };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // RACE DAY · HELPERS BASE (v2.30.1-p93 · Fase 1 MVP)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Fila #row-raceday en Runner solo aparece si hay plan activo de carrera
+    // (maratón/media). El sheet #raceday-sheet abre con effect estándar
+    // openSheet/closeSheet. En p93 el sheet muestra placeholder + CTA
+    // "Cargar GPX oficial" (stub); en p94 se llena con GPX parser + splits
+    // + chart elevación; en p95 se persiste con Supabase.
+    //
+    // Consumidores del refresh:
+    //   - _mrRepaintHomeAfterActivityChange (cambios en actividades)
+    //   - renderPlanWeek (cambios visibles del plan)
+    //   - Init tras DOMContentLoaded (arranque, tras cargar plan)
+    // ═══════════════════════════════════════════════════════════════════════
+    (function(){
+        // ¿El user tiene plan activo elegible (maratón o media)?
+        window._raceDayIsEligible = function() {
+            try {
+                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                if (!ap || ap.type === 'strength') return false;
+                var goal = String(ap.goal || '').toLowerCase();
+                return goal === 'm' || goal === 'hm';
+            } catch(_) { return false; }
+        };
+
+        // Nombre para mostrar (fallback si no hay plan.name)
+        window._raceDayRaceName = function() {
+            try {
+                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                if (!ap) return '';
+                var nm = (ap.name && typeof ap.name === 'string') ? ap.name.trim() : '';
+                if (nm) return nm;
+                return (String(ap.goal || '').toLowerCase() === 'm') ? 'Tu maratón' : 'Tu media maratón';
+            } catch(_) { return ''; }
+        };
+
+        // Countdown human-readable respecto a raceDate del plan
+        window._raceDayCountdown = function() {
+            try {
+                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                if (!ap || !ap.raceDate) return '';
+                var raceMs = new Date(ap.raceDate + 'T12:00:00').getTime();
+                if (!isFinite(raceMs)) return '';
+                var todayMs = new Date().setHours(12, 0, 0, 0);
+                var days = Math.round((raceMs - todayMs) / 86400000);
+                if (days > 1)  return 'en ' + days + ' días';
+                if (days === 1) return 'mañana';
+                if (days === 0) return 'HOY';
+                if (days === -1) return 'ayer';
+                return 'hace ' + Math.abs(days) + ' días';
+            } catch(_) { return ''; }
+        };
+
+        // Estado de la estrategia (Fase 1: GPX cargado o no · Fase 2+: pills)
+        window._raceDayStrategyStatus = function() {
+            try {
+                var pd = (window.profileData || null);
+                var rs = pd && pd.raceStrategy;
+                if (!rs) return 'Añade el GPX oficial';
+                // Fase 2+: si hay pills de nutrición, mostrar cuenta
+                if (rs.nutrition && Array.isArray(rs.nutrition.strategy) && rs.nutrition.strategy.length) {
+                    return rs.nutrition.strategy.length + ' pills';
+                }
+                // Fase 1: si hay splits, estrategia base cargada
+                if (rs.splits && Array.isArray(rs.splits) && rs.splits.length) {
+                    return 'Splits calculados';
+                }
+                return 'Añade el GPX oficial';
+            } catch(_) { return 'Añade el GPX oficial'; }
+        };
+
+        // Subtitle completo: "Maratón Sevilla · en 185 días · Añade el GPX oficial"
+        window._raceDayComputeSubtitle = function() {
+            try {
+                var name = window._raceDayRaceName();
+                var cd   = window._raceDayCountdown();
+                var st   = window._raceDayStrategyStatus();
+                var parts = [];
+                if (name) parts.push(name);
+                if (cd)   parts.push(cd);
+                if (st)   parts.push(st);
+                return parts.join(' · ');
+            } catch(_) { return ''; }
+        };
+
+        // Refresca visibilidad y subtitle de la fila #row-raceday
+        window._raceDayRefreshRow = function() {
+            try {
+                var row = document.getElementById('row-raceday');
+                if (!row) return;
+                var eligible = window._raceDayIsEligible();
+                if (eligible) {
+                    row.style.display = 'flex';
+                    var sub = document.getElementById('row-raceday-sub');
+                    if (sub) sub.textContent = window._raceDayComputeSubtitle();
+                } else {
+                    row.style.display = 'none';
+                }
+            } catch(_){}
+        };
+
+        // Abre el sheet Race Day (rellena hero del sheet con nombre carrera)
+        window.openRaceDaySheet = function() {
+            try {
+                // Rellenar spans dinámicos del sheet antes de abrir
+                var nameSpan = document.getElementById('raceday-sheet-race-name');
+                if (nameSpan) {
+                    var nm = window._raceDayRaceName();
+                    var cd = window._raceDayCountdown();
+                    nameSpan.textContent = (nm && cd) ? (nm + ' · ' + cd) : (nm || cd || '');
+                }
+                // Empty state info line (nombre + fecha)
+                var info = document.getElementById('raceday-empty-race-info');
+                if (info) {
+                    var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                    var dateStr = '';
+                    try {
+                        if (ap && ap.raceDate) {
+                            var d = new Date(ap.raceDate + 'T12:00:00');
+                            var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+                            dateStr = d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+                        }
+                    } catch(_){}
+                    var nm2 = window._raceDayRaceName();
+                    if (nm2 && dateStr) {
+                        info.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--tw);margin-bottom:4px;">' + nm2 + '</div>'
+                                       + '<div style="font-size:11.5px;color:var(--tm);margin-bottom:14px;letter-spacing:.3px;text-transform:uppercase;font-weight:700;">' + dateStr + '</div>'
+                                       + '<div>Carga el GPX oficial de la carrera y la app generará splits ajustados por elevación, estrategia de nutrición y plan de avituallamientos.</div>';
+                    }
+                }
+                if (typeof window.openSheet === 'function') window.openSheet('raceday-sheet');
+            } catch(e) {
+                try { if (typeof window.openSheet === 'function') window.openSheet('raceday-sheet'); } catch(_){}
+            }
+        };
+
+        // Init al DOMContentLoaded + doble RAF por si el plan carga async
+        function _raceDayInit() {
+            try { window._raceDayRefreshRow(); } catch(_){}
+            // Segundo pase 800ms después por si activePlan aún no estaba en el primero
+            setTimeout(function(){ try { window._raceDayRefreshRow(); } catch(_){} }, 800);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _raceDayInit);
+        } else {
+            _raceDayInit();
+        }
+    })();
 
     // ── VDOT (Evolución) ──
     function _mrRenderVdotCard(container){
@@ -58888,7 +59101,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p92';
+        window.__mrCorosVersion = 'v2.30.1-p93';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
