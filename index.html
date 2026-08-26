@@ -8864,10 +8864,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     <svg width="36" height="36" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="6" width="16" height="12" fill="#ffffff"/><rect x="4"  y="6"  width="4" height="4" fill="#0a0a0a"/><rect x="12" y="6"  width="4" height="4" fill="#0a0a0a"/><rect x="8"  y="10" width="4" height="4" fill="#0a0a0a"/><rect x="16" y="10" width="4" height="4" fill="#0a0a0a"/><rect x="4"  y="14" width="4" height="4" fill="#0a0a0a"/><rect x="12" y="14" width="4" height="4" fill="#0a0a0a"/><rect x="3.5" y="5.5" width="17" height="13" fill="none" stroke="var(--race-flag-outline)" stroke-width="1"/></svg>
                                 </div>
                                 <div style="font-size:17px;font-weight:800;color:var(--tw);letter-spacing:-.3px;margin-bottom:6px;">War room de tu carrera</div>
-                                <div id="raceday-empty-race-info" style="font-size:12.5px;color:var(--ts);line-height:1.5;margin-bottom:22px;">Carga el recorrido oficial de la carrera (GPX, KML o KMZ) y la app generará splits ajustados por elevación, avituallamientos y estrategia de nutrición.</div>
+                                <div id="raceday-empty-race-info" style="font-size:12.5px;color:var(--ts);line-height:1.5;margin-bottom:22px;">Carga el GPX oficial de la carrera y la app generará splits ajustados por elevación. Los avituallamientos se personalizan luego a tu estrategia.</div>
                                 <button id="raceday-load-gpx-btn" onclick="document.getElementById('raceday-gpx-input').click()" style="background:linear-gradient(135deg,#e879f9 0%,#a21caf 100%);color:#fff;border:none;padding:14px 28px;border-radius:12px;font-size:14px;font-weight:800;letter-spacing:.3px;cursor:pointer;box-shadow:0 6px 20px rgba(232,121,249,.35),inset 0 1px 0 rgba(255,255,255,.25);display:inline-flex;align-items:center;gap:8px;">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                    Cargar recorrido oficial
+                                    Cargar GPX oficial
                                 </button>
                             </div>
 
@@ -8918,7 +8918,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 <div class="rd-actions">
                                     <button class="rd-btn rd-btn-secondary" onclick="document.getElementById('raceday-gpx-input').click()">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                        Reemplazar recorrido
+                                        Reemplazar GPX
                                     </button>
                                     <button class="rd-btn rd-btn-primary" onclick="if(window.fxToast)fxToast('Estrategia de nutrición disponible en Fase 2 · p96');else alert('Próximamente · Fase 2');">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
@@ -8931,9 +8931,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
 
                 <!-- Input file oculto para cargar GPX
-                     v2.30.1-p94-fix1: accept="*/*" porque iOS grisa archivos .gpx
-                     cuando el accept es específico (no tiene UTI estándar). La
-                     validación real es por extensión/contenido en el handler. -->
+                     v2.30.1-p94-fix6: accept="*/*" porque iOS grisa archivos .gpx
+                     cuando el accept es específico (no tienen UTI estándar).
+                     Validación real por extensión + magic bytes en el handler. -->
                 <input type="file" id="raceday-gpx-input" accept="*/*" style="display:none;" onchange="window._raceDayHandleGpxFile && window._raceDayHandleGpxFile(this.files && this.files[0])">
 
                 <!-- Modal editar detalles carrera (Fase 1) -->
@@ -48720,30 +48720,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var my2 = H - pad - ((lastP.ele - minEle) / rangeEle) * (H - pad*2);
             markers.push('<circle cx="' + mx2.toFixed(1) + '" cy="' + my2.toFixed(1) + '" r="3.5" fill="#a21caf" stroke="#fff" stroke-width="1"/>');
 
-            // [v2.30.1-p94-fix4] Pines de avituallamientos oficiales sobre el chart
-            // Gota azul con borde blanco → se gestionarán en Fase 2 (nutrición)
-            var aidMarkers = '';
-            try {
-                var strategy = _rdGetStrategy();
-                var aids = strategy && strategy.aidStations;
-                if (aids && aids.length > 0) {
-                    aids.forEach(function(aid){
-                        if (aid.km * 1000 > totalDist) return;
-                        var target = aid.km * 1000;
-                        var closest = pts.reduce(function(best, p){
-                            return Math.abs(p.dist - target) < Math.abs(best.dist - target) ? p : best;
-                        });
-                        var ax = (closest.dist / totalDist) * (W - pad*2) + pad;
-                        var ay = H - pad - ((closest.ele - minEle) / rangeEle) * (H - pad*2);
-                        // Gota (path drop shape) → color agua
-                        aidMarkers += '<g transform="translate(' + ax.toFixed(1) + ',' + (ay - 8).toFixed(1) + ')">'
-                                    + '<path d="M0,-6 C-4,-6 -4,-1 0,3 C4,-1 4,-6 0,-6 Z" fill="#3b82f6" stroke="#fff" stroke-width=".7"/>'
-                                    + '<circle cx="0" cy="-3" r="1.2" fill="#fff"/>'
-                                    + '</g>';
-                    });
-                }
-            } catch(_){}
-
             var uid = 'elev' + Math.random().toString(36).substr(2, 6);
             return ''
                 + '<svg class="rd-chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">'
@@ -48759,7 +48735,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '  <path d="' + path + '" fill="url(#' + uid + ')"/>'
                 + '  <path d="' + line + '" fill="none" stroke="#e879f9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
                 +   markers.join('')
-                +   aidMarkers
                 + '</svg>';
         };
 
@@ -48914,376 +48889,77 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
         };
 
-        // ---- Parser KML (Google MyMaps export) ------------------------------
-        // Devuelve: { points:[{lat,lon,ele:0,dist:0}], aidStations:[{lat,lon,name}], name }
-        // Coordenadas KML son "lon,lat,ele" (INVERTIDO respecto a GPX que es lat,lon)
-        function _rdParseKML(xmlText) {
-            if (!xmlText || typeof xmlText !== 'string') throw new Error('KML vacío');
-            var doc;
-            try {
-                var parser = new DOMParser();
-                doc = parser.parseFromString(xmlText, 'application/xml');
-                var perr = doc.querySelector('parsererror');
-                if (perr) throw new Error('KML no válido');
-            } catch(e) { throw new Error('KML no se pudo parsear'); }
 
-            // Todos los Placemark
-            var pms = doc.querySelectorAll('Placemark');
-            var trackPoints = null;
-            var trackName = '';
-            var backupLongest = null;
-            var backupLongestLen = 0;
-            var aidStations = [];
-
-            for (var i = 0; i < pms.length; i++) {
-                var pm = pms[i];
-                // Puede ser <name> o <n> (namespace corto de MyMaps)
-                var nameEl = pm.querySelector(':scope > name, :scope > n');
-                var pmName = (nameEl && nameEl.textContent) ? nameEl.textContent.trim() : '';
-
-                // LineString → recorrido
-                var lsCoord = pm.querySelector('LineString > coordinates');
-                if (lsCoord) {
-                    var raw = lsCoord.textContent.trim();
-                    var pts = raw.split(/\s+/).map(function(triple){
-                        var parts = triple.split(',');
-                        var lon = parseFloat(parts[0]);
-                        var lat = parseFloat(parts[1]);
-                        var ele = parts.length > 2 ? parseFloat(parts[2]) : 0;
-                        if (!isFinite(lat) || !isFinite(lon)) return null;
-                        return { lat:lat, lon:lon, ele:isFinite(ele)?ele:0 };
-                    }).filter(function(p){return p !== null;});
-
-                    // Prioridad: "RECORRIDO · RACE LINE" exacto (no el "2")
-                    var isMain = /^RECORRIDO\s*[·\-]\s*RACE\s*LINE\s*$/i.test(pmName);
-                    if (isMain && !trackPoints) {
-                        trackPoints = pts;
-                        trackName = pmName;
-                    } else if (pts.length > backupLongestLen) {
-                        backupLongest = pts;
-                        backupLongestLen = pts.length;
-                    }
-                    continue;
-                }
-
-                // Point → posible aid station / KM marker / etc.
-                var ptCoord = pm.querySelector('Point > coordinates');
-                if (ptCoord) {
-                    var raw2 = ptCoord.textContent.trim();
-                    var parts2 = raw2.split(',');
-                    var lon2 = parseFloat(parts2[0]);
-                    var lat2 = parseFloat(parts2[1]);
-                    if (!isFinite(lat2) || !isFinite(lon2)) continue;
-
-                    // Detectar avituallamiento oficial
-                    var nUp = pmName.toUpperCase();
-                    if (/AVITUAL|DRINK\s*STATION|WATER\s*STATION|AGUA/.test(nUp)) {
-                        // Extraer km del nombre si viene ("KM 10", "KM 23")
-                        var kmMatch = nUp.match(/KM\s*(\d+(?:[.,]\d+)?)/);
-                        var kmHint = kmMatch ? parseFloat(kmMatch[1].replace(',','.')) : null;
-                        aidStations.push({
-                            lat: lat2, lon: lon2,
-                            name: pmName.replace(/\s*\n\s*/g,' ').trim(),
-                            type: 'aid',
-                            kmHint: kmHint
-                        });
-                    }
-                }
-            }
-
-            // Fallback: si no encontramos "RECORRIDO · RACE LINE" exacto, usar el más largo
-            if (!trackPoints && backupLongest) {
-                trackPoints = backupLongest;
-                trackName = 'Recorrido';
-            }
-
-            if (!trackPoints || trackPoints.length < 2) {
-                throw new Error('KML sin recorrido reconocible');
-            }
-
-            return { points: trackPoints, aidStations: aidStations, name: trackName };
-        }
-
-        // ---- Parser KMZ (ZIP con doc.kml dentro) ----------------------------
-        // Devuelve una Promise porque JSZip es async
-        function _rdParseKMZ(arrayBuffer) {
-            return new Promise(function(resolve, reject){
-                function withJSZip(JSZip) {
-                    try {
-                        JSZip.loadAsync(arrayBuffer).then(function(zip){
-                            // Buscar doc.kml (o cualquier .kml dentro)
-                            var kmlFile = zip.file('doc.kml');
-                            if (!kmlFile) {
-                                var candidates = [];
-                                zip.forEach(function(path, entry){
-                                    if (/\.kml$/i.test(path) && !entry.dir) candidates.push(entry);
-                                });
-                                if (candidates.length === 0) return reject(new Error('KMZ sin .kml dentro'));
-                                kmlFile = candidates[0];
-                            }
-                            kmlFile.async('string').then(function(xmlText){
-                                try { resolve(_rdParseKML(xmlText)); }
-                                catch(e) { reject(e); }
-                            }).catch(reject);
-                        }).catch(function(e){ reject(new Error('KMZ corrupto o inválido')); });
-                    } catch(e) { reject(e); }
-                }
-                if (typeof window.JSZip !== 'undefined') {
-                    withJSZip(window.JSZip);
-                } else {
-                    // Lazy-load JSZip desde CDN
-                    var script = document.createElement('script');
-                    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-                    script.onload = function(){ withJSZip(window.JSZip); };
-                    script.onerror = function(){ reject(new Error('No se pudo cargar JSZip')); };
-                    document.head.appendChild(script);
-                }
-            });
-        }
-
-        // ---- Fetch elevations desde Open-Meteo (batch 100 max) --------------
-        // Recibe: array de {lat,lon,...}. Devuelve Promise<points> con ele actualizada.
-        // Estrategia: downsample a max 100 puntos → 1 request → interpolar al resto.
-        // Fallback silencioso a ele=0 si falla.
-        function _rdFetchElevations(points) {
-            return new Promise(function(resolve){
-                if (!points || points.length === 0) return resolve(points);
-
-                // Downsample a max 100 puntos equiespaciados
-                var MAX = 100;
-                var step = Math.max(1, Math.ceil(points.length / MAX));
-                var indices = [];
-                for (var i = 0; i < points.length; i += step) indices.push(i);
-                if (indices[indices.length - 1] !== points.length - 1) indices.push(points.length - 1);
-
-                var lats = indices.map(function(i){ return points[i].lat.toFixed(6); }).join(',');
-                var lons = indices.map(function(i){ return points[i].lon.toFixed(6); }).join(',');
-
-                var url = 'https://api.open-meteo.com/v1/elevation?latitude=' + lats + '&longitude=' + lons;
-
-                fetch(url).then(function(r){
-                    if (!r.ok) throw new Error('Elevation API error ' + r.status);
-                    return r.json();
-                }).then(function(json){
-                    if (!json.elevation || !Array.isArray(json.elevation)) throw new Error('Respuesta inválida');
-                    if (json.elevation.length !== indices.length) throw new Error('Longitud incorrecta');
-
-                    // Interpolar linealmente al array completo
-                    for (var k = 0; k < indices.length; k++) {
-                        points[indices[k]].ele = json.elevation[k];
-                    }
-                    // Interpolar entre puntos ancla
-                    for (var k2 = 0; k2 < indices.length - 1; k2++) {
-                        var i0 = indices[k2], i1 = indices[k2+1];
-                        var e0 = points[i0].ele, e1 = points[i1].ele;
-                        for (var j = i0 + 1; j < i1; j++) {
-                            var t = (j - i0) / (i1 - i0);
-                            points[j].ele = e0 + (e1 - e0) * t;
-                        }
-                    }
-                    resolve(points);
-                }).catch(function(err){
-                    console.warn('[Race Day] Elevation fetch failed:', err.message);
-                    // Fallback: ele=0 para todos (chart plano, splits sin GAP)
-                    points.forEach(function(p){ p.ele = 0; });
-                    resolve(points);
-                });
-            });
-        }
-
-        // ---- Proyectar aid station al km más cercano del recorrido -----------
-        function _rdProjectAidStations(aidStations, trackPoints) {
-            if (!aidStations || aidStations.length === 0) return [];
-            var out = [];
-            aidStations.forEach(function(aid){
-                var bestIdx = 0;
-                var bestDist = Infinity;
-                for (var i = 0; i < trackPoints.length; i++) {
-                    var d = _rdHaversine(aid.lat, aid.lon, trackPoints[i].lat, trackPoints[i].lon);
-                    if (d < bestDist) { bestDist = d; bestIdx = i; }
-                }
-                // Solo aceptar si está a <200m del trazado (evita false positives)
-                if (bestDist < 200) {
-                    out.push({
-                        lat: aid.lat, lon: aid.lon, name: aid.name, type: aid.type,
-                        km: trackPoints[bestIdx].dist / 1000,
-                        distFromTrack: Math.round(bestDist)
-                    });
-                }
-            });
-            // Ordenar por km ascendente
-            out.sort(function(a,b){ return a.km - b.km; });
-            return out;
-        }
-
-        // Haversine (mismo algo que _rdHaversine del parser GPX pero también accesible aquí)
-        function _rdHaversine(lat1, lon1, lat2, lon2) {
-            var R = 6371000;
-            var toRad = Math.PI / 180;
-            var dLat = (lat2 - lat1) * toRad;
-            var dLon = (lon2 - lon1) * toRad;
-            var a = Math.sin(dLat/2)*Math.sin(dLat/2)
-                  + Math.cos(lat1*toRad)*Math.cos(lat2*toRad)*Math.sin(dLon/2)*Math.sin(dLon/2);
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        }
-
-        // ---- Handler unificado: detecta GPX / KML / KMZ ---------------------
-        // v2.30.1-p94-fix4: soporta GPX (text), KML (text) y KMZ (binary via JSZip).
-        // Para KML/KMZ sin elevación → auto-fetch Open-Meteo en background.
+        // ---- Handler carga GPX ----------------------------------------------
+        // [v2.30.1-p94-fix6] Rollback a solo GPX. Álvaro descartó KML/KMZ +
+        // Open-Meteo porque generaba splits con excesiva variabilidad (3:52 y
+        // 5:07 en km contiguos) por precisión de elevación demasiado agresiva.
+        // Los avituallamientos se meterán manualmente en Fase 2 (editor visual
+        // con 4 pills: gel / gel cafeína / sales / agua).
         window._raceDayHandleGpxFile = function(file) {
             if (!file) return;
             if (file.size === 0) {
-                if (window.fxToast) window.fxToast('Archivo vacío. Intenta compartirlo desde otra app.');
+                if (window.fxToast) window.fxToast('Archivo vacío. Intenta compartirlo desde otra app o descárgalo primero.');
+                else alert('Archivo vacío');
                 var input0 = document.getElementById('raceday-gpx-input');
                 if (input0) input0.value = '';
                 return;
             }
-            if (file.size > 10 * 1024 * 1024) {
-                if (window.fxToast) window.fxToast('Archivo demasiado grande (max 10MB)');
+            if (file.size > 5 * 1024 * 1024) {
+                if (window.fxToast) window.fxToast('GPX demasiado grande (max 5MB)');
+                else alert('GPX demasiado grande');
                 return;
             }
             var fname = String(file.name || '').toLowerCase();
-            var isKMZ = /\.kmz$/.test(fname);
-
-            // Detectar tipo por nombre + magic bytes; procesar en consecuencia
-            var loadingToast = window.fxToast ? window.fxToast('Procesando recorrido…', {duration:8000}) : null;
-
+            var extOk = /\.(gpx|xml)$/.test(fname);
+            if (!extOk) {
+                console.warn('[Race Day] Extensión no reconocida:', fname);
+            }
             var reader = new FileReader();
-
             reader.onload = function(e) {
-                var content = e.target.result;
-                var promiseParsed;
-
                 try {
-                    if (isKMZ) {
-                        // ArrayBuffer → JSZip → KML
-                        promiseParsed = _rdParseKMZ(content);
-                    } else {
-                        // Text: detectar GPX vs KML por contenido
-                        var head = String(content || '').substring(0, 500).toLowerCase();
-                        if (head.indexOf('<gpx') !== -1) {
-                            // Es GPX
-                            var gpxRaw = window._raceParseGPX(content);
-                            // Envolver en el shape unificado: {points, aidStations:[], name}
-                            promiseParsed = Promise.resolve({
-                                points: gpxRaw.points.map(function(p){return {lat:p.lat,lon:p.lon,ele:p.ele};}),
-                                aidStations: [],
-                                name: gpxRaw.name,
-                                _hasElevation: true // GPX suele traer ele real
-                            });
-                        } else if (head.indexOf('<kml') !== -1 || head.indexOf('<?xml') !== -1) {
-                            // Es KML (o al menos XML)
-                            promiseParsed = Promise.resolve(_rdParseKML(content));
-                        } else {
-                            throw new Error('Formato no reconocido (esperaba GPX, KML o KMZ)');
-                        }
+                    var xmlText = e.target.result;
+                    var head = String(xmlText || '').substring(0, 500).toLowerCase();
+                    if (head.indexOf('<gpx') === -1 && head.indexOf('<?xml') === -1) {
+                        throw new Error('No parece un GPX válido (falta la cabecera <gpx>)');
                     }
+                    var gpx = window._raceParseGPX(xmlText);
+                    var targetSecs = _rdGetTargetSecs();
+                    if (!targetSecs) targetSecs = Math.round(gpx.totalKm * 300);
+                    var splits = window._raceComputeSplits(gpx, targetSecs);
+
+                    var strategy = _rdGetStrategy() || {};
+                    strategy.gpx = gpx;
+                    strategy.splits = splits;
+                    strategy.targetTimeSecs = targetSecs;
+                    if (!strategy.raceInfo) strategy.raceInfo = {};
+                    // aidStations siempre array vacío al cargar GPX nuevo. En Fase 2
+                    // se rellenará via editor manual con el schema {km, type, note}.
+                    strategy.aidStations = strategy.aidStations || [];
+
+                    _rdSaveToStorage(strategy);
+
+                    var empty = document.getElementById('raceday-empty-state');
+                    var loaded = document.getElementById('raceday-loaded-state');
+                    if (empty) empty.style.display = 'none';
+                    if (loaded) loaded.style.display = '';
+
+                    window._raceDayRenderLoaded();
+                    try { window._raceDayRefreshRow(); } catch(_){}
+
+                    if (window.fxToast) window.fxToast('GPX cargado · ' + gpx.totalKm.toFixed(1) + ' km · +' + gpx.elevGain + 'm / −' + gpx.elevLoss + 'm');
                 } catch(err) {
                     console.error('[Race Day] Parse error:', err);
-                    if (window.fxToast) window.fxToast('Error: ' + err.message);
-                    var input1 = document.getElementById('raceday-gpx-input');
-                    if (input1) input1.value = '';
-                    return;
+                    if (window.fxToast) window.fxToast('Error al parsear GPX: ' + err.message);
+                    else alert('Error al parsear GPX: ' + err.message);
                 }
-
-                promiseParsed.then(function(parsed){
-                    // ¿Tiene elevación real? (revisar si al menos algún punto tiene ele != 0)
-                    var hasEle = parsed._hasElevation || parsed.points.some(function(p){return Math.abs(p.ele||0) > 0.01;});
-
-                    var elevPromise;
-                    if (hasEle) {
-                        elevPromise = Promise.resolve(parsed.points);
-                    } else {
-                        // Auto-fetch Open-Meteo en background (fallback silencioso a 0)
-                        if (window.fxToast) window.fxToast('Descargando altimetría…', {duration:5000});
-                        elevPromise = _rdFetchElevations(parsed.points);
-                    }
-
-                    elevPromise.then(function(pointsWithEle){
-                        // Ahora calcular distancias acumuladas + gain/loss (mismo algoritmo GPX)
-                        var pts = pointsWithEle;
-                        var totalDistM = 0;
-                        for (var i = 1; i < pts.length; i++) {
-                            totalDistM += _rdHaversine(pts[i-1].lat, pts[i-1].lon, pts[i].lat, pts[i].lon);
-                            pts[i].dist = totalDistM;
-                        }
-                        if (pts[0].dist === undefined) pts[0].dist = 0;
-
-                        // Smoothing + gain/loss
-                        var smoothWin = 3;
-                        var smoothed = new Array(pts.length);
-                        for (var j = 0; j < pts.length; j++) {
-                            var sum = 0, cnt = 0;
-                            for (var k = Math.max(0, j - smoothWin); k <= Math.min(pts.length - 1, j + smoothWin); k++) {
-                                sum += pts[k].ele; cnt++;
-                            }
-                            smoothed[j] = sum / cnt;
-                        }
-                        var elevGain = 0, elevLoss = 0;
-                        var THR = 0.5;
-                        for (var m = 1; m < smoothed.length; m++) {
-                            var d = smoothed[m] - smoothed[m-1];
-                            if (d > THR) elevGain += d;
-                            else if (d < -THR) elevLoss += -d;
-                        }
-                        var eles = pts.map(function(p){return p.ele;});
-
-                        var gpxData = {
-                            points: pts,
-                            totalKm: totalDistM / 1000,
-                            elevGain: Math.round(elevGain),
-                            elevLoss: Math.round(elevLoss),
-                            name: parsed.name,
-                            minEle: Math.round(Math.min.apply(null, eles)),
-                            maxEle: Math.round(Math.max.apply(null, eles))
-                        };
-
-                        // Proyectar aid stations al recorrido → obtener km real
-                        var projectedAids = _rdProjectAidStations(parsed.aidStations || [], pts);
-
-                        // Splits
-                        var targetSecs = _rdGetTargetSecs();
-                        if (!targetSecs) targetSecs = Math.round(gpxData.totalKm * 300);
-                        var splits = window._raceComputeSplits(gpxData, targetSecs);
-
-                        // Guardar strategy
-                        var strategy = _rdGetStrategy() || {};
-                        strategy.gpx = gpxData;
-                        strategy.splits = splits;
-                        strategy.targetTimeSecs = targetSecs;
-                        strategy.aidStations = projectedAids;
-                        if (!strategy.raceInfo) strategy.raceInfo = {};
-                        _rdSaveToStorage(strategy);
-
-                        // Cambiar vista a loaded
-                        var empty = document.getElementById('raceday-empty-state');
-                        var loaded = document.getElementById('raceday-loaded-state');
-                        if (empty) empty.style.display = 'none';
-                        if (loaded) loaded.style.display = '';
-
-                        window._raceDayRenderLoaded();
-                        try { window._raceDayRefreshRow(); } catch(_){}
-
-                        var msg = 'Cargado · ' + gpxData.totalKm.toFixed(1) + ' km · +' + gpxData.elevGain + 'm / −' + gpxData.elevLoss + 'm';
-                        if (projectedAids.length > 0) msg += ' · ' + projectedAids.length + ' avituallamientos';
-                        if (window.fxToast) window.fxToast(msg);
-                    });
-                }).catch(function(err){
-                    console.error('[Race Day] Full pipeline error:', err);
-                    if (window.fxToast) window.fxToast('Error: ' + (err.message || err));
-                });
-
-                // Reset input para permitir re-cargar el mismo archivo
                 var input = document.getElementById('raceday-gpx-input');
                 if (input) input.value = '';
             };
-
             reader.onerror = function() {
                 if (window.fxToast) window.fxToast('No se pudo leer el archivo');
             };
-
-            if (isKMZ) reader.readAsArrayBuffer(file);
-            else reader.readAsText(file);
+            reader.readAsText(file);
         };
 
         // ---- Modal edit carrera ---------------------------------------------
