@@ -4956,23 +4956,24 @@
         }
         .mr-pc-day.done .mr-pc-day-dot { background: var(--tm); }
         /* Hero card sesión hoy (verde) */
+        /* v2.30.1-p85 · Padding 10/12 → 12/14, radius 14 → 15 (más aire premium) */
         .mr-pc-hoy-wrap {
             background: linear-gradient(145deg, rgba(74,222,128,.10) 0%, rgba(74,222,128,.03) 100%);
             border: 1px solid rgba(74,222,128,.28);
-            border-radius: 14px;
-            padding: 10px 12px;
+            border-radius: 15px;
+            padding: 12px 14px;
             margin-bottom: 12px;
         }
         .mr-pc-hoy-tag {
             display: inline-flex;
             align-items: center;
             gap: 5px;
-            font-size: 9.5px;
+            font-size: 10px;
             font-weight: 800;
             letter-spacing: .8px;
             color: #4ade80;
             text-transform: uppercase;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
         .mr-pc-hoy-tag::before {
             content: '';
@@ -27473,20 +27474,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var _deferHeavyImport = function() {
             try { renderActivities(); } catch(e) { console.warn('[MR][P2-Fix] renderActivities:', e); }
             try { saveAppState(); }    catch(e) { console.warn('[MR][P2-Fix] saveAppState:', e); }
-            // [FIX widgets Home post-import]
-            // Sin esto, TrainingLoad/Readiness/VO2max/VDOT/Stamina se quedan
-            // con el valor viejo hasta que el user navegue a HOME (que dispara
-            // renderHome completo). Los repaints son noop si su nodo no existe
-            // (arranque en otro tab), así que sin coste añadido.
-            try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
-            try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
-            try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
-            try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
-            try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
-            // v2.30.1-p48 · Refresh bloque MEV (Mister eval V2): si la actividad
-            // importada coincide con un día del plan activo, aparecerá como
-            // pendiente en el carrusel al abrir Mister.
-            try { if (typeof window._mrRenderEvalIABlock === 'function') window._mrRenderEvalIABlock(); } catch(_){}
+            // [FIX widgets Home post-import · v2.30.1-p84]
+            // Sin esto, TrainingLoad/Readiness/VO2max/VDOT/Stamina/LastActivity
+            // se quedan con el valor viejo hasta que el user navegue a HOME
+            // (que dispara renderHome completo). Los repaints son noop si su
+            // nodo no existe (arranque en otro tab), así que sin coste añadido.
+            // Helper canónico único (incluye LastActivityCard, que faltaba y
+            // dejaba la mini-card "Último entreno HOY" pegada al valor previo
+            // hasta cambiar de tab · reportado por Álvaro).
+            try { if (typeof window._mrRepaintHomeAfterActivityChange === 'function') window._mrRepaintHomeAfterActivityChange(); } catch(_){}
         };
         if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(_deferHeavyImport, { timeout: 500 });
@@ -29009,6 +29005,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Recomputa el total del month wrap (o lo purga si queda vacío).
         renderActivities({mode:'diff', removedIds:[id]});
         saveAppState();
+        // [FIX widgets Home post-delete · v2.30.1-p84]
+        // Sin esto, si borras el entreno de HOY la mini-card "Último entreno
+        // HOY" quedaba fantasma en Home hasta cambiar de tab; ACWR/Readiness/
+        // Stamina/Vdot/VO2max también se quedaban con el valor viejo. Helper
+        // canónico único, mismo que import/edit. Todos son noop si el nodo
+        // no existe (arranque en otro tab).
+        try { if (typeof window._mrRepaintHomeAfterActivityChange === 'function') window._mrRepaintHomeAfterActivityChange(); } catch(_){}
         // Si la actividad borrada era de running, recalcular los PRs Y los hitos.
         // [HOTFIX hitos 26-may] Antes solo se llamaba _rebuildAllRecordsFromHistory
         // (PRs), pero los hitos km acumulados también necesitan recalcularse: si
@@ -31075,14 +31078,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _editPhotoB64 = undefined;
         renderActivities();
         saveAppState();
-        // [FIX widgets Home post-edit]
-        // Simétrico con _deferHeavyImport: cambio de tipo puede reclasificar la
-        // activity en ACWR o alterar TSB. Todos son noop si el nodo no existe.
-        try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
-        try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
-        try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
-        try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
-        try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
+        // [FIX widgets Home post-edit · v2.30.1-p84]
+        // Simétrico con _deferHeavyImport: cambio de tipo puede reclasificar
+        // la activity en ACWR o alterar TSB, y editar nombre/foto/RPE debe
+        // reflejarse en la mini-card Último entreno HOY. Helper canónico
+        // único (incluye LastActivityCard + EvalIA, que antes faltaban aquí).
+        try { if (typeof window._mrRepaintHomeAfterActivityChange === 'function') window._mrRepaintHomeAfterActivityChange(); } catch(_){}
         // FASE 6.1.b: persistencia a Supabase si la activity vive en BD
         // (tanto manuales como bulk Strava). Se ejecuta en background, no
         // bloquea UI. Si falla, queda en IDB local con los cambios.
@@ -41114,6 +41115,52 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     };
     window._mrDescOneLine = _descOneLine;
 
+    // ── [v2.30.1-p85] Línea 2 simplificada para el bloque HOY (plan activo · Home) ──
+    //   Álvaro (26 ago 2026): "en la línea de debajo solo la duración en tiempo
+    //   en long run, las series solo el 6× lo que sea con la rec sin repetir
+    //   'Series', en easy y recovery solo el ritmo ya que los km están en la
+    //   fila de arriba del titulo."
+    //   La línea 1 (título + pill km/min) sigue mostrando todo. La 2 se limpia
+    //   por tipo para dar aire y sensación premium.
+    //     • easy / recovery       → solo ritmo (ej. "5'20\"/km")
+    //     • long                  → duración + ritmo (ej. "1h 55min · 5'15\"/km")
+    //     • series/threshold/etc  → solo la spec "N× a Y/km · rec Z" (regex)
+    //     • race / test / otros   → fallback _descOneLine (comportamiento previo)
+    //   Fuerza (strength) NO pasa por aquí — ya se resuelve antes con el emoji
+    //   + "Fuerza runner en/con equipamiento".
+    window._mrTodayLine2 = function(sess) {
+        if (!sess) return '';
+        var t = String(sess.type || '');
+        var fmt = (typeof fmtPace === 'function')
+            ? fmtPace
+            : function(s) { var m = Math.floor(s/60), ss = s%60; return m + "'" + String(ss).padStart(2,'0') + '"'; };
+
+        // easy / recovery: solo ritmo (km ya en la pill)
+        if ((t === 'easy' || t === 'recovery') && sess.pace) {
+            return fmt(sess.pace) + '/km';
+        }
+        // long: duración + ritmo
+        if (t === 'long') {
+            if (sess.durStr && sess.pace) return sess.durStr + ' · ' + fmt(sess.pace) + '/km';
+            if (sess.durStr) return sess.durStr;
+        }
+        // series / threshold / tempo / repeats: extraer spec principal del desc
+        if (t === 'series' || t === 'threshold' || t === 'tempo' || t === 'repeats') {
+            var raw = String(sess.desc || '');
+            // Regex: primer patrón "N×..." (con o sin espacio), incluyendo
+            // opcionalmente "· rec ..." al final. Corta prefijos tipo
+            // "Fartlek aeróbico", "Tempo", etc. Case-insensitive.
+            var m = raw.match(/(\d+\s*[×x]\s*[^·]+?)(\s*·\s*rec[^·]+)?(?:\s*·|\s*$)/i);
+            if (m && m[1]) {
+                return (m[1] + (m[2] || '')).trim();
+            }
+            // Fallback: descOneLine si no matchea (p.ej. "Tempo 20min a HM pace")
+            return (window._mrDescOneLine ? window._mrDescOneLine(raw) : raw);
+        }
+        // race / test / otros: comportamiento previo
+        return (window._mrDescOneLine ? window._mrDescOneLine(sess.desc || '') : '');
+    };
+
 
     // Aplana bloques con reps para agregaciones lineales (opcional, útil futuro).
     // No usado por el render actual; se mantiene por si se necesita en aggregations.
@@ -47826,6 +47873,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     try { window._mrRenderLastActivityCard = _mrRenderLastActivityCard; window._mrRepaintLastActivityCard = _mrRepaintLastActivityCard; } catch(_){}
 
+    // ── [v2.30.1-p84] Helper canónico · Refresh widgets Home tras mutación de activities[] ──
+    //   Único punto de verdad para el "post-cambio" (import / edit / delete /
+    //   sync AUTO Strava/COROS). Antes cada sitio llamaba a mano una lista
+    //   ligeramente distinta de repaints, con el bug de que a veces faltaba
+    //   alguno (Último entreno HOY no salía tras importar hasta cambiar de
+    //   tab; delete de la activity de HOY dejaba la mini-card fantasma).
+    //   Todos los repaints son NO-OP si su nodo no existe (arranque en otro
+    //   tab), así que sin coste añadido llamarlos siempre.
+    //   Lista incluida (en orden barato→caro):
+    //     1) LastActivityCard  ← el bug reportado por Álvaro
+    //     2) TrainingLoadCard  (ACWR)
+    //     3) VdotCard          (Evolución)
+    //     4) Stamina           (Estado de forma, fallback si no hay COROS)
+    //     5) VO2maxCard        (Runner tab, coherencia con readiness)
+    //     6) Readiness         (recalcula PMC/TSB → dispara colateral coros)
+    //     7) EvalIABlock       (Mister eval: puede añadir actividad al carrusel)
+    window._mrRepaintHomeAfterActivityChange = function() {
+        try { if (typeof window._mrRepaintLastActivityCard === 'function') window._mrRepaintLastActivityCard(); } catch(_){}
+        try { if (typeof window._mrRepaintTrainingLoadCard === 'function') window._mrRepaintTrainingLoadCard(); } catch(_){}
+        try { if (typeof window._mrRepaintVdotCard === 'function') window._mrRepaintVdotCard(); } catch(_){}
+        try { if (typeof window._mrRepaintStamina === 'function') window._mrRepaintStamina(); } catch(_){}
+        try { if (typeof renderVO2maxCard === 'function') renderVO2maxCard(); } catch(_){}
+        try { if (typeof window._mrRenderReadiness === 'function') window._mrRenderReadiness(); } catch(_){}
+        try { if (typeof window._mrRenderEvalIABlock === 'function') window._mrRenderEvalIABlock(); } catch(_){}
+    };
+
     // ── VDOT (Evolución) ──
     function _mrRenderVdotCard(container){
         if (!container) return;
@@ -48315,16 +48388,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     test:     'linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)'
                 };
                 const _HERO_ICON_WHITE = {
-                    recovery: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c2-3 4-3 6 0s4 3 6 0 4-3 6 0 2 0 2 0"/></svg>',
-                    easy:     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 17h17a3 3 0 0 0 3-3v-1l-7-1-3-4-4-1-1 2 2 2-3 2-4 1z"/><path d="M6 14l-2 2"/></svg>',
-                    series:   '<svg viewBox="0 0 24 24" width="14" height="14" fill="#fff"><path d="M13 2L4 13h6l-2 9 10-12h-7l2-8z"/></svg>',
-                    long:     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20l6-10 4 6 4-8 6 12z"/><circle cx="17" cy="6" r="1.5" fill="#fff"/></svg>',
-                    race:     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="15" r="6"/><path d="M8.5 9L6 3h12l-2.5 6"/></svg>',
-                    test:     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6M12 7V5"/></svg>'
+                    recovery: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c2-3 4-3 6 0s4 3 6 0 4-3 6 0 2 0 2 0"/></svg>',
+                    easy:     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 17h17a3 3 0 0 0 3-3v-1l-7-1-3-4-4-1-1 2 2 2-3 2-4 1z"/><path d="M6 14l-2 2"/></svg>',
+                    series:   '<svg viewBox="0 0 24 24" width="17" height="17" fill="#fff"><path d="M13 2L4 13h6l-2 9 10-12h-7l2-8z"/></svg>',
+                    long:     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20l6-10 4 6 4-8 6 12z"/><circle cx="17" cy="6" r="1.5" fill="#fff"/></svg>',
+                    race:     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="15" r="6"/><path d="M8.5 9L6 3h12l-2.5 6"/></svg>',
+                    test:     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6M12 7V5"/></svg>'
                 };
                 const _grad = _HERO_GRAD[sess.type] || 'linear-gradient(135deg, #94a3b8 0%, #475569 100%)';
                 const _iconSvgWhite = _isStr
-                    ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="#fff" xmlns="http://www.w3.org/2000/svg"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>'
+                    ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="#fff" xmlns="http://www.w3.org/2000/svg"><path d="M2 9v6h2v-6zm18 0v6h2v-6zM6 7v10h2V7zm10 0v10h2V7zM9 11v2h6v-2z"/></svg>'
                     : (_HERO_ICON_WHITE[sess.type] || `<div style="width:10px;height:10px;border-radius:2px;background:#fff;"></div>`);
 
                 // [v2.10.0] Mismo formato que la fila colapsada de la pestaña Plan:
@@ -48353,19 +48426,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } else {
                     _descLine = (window._mrDescOneLine ? window._mrDescOneLine(sess.desc||'') : '');
                 }
-                const _msBar    = (window._mrMiniStruct  ? window._mrMiniStruct(sess, _isStr) : '');
+                // v2.30.1-p85 · Línea 2 simplificada por tipo para fuerza NO
+                // aplica (mantiene el emoji + "Fuerza runner …" de arriba).
+                // Para running usa el helper _mrTodayLine2: easy/recovery →
+                // solo ritmo; long → duración + ritmo; series → solo la spec
+                // "N× a Y/km · rec Z" sin repetir "Series"/"Fartlek".
+                if (!_isStr && typeof window._mrTodayLine2 === 'function') {
+                    var _line2Try = window._mrTodayLine2(sess);
+                    if (_line2Try) _descLine = _line2Try;
+                }
+                // v2.30.1-p85 · Ministruct 15% más grande (scale 1.15) para
+                // el bloque HOY de Home: alto 16→18.4px, ancho 48→55.2px.
+                const _msBar    = (window._mrMiniStruct  ? window._mrMiniStruct(sess, _isStr, {scale:1.15}) : '');
 
                 let html = `<div id="${_rowId}" ${opts.divider?'style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"':''}>
                     <div>
-                        <div style="display:flex;align-items:center;gap:11px;">
-                            <div style="width:34px;height:34px;border-radius:6px;background:${_grad};display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.28);">${_iconSvgWhite}</div>
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <div style="width:38px;height:38px;border-radius:7px;background:${_grad};display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.28);">${_iconSvgWhite}</div>
                             <div style="flex:1;min-width:0;">
                                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                                    <span style="font-size:13px;font-weight:800;color:${_tColor};">${_typeLbl}</span>
-                                    <span style="background:${_grad};color:#fff;border-radius:6px;padding:2px 10px 2px 9px;font-size:10px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25);"><span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span><span style="font-size:7.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span></span>${sess.type==='test' && window._mrTestBadge ? window._mrTestBadge('m') : ''}${_matched?'<span style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:4px;background:var(--warm);color:#fff;font-size:9px;font-weight:900;line-height:1;box-shadow:0 1px 3px rgba(22,163,74,.4);flex-shrink:0;">✓</span>':''}
+                                    <span style="font-size:15px;font-weight:800;color:${_tColor};letter-spacing:-.2px;">${_typeLbl}</span>
+                                    <span style="background:${_grad};color:#fff;border-radius:7px;padding:3px 11px 3px 10px;font-size:11px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25);"><span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span><span style="font-size:8px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span></span>${sess.type==='test' && window._mrTestBadge ? window._mrTestBadge('m') : ''}${_matched?'<span style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:4px;background:var(--warm);color:#fff;font-size:9px;font-weight:900;line-height:1;box-shadow:0 1px 3px rgba(22,163,74,.4);flex-shrink:0;">✓</span>':''}
                                     ${window._corosRenderBadgeIfSynced?window._corosRenderBadgeIfSynced(sess):''}
                                 </div>
-                                <div style="font-size:10px;color:var(--ts);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descLine || _motiv}</div>
+                                <div style="font-size:11.5px;color:var(--ts);margin-top:4px;font-weight:600;letter-spacing:-.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descLine || _motiv}</div>
                             </div>
                             ${_msBar}
                         </div>`;
@@ -58719,7 +58803,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.0-p2';
+        window.__mrCorosVersion = 'v2.30.1-p85';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
