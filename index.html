@@ -48035,31 +48035,62 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     //   - Init tras DOMContentLoaded (arranque, tras cargar plan)
     // ═══════════════════════════════════════════════════════════════════════
     (function(){
+        // Distancias elegibles para Race Day (importa la estrategia)
+        // planDist real puede ser: '5k' | '10k' | 'half' | 'marathon' | 'marathon_intermediate' | 'marathon_xl'
+        // goal legacy puede ser: 'correr' | '10k' | 'hm' | 'm'
+        var _RACE_DIST_ELIGIBLE = { 'half':1, 'marathon':1, 'marathon_intermediate':1, 'marathon_xl':1 };
+        var _RACE_GOAL_ELIGIBLE = { 'm':1, 'hm':1 };
+
+        // Acceso robusto a activePlan (mismo scope de script, pero cinturones)
+        function _rdGetActivePlan() {
+            try {
+                var ap = (typeof activePlan !== 'undefined' && activePlan) ? activePlan
+                       : (window.activePlan || null);
+                if (ap) return ap;
+            } catch(_) {}
+            // Fallback: leer de localStorage (por si scope roto)
+            try {
+                var uk = (typeof _uk === 'function') ? _uk('mr_plan') : 'mr_plan';
+                var s = localStorage.getItem(uk);
+                if (s) return JSON.parse(s);
+            } catch(_){}
+            return null;
+        }
+
         // ¿El user tiene plan activo elegible (maratón o media)?
         window._raceDayIsEligible = function() {
             try {
-                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                var ap = _rdGetActivePlan();
                 if (!ap || ap.type === 'strength') return false;
+                var pd = String(ap.planDist || '').toLowerCase();
+                if (_RACE_DIST_ELIGIBLE[pd]) return true;
                 var goal = String(ap.goal || '').toLowerCase();
-                return goal === 'm' || goal === 'hm';
+                if (_RACE_GOAL_ELIGIBLE[goal]) return true;
+                return false;
             } catch(_) { return false; }
         };
 
         // Nombre para mostrar (fallback si no hay plan.name)
         window._raceDayRaceName = function() {
             try {
-                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                var ap = _rdGetActivePlan();
                 if (!ap) return '';
                 var nm = (ap.name && typeof ap.name === 'string') ? ap.name.trim() : '';
                 if (nm) return nm;
-                return (String(ap.goal || '').toLowerCase() === 'm') ? 'Tu maratón' : 'Tu media maratón';
+                var pd = String(ap.planDist || '').toLowerCase();
+                if (pd === 'half') return 'Tu media maratón';
+                if (pd === 'marathon' || pd === 'marathon_intermediate' || pd === 'marathon_xl') return 'Tu maratón';
+                var goal = String(ap.goal || '').toLowerCase();
+                if (goal === 'hm') return 'Tu media maratón';
+                if (goal === 'm')  return 'Tu maratón';
+                return 'Tu carrera';
             } catch(_) { return ''; }
         };
 
         // Countdown human-readable respecto a raceDate del plan
         window._raceDayCountdown = function() {
             try {
-                var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                var ap = _rdGetActivePlan();
                 if (!ap || !ap.raceDate) return '';
                 var raceMs = new Date(ap.raceDate + 'T12:00:00').getTime();
                 if (!isFinite(raceMs)) return '';
@@ -48079,11 +48110,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var pd = (window.profileData || null);
                 var rs = pd && pd.raceStrategy;
                 if (!rs) return 'Añade el GPX oficial';
-                // Fase 2+: si hay pills de nutrición, mostrar cuenta
                 if (rs.nutrition && Array.isArray(rs.nutrition.strategy) && rs.nutrition.strategy.length) {
                     return rs.nutrition.strategy.length + ' pills';
                 }
-                // Fase 1: si hay splits, estrategia base cargada
                 if (rs.splits && Array.isArray(rs.splits) && rs.splits.length) {
                     return 'Splits calculados';
                 }
@@ -48091,7 +48120,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_) { return 'Añade el GPX oficial'; }
         };
 
-        // Subtitle completo: "Maratón Sevilla · en 185 días · Añade el GPX oficial"
+        // Subtitle completo: "Maratón Valencia · en 102 días · Añade el GPX oficial"
         window._raceDayComputeSubtitle = function() {
             try {
                 var name = window._raceDayRaceName();
@@ -48121,20 +48150,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(_){}
         };
 
+        // Helper de consola para debug rápido: window.__raceDayDebug()
+        window.__raceDayDebug = function() {
+            var ap = _rdGetActivePlan();
+            var info = {
+                hasActivePlan: !!ap,
+                planName: ap && ap.name,
+                planDist: ap && ap.planDist,
+                planGoal: ap && ap.goal,
+                planType: ap && ap.type,
+                raceDate: ap && ap.raceDate,
+                isEligible: window._raceDayIsEligible(),
+                rowExists: !!document.getElementById('row-raceday'),
+                rowDisplay: (document.getElementById('row-raceday') || {}).style && document.getElementById('row-raceday').style.display,
+                subtitle: window._raceDayComputeSubtitle()
+            };
+            console.log('[Race Day debug]', info);
+            return info;
+        };
+
         // Abre el sheet Race Day (rellena hero del sheet con nombre carrera)
         window.openRaceDaySheet = function() {
             try {
-                // Rellenar spans dinámicos del sheet antes de abrir
                 var nameSpan = document.getElementById('raceday-sheet-race-name');
                 if (nameSpan) {
                     var nm = window._raceDayRaceName();
                     var cd = window._raceDayCountdown();
                     nameSpan.textContent = (nm && cd) ? (nm + ' · ' + cd) : (nm || cd || '');
                 }
-                // Empty state info line (nombre + fecha)
                 var info = document.getElementById('raceday-empty-race-info');
                 if (info) {
-                    var ap = (typeof activePlan !== 'undefined' ? activePlan : window.activePlan);
+                    var ap = _rdGetActivePlan();
                     var dateStr = '';
                     try {
                         if (ap && ap.raceDate) {
@@ -48159,7 +48205,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Init al DOMContentLoaded + doble RAF por si el plan carga async
         function _raceDayInit() {
             try { window._raceDayRefreshRow(); } catch(_){}
-            // Segundo pase 800ms después por si activePlan aún no estaba en el primero
             setTimeout(function(){ try { window._raceDayRefreshRow(); } catch(_){} }, 800);
         }
         if (document.readyState === 'loading') {
