@@ -50336,10 +50336,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (badge) badge.textContent = '—';
                 return;
             }
-            if (!loc.lat || !loc.lon) {
+            if (!loc.name) {
                 el.innerHTML = '<div class="rd-wr-wx-error">Añade la ciudad de la carrera en Editar detalles para ver el clima.</div>';
                 if (badge) badge.textContent = '—';
                 return;
+            }
+            // [p101-fix2] Backfill lazy: hay name pero NO hay lat/lon → geocodify ahora.
+            // Cubre el caso de strategies guardadas antes de p101 (geocoding automático
+            // solo dispara en save del modal Editar carrera). Una vez completado, el
+            // resultado persiste en localStorage + Supabase y no vuelve a hacer falta.
+            if (!loc.lat || !loc.lon) {
+                el.innerHTML = '<div class="rd-wr-wx-loading">Localizando ' + _rdAidEscape(loc.name) + '…</div>';
+                if (badge) badge.textContent = '—';
+                if (typeof window._mrForwardGeocode === 'function') {
+                    try {
+                        var geo = await window._mrForwardGeocode(loc.name);
+                        if (geo && geo.lat != null && geo.lon != null) {
+                            var s2 = _rdGetStrategy();
+                            // Solo persistir si la strategy sigue con la misma ciudad (evita race con edición concurrente)
+                            if (s2 && s2.raceInfo && s2.raceInfo.location && (s2.raceInfo.location.name || '') === loc.name) {
+                                s2.raceInfo.location.lat = geo.lat;
+                                s2.raceInfo.location.lon = geo.lon;
+                                _rdSaveToStorage(s2);
+                                loc = s2.raceInfo.location;
+                            }
+                        }
+                    } catch(e) { console.warn('[MR][p101] backfill geocode warn:', e); }
+                }
+                if (!loc.lat || !loc.lon) {
+                    el.innerHTML = '<div class="rd-wr-wx-error">No se ha podido localizar "' + _rdAidEscape(loc.name) + '". Comprueba el nombre en Editar detalles (prueba con la ciudad simple, ej. "Valencia").</div>';
+                    return;
+                }
             }
             el.innerHTML = '<div class="rd-wr-wx-loading">Cargando previsión…</div>';
             var wx = await _rdFetchRaceWeather(s);
