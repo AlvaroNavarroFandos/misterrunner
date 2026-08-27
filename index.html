@@ -49063,6 +49063,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Formato viejo (Fase 1 placeholder): { km, type, note } → migrado on-read.
         // Tipos: water · isotonic · solid · gel · caffeine · salts
         // ═════════════════════════════════════════════════════════════════════
+
+        // [v2.30.1-p96 · z-index fix2] Portal helper. Los modales viven en el
+        // HTML dentro del árbol #app > #home-content > .vi > … lo cual crea
+        // stacking context anidados (por opacity/transform/filter en algún
+        // ancestor). El sheet Race Day (.sheet-backdrop z-index 99990) queda
+        // POR ENCIMA de los modales aunque el modal declare z-index 100000.
+        // Solución: mover el modal directo al <body> al abrir, escapando de
+        // cualquier stacking context. Idempotente: solo mueve si no está ya.
+        function _rdEnsurePortal(id) {
+            var el = document.getElementById(id);
+            if (el && el.parentNode !== document.body) {
+                document.body.appendChild(el);
+            }
+            return el;
+        }
+
         var _RD_AID_TYPES = [
             { key:'water',    label:'Agua',      emoji:'💧', bar:false },
             { key:'isotonic', label:'Isotónica', emoji:'🥤', bar:false },
@@ -49208,6 +49224,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
 
         window._rdAidOpenModal = function(idxOrNull) {
+            // [v2.30.1-p96 · z-index fix2] Portal-style: mover modal al <body>
+            // para escapar de cualquier stacking context creado por ancestros
+            // (#app, #home-content, .vi con opacity/transform). Sin esto,
+            // el z-index compite dentro del stacking del padre y el sheet
+            // Race Day (99990) lo sigue tapando aunque el modal sea 100000.
+            _rdEnsurePortal('rd-aid-modal');
+
             var list = _rdAidGetList();
             var isEdit = (idxOrNull !== null && idxOrNull !== undefined && list[idxOrNull]);
             _RD_AID_MODAL.editIndex = isEdit ? idxOrNull : null;
@@ -49537,6 +49560,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ---- Modal edit carrera ---------------------------------------------
         window._raceDayOpenEditModal = function() {
+            // [v2.30.1-p96 · z-index fix2] Portal-style (ver _rdEnsurePortal).
+            _rdEnsurePortal('raceday-edit-modal');
+
             var strategy = _rdGetStrategy() || {};
             var info = strategy.raceInfo || {};
             var ap = _rdGetActivePlan();
