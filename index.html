@@ -16994,6 +16994,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 renderActivities();
                 renderHome();
             }
+            // [p108-fix1] Hidratar act.pr desde Supabase user_records DESPUÉS de
+            // que activities esté poblado. Antes se llamaba fire-and-forget en
+            // paralelo → race con _refreshActivitiesFromBD → activities vacío al
+            // consultar → 0 matches → badges no aparecían. Ahora se llama aquí,
+            // con activities garantizado poblado. Al terminar dispara render
+            // interno para repintar biblio con badges.
+            try {
+                if (typeof _mrHydrateActivityPRs === 'function') {
+                    _mrHydrateActivityPRs().catch(function(e){
+                        console.warn('[MR][p108] PR hydrate warn:', e);
+                    });
+                }
+            } catch(e) { console.warn('[MR][p108] PR hydrate call warn:', e); }
+
             // v2.30.1-p49 · Refresh MEV al load inicial (activities + activePlan
             // ya listos). Necesario porque el wire del click en nav no se
             // dispara si el user arranca la app en la tab Mister.
@@ -17054,20 +17068,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     await _mrFullSyncHydrate();
                 }
             } catch(e) { console.warn('[MR][p103] full sync hydrate warn:', e); }
-        })();
-
-        // [p108] Hidrata act.pr = {records:[...]} en las activities locales desde
-        // Supabase user_records. Sin esto el badge PR nunca aparecería en biblio
-        // (el sistema guarda récords por tipo en Supabase pero jamás asigna
-        // act.pr en las activities cargadas — solo se poblaba en share al club).
-        // Fire-and-forget en paralelo con full sync; al llegar los datos dispara
-        // renderActivities para repintar biblio con badges.
-        (async () => {
-            try {
-                if (typeof _mrHydrateActivityPRs === 'function') {
-                    await _mrHydrateActivityPRs();
-                }
-            } catch(e) { console.warn('[MR][p108] PR hydrate warn:', e); }
         })();
 
         // [v6 P.Plan] Al cargar la app, localizar la semana actual del plan
@@ -58085,14 +58085,32 @@ window._downsampleRecords = _downsampleRecords;
     //
     // Coste típico: 1 SELECT (~10-50 rows), <500ms total.
     // ═══════════════════════════════════════════════════════════════════════
-    async function _mrHydrateActivityPRs() {
+    async function _mrHydrateActivityPRs(_retryCount) {
+        _retryCount = _retryCount || 0;
         try {
             var sb = window._sbClient;
             if (!sb || !sb.auth) return { ok: false, error: 'no-sb' };
             var sess = await sb.auth.getSession();
             var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
-            if (!uid) return { ok: false, error: 'no-session' };
+            if (!uid) {
+                // [p108-fix1] Race condition auth cold start PWA iOS (mismo patrón
+                // que _loadShoesFromSupabase p105-fix3). Retry backoff 4x.
+                if (_retryCount < 4) {
+                    var delay = 500 * Math.pow(2, _retryCount);
+                    console.log('[MR][p108] session no lista, retry en ' + delay + 'ms (intento ' + (_retryCount + 1) + '/4)');
+                    await new Promise(function(r){ setTimeout(r, delay); });
+                    return _mrHydrateActivityPRs(_retryCount + 1);
+                }
+                return { ok: false, error: 'no-session' };
+            }
             if (typeof activities === 'undefined' || !Array.isArray(activities) || activities.length === 0) {
+                // [p108-fix1] Si activities aún vacío, esperar un poco (bulk BD load
+                // puede tardar). Retry hasta 3 veces cada 1s.
+                if (_retryCount < 3) {
+                    console.log('[MR][p108] activities aún vacío, esperando 1s (intento ' + (_retryCount + 1) + '/3)');
+                    await new Promise(function(r){ setTimeout(r, 1000); });
+                    return _mrHydrateActivityPRs(_retryCount + 1);
+                }
                 return { ok: true, count: 0, note: 'no-activities' };
             }
 
@@ -58139,7 +58157,7 @@ window._downsampleRecords = _downsampleRecords;
                     matched++;
                 }
             }
-            console.log('[MR][p108] PRs hidratados: ' + matched + ' activities con badge (de ' + rows.length + ' user_records totales)');
+            console.log('[MR][p108] PRs hidratados: ' + matched + ' activities con badge (de ' + rows.length + ' user_records totales, ' + Object.keys(byActId).length + ' actIds únicos en BD, ' + activities.length + ' activities en memoria)');
 
             // Repintar biblioteca si está montada
             try { if (typeof renderActivities === 'function') renderActivities(); } catch(_) {}
@@ -64541,7 +64559,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p108';
+        window.__mrCorosVersion = 'v2.30.1-p108-fix1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
