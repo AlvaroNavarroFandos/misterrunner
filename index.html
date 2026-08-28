@@ -8601,11 +8601,231 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                 </div>
 
+                <!-- 13. MI AÑO (v2.30.1-p104) · Fila permanente · Calendario
+                     anual estilo GitHub contributions. Grid 53 sem × 7 días,
+                     5 niveles verde por km (0=descanso, 1<5km, 2=5-10, 3=10-15,
+                     4=15+). Al pulsar celda muestra detalle debajo con opción
+                     "Ver actividad" que abre openActivityDetail. -->
+                <div id="row-mianyo" class="mr-rrow" onclick="openMiAnyoSheet()" style="--rrow-accent:#22c55e;--rrow-tint:rgba(34,197,94,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="3" height="3" rx=".6" fill="#22c55e"/>
+                            <rect x="7.5" y="3" width="3" height="3" rx=".6" fill="#a7f3d0"/>
+                            <rect x="12" y="3" width="3" height="3" rx=".6" fill="#4ade80"/>
+                            <rect x="16.5" y="3" width="3" height="3" rx=".6" fill="#22c55e"/>
+                            <rect x="3" y="7.5" width="3" height="3" rx=".6" fill="#a7f3d0"/>
+                            <rect x="7.5" y="7.5" width="3" height="3" rx=".6" fill="#15803d"/>
+                            <rect x="12" y="7.5" width="3" height="3" rx=".6" fill="#4ade80"/>
+                            <rect x="16.5" y="7.5" width="3" height="3" rx=".6" fill="var(--bsoft)"/>
+                            <rect x="3" y="12" width="3" height="3" rx=".6" fill="#22c55e"/>
+                            <rect x="7.5" y="12" width="3" height="3" rx=".6" fill="#4ade80"/>
+                            <rect x="12" y="12" width="3" height="3" rx=".6" fill="#15803d"/>
+                            <rect x="16.5" y="12" width="3" height="3" rx=".6" fill="#22c55e"/>
+                            <rect x="3" y="16.5" width="3" height="3" rx=".6" fill="var(--bsoft)"/>
+                            <rect x="7.5" y="16.5" width="3" height="3" rx=".6" fill="#a7f3d0"/>
+                            <rect x="12" y="16.5" width="3" height="3" rx=".6" fill="#22c55e"/>
+                            <rect x="16.5" y="16.5" width="3" height="3" rx=".6" fill="#4ade80"/>
+                        </svg>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Mi año</div>
+                    </div>
+                    <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
+                </div>
+
                 </div><!-- /grupo runner rows -->
 
                 <!-- ========== TODOS LOS SHEETS DEL GRUPO ========== -->
 
                 <!-- [v5.3] Predictor sheet eliminado → predicciones ahora dentro de vdot-history-sheet -->
+
+                <!-- ══════════════════════════════════════════════════════════
+                     MI AÑO SHEET · v2.30.1-p104
+                     Calendario racha anual estilo GitHub contributions.
+                     Sheet full-height con 4 stats + grid scrollable + leyenda
+                     + detalle día seleccionado. Todo el pintado en
+                     _myaRenderCalendar() a partir de activities[].
+                     ══════════════════════════════════════════════════════════ -->
+                <style id="mi-anyo-styles">
+                    :root {
+                        --mya-cal-0: #ebedf0;
+                        --mya-cal-1: #a7f3d0;
+                        --mya-cal-2: #4ade80;
+                        --mya-cal-3: #22c55e;
+                        --mya-cal-4: #15803d;
+                    }
+                    body.dark-mode {
+                        --mya-cal-0: rgba(255,255,255,.05);
+                        --mya-cal-1: #14532d;
+                        --mya-cal-2: #16a34a;
+                        --mya-cal-3: #22c55e;
+                        --mya-cal-4: #4ade80;
+                    }
+                    .mya-stats {
+                        display: grid; grid-template-columns: repeat(4, 1fr);
+                        gap: 8px; margin-bottom: 18px;
+                    }
+                    .mya-stat {
+                        background: var(--bsoft); border-radius: 10px;
+                        padding: 10px 6px; text-align: center;
+                    }
+                    .mya-stat-v {
+                        font-size: 18px; font-weight: 800; color: var(--tw);
+                        letter-spacing: -.5px; font-variant-numeric: tabular-nums;
+                        line-height: 1;
+                    }
+                    .mya-stat-v.warm { color: #22c55e; }
+                    .mya-stat-u { font-size: 10px; color: var(--ts); font-weight: 700; margin-left: 1px; }
+                    .mya-stat-l {
+                        font-size: 9px; color: var(--ts); text-transform: uppercase;
+                        letter-spacing: .5px; margin-top: 4px; font-weight: 700;
+                    }
+                    .mya-cal-wrap {
+                        overflow-x: auto; overflow-y: hidden;
+                        -webkit-overflow-scrolling: touch;
+                        padding-bottom: 6px; margin: 0 -6px;
+                    }
+                    .mya-cal-wrap::-webkit-scrollbar { height: 4px; }
+                    .mya-cal-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+                    .mya-cal-inner { padding: 0 8px; display: inline-block; }
+                    .mya-cal-months {
+                        display: grid; grid-template-columns: repeat(53, 12px);
+                        gap: 2px; font-size: 9px; color: var(--ts); font-weight: 700;
+                        text-transform: uppercase; letter-spacing: .3px;
+                        margin-bottom: 4px; margin-left: 20px;
+                        min-width: max-content;
+                    }
+                    .mya-month-lbl { white-space: nowrap; grid-row: 1; line-height: 1; }
+                    .mya-cal-body { display: flex; gap: 6px; min-width: max-content; }
+                    .mya-cal-dows {
+                        display: grid; grid-template-rows: repeat(7, 12px); gap: 2px;
+                        font-size: 8px; color: var(--tm); font-weight: 600;
+                        line-height: 1; margin-top: 1px; min-width: 16px;
+                    }
+                    .mya-cal-grid {
+                        display: grid; grid-template-columns: repeat(53, 12px);
+                        grid-template-rows: repeat(7, 12px); gap: 2px;
+                        grid-auto-flow: column;
+                    }
+                    .mya-cell {
+                        width: 12px; height: 12px; border-radius: 2px;
+                        background: var(--mya-cal-0); cursor: pointer;
+                        transition: transform .1s ease;
+                    }
+                    .mya-cell.l1 { background: var(--mya-cal-1); }
+                    .mya-cell.l2 { background: var(--mya-cal-2); }
+                    .mya-cell.l3 { background: var(--mya-cal-3); }
+                    .mya-cell.l4 { background: var(--mya-cal-4); }
+                    .mya-cell.future { opacity: .3; }
+                    .mya-cell:active { transform: scale(.85); }
+                    .mya-cell.selected {
+                        box-shadow: 0 0 0 2px var(--tw), 0 0 0 3.5px var(--card);
+                    }
+                    .mya-cal-legend {
+                        display: flex; align-items: center; gap: 6px;
+                        justify-content: flex-end; font-size: 10px;
+                        color: var(--ts); margin-top: 12px; padding: 0 6px;
+                        font-weight: 600;
+                    }
+                    .mya-legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
+                    .mya-legend-swatch.mya-l0 { background: var(--mya-cal-0); }
+                    .mya-legend-swatch.mya-l1 { background: var(--mya-cal-1); }
+                    .mya-legend-swatch.mya-l2 { background: var(--mya-cal-2); }
+                    .mya-legend-swatch.mya-l3 { background: var(--mya-cal-3); }
+                    .mya-legend-swatch.mya-l4 { background: var(--mya-cal-4); }
+                    .mya-day-detail {
+                        margin-top: 16px; padding: 14px 14px 12px;
+                        background: var(--bsoft); border-radius: 12px;
+                        min-height: 78px;
+                    }
+                    .mya-day-detail.empty {
+                        display: flex; align-items: center; justify-content: center;
+                        font-size: 12px; color: var(--tm); font-style: italic;
+                        text-align: center;
+                    }
+                    .mya-day-detail.rest {
+                        display: flex; flex-direction: column; align-items: center;
+                        justify-content: center; gap: 4px;
+                    }
+                    .mya-rest-icon { font-size: 20px; }
+                    .mya-rest-txt { font-size: 12px; color: var(--tm); font-weight: 600; }
+                    .mya-day-date {
+                        font-size: 11px; color: var(--ts); font-weight: 700;
+                        text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px;
+                    }
+                    .mya-day-type {
+                        font-size: 15px; font-weight: 800; color: var(--tw);
+                        letter-spacing: -.2px; display: flex; align-items: center; gap: 8px;
+                    }
+                    .mya-day-dot { width: 8px; height: 8px; border-radius: 50%; }
+                    .mya-day-stats {
+                        display: flex; gap: 12px; margin-top: 6px;
+                        font-size: 11.5px; color: var(--ts); font-weight: 600;
+                    }
+                    .mya-day-stats b { color: var(--tw); font-weight: 800; }
+                    .mya-goto-btn {
+                        display: inline-flex; align-items: center; gap: 5px;
+                        margin-top: 10px; padding: 6px 12px;
+                        background: var(--tw); color: var(--card);
+                        border: none; border-radius: 7px;
+                        font-size: 11px; font-weight: 800; cursor: pointer;
+                        font-family: var(--f); letter-spacing: .2px;
+                    }
+                </style>
+
+                <div id="mi-anyo-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('mi-anyo-sheet')">
+                    <div class="sheet">
+                        <div class="sheet-handle-wrap">
+                            <div class="sheet-handle"></div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;min-width:0;">
+                                    <div style="width:26px;height:26px;background:linear-gradient(135deg,#22c55e 0%,#15803d 100%);border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(34,197,94,.35);">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <rect x="4" y="4" width="4" height="4" rx=".6" fill="#fff" opacity=".55"/>
+                                            <rect x="10" y="4" width="4" height="4" rx=".6" fill="#fff" opacity=".85"/>
+                                            <rect x="16" y="4" width="4" height="4" rx=".6" fill="#fff"/>
+                                            <rect x="4" y="10" width="4" height="4" rx=".6" fill="#fff"/>
+                                            <rect x="10" y="10" width="4" height="4" rx=".6" fill="#fff" opacity=".55"/>
+                                            <rect x="16" y="10" width="4" height="4" rx=".6" fill="#fff" opacity=".85"/>
+                                            <rect x="4" y="16" width="4" height="4" rx=".6" fill="#fff" opacity=".85"/>
+                                            <rect x="10" y="16" width="4" height="4" rx=".6" fill="#fff"/>
+                                            <rect x="16" y="16" width="4" height="4" rx=".6" fill="#fff" opacity=".55"/>
+                                        </svg>
+                                    </div>
+                                    <span style="flex-shrink:0;">Mi año</span>
+                                    <span id="mya-year-lbl" style="font-weight:500;color:var(--ts);font-size:13px;"></span>
+                                </div>
+                                <button onclick="closeSheet('mi-anyo-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
+                            </div>
+                        </div>
+                        <div class="sheet-body">
+                            <div id="mya-stats" class="mya-stats"></div>
+                            <div id="mya-cal-wrap" class="mya-cal-wrap">
+                                <div class="mya-cal-inner">
+                                    <div class="mya-cal-months" id="mya-cal-months"></div>
+                                    <div class="mya-cal-body">
+                                        <div class="mya-cal-dows">
+                                            <div>L</div><div></div><div>M</div><div></div><div>V</div><div></div><div>D</div>
+                                        </div>
+                                        <div class="mya-cal-grid" id="mya-cal-grid"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mya-cal-legend">
+                                <span>Menos</span>
+                                <div class="mya-legend-swatch mya-l0"></div>
+                                <div class="mya-legend-swatch mya-l1"></div>
+                                <div class="mya-legend-swatch mya-l2"></div>
+                                <div class="mya-legend-swatch mya-l3"></div>
+                                <div class="mya-legend-swatch mya-l4"></div>
+                                <span>Más</span>
+                            </div>
+                            <div id="mya-day-detail" class="mya-day-detail empty">
+                                Toca un día para ver el detalle
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- CALENTAMIENTO SHEET -->
                 <div id="warmup-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('warmup-sheet')">
@@ -45696,6 +45916,325 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         window._mrFullSyncHydrate             = _mrFullSyncHydrate;
     } catch(_){}
 
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MR × Mi año · v2.30.1-p104 · 28 ago 2026
+    //
+    // Calendario racha anual estilo GitHub contributions. Sheet full-height
+    // que se abre desde la fila #row-mianyo en Runner. Grid 53 semanas × 7
+    // días (Lun-Dom) del año calendario actual. Cada celda coloreada según
+    // km del día en 5 niveles:
+    //   0 · sin actividad (gris/oscuro)
+    //   1 · <5 km
+    //   2 · 5-10 km
+    //   3 · 10-15 km
+    //   4 · 15+ km
+    //
+    // Tap celda → muestra detalle debajo (fecha, tipo, km, ritmo, FC) +
+    // botón "Ver actividad" que cierra el sheet y abre openActivityDetail.
+    //
+    // Stats en la cabecera del sheet: total km · sesiones · racha actual
+    // (días consecutivos hasta hoy o ayer) · racha máxima del año.
+    //
+    // Sin dependencias externas más allá de activities[] y openActivityDetail.
+    // No hay persistencia (todo derivado en cada apertura desde activities).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    var _MYA_YEAR = new Date().getFullYear();
+    var _MYA_MONTHS_LBL = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+    function _myaLocalDateStr(d) {
+        if (typeof localDateStr === 'function') return localDateStr(d);
+        var y = d.getFullYear();
+        var m = String(d.getMonth() + 1).padStart(2, '0');
+        var dd = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + dd;
+    }
+
+    function _myaKmToLevel(km) {
+        if (!km || km <= 0) return 0;
+        if (km < 5)  return 1;
+        if (km < 10) return 2;
+        if (km < 15) return 3;
+        return 4;
+    }
+
+    // Extrae mapa dateStr → { km, count, acts[] } para todas las activities
+    // del año dado. Agrega múltiples sesiones del mismo día (doble sesión).
+    function _myaYearData(year) {
+        var out = {};
+        if (typeof activities === 'undefined' || !Array.isArray(activities)) return out;
+        var startStr = year + '-01-01';
+        var endStr = year + '-12-31';
+        for (var i = 0; i < activities.length; i++) {
+            var a = activities[i];
+            if (!a || !a.dateStr) continue;
+            if (a.dateStr < startStr || a.dateStr > endStr) continue;
+            var km = Number(a.distKm) || 0;
+            if (!out[a.dateStr]) out[a.dateStr] = { km: 0, count: 0, acts: [] };
+            out[a.dateStr].km += km;
+            out[a.dateStr].count += 1;
+            out[a.dateStr].acts.push(a);
+        }
+        return out;
+    }
+
+    // Devuelve totales del año + racha actual (hasta hoy o ayer) + racha máx.
+    function _myaComputeStats(yearData) {
+        var totalKm = 0;
+        var sessions = 0;
+        Object.keys(yearData).forEach(function(k){
+            totalKm  += yearData[k].km;
+            sessions += yearData[k].count;
+        });
+
+        var year = _MYA_YEAR;
+        var today = new Date();
+        var start = new Date(year, 0, 1);
+        var end = new Date(year, 11, 31);
+        if (end > today) end = new Date(today);
+
+        // Racha máxima del año
+        var maxStreak = 0, cur = 0;
+        var d = new Date(start);
+        while (d <= end) {
+            var ds = _myaLocalDateStr(d);
+            if (yearData[ds]) {
+                cur++;
+                if (cur > maxStreak) maxStreak = cur;
+            } else {
+                cur = 0;
+            }
+            d.setDate(d.getDate() + 1);
+        }
+
+        // Racha actual: si hoy no hay actividad, arranca por ayer (racha
+        // "en curso" no debería cortarse porque aún no has corrido hoy).
+        var currentStreak = 0;
+        var cursor = new Date(today);
+        var todayStr = _myaLocalDateStr(cursor);
+        if (!yearData[todayStr]) cursor.setDate(cursor.getDate() - 1);
+        while (true) {
+            var cs = _myaLocalDateStr(cursor);
+            if (yearData[cs]) {
+                currentStreak++;
+                cursor.setDate(cursor.getDate() - 1);
+                if (currentStreak > 500) break; // safety
+            } else {
+                break;
+            }
+        }
+
+        return {
+            totalKm: Math.round(totalKm),
+            sessions: sessions,
+            currentStreak: currentStreak,
+            maxStreak: maxStreak
+        };
+    }
+
+    function _myaTypeColor(type) {
+        var map = { easy:'#4ade80', recovery:'#60a5fa', series:'#ef4444', long:'#a78bfa', race:'#e879f9', test:'#22d3ee' };
+        return map[String(type||'').toLowerCase()] || '#94a3b8';
+    }
+
+    function _myaTypeLabel(type) {
+        var map = { easy:'Easy', recovery:'Recovery', series:'Series', long:'Long', race:'Carrera', test:'Test' };
+        return map[String(type||'').toLowerCase()] || 'Rodaje';
+    }
+
+    function _myaRenderCalendar() {
+        var grid = document.getElementById('mya-cal-grid');
+        var months = document.getElementById('mya-cal-months');
+        var statsBox = document.getElementById('mya-stats');
+        var yearLbl = document.getElementById('mya-year-lbl');
+        if (!grid || !months || !statsBox) return;
+
+        grid.innerHTML = '';
+        months.innerHTML = '';
+
+        var year = _MYA_YEAR;
+        if (yearLbl) yearLbl.textContent = String(year);
+
+        var yearData = _myaYearData(year);
+        var stats = _myaComputeStats(yearData);
+
+        // Stats pintados
+        statsBox.innerHTML =
+            '<div class="mya-stat"><div class="mya-stat-v">'+stats.totalKm+'<span class="mya-stat-u">km</span></div><div class="mya-stat-l">Total</div></div>' +
+            '<div class="mya-stat"><div class="mya-stat-v">'+stats.sessions+'</div><div class="mya-stat-l">Sesiones</div></div>' +
+            '<div class="mya-stat"><div class="mya-stat-v warm">'+stats.currentStreak+'</div><div class="mya-stat-l">Racha</div></div>' +
+            '<div class="mya-stat"><div class="mya-stat-v">'+stats.maxStreak+'</div><div class="mya-stat-l">Máx</div></div>';
+
+        // Primer lunes antes o en 1 enero
+        var jan1 = new Date(year, 0, 1);
+        var jan1Dow = (jan1.getDay() + 6) % 7; // lun=0..dom=6
+        var firstMonday = new Date(jan1);
+        firstMonday.setDate(jan1.getDate() - jan1Dow);
+
+        var today = new Date();
+        var todayStr = _myaLocalDateStr(today);
+        var monthColSeen = {};
+        var todayCell = null;
+        var lastActCell = null;
+        var lastActDateStr = null;
+
+        var cursor = new Date(firstMonday);
+        for (var col = 0; col < 53; col++) {
+            for (var row = 0; row < 7; row++) {
+                var dateStr = _myaLocalDateStr(cursor);
+                var isInYear = cursor.getFullYear() === year;
+                var isFuture = cursor > today;
+                var cell = document.createElement('div');
+                cell.className = 'mya-cell';
+
+                if (!isInYear) {
+                    cell.style.visibility = 'hidden';
+                } else {
+                    var data = yearData[dateStr];
+                    var lvl = data ? _myaKmToLevel(data.km) : 0;
+                    if (lvl > 0) cell.classList.add('l' + lvl);
+                    if (isFuture) cell.classList.add('future');
+                    cell.dataset.date = dateStr;
+                    cell.addEventListener('click', function(){ _myaSelectDay(this); });
+
+                    if (dateStr === todayStr) todayCell = cell;
+                    // Trackea el último día con actividad (por si hoy no hay)
+                    if (data && !isFuture) {
+                        if (!lastActDateStr || dateStr > lastActDateStr) {
+                            lastActDateStr = dateStr;
+                            lastActCell = cell;
+                        }
+                    }
+
+                    if (cursor.getDate() === 1 && !(cursor.getMonth() in monthColSeen)) {
+                        monthColSeen[cursor.getMonth()] = col;
+                    }
+                }
+                grid.appendChild(cell);
+                cursor.setDate(cursor.getDate() + 1);
+            }
+        }
+
+        // Labels de mes arriba
+        for (var m = 0; m < 12; m++) {
+            if (monthColSeen[m] != null) {
+                var lbl = document.createElement('div');
+                lbl.className = 'mya-month-lbl';
+                lbl.textContent = _MYA_MONTHS_LBL[m];
+                lbl.style.gridColumn = (monthColSeen[m] + 1);
+                months.appendChild(lbl);
+            }
+        }
+
+        // Auto-selección: hoy si tiene actividad, sino último día con actividad
+        setTimeout(function(){
+            var toSelect = null;
+            if (todayCell && yearData[todayStr]) {
+                toSelect = todayCell;
+            } else if (lastActCell) {
+                toSelect = lastActCell;
+            }
+            if (toSelect) _myaSelectDay(toSelect);
+
+            // Scroll al mes actual (o final del año pasado si estamos en enero)
+            var wrap = document.getElementById('mya-cal-wrap');
+            if (wrap) {
+                // Scroll a la posición aproximada de hoy (fin del scroll si es dic)
+                wrap.scrollLeft = wrap.scrollWidth;
+            }
+        }, 50);
+    }
+
+    function _myaSelectDay(cell) {
+        if (!cell || !cell.dataset || !cell.dataset.date) return;
+        // Quitar selección previa
+        document.querySelectorAll('.mya-cell.selected').forEach(function(c){ c.classList.remove('selected'); });
+        cell.classList.add('selected');
+        var dateStr = cell.dataset.date;
+
+        var detail = document.getElementById('mya-day-detail');
+        if (!detail) return;
+
+        var d = new Date(dateStr + 'T12:00:00');
+        var dowNames = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+        var monthsFull = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        var dateLbl = dowNames[d.getDay()] + ' · ' + d.getDate() + ' ' + monthsFull[d.getMonth()] + ' ' + d.getFullYear();
+
+        var yearData = _myaYearData(_MYA_YEAR);
+        var data = yearData[dateStr];
+
+        if (!data) {
+            detail.className = 'mya-day-detail rest';
+            detail.innerHTML =
+                '<div class="mya-rest-icon">💤</div>' +
+                '<div class="mya-rest-txt">' + dateLbl + '</div>' +
+                '<div class="mya-rest-txt" style="font-size:11px;">Día de descanso</div>';
+            return;
+        }
+
+        // Actividad principal (primera del día)
+        var mainAct = data.acts[0];
+        var typeColor = _myaTypeColor(mainAct.type);
+        var typeLbl = _myaTypeLabel(mainAct.type);
+
+        var paceTxt = '';
+        if (typeof paceStr === 'function' && mainAct.distKm > 0 && mainAct.durationSec > 0) {
+            paceTxt = paceStr(mainAct.distKm, mainAct.durationSec);
+        }
+        var hr = mainAct.avgHr ? Math.round(mainAct.avgHr) : null;
+
+        var kmTxt = Math.round(data.km * 10) / 10;
+        var multiTxt = data.count > 1 ? ' <span style="color:var(--tm);font-size:11px;font-weight:600;">· '+data.count+' sesiones</span>' : '';
+
+        var statsHtml = '<div class="mya-day-stats"><span><b>'+kmTxt+'</b> km</span>';
+        if (paceTxt) statsHtml += '<span>·</span><span><b>'+paceTxt+'</b>/km</span>';
+        if (hr)      statsHtml += '<span>·</span><span>FC <b>'+hr+'</b></span>';
+        statsHtml += '</div>';
+
+        detail.className = 'mya-day-detail';
+        detail.innerHTML =
+            '<div class="mya-day-date">' + dateLbl + '</div>' +
+            '<div class="mya-day-type">' +
+              '<span class="mya-day-dot" style="background:'+typeColor+';"></span>' +
+              typeLbl + multiTxt +
+            '</div>' +
+            statsHtml +
+            '<button class="mya-goto-btn" onclick="_myaGoToActivity(\''+dateStr+'\')">' +
+              '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+              'Ver actividad' +
+            '</button>';
+    }
+
+    function _myaGoToActivity(dateStr) {
+        var yearData = _myaYearData(_MYA_YEAR);
+        var data = yearData[dateStr];
+        if (!data || !data.acts.length) return;
+        var act = data.acts[0];
+        try { closeSheet('mi-anyo-sheet'); } catch(_){}
+        // Esperar animación de cierre antes de abrir visor
+        setTimeout(function(){
+            if (typeof window.openActivityDetail === 'function') {
+                window.openActivityDetail(act);
+            }
+        }, 300);
+    }
+
+    function openMiAnyoSheet() {
+        _MYA_YEAR = new Date().getFullYear();
+        try { openSheet('mi-anyo-sheet'); } catch(_){}
+        // Doble rAF para asegurar que el sheet ya está en DOM/painted
+        requestAnimationFrame(function(){
+            requestAnimationFrame(function(){ _myaRenderCalendar(); });
+        });
+    }
+
+    try {
+        window.openMiAnyoSheet     = openMiAnyoSheet;
+        window._myaGoToActivity    = _myaGoToActivity;
+        window._myaRenderCalendar  = _myaRenderCalendar;
+    } catch(_){}
+
     function loadAppState() {
         try {
             const _key = APP_KEY_OVERRIDE || APP_KEY;
@@ -63156,7 +63695,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p103-fix1';
+        window.__mrCorosVersion = 'v2.30.1-p104';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
