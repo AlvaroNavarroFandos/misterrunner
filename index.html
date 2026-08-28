@@ -8738,6 +8738,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         background: var(--bsoft); border-radius: 12px;
                         min-height: 78px;
                     }
+                    /* [p104-fix1] Variante para mini card estilo biblioteca:
+                       sin padding/bg propios (la card trae los suyos). */
+                    .mya-day-detail.has-card {
+                        padding: 0; background: transparent;
+                        min-height: 0; border-radius: 0;
+                    }
                     .mya-day-detail.empty {
                         display: flex; align-items: center; justify-content: center;
                         font-size: 12px; color: var(--tm); font-style: italic;
@@ -46173,37 +46179,74 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
 
-        // Actividad principal (primera del día)
-        var mainAct = data.acts[0];
-        var typeColor = _myaTypeColor(mainAct.type);
-        var typeLbl = _myaTypeLabel(mainAct.type);
+        // [p104-fix1] Mini card estilo biblioteca — reutilizar patrón exacto de
+        // "Último entreno HOY" del Home (línea ~49837): outfit izq + datos centro
+        // + mapa track dcha, con badges PR/indoor/foto. Al tap: abre visor.
+        var act = data.acts[0];
+        var cId = 'mya-track-' + act.id;
+        var df = d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
 
-        var paceTxt = '';
-        if (typeof paceStr === 'function' && mainAct.distKm > 0 && mainAct.durationSec > 0) {
-            paceTxt = paceStr(mainAct.distKm, mainAct.durationSec);
-        }
-        var hr = mainAct.avgHr ? Math.round(mainAct.avgHr) : null;
+        var _outfit      = (typeof buildOutfitFull     === 'function') ? buildOutfitFull(act) : '';
+        var _prBadge     = (typeof _libPRBadgeHTML     === 'function') ? _libPRBadgeHTML(act) : '';
+        var _indoorBadge = (typeof _libIndoorBadgeHTML === 'function') ? _libIndoorBadgeHTML(act) : '';
+        var _photoBadge  = (typeof _libPhotoBadgeHTML  === 'function') ? _libPhotoBadgeHTML(act) : '';
+        var _pace = (typeof paceStr === 'function' && act.distKm > 0 && act.durationSec > 0)
+                    ? paceStr(act.distKm, act.durationSec) : '—';
+        var _dur  = (typeof secsToHMS === 'function' && act.durationSec > 0)
+                    ? secsToHMS(act.durationSec) : '—';
+        var _hrTxt = (act.avgHr > 0) ? Math.round(act.avgHr) : '—';
+        var _kmTxt = (act.distKm > 0) ? act.distKm.toFixed(2) : '—';
 
-        var kmTxt = Math.round(data.km * 10) / 10;
-        var multiTxt = data.count > 1 ? ' <span style="color:var(--tm);font-size:11px;font-weight:600;">· '+data.count+' sesiones</span>' : '';
-
-        var statsHtml = '<div class="mya-day-stats"><span><b>'+kmTxt+'</b> km</span>';
-        if (paceTxt) statsHtml += '<span>·</span><span><b>'+paceTxt+'</b>/km</span>';
-        if (hr)      statsHtml += '<span>·</span><span>FC <b>'+hr+'</b></span>';
-        statsHtml += '</div>';
-
-        detail.className = 'mya-day-detail';
+        detail.className = 'mya-day-detail has-card';
         detail.innerHTML =
-            '<div class="mya-day-date">' + dateLbl + '</div>' +
-            '<div class="mya-day-type">' +
-              '<span class="mya-day-dot" style="background:'+typeColor+';"></span>' +
-              typeLbl + multiTxt +
-            '</div>' +
-            statsHtml +
-            '<button class="mya-goto-btn" onclick="_myaGoToActivity(\''+dateStr+'\')">' +
-              '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
-              'Ver actividad' +
-            '</button>';
+            '<div class="act-swipe-wrap" data-act-id="' + act.id + '" style="border-radius:12px;overflow:hidden;background:var(--card2);border:1px solid var(--border);cursor:pointer;">' +
+              '<div class="act-sliding act-card mr-lib-card">' +
+                '<div class="mr-lib-card-inner" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">' +
+                  '<div style="width:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px 0 3px 4px;flex-shrink:0;">' +
+                    '<div style="width:100%;display:flex;justify-content:center;">' + _outfit + '</div>' +
+                  '</div>' +
+                  '<div class="mr-lib-data" style="flex:1;padding:0 12px 0 10px;display:flex;flex-direction:column;justify-content:center;gap:0;min-width:0;">' +
+                    '<div style="display:flex;align-items:center;gap:6px;">' +
+                      '<div class="mr-lib-title" style="font-size:10px;font-weight:800;line-height:1;flex:1;min-width:0;letter-spacing:1px;text-transform:uppercase;opacity:.6;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (act.name || '—') + '</div>' +
+                      _prBadge +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:6px;margin-top:2px;">' +
+                      '<div style="display:flex;align-items:baseline;gap:2px;">' +
+                        '<span class="mr-lib-hero-km" style="font-size:25px;font-weight:800;letter-spacing:-1.1px;line-height:1;font-family:var(--f);font-variant-numeric:tabular-nums;">' + _kmTxt + '</span>' +
+                        '<span class="mr-lib-hero-km-unit" style="font-size:11px;font-weight:600;margin-left:3px;font-family:var(--f);">km</span>' +
+                      '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-top:-3px;">' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _dur + '</span>' +
+                      '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _pace + '</span>' +
+                      '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _hrTxt + '</span>' +
+                    '</div>' +
+                    '<div class="mr-lib-date-inline" style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;font-family:var(--f);line-height:1;margin-top:-1px;">' + df + '</div>' +
+                  '</div>' +
+                  '<div class="mr-lib-mapcol" style="position:relative;flex:0 0 33%;overflow:hidden;">' +
+                    '<canvas id="' + cId + '" width="248" height="290" style="width:100%;height:100%;display:block;"></canvas>' +
+                    _indoorBadge +
+                  '</div>' +
+                  _photoBadge +
+                '</div>' +
+              '</div>' +
+            '</div>';
+
+        // Wire click en toda la card → abrir visor de la actividad
+        var wrap = detail.querySelector('.act-swipe-wrap');
+        if (wrap) {
+            wrap.addEventListener('click', function() { _myaGoToActivity(dateStr); });
+        }
+
+        // Pintar canvas del track (rAF diferido, mismo patrón que biblioteca)
+        requestAnimationFrame(function() {
+            var c = document.getElementById(cId);
+            if (c && typeof drawTrackForLibrary === 'function') {
+                try { drawTrackForLibrary(c, act.records, act.shoeColor || null); } catch(_){}
+            }
+        });
     }
 
     function _myaGoToActivity(dateStr) {
@@ -63695,7 +63738,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p104';
+        window.__mrCorosVersion = 'v2.30.1-p104-fix1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
