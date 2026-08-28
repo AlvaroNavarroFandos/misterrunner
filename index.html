@@ -8474,7 +8474,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
 
                 <!-- 5. ZAPATILLAS -->
-                <div id="row-shoes" class="mr-rrow" onclick="openSheet('shoes-sheet')" style="--rrow-accent:#3b82f6;--rrow-tint:rgba(59,130,246,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                <div id="row-shoes" class="mr-rrow" onclick="_openShoesSheetSafe()" style="--rrow-accent:#3b82f6;--rrow-tint:rgba(59,130,246,.10);padding:12px 14px;display:flex;align-items:center;gap:14px;cursor:pointer;border-bottom:1px solid var(--border);">
                     <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--tw);">
                         <svg viewBox="0 -960 960 960" fill="currentColor" width="24" height="24" aria-hidden="true">
                             <path d="M216-580H88q4-14 10.5-26.5T114-631l154-206q17-23 45.5-30.5T368-861l28 14q21 11 32.5 30t11.5 42v84l74-19q30-8 58 7.5t38 44.5l65 196 170 170q20 20 27.5 43t7.5 49q0 37-20 66t-52 43L354-525q-29-27-64-41t-74-14ZM566-80q-30 0-57-11t-50-31L134-417q-19-17-31-38.5T86-500h130q23 0 44.5 8t38.5 25L703-80H566Z"/>
@@ -27785,12 +27785,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Llamada desde bootApp tras login. Idempotente (cada llamada
     // resetea el array). No genera URLs firmadas de fotos aún (lazy
     // en renderShoes para no gastar Storage requests innecesarios).
-    async function _loadShoesFromSupabase() {
+    async function _loadShoesFromSupabase(_retryCount) {
+        _retryCount = _retryCount || 0;
         try {
             var sb = window._sbClient;
             if (!sb) return { ok: false, error: 'no-sb-client' };
             var uid = await _getShoesUid();
-            if (!uid) return { ok: false, error: 'no-session' };
+            if (!uid) {
+                // [p105-fix3] Race condition post-boot PWA iOS: sb.auth.getSession()
+                // puede devolver null durante los primeros ~500-2000ms tras cold
+                // start mientras rehidrata la sesión desde localStorage. Sin retry,
+                // shoes[] quedaba vacío y solo aparecían al cambiar de tab o
+                // reiniciar. Retry con backoff exponencial 500→1000→2000→4000 ms
+                // (hasta 4 intentos = ~7.5s ventana). Cubre 99% de cold starts.
+                if (_retryCount < 4) {
+                    var delay = 500 * Math.pow(2, _retryCount);
+                    console.log('[MR][S26.A] session no lista aún, retry en ' + delay + 'ms (intento ' + (_retryCount + 1) + '/4)');
+                    await new Promise(function(r){ setTimeout(r, delay); });
+                    return _loadShoesFromSupabase(_retryCount + 1);
+                }
+                console.warn('[MR][S26.A] session sigue null tras 4 retries — shoes NO cargadas');
+                return { ok: false, error: 'no-session' };
+            }
 
             var res = await sb.from('user_shoes')
                 .select('id, name, km, max_km, color_hex, color_name, photo_path, '
@@ -27804,6 +27820,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
             var rows = (res && res.data) || [];
             shoes = rows.map(_mapDbRowToShoe).filter(Boolean);
+            window.__mrShoesLoadOk = true;  // [p105-fix3] marca que al menos 1 load exitoso
             console.log('[MR][S26.A] shoes cargadas desde BD: ' + shoes.length);
             try { if (typeof renderShoes === 'function') renderShoes(); } catch(_) {}
             return { ok: true, count: shoes.length };
@@ -27814,6 +27831,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     // Exponer para debug + uso desde bootApp
     window._loadShoesFromSupabase = _loadShoesFromSupabase;
+
+    // [p105-fix3] Handler defensivo para abrir el sheet de shoes.
+    // Si al boot _loadShoesFromSupabase falló (session no lista), el user
+    // podría abrir el carrusel y no ver sus zapas. Este guard detecta el
+    // caso "load nunca completó" (window.__mrShoesLoadOk !== true) y dispara
+    // recarga antes de abrir. Si ya completó → openSheet directo sin coste.
+    // NO se dispara si el user simplemente no tiene shoes (load OK + [] vacío).
+    window._openShoesSheetSafe = function() {
+        try { openSheet('shoes-sheet'); } catch(_){}
+        // Si el load inicial nunca completó, intentar recargar en background
+        if (window.__mrShoesLoadOk !== true) {
+            console.log('[MR][S26.A] shoes load no completó al boot, reintentando desde sheet open');
+            _loadShoesFromSupabase().then(function(res){
+                if (res && res.ok && res.count > 0) {
+                    // Hidratar fotos también (mismo flow que bootApp)
+                    if (typeof _hydrateShoePhotoUrls === 'function') {
+                        _hydrateShoePhotoUrls().catch(function(e){
+                            console.warn('[MR][S26.A] hidratación fotos warn (from sheet):', e);
+                        });
+                    }
+                }
+            }).catch(function(e){
+                console.warn('[MR][S26.A] recarga desde sheet fallo:', e);
+            });
+        }
+    };
 
     // INSERT de una shoe nueva. Recibe el shape JS, devuelve la fila BD
     // (con id uuid generado). Persiste user_id explícito (Lección S26.A:
@@ -64219,7 +64262,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p105-fix2';
+        window.__mrCorosVersion = 'v2.30.1-p105-fix3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
