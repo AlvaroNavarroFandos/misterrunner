@@ -8848,6 +8848,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         --mr-goal-tick:  #94a3b8;
                     }
                     .mr-goal-card {
+                        background: var(--card);
+                        border-radius: 16px;
                         padding: 16px 18px 18px;
                         position: relative;
                         overflow: hidden;
@@ -46686,6 +46688,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) { console.warn('[MR][goal] render exception:', e); }
     };
 
+    // [p105-fix1] Refresh quirúrgico de solo la card goal, sin repintar todo
+    // el Home. Usado tras save/delete para actualización inmediata visible.
+    // Reemplaza el elemento [data-ho="goal"] en #home-content si existe, y
+    // asegura que sigue siendo la última card tras el re-render.
+    window._mrRefreshGoalCard = function() {
+        try {
+            var container = document.getElementById('home-content');
+            if (!container) return;
+            var existing = container.querySelector('[data-ho="goal"]');
+            if (existing) existing.remove();
+            window._mrRenderGoalCard(container);
+            // Asegurar posición final (por si otras cards se añadieron después)
+            var newCard = container.querySelector('[data-ho="goal"]');
+            if (newCard) container.appendChild(newCard);
+        } catch(e) { console.warn('[MR][goal] refresh exception:', e); }
+    };
+
     // Modal editar objetivo. Reutiliza el helper openSheet estándar.
     function _mrGoalOpenEditModal() {
         var current = (typeof profileData === 'object' && profileData && profileData.annualKmGoal != null)
@@ -46714,14 +46733,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         profileData.annualKmGoal = v;
         try { if (typeof saveAppState === 'function') saveAppState({immediate:true}); } catch(_){}
         try { closeSheet('mr-goal-sheet'); } catch(_){}
-        // Repaint Home canonical (cubre 7 widgets según memoria _mrRepaintHomeAfterActivityChange)
-        try {
-            if (typeof window._mrRepaintHomeAfterActivityChange === 'function') {
-                window._mrRepaintHomeAfterActivityChange();
-            } else if (typeof renderHome === 'function') {
-                renderHome();
-            }
-        } catch(_){}
+        // [p105-fix1] Refresh quirúrgico inmediato (sin renderHome completo)
+        try { if (typeof window._mrRefreshGoalCard === 'function') window._mrRefreshGoalCard(); } catch(_){}
     }
     window._mrGoalSave = _mrGoalSave;
 
@@ -46731,13 +46744,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         profileData.annualKmGoal = null;
         try { if (typeof saveAppState === 'function') saveAppState({immediate:true}); } catch(_){}
         try { closeSheet('mr-goal-sheet'); } catch(_){}
-        try {
-            if (typeof window._mrRepaintHomeAfterActivityChange === 'function') {
-                window._mrRepaintHomeAfterActivityChange();
-            } else if (typeof renderHome === 'function') {
-                renderHome();
-            }
-        } catch(_){}
+        // [p105-fix1] Refresh quirúrgico inmediato
+        try { if (typeof window._mrRefreshGoalCard === 'function') window._mrRefreshGoalCard(); } catch(_){}
     }
     window._mrGoalDelete = _mrGoalDelete;
 
@@ -50488,6 +50496,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try { if (typeof window._mrRenderEvalIABlock === 'function') window._mrRenderEvalIABlock(); } catch(_){}
         // v2.30.1-p93 · Race Day: refresca la fila condicional en Runner (visible/sub)
         try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
+        // [p105-fix1] Objetivo anual: km actuales cambian cuando importas actividades
+        try { if (typeof window._mrRefreshGoalCard === 'function') window._mrRefreshGoalCard(); } catch(_){}
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -64208,7 +64218,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p105';
+        window.__mrCorosVersion = 'v2.30.1-p105-fix1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
