@@ -45641,9 +45641,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             _mrApplyActivePlanFromSupabase(planRes.data);
                         }
                     } else if (typeof activePlan !== 'undefined' && activePlan) {
-                        // Supabase vacío + local poblado → push (migración)
+                        // Supabase vacío + local poblado → push (migración) + verify + mark migrated
                         console.log('[MR][SYNC] plan local poblado + Supabase vacío → push migración');
-                        _mrPushActivePlanToSupabase();
+                        var planPushRes = await _mrPushActivePlanToSupabase();
+                        if (planPushRes && planPushRes.ok) {
+                            var planVerify = await ctx.sb.from('user_active_plans').select('plan_data').eq('user_id', ctx.uid).maybeSingle();
+                            if (planVerify && planVerify.data && planVerify.data.plan_data) {
+                                await ctx.sb.from('user_active_plans').update({ migrated_from_local_v1: true }).eq('user_id', ctx.uid);
+                                console.log('[MR][SYNC] migración plan completada + flag set');
+                            } else {
+                                console.warn('[MR][SYNC] migración plan: verificación falló, NO se marca migrated');
+                            }
+                        }
                     }
                 }
             } catch(e) { console.warn('[MR][SYNC] hydrate plan branch exception:', e); }
@@ -45659,7 +45668,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         }
                     } else if (typeof activeRehabPlan !== 'undefined' && activeRehabPlan) {
                         console.log('[MR][SYNC] rehab local poblado + Supabase vacío → push migración');
-                        _mrPushActiveRehabPlanToSupabase();
+                        var rehabPushRes = await _mrPushActiveRehabPlanToSupabase();
+                        if (rehabPushRes && rehabPushRes.ok) {
+                            var rehabVerify = await ctx.sb.from('user_active_rehab_plans').select('plan_data').eq('user_id', ctx.uid).maybeSingle();
+                            if (rehabVerify && rehabVerify.data && rehabVerify.data.plan_data) {
+                                await ctx.sb.from('user_active_rehab_plans').update({ migrated_from_local_v1: true }).eq('user_id', ctx.uid);
+                                console.log('[MR][SYNC] migración rehab completada + flag set');
+                            } else {
+                                console.warn('[MR][SYNC] migración rehab: verificación falló, NO se marca migrated');
+                            }
+                        }
                     }
                 }
             } catch(e) { console.warn('[MR][SYNC] hydrate rehab branch exception:', e); }
@@ -63138,7 +63156,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p103';
+        window.__mrCorosVersion = 'v2.30.1-p103-fix1';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
