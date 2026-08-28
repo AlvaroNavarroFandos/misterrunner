@@ -6550,6 +6550,62 @@
             50%      { transform: scaleY(1.0);  opacity: 1; }
         }
 
+        /* [v2.30.1-p111-fix2 · Fase 3.3] Markdown assistant + cursor streaming */
+        .mi-msg.assistant .mi-md-code {
+            background: var(--ia-purple-lt);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            font-size: .92em;
+            color: var(--ia-purple);
+        }
+        .mi-msg.assistant .mi-md-pre {
+            background: var(--bsoft);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin: 6px 0;
+            overflow-x: auto;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            font-size: .88em;
+            line-height: 1.4;
+        }
+        .mi-msg.assistant .mi-md-pre code {
+            color: var(--tw);
+            background: none;
+            padding: 0;
+        }
+        .mi-msg.assistant .mi-md-h {
+            font-size: 14px;
+            font-weight: 800;
+            margin: 8px 0 4px;
+            color: var(--ia-purple);
+            letter-spacing: -.2px;
+        }
+        .mi-msg.assistant .mi-md-ul {
+            margin: 4px 0 4px 0;
+            padding-left: 18px;
+        }
+        .mi-msg.assistant .mi-md-ul li { margin: 2px 0; }
+        .mi-msg.assistant p { margin: 4px 0; }
+        .mi-msg.assistant p:first-child { margin-top: 0; }
+        .mi-msg.assistant p:last-child { margin-bottom: 0; }
+        .mi-msg.assistant.error {
+            border-color: rgba(220,38,38,.4);
+            background: rgba(220,38,38,.06);
+        }
+        .mi-md-cursor {
+            display: inline-block;
+            color: var(--ia-purple);
+            font-weight: 700;
+            animation: mi-cursor-blink 1s steps(2) infinite;
+            margin-left: 1px;
+            transform: translateY(-1px);
+        }
+        @keyframes mi-cursor-blink {
+            50% { opacity: 0; }
+        }
+
         /* ─── Botón "Exportar COROS" en barra del plan (variante A) ─── */
         .mr-coros-btn-plan {
             display: inline-flex;
@@ -65574,7 +65630,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p111-fix1';
+        window.__mrCorosVersion = 'v2.30.1-p111-fix2';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -68749,6 +68805,109 @@ window.addEventListener('DOMContentLoaded', function() {
             'haiku-4-5': 'claude-haiku-4-5-20251001'
         };
 
+        /* [v2.30.1-p111-fix2 · Fase 3.2] System prompt personalidad Míster.
+           Aprobado por Álvaro sesión 28/08/2026. Cuñadismo máster + técnico
+           pro + anglicismos running + gen-Z + jerga mus. Se inyecta ANTES
+           del bloque CONTEXTO en el system field de la API Anthropic.
+           Placeholders {firstName} y {FIRSTNAME} se sustituyen client-side. */
+        var MI_SYSTEM_PROMPT = [
+            'Eres Míster, el entrenador personal de running de {firstName}. Le conoces desde hace tiempo:',
+            'tienes su perfil físico, plan activo, marcas oficiales, historial reciente, estado de forma,',
+            'lesiones pasadas y su carrera objetivo. Todo eso está en el bloque "CONTEXTO DE {FIRSTNAME}"',
+            'que viene justo debajo. Léelo como conocimiento previo — no lo cites literal, úsalo con',
+            'naturalidad.',
+            '',
+            '── QUIÉN ERES ──',
+            'Un veterano del running con décadas de tartán, cuestas y cervezas post-carrera. Sabes de',
+            'fisiología, VDOT, zonas, periodización, PMC, biomecánica y nutrición deportiva a nivel pro',
+            '— te has leído a Daniels, Lydiard, Magness y a todo el que haya escrito en serio. Pero',
+            'también eres el tío de la barra del bar que ha visto de todo, que suelta cuñadeces de',
+            'campeonato, y que aprendió a leer el juego del contrario echando mil partidas al mus con',
+            'los amigos. {firstName} es tu colega runner de años.',
+            '',
+            '── TONO ──',
+            '· Castellano de España, castizo y directo. Sin filtros, sin edulcorar. "Joder", "hostia",',
+            '  "vaya tela", "menudo cabrón", "date caña", "dale", "brutal", "espabila", "cuidado con eso",',
+            '  "eso está fino", "menudo pepino", "vas cascao".',
+            '· Cuñadismo de máster cuando pinte: refranes, comparaciones absurdas, "esto es como cuando...",',
+            '  "yo tenía un colega que...", "no por mucho madrugar amanece más temprano", "el que la sigue',
+            '  la consigue", "ojito con eso ¿eh?".',
+            '· Anglicismos runners con naturalidad — así de paso {firstName} los aprende: long run, easy',
+            '  pace, tempo, threshold, hill repeats, fartlek, tapering, warm-up, cool-down, PB, negative',
+            '  split, hitting the wall/bonk, kick final, sub-3, tune-up race, carb loading, runners high,',
+            '  aid station, DNF. Cuando uses uno raro, aclaración breve entre paréntesis la primera vez.',
+            '· Expresiones modernas gen-Z/gaming para valoraciones rápidas: "eso es una W", "menuda L",',
+            '  "farmeas aura como un cabrón", "GOATed", "peak {firstName}", "menudo chad", "mid" (mediocre),',
+            '  "based" (bien hecho), "cracked" (crack), "no cap" (en serio), "sus" (sospechoso). Sin abusar',
+            '  — cuando el momento lo pida.',
+            '· Jerga del mus cuando encaje: "eso es un órdago en toda regla", "vas envidando fuerte esta',
+            '  semana", "amarraco a favor", "estás jugando la chica cuando toca la grande", "postre de',
+            '  temporada (última semana antes de carrera)", "farolear con la fatiga", "hago señal: esto se',
+            '  va de madre", "faltan pocas piedras para la carrera".',
+            '· {firstName} por nombre puntual (nunca en cada frase, queda plástico). Tuteo siempre.',
+            '  Frases cortas por defecto.',
+            '',
+            '── FORMATO ──',
+            '· 3-5 frases por defecto. Si el tema pide análisis profundo (nutrición maratón, estrategia',
+            '  carrera, plan recovery), expande sin problema — un párrafo o dos si hace falta.',
+            '· **Negrita** para conceptos y cifras clave. Listas con "-" solo cuando enumeras 3+ cosas.',
+            '· Cita datos reales del contexto con precisión quirúrgica: CTL 68.4, TSB -3.7, ritmo umbral',
+            '  4:05, cumplimiento 89%, ACWR 1.28. NUNCA inventes cifras. Si un dato no está: "no lo veo',
+            '  en tus datos, échale un ojo al reloj y me dices".',
+            '· Puedes referenciar el COROS Pace Pro cuando encaje: "míralo en el COROS", "en el training',
+            '  hub te sale el gráfico", "el reloj te lo pinta claro".',
+            '',
+            '── SINCERIDAD BRUTAL ──',
+            'Sinceridad total aunque duela. Si {firstName} se está pasando (forzar tras RPE 9, doblar km',
+            'de golpe, saltarse recovery, competir enfermo, ignorar dolor), pushback frontal con razón',
+            'fisiológica: "eso es error, y te digo por qué: ...". Si va bien, se lo dices igual de claro:',
+            '"vas GOATed, sigue así".',
+            'NO sí-manía nunca. NO cheerleading de relleno ("¡tú puedes, campeón!"). {firstName} lleva',
+            'años entrenando, no necesita motivación de guardería.',
+            '',
+            '── QUÉ NO HACES ──',
+            '· NO condescendencia. Si pregunta algo básico, respondes recto sin "como sabrás..." ni',
+            '  "seguro ya lo sabes...".',
+            '· NO inventes carreras, PRs, activities, adaptaciones que no estén en el contexto.',
+            '· NO diagnostiques nada médico. Si menciona dolor real, molestia articular persistente,',
+            '  síntomas raros: "esto lo ve un fisio o médico deportivo en persona, no yo. Ni de coña te',
+            '  digo yo lo que es sin verlo".',
+            '· NO recomiendes dosis de suplementos, medicamentos ni farmacología. Nutrición deportiva',
+            '  general sí (CH/h, cafeína, hidratación, timing pre-carrera).',
+            '· Si detectas patrón de overtraining crónico o señales raras con la comida, coméntalo una',
+            '  vez con tacto y sugiere pro. No lo repitas cada mensaje.',
+            '· Emojis: solo 🏆 (PR nuevo) y 🎯 (sesión clave). Nada de 💪🔥⚡️😊.',
+            '',
+            '── FUERA DE RUNNING ──',
+            'Si pregunta cosas ajenas al running (fútbol, cine, curro, la vida), respondes breve con',
+            'humor y reencaminas: "eso ya no es mi campo, pregúntale a otro cuñado — pero de tu long',
+            'del domingo sí te digo que...".',
+            '',
+            '── SI TE PREGUNTAN "¿ERES UNA IA?" ──',
+            'Honestidad total: "Soy Míster, tu entrenador digital dentro de MisterRunner. Por dentro',
+            'llevo Claude (Anthropic). Todo lo que sé de ti viene de tu perfil, plan y activities de',
+            'la app — nada más, no espío nada raro."',
+            '',
+            '── ARRANQUE ──',
+            'Si el primer mensaje del user es un saludo escueto ("hola", "buenas", "qué tal"),',
+            'respondes breve y contextual: menciona un dato reciente relevante (última activity,',
+            'sesión de hoy, PR reciente, días para carrera) y ofrece ayuda concreta.'
+        ].join('\n');
+
+        window._miGetSystemPrompt = function() {
+            try {
+                var first = (typeof profileData === 'object' && profileData && profileData.name)
+                    ? profileData.name.split(/\s+/)[0]
+                    : 'colega';
+                var upper = first.toUpperCase();
+                return MI_SYSTEM_PROMPT
+                    .replace(/\{firstName\}/g, first)
+                    .replace(/\{FIRSTNAME\}/g, upper);
+            } catch(_) {
+                return MI_SYSTEM_PROMPT;
+            }
+        };
+
         // Estado transitorio del sheet edit (antes de guardar)
         var _miDraft = { key: '', model: MI_DEFAULT_MODEL, saveHistory: true, keyVisible: false };
 
@@ -69109,6 +69268,44 @@ window.addEventListener('DOMContentLoaded', function() {
                     if (ta) ta.focus();
                 } catch (_) {}
             }, 380);
+            // [Fase 3.5 mergeada en fix2] Hidratar historial desde Supabase.
+            // Solo si toggle "Guardar conversaciones" ON + hay sesión Supabase.
+            // Fire-and-forget: no bloquea apertura del sheet.
+            try {
+                if (window._miGetSaveHistory && window._miGetSaveHistory()
+                    && window._sbClient && Array.isArray(_miConvHistory)) {
+                    // Skip re-hidratación si ya hay historial cargado en RAM
+                    if (_miConvHistory.length === 0) {
+                        (async function _miHydrateHistoryOnce() {
+                            try {
+                                var sb = window._sbClient;
+                                var { data: { user } } = await sb.auth.getUser();
+                                if (!user) return;
+                                var res = await sb.from('mister_conversations')
+                                    .select('messages')
+                                    .eq('user_id', user.id)
+                                    .maybeSingle();
+                                var row = res && res.data;
+                                if (!row || !Array.isArray(row.messages) || !row.messages.length) return;
+                                // Filtro 30d defensivo (por si cleanup no corrió aún)
+                                var cutoff = Date.now() - 30 * 86400 * 1000;
+                                var msgs = row.messages.filter(function(m){
+                                    var ts = m && m.ts ? new Date(m.ts).getTime() : 0;
+                                    return ts >= cutoff && m && (m.role === 'user' || m.role === 'assistant');
+                                });
+                                if (!msgs.length) return;
+                                // Cap últimos 30 mensajes en pantalla (los más recientes)
+                                var toShow = msgs.slice(-30);
+                                _miConvHistory = toShow.slice();
+                                // Pintar en DOM
+                                toShow.forEach(function(m){ _miAppendMsg(m.role, m.content); });
+                            } catch(e) {
+                                console.warn('[MR][mi] hidratación historial error:', e && e.message || e);
+                            }
+                        })();
+                    }
+                }
+            } catch(_) {}
         };
 
         /* ─── Composer: input handler (auto-resize + toggle send disabled) ─── */
@@ -69890,13 +70087,330 @@ window.addEventListener('DOMContentLoaded', function() {
         };
 
         window._miChatOnSend = function() {
+            /* Placeholder — se sobrescribe abajo con la versión real de Fase 3.3.
+               Se deja aquí como safety net por si el bloque siguiente falla. */
+            try {
+                if (typeof fxToast === 'function') fxToast('Chat no disponible ahora', { variant: 'warn' });
+            } catch (_) {}
+        };
+
+        /* ═══════════════════════════════════════════════════════════════
+           FASE 3.3 · Chat streaming SSE contra Anthropic API
+           ───────────────────────────────────────────────────────────────
+           Reemplaza el stub anterior con el flujo real:
+             1. Compila contexto fresco (C3A) via _miChatBuildContext
+             2. Fetch streaming POST https://api.anthropic.com/v1/messages
+                con x-api-key del user (BYOK) + header dangerous-direct-browser-access
+             3. Parse SSE chunks, acumula texto y renderiza markdown en vivo
+             4. Al finalizar stream: persiste par (user, assistant) en Supabase
+                mister_conversations si _miGetSaveHistory() = true
+             5. Manejo errores: 401 (key inválida), 429 (rate limit), 5xx, network
+           Onda premium: _miShowThinking(true) al enviar → (false) al FIN del stream
+           completo (Q1·B decisión Álvaro: onda dura pensando + escribiendo).
+           Markdown en tiempo real (Q2·A): parse regex ligero en cada delta.
+           ═══════════════════════════════════════════════════════════════ */
+
+        /* Estado de la conversación en RAM (se rehidrata desde Supabase al abrir sheet) */
+        var _miConvHistory = [];  // [{role, content, ts}]
+        var _MI_MAX_HISTORY_SEND = 20;   // últimos N mensajes enviados a la API (cap tokens)
+        var _MI_MAX_TOKENS       = 1024; // límite respuesta
+        var _MI_STREAM_TIMEOUT   = 60000; // 60s hard timeout
+
+        /* Escape HTML defensivo — obligatorio antes de renderizar cualquier
+           texto del user o del assistant en el DOM (evita XSS con < > & etc). */
+        function _miEscapeHtml(str) {
+            if (str == null) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        /* Markdown básico inline. Escapa HTML PRIMERO, luego aplica regex.
+           Soporta: **bold**, *italic*, `code`, listas con - o *, headers h3 (###),
+           saltos de línea dobles → párrafos, saltos simples → <br>.
+           NO usa librería externa (peso 0). */
+        function _miRenderMarkdown(text) {
+            if (text == null) return '';
+            var t = _miEscapeHtml(String(text));
+            // Bloques de código triple ``` primero (para que no rompa el resto)
+            t = t.replace(/```([\s\S]*?)```/g, function(_, code){
+                return '<pre class="mi-md-pre"><code>' + code + '</code></pre>';
+            });
+            // Código inline `code`
+            t = t.replace(/`([^`\n]+)`/g, '<code class="mi-md-code">$1</code>');
+            // Bold **texto**
+            t = t.replace(/\*\*([^\*\n]+)\*\*/g, '<strong>$1</strong>');
+            // Italic *texto* (single, no double)
+            t = t.replace(/(^|[\s(])\*([^\*\n]+)\*(?=[\s.,;:!?)]|$)/g, '$1<em>$2</em>');
+            // Headers h3
+            t = t.replace(/^###\s+(.+)$/gm, '<h4 class="mi-md-h">$1</h4>');
+            // Listas: convertir bloque de líneas "- item" en <ul>
+            t = t.replace(/(^|\n)((?:[\-\*] .+(?:\n|$))+)/g, function(_, prefix, block) {
+                var items = block.trim().split('\n')
+                    .map(function(l){ return l.replace(/^[\-\*]\s+/, ''); })
+                    .map(function(l){ return '<li>' + l + '</li>'; })
+                    .join('');
+                return prefix + '<ul class="mi-md-ul">' + items + '</ul>';
+            });
+            // Párrafos: dobles saltos de línea → </p><p>
+            t = t.split(/\n\n+/).map(function(p){
+                if (/^<(ul|pre|h4)/.test(p.trim())) return p;
+                return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+            }).join('');
+            return t;
+        }
+
+        /* Añade una burbuja al DOM y devuelve el elemento (para poder actualizarlo
+           en streaming). Oculta empty state la primera vez. */
+        function _miAppendMsg(role, text) {
+            try {
+                var body = document.getElementById('mi-chat-body');
+                if (!body) return null;
+                // Ocultar empty state si visible
+                var empty = document.getElementById('mi-chat-empty');
+                if (empty) empty.style.display = 'none';
+                var msg = document.createElement('div');
+                msg.className = 'mi-msg ' + role;
+                if (role === 'assistant') {
+                    msg.innerHTML = _miRenderMarkdown(text);
+                } else {
+                    // User: escape puro, respetar saltos de línea
+                    msg.innerHTML = _miEscapeHtml(text).replace(/\n/g, '<br>');
+                }
+                body.appendChild(msg);
+                _miScrollChatToBottom();
+                return msg;
+            } catch(_) { return null; }
+        }
+
+        function _miScrollChatToBottom() {
+            try {
+                var body = document.getElementById('mi-chat-body');
+                if (body) body.scrollTop = body.scrollHeight;
+            } catch(_) {}
+        }
+
+        /* Reemplaza contenido de una burbuja assistant por card error visible.
+           Rojo suave, no rompe layout. */
+        function _miShowMsgError(el, err) {
+            try {
+                if (!el) return;
+                var msg = 'Algo ha fallado. Prueba de nuevo o revisa tu key.';
+                var status = err && err._miStatus;
+                if (status === 401) msg = 'Tu API key ya no es válida. Revísala en Conexiones > Míster IA.';
+                else if (status === 429) msg = 'Rate limit alcanzado. Espera un momento e inténtalo de nuevo.';
+                else if (status >= 500 && status < 600) msg = 'Error del servidor de Anthropic. Vuelve a intentarlo en unos segundos.';
+                else if (err && err.name === 'AbortError') msg = 'Sin respuesta de Anthropic. Comprueba tu conexión.';
+                else if (err && /NetworkError|Failed to fetch/i.test(String(err.message || err))) msg = 'Sin respuesta de Anthropic. Comprueba tu conexión.';
+                el.classList.add('error');
+                el.innerHTML = '<span style="color:#dc2626;font-weight:700;">⚠ ' + _miEscapeHtml(msg) + '</span>';
+            } catch(_) {}
+        }
+
+        /* Devuelve el histórico limitado a los últimos N msgs formateado para
+           el endpoint Anthropic (role + content, sin timestamps ni metadata). */
+        function _miGetHistoryForRequest() {
+            try {
+                var slice = _miConvHistory.slice(-_MI_MAX_HISTORY_SEND);
+                return slice.map(function(m){
+                    return { role: m.role, content: m.content };
+                });
+            } catch(_) { return []; }
+        }
+
+        /* Persistencia Supabase fire-and-forget. Cleanup 30d en el propio UPSERT
+           (regla férrea del proyecto — sin cron). NO await desde el caller. */
+        async function _miPersistToSupabase(userText, assistantText) {
+            try {
+                var sb = window._sbClient;
+                if (!sb) return;
+                var { data: { user } } = await sb.auth.getUser();
+                if (!user) return;
+                // Read current
+                var current = null;
+                try {
+                    var res = await sb.from('mister_conversations')
+                        .select('messages, total_msgs')
+                        .eq('user_id', user.id)
+                        .maybeSingle();
+                    current = res && res.data;
+                } catch(_) {}
+                var messages = (current && Array.isArray(current.messages)) ? current.messages.slice() : [];
+                // Cleanup 30d
+                var cutoff = Date.now() - 30 * 86400 * 1000;
+                messages = messages.filter(function(m){
+                    var ts = m && m.ts ? new Date(m.ts).getTime() : 0;
+                    return ts >= cutoff;
+                });
+                var now = new Date().toISOString();
+                messages.push({ role: 'user',      content: userText,      ts: now });
+                messages.push({ role: 'assistant', content: assistantText, ts: now });
+                var totalPrev = (current && typeof current.total_msgs === 'number') ? current.total_msgs : 0;
+                var upsertRes = await sb.from('mister_conversations').upsert({
+                    user_id: user.id,
+                    messages: messages,
+                    total_msgs: totalPrev + 2
+                }, { onConflict: 'user_id' });
+                if (upsertRes && upsertRes.error) {
+                    console.warn('[MR][mi] persist upsert error:', upsertRes.error.message || upsertRes.error);
+                }
+            } catch(e) {
+                console.warn('[MR][mi] _miPersistToSupabase exception:', e && e.message || e);
+            }
+        }
+
+        /* SEND HANDLER REAL — reemplaza el stub arriba. Async porque usa fetch stream. */
+        window._miChatOnSend = async function() {
+            var assistantEl = null;
+            var userText = '';
             try {
                 var ta = document.getElementById('mi-chat-input');
                 if (!ta || !ta.value.trim()) return;
-                if (typeof fxToast === 'function') {
-                    fxToast('Chat activo en Fase 3 · próximo release', { variant: 'info' });
+                userText = ta.value.trim();
+
+                // Guard: sin API key configurada
+                if (!window._miHasApiKey || !window._miHasApiKey()) {
+                    if (typeof fxToast === 'function') {
+                        fxToast('Configura tu API key en Conexiones > Míster IA', { variant: 'warn' });
+                    }
+                    return;
                 }
-            } catch (_) {}
+
+                // 1. Pintar burbuja user + limpiar textarea
+                _miAppendMsg('user', userText);
+                _miConvHistory.push({ role: 'user', content: userText, ts: new Date().toISOString() });
+                ta.value = '';
+                ta.style.height = '';
+                if (typeof window._miChatOnInput === 'function') window._miChatOnInput();
+
+                // 2. Crear burbuja assistant vacía + activar onda pensamiento
+                assistantEl = _miAppendMsg('assistant', '');
+                if (assistantEl) assistantEl.innerHTML = '<span class="mi-md-cursor">▍</span>';
+                window._miShowThinking(true);
+
+                // 3. Build request body
+                var systemPrompt = window._miGetSystemPrompt();
+                var contextSnapshot = (typeof window._miChatBuildContext === 'function')
+                    ? window._miChatBuildContext()
+                    : '';
+                var fullSystem = systemPrompt + '\n\n' + contextSnapshot;
+                var apiModel = MI_MODEL_API[window._miGetModel()] || MI_MODEL_API[MI_DEFAULT_MODEL];
+                var history = _miGetHistoryForRequest();  // ya incluye el user msg recién añadido
+
+                // 4. Fetch streaming con AbortController + timeout defensivo
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function(){ controller.abort(); }, _MI_STREAM_TIMEOUT);
+                var resp;
+                try {
+                    resp = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': window._miGetApiKey(),
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-dangerous-direct-browser-access': 'true',
+                            'content-type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: apiModel,
+                            max_tokens: _MI_MAX_TOKENS,
+                            system: fullSystem,
+                            messages: history,
+                            stream: true
+                        }),
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+
+                if (!resp.ok) {
+                    var errMsg = 'HTTP ' + resp.status;
+                    try {
+                        var errBody = await resp.text();
+                        console.warn('[MR][mi] fetch error body:', errBody.slice(0, 400));
+                    } catch(_) {}
+                    var e = new Error(errMsg);
+                    e._miStatus = resp.status;
+                    throw e;
+                }
+
+                // 5. Parse SSE stream chunk a chunk
+                var reader = resp.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+                var accumulated = '';
+                var receivedFirstDelta = false;
+
+                while (true) {
+                    var readResult = await reader.read();
+                    if (readResult.done) break;
+                    buffer += decoder.decode(readResult.value, { stream: true });
+                    // SSE separa eventos con doble \n
+                    var events = buffer.split('\n\n');
+                    buffer = events.pop() || ''; // último trozo incompleto queda en buffer
+                    for (var i = 0; i < events.length; i++) {
+                        var evt = events[i];
+                        // Cada evento puede tener múltiples líneas "event: X" y "data: Y"
+                        var lines = evt.split('\n');
+                        for (var j = 0; j < lines.length; j++) {
+                            var line = lines[j];
+                            if (!line || line.indexOf('data:') !== 0) continue;
+                            var payload = line.slice(5).trim();
+                            if (!payload || payload === '[DONE]') continue;
+                            try {
+                                var parsed = JSON.parse(payload);
+                                if (parsed && parsed.type === 'content_block_delta'
+                                    && parsed.delta && parsed.delta.type === 'text_delta'
+                                    && typeof parsed.delta.text === 'string') {
+                                    accumulated += parsed.delta.text;
+                                    receivedFirstDelta = true;
+                                    if (assistantEl) {
+                                        // Q2·A: render markdown en tiempo real con cursor visual
+                                        assistantEl.innerHTML = _miRenderMarkdown(accumulated)
+                                            + '<span class="mi-md-cursor">▍</span>';
+                                        _miScrollChatToBottom();
+                                    }
+                                }
+                                // Otros events (message_start, message_delta, message_stop, ping) los ignoramos
+                            } catch(pe) { /* JSON parse error → skip line silenciosamente */ }
+                        }
+                    }
+                }
+
+                // 6. Fin del stream: quitar cursor + apagar onda (Q1·B)
+                if (assistantEl) {
+                    assistantEl.innerHTML = _miRenderMarkdown(accumulated);
+                }
+                window._miShowThinking(false);
+
+                if (!accumulated) {
+                    // Stream vacío raro — mostrar aviso sutil
+                    if (assistantEl) {
+                        assistantEl.innerHTML = '<em style="opacity:.6;">(sin respuesta — intenta de nuevo)</em>';
+                    }
+                    return;
+                }
+
+                // 7. Añadir a historial en RAM
+                _miConvHistory.push({
+                    role: 'assistant',
+                    content: accumulated,
+                    ts: new Date().toISOString()
+                });
+
+                // 8. Persistir a Supabase si toggle ON (fire-and-forget)
+                if (window._miGetSaveHistory && window._miGetSaveHistory()) {
+                    _miPersistToSupabase(userText, accumulated); // no await
+                }
+
+            } catch (err) {
+                console.warn('[MR][mi] _miChatOnSend error:', err && err.message || err);
+                window._miShowThinking(false);
+                _miShowMsgError(assistantEl, err);
+            }
         };
 
         /* [v2.30.1-p111-fix1] Toggle waveform premium en cabecera del chat.
@@ -69935,7 +70449,7 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
         try { console.log('%c[MR] Míster IA · Fase 2 helpers ready (v2.30.1-p110)', 'color:#7c3aed;font-weight:bold;'); } catch (_) {}
-        try { console.log('%c[MR] Míster IA · Fase 3.1 helpers ready (v2.30.1-p111-fix1) · _miChatBuildContext + _miShowThinking + waveform premium', 'color:#a855f7;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Míster IA · Fase 3.3 helpers ready (v2.30.1-p111-fix2) · streaming SSE + system prompt + persistencia', 'color:#a855f7;font-weight:bold;'); } catch (_) {}
     })();
 
     </script>
