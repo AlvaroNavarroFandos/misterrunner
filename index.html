@@ -16466,6 +16466,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(e) { console.warn('[MR][p100] nutrition hydrate warn:', e); }
         })();
 
+        // [p103 · Full Profile Sync] Hidratación cross-device: profile físico +
+        // activePlan + activeRehabPlan. Fire-and-forget en paralelo. Last-write
+        // -wins comparando updated_at server vs state.ts local. Migración
+        // one-time si Supabase vacío + local poblado + !migrated_from_local_v1.
+        // Se ejecuta DESPUÉS de loadAppState (loaded) y loadRehabPlanOnBoot
+        // (ambos síncronos arriba) para que los valores locales ya estén en
+        // profileData/activePlan/activeRehabPlan cuando comparemos timestamps.
+        (async () => {
+            try {
+                if (typeof _mrFullSyncHydrate === 'function') {
+                    await _mrFullSyncHydrate();
+                }
+            } catch(e) { console.warn('[MR][p103] full sync hydrate warn:', e); }
+        })();
+
         // [v6 P.Plan] Al cargar la app, localizar la semana actual del plan
         // para que Plan se muestre directamente en HOY (no en semana 1).
         try {
@@ -16577,6 +16592,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // ── STORAGE ──────────────────────────────────────────────────────────
     function saveRehabPlanToStorage() {
         try { localStorage.setItem(_uk('mr_rehab_plan'), JSON.stringify(activeRehabPlan)); } catch(e){}
+        // [p103] Sync a Supabase (fire-and-forget, debounced 5s)
+        try { if (typeof _mrScheduleRehabPlanSync === 'function') _mrScheduleRehabPlanSync(); } catch(_){}
     }
     function loadRehabPlanOnBoot() {
         try { var r=localStorage.getItem(_uk('mr_rehab_plan')); if(r) activeRehabPlan=JSON.parse(r); } catch(e){}
@@ -16586,6 +16603,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if(!confirm('¿Eliminar el plan de rehabilitación?')) return;
         activeRehabPlan = null;
         try { localStorage.removeItem(_uk('mr_rehab_plan')); } catch(e){}
+        // [p103] Sync a Supabase el borrado (fire-and-forget)
+        try { if (typeof _mrScheduleRehabPlanSync === 'function') _mrScheduleRehabPlanSync(); } catch(_){}
         updateRehabUI();
         showToast('Plan de rehabilitación eliminado', 3000);
     }
@@ -45214,6 +45233,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     console.warn('saveAppState: saved without avatar ref');
                 } catch(e2){ console.warn('saveAppState quota exceeded:', e2); }
             }
+            // [p103] Full Profile Sync — schedule push a Supabase (debounced 5s).
+            // Fire-and-forget: si falla, localStorage sigue siendo la fuente de
+            // verdad hasta el próximo boot que rehidrata comparando timestamps.
+            try { if (typeof _mrScheduleProfileSync === 'function') _mrScheduleProfileSync(); } catch(_){}
+            try { if (typeof _mrSchedulePlanSync    === 'function') _mrSchedulePlanSync();    } catch(_){}
         } catch(e){ console.warn('saveAppState:', e); }
     }
 
@@ -45236,6 +45260,423 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             _saveAppStateNow();
         }, _SAVE_DEBOUNCE_MS);
     }
+
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MR × Full Profile Sync · v2.30.1-p103 · 28 ago 2026
+    //
+    // Sync completo de profileData físico + activePlan + activeRehabPlan a
+    // Supabase para persistencia cross-device. Last-write-wins con
+    // updated_at server-side (trigger mr_touch_updated_at aplicado en Fase A).
+    //
+    // PROFILE (tabla profiles · 18 cols nuevas añadidas en Fase A):
+    //   weight, height, sex, dob, hr_max, hr_rest
+    //   lt_value, pace_value, lt_manual, pace_manual
+    //   meta, vo2max, weeks_exp, weeks_exp_saved_at
+    //   training_days, injuries, medallero
+    //   migrated_from_local_v1
+    //
+    // PLANES (tablas nuevas · JSONB):
+    //   user_active_plans.plan_data → activePlan
+    //   user_active_rehab_plans.plan_data → activeRehabPlan
+    //
+    // Flow save (fire-and-forget, debounced 5s):
+    //   _saveAppStateNow (localStorage, ya existente) sigue igual.
+    //   Además: _mrScheduleProfileSync() + _mrSchedulePlanSync() al final.
+    //   saveRehabPlanToStorage() añade _mrScheduleRehabPlanSync().
+    //
+    // Flow hydrate (post-boot, fire-and-forget, en bootApp):
+    //   _mrFullSyncHydrate() → 3 fetches paralelos → last-write-wins.
+    //   - Si Supabase.updated_at > local.ts → aplicar Supabase + repaint.
+    //   - Si Supabase vacío + local poblado + !migrated → push (migración).
+    //   - Empate o local > Supabase → no hacer nada (local wins).
+    //
+    // Coexistencia con syncs ya existentes:
+    //   - nutrition: gestionado por _rdSave/_rdLoadNutritionFromSupabase.
+    //     NO se toca en este push (mismo campo, otro flujo).
+    //   - display_name/avatar_url/username: gestionado por saveProfile UI.
+    //     NO se tocan en este push (evitar carrera con avatar upload).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    var _mrSyncTimers = { profile:null, plan:null, rehab:null };
+    var _MR_SYNC_DEBOUNCE_MS = 5000;
+    // [p103] Flag para suprimir schedule push cuando estamos aplicando datos
+    // que ACABAN de venir de Supabase (en apply functions). Evita el loop
+    // "hydrate SB → local.saveAppState() → schedule push → Supabase update"
+    // que no aporta nada pero desperdicia writes en cada boot.
+    var _mrSyncSuppressPush = false;
+
+    function _mrGetLocalProfileTs() {
+        try {
+            var _key = APP_KEY_OVERRIDE || APP_KEY;
+            var raw = localStorage.getItem(_key);
+            if (!raw) return 0;
+            var state = JSON.parse(raw);
+            return (state && state.ts) || 0;
+        } catch(_) { return 0; }
+    }
+
+    async function _mrGetSyncSession() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return null;
+            var res = await sb.auth.getSession();
+            var session = res && res.data && res.data.session;
+            if (!session || !session.user || !session.user.id) return null;
+            return { sb: sb, uid: session.user.id };
+        } catch(_) { return null; }
+    }
+
+    // ── PUSH: profile ──────────────────────────────────────────────────
+    // Envía profileData físico + umbrales a la tabla profiles. NO toca
+    // display_name/avatar_url/username/nutrition/bio (otros flujos).
+    // Trigger DB actualiza updated_at → cross-device sync coherente.
+    async function _mrPushProfileToSupabase() {
+        try {
+            var ctx = await _mrGetSyncSession();
+            if (!ctx) return { ok:false, reason:'no-session' };
+            var pd = (typeof profileData === 'object' && profileData) ? profileData : {};
+
+            function _num(v) {
+                if (v == null || v === '') return null;
+                var n = Number(v);
+                return isFinite(n) ? n : null;
+            }
+            function _int(v) {
+                if (v == null || v === '') return null;
+                var n = parseInt(v, 10);
+                return isFinite(n) ? n : null;
+            }
+            function _str(v) {
+                return (v == null || v === '') ? null : String(v);
+            }
+            function _arr(v) {
+                return Array.isArray(v) ? v : [];
+            }
+
+            var payload = {
+                weight:             _num(pd.weight),
+                height:             _num(pd.height),
+                sex:                _str(pd.sex),
+                dob:                _str(pd.dob),
+                hr_max:             _int(pd.hrMax),
+                hr_rest:            _int(pd.hrRest),
+                lt_value:           (typeof ltValue    === 'number' && isFinite(ltValue))    ? ltValue    : null,
+                pace_value:         (typeof paceValue  === 'number' && isFinite(paceValue))  ? paceValue  : null,
+                lt_manual:          (typeof ltManual   === 'number' && isFinite(ltManual))   ? ltManual   : null,
+                pace_manual:        (typeof paceManual === 'number' && isFinite(paceManual)) ? paceManual : null,
+                meta:               _str(pd.meta),
+                vo2max:             _num(pd.vo2max),
+                weeks_exp:          _int(pd.weeksExp),
+                weeks_exp_saved_at: _str(pd.weeksExpSavedAt),
+                training_days:      _arr(pd.trainingDays),
+                injuries:           _arr(pd.injuries),
+                medallero:          _arr(pd.medallero)
+            };
+
+            var res = await ctx.sb.from('profiles').update(payload).eq('id', ctx.uid);
+            if (res && res.error) {
+                console.warn('[MR][SYNC] profile push warn:', res.error);
+                return { ok:false, error:res.error };
+            }
+            return { ok:true };
+        } catch(e) {
+            console.warn('[MR][SYNC] profile push exception:', e);
+            return { ok:false, error:e };
+        }
+    }
+
+    // ── PUSH: activePlan (JSONB) ───────────────────────────────────────
+    // Si activePlan es null → borra la fila en Supabase (coherente con
+    // deletePlan local que borra 'mr_plan' de localStorage).
+    async function _mrPushActivePlanToSupabase() {
+        try {
+            var ctx = await _mrGetSyncSession();
+            if (!ctx) return { ok:false, reason:'no-session' };
+
+            if (!activePlan) {
+                var delRes = await ctx.sb.from('user_active_plans').delete().eq('user_id', ctx.uid);
+                if (delRes && delRes.error) console.warn('[MR][SYNC] plan delete warn:', delRes.error);
+                return { ok:true, deleted:true };
+            }
+
+            var payload = { user_id: ctx.uid, plan_data: activePlan };
+            var res = await ctx.sb.from('user_active_plans').upsert(payload, { onConflict:'user_id' });
+            if (res && res.error) {
+                console.warn('[MR][SYNC] plan push warn:', res.error);
+                return { ok:false, error:res.error };
+            }
+            return { ok:true };
+        } catch(e) {
+            console.warn('[MR][SYNC] plan push exception:', e);
+            return { ok:false, error:e };
+        }
+    }
+
+    // ── PUSH: activeRehabPlan (JSONB) ──────────────────────────────────
+    async function _mrPushActiveRehabPlanToSupabase() {
+        try {
+            var ctx = await _mrGetSyncSession();
+            if (!ctx) return { ok:false, reason:'no-session' };
+
+            if (!activeRehabPlan) {
+                var delRes = await ctx.sb.from('user_active_rehab_plans').delete().eq('user_id', ctx.uid);
+                if (delRes && delRes.error) console.warn('[MR][SYNC] rehab delete warn:', delRes.error);
+                return { ok:true, deleted:true };
+            }
+
+            var payload = { user_id: ctx.uid, plan_data: activeRehabPlan };
+            var res = await ctx.sb.from('user_active_rehab_plans').upsert(payload, { onConflict:'user_id' });
+            if (res && res.error) {
+                console.warn('[MR][SYNC] rehab push warn:', res.error);
+                return { ok:false, error:res.error };
+            }
+            return { ok:true };
+        } catch(e) {
+            console.warn('[MR][SYNC] rehab push exception:', e);
+            return { ok:false, error:e };
+        }
+    }
+
+    // ── Debounce schedulers ────────────────────────────────────────────
+    function _mrScheduleProfileSync() {
+        if (_mrSyncSuppressPush) return;
+        if (_mrSyncTimers.profile) clearTimeout(_mrSyncTimers.profile);
+        _mrSyncTimers.profile = setTimeout(function(){
+            _mrSyncTimers.profile = null;
+            _mrPushProfileToSupabase();
+        }, _MR_SYNC_DEBOUNCE_MS);
+    }
+    function _mrSchedulePlanSync() {
+        if (_mrSyncSuppressPush) return;
+        if (_mrSyncTimers.plan) clearTimeout(_mrSyncTimers.plan);
+        _mrSyncTimers.plan = setTimeout(function(){
+            _mrSyncTimers.plan = null;
+            _mrPushActivePlanToSupabase();
+        }, _MR_SYNC_DEBOUNCE_MS);
+    }
+    function _mrScheduleRehabPlanSync() {
+        if (_mrSyncSuppressPush) return;
+        if (_mrSyncTimers.rehab) clearTimeout(_mrSyncTimers.rehab);
+        _mrSyncTimers.rehab = setTimeout(function(){
+            _mrSyncTimers.rehab = null;
+            _mrPushActiveRehabPlanToSupabase();
+        }, _MR_SYNC_DEBOUNCE_MS);
+    }
+
+    // ── APPLY: Supabase → local (hidratación) ──────────────────────────
+    function _mrApplyProfileFromSupabase(row) {
+        try {
+            if (!row) return;
+            if (typeof profileData !== 'object' || !profileData) return;
+            _mrSyncSuppressPush = true;
+            try {
+                if (row.weight             != null) profileData.weight          = Number(row.weight);
+                if (row.height             != null) profileData.height          = Number(row.height);
+                if (row.sex                != null) profileData.sex             = row.sex;
+                if (row.dob                != null) profileData.dob             = row.dob;
+                if (row.hr_max             != null) profileData.hrMax           = row.hr_max;
+                if (row.hr_rest            != null) profileData.hrRest          = row.hr_rest;
+                if (row.lt_value           != null) { try { ltValue    = row.lt_value;   } catch(_){} }
+                if (row.pace_value         != null) { try { paceValue  = row.pace_value; } catch(_){} }
+                if (row.lt_manual          != null) { try { ltManual   = row.lt_manual;   } catch(_){} }
+                if (row.pace_manual        != null) { try { paceManual = row.pace_manual; } catch(_){} }
+                if (row.meta               != null) profileData.meta            = row.meta;
+                if (row.vo2max             != null) profileData.vo2max          = Number(row.vo2max);
+                if (row.weeks_exp          != null) profileData.weeksExp        = row.weeks_exp;
+                if (row.weeks_exp_saved_at != null) profileData.weeksExpSavedAt = row.weeks_exp_saved_at;
+                if (Array.isArray(row.training_days)) profileData.trainingDays  = row.training_days;
+                if (Array.isArray(row.injuries))      profileData.injuries      = row.injuries;
+                if (Array.isArray(row.medallero))     profileData.medallero     = row.medallero;
+
+                // Repaint DOM básico del perfil físico (mismo patrón que loadAppState)
+                try {
+                    var _hm=document.getElementById('hrmax-display');
+                    var _hr=document.getElementById('hrrest-display');
+                    if(_hm) _hm.textContent=(profileData.hrMax||195)+' ppm ›';
+                    if(_hr) _hr.textContent=(profileData.hrRest||50)+' ppm ›';
+                    if (window._mrApplyCorosThresholds) {
+                        window._mrApplyCorosThresholds();
+                    } else {
+                        var _lt = document.getElementById('lt-display');
+                        if(_lt) _lt.textContent = ltValue+' ppm ›';
+                        var _pa = document.getElementById('pace-display');
+                        if(_pa && typeof secsToStr === 'function') _pa.textContent = secsToStr(paceValue)+' ›';
+                    }
+                    var _dd = document.getElementById('days-display');
+                    if(_dd && profileData.trainingDays && profileData.trainingDays.length)
+                        _dd.textContent = profileData.trainingDays.join(' · ')+' ›';
+                    if(profileData.trainingDays){
+                        document.querySelectorAll('.day-btn').forEach(function(btn){
+                            btn.classList.toggle('active', profileData.trainingDays.indexOf(btn.dataset.day) >= 0);
+                        });
+                    }
+                    if (typeof updateExpBadge === 'function') updateExpBadge();
+                    if (typeof renderInjuries === 'function') renderInjuries();
+                    if (typeof renderVO2maxCard === 'function') renderVO2maxCard();
+                    if (typeof renderMedallero === 'function') renderMedallero();
+                } catch(e) { console.warn('[MR][SYNC] profile apply repaint warn:', e); }
+
+                // Persistir de vuelta a localStorage inmediato (mantener cache local coherente)
+                try { if (typeof saveAppState === 'function') saveAppState({immediate:true}); } catch(_){}
+            } finally { _mrSyncSuppressPush = false; }
+        } catch(e) { console.warn('[MR][SYNC] apply profile exception:', e); }
+    }
+
+    function _mrApplyActivePlanFromSupabase(row) {
+        try {
+            if (!row || !row.plan_data) return;
+            _mrSyncSuppressPush = true;
+            try {
+                activePlan = row.plan_data;
+                try { localStorage.setItem(_uk('mr_plan'), JSON.stringify(activePlan)); } catch(_){}
+                try { if (typeof saveAppState === 'function') saveAppState({immediate:true}); } catch(_){}
+                // Reposicionar semana actual (misma lógica que bootApp)
+                try {
+                    if (activePlan && activePlan.weeks && activePlan.weeks.length && typeof localDateStr === 'function') {
+                        var _todayMs = new Date(localDateStr(new Date())+'T00:00:00').getTime();
+                        for (var i=0; i<activePlan.weeks.length; i++) {
+                            var wkStart = new Date(activePlan.weeks[i].weekStart+'T00:00:00').getTime();
+                            var wkEnd = wkStart + 7*86400000;
+                            if (_todayMs >= wkStart && _todayMs < wkEnd) { planCurrentWeek = i; break; }
+                        }
+                    }
+                } catch(_){}
+                try { if (typeof _renderActivePlanWeek === 'function') _renderActivePlanWeek(planCurrentWeek || 0); } catch(_){}
+                try { if (typeof updatePlanNav === 'function') updatePlanNav(); } catch(_){}
+                try { if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard(); } catch(_){}
+                try { if (typeof renderHome === 'function') renderHome(); } catch(_){}
+            } finally { _mrSyncSuppressPush = false; }
+        } catch(e) { console.warn('[MR][SYNC] apply plan exception:', e); }
+    }
+
+    function _mrApplyActiveRehabPlanFromSupabase(row) {
+        try {
+            if (!row || !row.plan_data) return;
+            _mrSyncSuppressPush = true;
+            try {
+                activeRehabPlan = row.plan_data;
+                try { localStorage.setItem(_uk('mr_rehab_plan'), JSON.stringify(activeRehabPlan)); } catch(_){}
+                try { if (typeof updateRehabUI === 'function') updateRehabUI(); } catch(_){}
+            } finally { _mrSyncSuppressPush = false; }
+        } catch(e) { console.warn('[MR][SYNC] apply rehab exception:', e); }
+    }
+
+    // ── HYDRATE + Migration ────────────────────────────────────────────
+    // Se llama desde bootApp fire-and-forget. Compara timestamps server vs
+    // local.ts. Migración one-time: si Supabase no tiene datos físicos +
+    // flag migrated_from_local_v1=false + local tiene datos → push local
+    // + marcar migrated=true tras verificación.
+    async function _mrFullSyncHydrate() {
+        try {
+            var ctx = await _mrGetSyncSession();
+            if (!ctx) return;
+
+            var localTs = _mrGetLocalProfileTs();
+
+            // 3 fetches paralelos
+            var results;
+            try {
+                results = await Promise.all([
+                    ctx.sb.from('profiles').select('*').eq('id', ctx.uid).maybeSingle(),
+                    ctx.sb.from('user_active_plans').select('*').eq('user_id', ctx.uid).maybeSingle(),
+                    ctx.sb.from('user_active_rehab_plans').select('*').eq('user_id', ctx.uid).maybeSingle()
+                ]);
+            } catch(e) { console.warn('[MR][SYNC] hydrate fetch exception:', e); return; }
+
+            var pRes    = results[0];
+            var planRes = results[1];
+            var rehabRes = results[2];
+
+            // ─── PROFILE ─────────────────────────────────────────────
+            try {
+                if (pRes && !pRes.error && pRes.data) {
+                    var p = pRes.data;
+                    var sbTs = p.updated_at ? new Date(p.updated_at).getTime() : 0;
+                    var migrated = !!p.migrated_from_local_v1;
+                    var hasPhysicalData = (
+                        p.weight != null || p.height != null || p.hr_max != null ||
+                        p.hr_rest != null || p.lt_value != null || p.pace_value != null ||
+                        (Array.isArray(p.training_days) && p.training_days.length > 0) ||
+                        (Array.isArray(p.injuries)      && p.injuries.length > 0) ||
+                        (Array.isArray(p.medallero)     && p.medallero.length > 0)
+                    );
+
+                    var localHasData = (typeof profileData === 'object' && profileData) && (
+                        profileData.weight != null || profileData.height != null ||
+                        profileData.hrMax  != null || profileData.hrRest != null ||
+                        (Array.isArray(profileData.trainingDays) && profileData.trainingDays.length > 0) ||
+                        (Array.isArray(profileData.injuries)     && profileData.injuries.length > 0)
+                    );
+
+                    if (!migrated && !hasPhysicalData && localHasData) {
+                        // Migración one-time: local → Supabase
+                        console.log('[MR][SYNC] migración profile local → Supabase iniciada');
+                        var pushRes = await _mrPushProfileToSupabase();
+                        if (pushRes && pushRes.ok) {
+                            var verify = await ctx.sb.from('profiles').select('weight,hr_max,training_days').eq('id', ctx.uid).maybeSingle();
+                            if (verify && verify.data && (verify.data.weight != null || verify.data.hr_max != null || (Array.isArray(verify.data.training_days) && verify.data.training_days.length > 0))) {
+                                await ctx.sb.from('profiles').update({ migrated_from_local_v1: true }).eq('id', ctx.uid);
+                                console.log('[MR][SYNC] migración profile completada + flag set');
+                            } else {
+                                console.warn('[MR][SYNC] migración profile: verificación falló, NO se marca migrated');
+                            }
+                        }
+                    } else if (sbTs > localTs && hasPhysicalData) {
+                        // Supabase más nuevo → aplicar
+                        console.log('[MR][SYNC] profile Supabase > local (' + sbTs + ' vs ' + localTs + ') → aplicando');
+                        _mrApplyProfileFromSupabase(p);
+                    }
+                    // else: local wins o empate → no hacer nada
+                }
+            } catch(e) { console.warn('[MR][SYNC] hydrate profile branch exception:', e); }
+
+            // ─── ACTIVE PLAN ─────────────────────────────────────────
+            try {
+                if (planRes && !planRes.error) {
+                    if (planRes.data && planRes.data.plan_data) {
+                        var planSbTs = planRes.data.updated_at ? new Date(planRes.data.updated_at).getTime() : 0;
+                        if (planSbTs > localTs) {
+                            console.log('[MR][SYNC] plan Supabase > local → aplicando');
+                            _mrApplyActivePlanFromSupabase(planRes.data);
+                        }
+                    } else if (typeof activePlan !== 'undefined' && activePlan) {
+                        // Supabase vacío + local poblado → push (migración)
+                        console.log('[MR][SYNC] plan local poblado + Supabase vacío → push migración');
+                        _mrPushActivePlanToSupabase();
+                    }
+                }
+            } catch(e) { console.warn('[MR][SYNC] hydrate plan branch exception:', e); }
+
+            // ─── REHAB PLAN ──────────────────────────────────────────
+            try {
+                if (rehabRes && !rehabRes.error) {
+                    if (rehabRes.data && rehabRes.data.plan_data) {
+                        var rehabSbTs = rehabRes.data.updated_at ? new Date(rehabRes.data.updated_at).getTime() : 0;
+                        if (rehabSbTs > localTs) {
+                            console.log('[MR][SYNC] rehab Supabase > local → aplicando');
+                            _mrApplyActiveRehabPlanFromSupabase(rehabRes.data);
+                        }
+                    } else if (typeof activeRehabPlan !== 'undefined' && activeRehabPlan) {
+                        console.log('[MR][SYNC] rehab local poblado + Supabase vacío → push migración');
+                        _mrPushActiveRehabPlanToSupabase();
+                    }
+                }
+            } catch(e) { console.warn('[MR][SYNC] hydrate rehab branch exception:', e); }
+
+        } catch(e) { console.warn('[MR][SYNC] hydrate exception:', e); }
+    }
+
+    // ── Window exports ─────────────────────────────────────────────────
+    try {
+        window._mrScheduleProfileSync         = _mrScheduleProfileSync;
+        window._mrSchedulePlanSync            = _mrSchedulePlanSync;
+        window._mrScheduleRehabPlanSync       = _mrScheduleRehabPlanSync;
+        window._mrPushProfileToSupabase       = _mrPushProfileToSupabase;
+        window._mrPushActivePlanToSupabase    = _mrPushActivePlanToSupabase;
+        window._mrPushActiveRehabPlanToSupabase = _mrPushActiveRehabPlanToSupabase;
+        window._mrFullSyncHydrate             = _mrFullSyncHydrate;
+    } catch(_){}
 
     function loadAppState() {
         try {
@@ -62697,7 +63138,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p102';
+        window.__mrCorosVersion = 'v2.30.1-p103';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
