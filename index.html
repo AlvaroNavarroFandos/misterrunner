@@ -6213,7 +6213,7 @@
 
         /* ─── Burbuja hero (130×130, sin card contenedora) ─── */
         /* ═══════════════════════════════════════════════════════════════
-           [v2.30.1-p111-fix9] Burbuja hero V3 · anillos sonar + relieve
+           [v2.30.1-p111-fix10] Burbuja hero V3 · anillos sonar + relieve
            ───────────────────────────────────────────────────────────────
            Elegido por Álvaro sobre 4 variantes (preview p111-fix6-fab).
            Botón flotante SIN texto, con doble anillo pulsante estilo
@@ -6361,7 +6361,7 @@
         body.dark .mi-hero-bubble__lock { background: rgba(255, 255, 255, .22); }
         .mi-hero-bubble.locked .mi-hero-bubble__lock { display: flex; }
 
-        /* [v2.30.1-p111-fix9] Expand fullscreen inline del mapa Card 1.
+        /* [v2.30.1-p111-fix10] Expand fullscreen inline del mapa Card 1.
            Tap en el mapa → los stats se deslizan hacia abajo (slide-down + fade)
            y el mapa expande a fullscreen dentro de la card. Botón X para volver.
            Reemplaza la UX anterior "tap → modal separado". Álvaro pidió esta
@@ -6428,7 +6428,7 @@
             color: #e5e5e7;
         }
 
-        /* [v2.30.1-p111-fix9] Pill CTA morada brillante bajo la burbuja hero */
+        /* [v2.30.1-p111-fix10] Pill CTA morada brillante bajo la burbuja hero */
         .mi-hero-cta-pill {
             display: inline-flex;
             align-items: center;
@@ -6791,7 +6791,7 @@
             50% { opacity: 0; }
         }
 
-        /* [v2.30.1-p111-fix9] Sheet chat SIEMPRE 92dvh — sin min-height:auto
+        /* [v2.30.1-p111-fix10] Sheet chat SIEMPRE 92dvh — sin min-height:auto
            que lo colapsaba al tamaño del contenido cuando había pocos mensajes.
            Álvaro pidió más espacio para la conversación. */
         #mister-chat-sheet .sheet {
@@ -8940,7 +8940,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div class="mi-hero-bubble__lock">🔒</div>
                     </div>
                 </div>
-                <!-- [v2.30.1-p111-fix9] Pill CTA bajo el hero: refuerzo visual "Chat con Míster".
+                <!-- [v2.30.1-p111-fix10] Pill CTA bajo el hero: refuerzo visual "Chat con Míster".
                      Solo visible cuando hay API key (state live). En locked queda oculta. -->
                 <div id="mi-hero-cta-pill" class="mi-hero-cta-pill" onclick="if(window.openMistIaChat)window.openMistIaChat()">
                     <span class="mi-hero-cta-pill__icon">💬</span>
@@ -18135,6 +18135,52 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if(ss) activeStrengthPlan = JSON.parse(ss);
         } catch(e) {}
     }
+
+    /* ═══════════════════════════════════════════════════════════════
+       [v2.30.1-p111-fix10] STRENGTH DONE · Persistencia sesiones fuerza completadas
+       ───────────────────────────────────────────────────────────────
+       Los entrenos de running se marcan "completados" automáticamente al
+       hacer match con una activity real (mismo dateStr + type). Los de
+       fuerza NO tienen activity asociada, así que el user debe marcarlos
+       manualmente via long-press → "Marcar como completado".
+       Storage: array de dateStr ISO en localStorage bajo key user-scoped
+       mr_strength_done. Sync a profileData.strengthDoneDates para que
+       el snapshot del compilador Míster lo tenga en cada mensaje.
+       ═══════════════════════════════════════════════════════════════ */
+    window._mrIsStrengthDone = function(dateStr) {
+        try {
+            if (!dateStr) return false;
+            var raw = localStorage.getItem(_uk('mr_strength_done'));
+            var set = raw ? JSON.parse(raw) : [];
+            return Array.isArray(set) && set.indexOf(dateStr) >= 0;
+        } catch(_) { return false; }
+    };
+    window._mrSetStrengthDone = function(dateStr, done) {
+        try {
+            if (!dateStr) return null;
+            var raw = localStorage.getItem(_uk('mr_strength_done'));
+            var set = raw ? JSON.parse(raw) : [];
+            if (!Array.isArray(set)) set = [];
+            var idx = set.indexOf(dateStr);
+            var changed = false;
+            if (done && idx < 0) { set.push(dateStr); changed = true; }
+            else if (!done && idx >= 0) { set.splice(idx, 1); changed = true; }
+            if (changed) {
+                localStorage.setItem(_uk('mr_strength_done'), JSON.stringify(set));
+                try { if (typeof profileData === 'object' && profileData) profileData.strengthDoneDates = set.slice(); } catch(_){}
+                // Full Profile Sync push a Supabase (fire-and-forget)
+                try { if (typeof _mrPush === 'function') _mrPush('strengthDoneDates', set.slice()); } catch(_){}
+            }
+            return set;
+        } catch(_) { return []; }
+    };
+    window._mrGetStrengthDoneSet = function() {
+        try {
+            var raw = localStorage.getItem(_uk('mr_strength_done'));
+            var set = raw ? JSON.parse(raw) : [];
+            return Array.isArray(set) ? set : [];
+        } catch(_) { return []; }
+    };
 
     // ── THRESHOLD CROSS-VALIDATION ───────────────────────────────
     function showThresholdValidation() {
@@ -33480,7 +33526,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var ref = { map:null, dead:false };
         _mrEnsureMapLibre().then(function(maplibregl){
             if (ref.dead || !container.isConnected) return;
-            // [v2.30.1-p111-fix9] Modo "partialInteractive": mapa interactivo
+            // [v2.30.1-p111-fix10] Modo "partialInteractive": mapa interactivo
             // desde el arranque (pinch zoom/rotate, tilt, double-tap zoom,
             // scroll zoom) PERO con dragPan/dragRotate/boxZoom OFF para no
             // secuestrar el swipe horizontal del carrusel de cards del visor.
@@ -34250,7 +34296,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [v2.13.0] Handle del mapa MapLibre inline de la card 1. Se libera en
         // _detCleanup() al cerrar el visor (destruye el contexto WebGL → sin leaks).
         var _detInlineMap = null;
-        // [v2.30.1-p111-fix9] Referencia directa al map de MapLibre (no al wrapper)
+        // [v2.30.1-p111-fix10] Referencia directa al map de MapLibre (no al wrapper)
         // para poder llamar dragPan.enable/disable en el toggle expand.
         var _detInlineMapRef = null;
         var _card1MapExpanded = false;
@@ -34354,7 +34400,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (_detAbortCtrl && !_detAbortCtrl.signal.aborted) _detAbortCtrl.abort();
             } catch(_){}
             try { if (_detInlineMap) { _detInlineMap.remove(); _detInlineMap = null; } } catch(_){}
-            // [v2.30.1-p111-fix9] Reset del estado expand por si el user cerró el visor
+            // [v2.30.1-p111-fix10] Reset del estado expand por si el user cerró el visor
             // sin colapsar el mapa antes. La ref al map ya está muerta con remove().
             _detInlineMapRef = null;
             _card1MapExpanded = false;
@@ -34414,7 +34460,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // en la esquina inferior derecha del mapa, simétrica a la pill de
         // distancia (inferior izquierda).
         const mapOutfitRow = document.createElement('div');
-        // [v2.30.1-p111-fix9] Clase para poder targetearlo desde CSS de expand fullscreen inline
+        // [v2.30.1-p111-fix10] Clase para poder targetearlo desde CSS de expand fullscreen inline
         mapOutfitRow.className = 'det-card__map-row';
         // v2.30.1-p14 · Altura mapa 400→420 (+5%) para que la fila de datos de
         // elevación (D+/D-/Máx/Mín/Media) NO aparezca sin scroll bajo la línea
@@ -35270,7 +35316,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         onReady: function(map){
                             _mapLoader.hide();
                             _detInlineMapRef = map;
-                            // [v2.30.1-p111-fix9] Tap simple en el mapa → expandir inline a fullscreen
+                            // [v2.30.1-p111-fix10] Tap simple en el mapa → expandir inline a fullscreen
                             // dentro de la card (stats se deslizan hacia abajo con transición). En modo
                             // expandido se habilita dragPan/dragRotate; en normal quedan OFF para
                             // preservar swipe del carrusel de cards. Álvaro pidió esta UX porque el
@@ -35920,6 +35966,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // interferir con el swipe horizontal entre cards.
         let dtx=0,dty=0,ddx=0,ddy=0,drag=false,dragDir=null,edgeSwipe=false;
         wrap.addEventListener('touchstart',e=>{
+            // [v2.30.1-p111-fix10] Si el mapa Card 1 está expanded, consume TODOS
+            // los gestos horizontales — pan libre para el mapa sin interferir con
+            // swipe entre cards ni edge-back de cierre. Álvaro: "que solo se juega
+            // con el mapa sin que moleste nada de nada".
+            if (_card1MapExpanded) { drag = false; return; }
             dtx=e.touches[0].clientX; dty=e.touches[0].clientY;
             ddx=0; ddy=0; drag=true; dragDir=null;
             edgeSwipe = (curCard===0 && dtx <= 24);
@@ -43857,9 +43908,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             var sideW = _isToday ? '5px' : '3px';
             var sideGlow = _isToday ? 'box-shadow:0 0 8px rgba(196,136,30,.45);' : '';
-            var html2 = '<div style="position:absolute;left:0;top:0;bottom:0;width:'+sideW+';background:linear-gradient(180deg,#fbbf24 0%,#c4881e 100%);'+sideGlow+'z-index:2;pointer-events:none;"></div>'
+            // [v2.30.1-p111-fix10] Si está marcada como completada, barra lateral verde
+            // (igual que running matched) + puntito verde en la esquina superior derecha
+            // del icono/dumbbell. Ambos igual que el estilo de running matched.
+            var _strDoneLocal = (typeof window._mrIsStrengthDone === 'function')
+                ? window._mrIsStrengthDone(sess.dateStr) : false;
+            var _sideBar = _strDoneLocal
+                ? '#22c55e'
+                : 'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)';
+            var _cardBgDone = _strDoneLocal ? 'background:rgba(34,197,94,.06);' : '';
+            var _greenDot = _strDoneLocal
+                ? '<div style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 1.5px var(--card),0 0 6px rgba(34,197,94,.7);z-index:3;pointer-events:none;" aria-label="Completada"></div>'
+                : '';
+            if (_cardBgDone) card.style.cssText = (card.style.cssText || '') + _cardBgDone;
+            var html2 = '<div style="position:absolute;left:0;top:0;bottom:0;width:'+sideW+';background:'+_sideBar+';'+(_strDoneLocal?'':sideGlow)+'z-index:2;pointer-events:none;"></div>'
                 + '<div class="mr-str-dhead" style="display:flex;align-items:center;padding:8px 10px 8px 15px;gap:8px;cursor:pointer;position:relative;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">'
-                +   '<div style="flex-shrink:0;width:42px;text-align:center;">'
+                +   '<div style="flex-shrink:0;width:42px;text-align:center;position:relative;">'
+                +     _greenDot
                 +     '<div style="font-size:9px;font-weight:'+(_isToday?900:800)+';color:'+(_isToday?'#c4881e':'var(--tm)')+';text-transform:uppercase;letter-spacing:1px;line-height:1;">'+_dowLabel+'</div>'
                 +     '<div style="font-size:19px;font-weight:800;color:var(--tw);line-height:1;letter-spacing:-.5px;margin:2px 0;font-variant-numeric:tabular-nums;">'+_dayNum+'</div>'
                 +     '<div style="font-size:8px;color:var(--tm);text-transform:uppercase;letter-spacing:.7px;font-weight:600;">'+_monthShort+'</div>'
@@ -44687,23 +44752,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 //   - Completado: tinta verde muy sutil (solo barra lateral verde fuerte)
                 //   - Past sin completar: opacity .55 sutil
                 //   - Resto: card2 normal
+                // [v2.30.1-p111-fix10] Strength done cuenta como "completado" a efectos
+                // visuales: barra lateral verde + bg verde suave + puntito verde.
+                const _isStrengthDone = _isStrengthCard && typeof window._mrIsStrengthDone === 'function'
+                    ? window._mrIsStrengthDone(sess.dateStr) : false;
+                const _isCompleted = matched || _isStrengthDone;
                 const _cardBg = _isToday
                     ? `linear-gradient(90deg, rgba(${_typeRGB},.15) 0%, rgba(${_typeRGB},.04) 55%, transparent 100%)`
-                    : (matched ? 'rgba(34,197,94,.06)' : (_typeTint || 'var(--card2)'));
+                    : (_isCompleted ? 'rgba(34,197,94,.06)' : (_typeTint || 'var(--card2)'));
                 const _cardOpacity = _isPastNotDone ? '.55' : '1';
                 const card = document.createElement('div');
                 card.style.cssText = `position:relative;z-index:1;background:${_cardBg};opacity:${_cardOpacity};`;
 
                 // Barra lateral 3px del color de la sesión (navy running / dorado strength / verde si completado / motivo si skipped)
                 // [v5.5 SKIP] Prioridad: skipped > matched > default
+                // [v2.30.1-p111-fix10] Strength done también pinta verde la barra.
                 const _sideBarCol = _isSkipped
                     ? _skipCol
-                    : (matched
+                    : (_isCompleted
                         ? '#22c55e'
                         : (_isStrengthCard
                             ? 'linear-gradient(180deg,#fbbf24 0%,#c4881e 100%)'
                             : 'linear-gradient(180deg,#1a3055 0%,#12233a 100%)'));
-                const _useGradient = !matched && !_isSkipped;
+                const _useGradient = !_isCompleted && !_isSkipped;
 
                 // Day date: solo en la primera sesión del día
                 const _showDate = sessIdx === 0;
@@ -45464,6 +45535,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
             + '</button>';
 
+        // [v2.30.1-p111-fix10] Botón "Marcar completado" / "Desmarcar" solo para
+        // sesiones de FUERZA (los running se marcan automáticamente al matchear
+        // con activity). Muestra estado toggle según _mrIsStrengthDone.
+        var _strDone = isMovingStrength && typeof window._mrIsStrengthDone === 'function'
+            ? window._mrIsStrengthDone(sessDate) : false;
+        var _btnStrDone = '';
+        if (isMovingStrength && !_sessSkipped) {
+            if (_strDone) {
+                // Ya completada → botón para desmarcar
+                _btnStrDone = ''
+                    + '<button id="plan-sa-str-undone" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(120,120,130,.28);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+                    +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(120,120,130,.14);border:1px solid rgba(120,120,130,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                    +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--tp)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>'
+                    +   '</div>'
+                    +   '<div style="flex:1;text-align:left;">'
+                    +     '<div style="font-size:14px;font-weight:800;color:var(--tw);">Desmarcar completada</div>'
+                    +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Vuelve al estado pendiente</div>'
+                    +   '</div>'
+                    +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                    + '</button>';
+            } else {
+                // Pendiente → botón para marcar como completada
+                _btnStrDone = ''
+                    + '<button id="plan-sa-str-done" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--card);border:1px solid rgba(34,197,94,.30);border-radius:14px;cursor:pointer;font-family:var(--f);transition:background .15s,transform .12s;">'
+                    +   '<div style="width:38px;height:38px;border-radius:50%;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                    +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>'
+                    +   '</div>'
+                    +   '<div style="flex:1;text-align:left;">'
+                    +     '<div style="font-size:14px;font-weight:800;color:#22c55e;">Marcar como completada</div>'
+                    +     '<div style="font-size:11px;color:var(--tm);margin-top:1px;">Registrada como hecha (para Míster)</div>'
+                    +   '</div>'
+                    +   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2.2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>'
+                    + '</button>';
+            }
+        }
+
         modal.innerHTML = ''
             + '<div id="plan-session-actions-inner" style="background:var(--bg);width:100%;max-width:500px;border-radius:22px 22px 0 0;padding:0 0 calc(20px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 32px rgba(0,0,0,.35);transform:translateY(100%);transition:transform .32s cubic-bezier(.16,1,.3,1);">'
             +   '<div style="padding:18px 20px 14px;border-bottom:1px solid var(--bsoft);text-align:center;">'
@@ -45473,6 +45580,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   '</div>'
             +   '<div style="padding:14px 16px 4px;display:flex;flex-direction:column;gap:8px;">'
             +     _btnEditRpe
+            +     _btnStrDone
             +     _btnMove
             +     _btnSkip
             +     _btnRemoveCoros
@@ -45543,6 +45651,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 } catch(e) { console.warn('[MR][SKIP] skip open:', e); }
             }, 280);
+        };
+
+        // [v2.30.1-p111-fix10] Marcar/desmarcar sesión de fuerza como completada.
+        // Fire → guardar en localStorage + profileData → re-render el plan.
+        var _strDoneBtn = document.getElementById('plan-sa-str-done');
+        if (_strDoneBtn) _strDoneBtn.onclick = function() {
+            try {
+                if (typeof window._mrSetStrengthDone === 'function') {
+                    window._mrSetStrengthDone(sessDate, true);
+                    if (navigator.vibrate) try { navigator.vibrate(20); } catch(_){}
+                    if (typeof fxToast === 'function') fxToast('Fuerza completada · Míster ya lo sabe', { variant: 'success' });
+                }
+                closeModal();
+                // Re-render del plan actual — el runtime lo hace via
+                // renderStrengthPlanWeek si estamos en la pestaña Fuerza, o via
+                // renderPlanWeek si estamos en Plan (mixto). Se llama al que exista.
+                setTimeout(function(){
+                    try {
+                        if (typeof renderStrengthPlanWeek === 'function') renderStrengthPlanWeek(weekIdx);
+                        if (typeof renderPlanWeek === 'function') renderPlanWeek(weekIdx);
+                        if (typeof renderHome === 'function') renderHome();
+                    } catch(_){}
+                }, 320);
+            } catch(e) { console.warn('[MR][fix10] str done:', e); }
+        };
+        var _strUndoneBtn = document.getElementById('plan-sa-str-undone');
+        if (_strUndoneBtn) _strUndoneBtn.onclick = function() {
+            try {
+                if (typeof window._mrSetStrengthDone === 'function') {
+                    window._mrSetStrengthDone(sessDate, false);
+                    if (navigator.vibrate) try { navigator.vibrate(15); } catch(_){}
+                    if (typeof fxToast === 'function') fxToast('Marca de completada retirada', { variant: 'info' });
+                }
+                closeModal();
+                setTimeout(function(){
+                    try {
+                        if (typeof renderStrengthPlanWeek === 'function') renderStrengthPlanWeek(weekIdx);
+                        if (typeof renderPlanWeek === 'function') renderPlanWeek(weekIdx);
+                        if (typeof renderHome === 'function') renderHome();
+                    } catch(_){}
+                }, 320);
+            } catch(e) { console.warn('[MR][fix10] str undone:', e); }
         };
 
         // [v5.5 SKIP] Reactivar → limpiar campos skip* y re-render (sin sheet intermedio)
@@ -55323,9 +55473,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // activity de hoy marcaba como completadas las sesiones de
                 // ayer y mañana del mismo tipo (delta=86400000, borde ≤).
                 // Ahora comparación exacta de dateStr + type.
-                const _matched = sess.dateStr ? activities.some(a=>{
-                    return a.dateStr === sess.dateStr && a.type === sess.type;
-                }) : false;
+                // [v2.30.1-p111-fix10] Para fuerza, "completado" = strength done
+                // manual (no hay activity que hacer match). Coherencia visual con running:
+                // puntito verde en la esquina del icono en ambos casos.
+                const _matched = sess.dateStr
+                    ? ((_isStr && typeof window._mrIsStrengthDone === 'function' && window._mrIsStrengthDone(sess.dateStr))
+                       || activities.some(a=>{ return a.dateStr === sess.dateStr && a.type === sess.type; }))
+                    : false;
                 const _tColor  = TYPE_COLOR_HOME[sess.type]||'#fff';
                 const _motives = MOTIVATIONAL[sess.type]||['¡Vamos!'];
                 const _motiv   = _motives[today.getDay()%_motives.length];
@@ -65907,7 +66061,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p111-fix9';
+        window.__mrCorosVersion = 'v2.30.1-p111-fix10';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -69884,13 +70038,20 @@ window.addEventListener('DOMContentLoaded', function() {
                 activePlan.weeks.forEach(function(wk, wi) {
                     if (!wk || !Array.isArray(wk.sessions)) return;
                     wk.sessions.forEach(function(s) {
+                        var isStr = !!(s.isStrength || s.type === 'strength');
+                        var doneFlag = !!s._done;
+                        // [v2.30.1-p111-fix10] Strength: check localStorage manual done flag
+                        if (!doneFlag && isStr && typeof window._mrIsStrengthDone === 'function') {
+                            doneFlag = window._mrIsStrengthDone(s.dateStr);
+                        }
                         acc.push({
                             weekIdx: wi + 1,
                             dateStr: s.dateStr,
                             type: s.type,
                             title: s.title || s.desc || _miTypeLabel(s.type),
                             detail: s.detail || s.desc || '',
-                            done: !!s._done
+                            done: doneFlag,
+                            isStrength: isStr
                         });
                     });
                 });
@@ -69898,7 +70059,9 @@ window.addEventListener('DOMContentLoaded', function() {
             } catch(_) { return []; }
         }
 
-        /* Cumplimiento 4 sem: cuenta sessions pasadas (no rest) que tienen activity mismo día */
+        /* Cumplimiento 4 sem: cuenta sessions pasadas (no rest) que tienen activity mismo día
+           O son strength marcadas manualmente como done. Álvaro fix10: para que Míster
+           sepa el cumplimiento real incluyendo fuerza. */
         function _miPlanCompliance4wk() {
             try {
                 var days = _miPlanAllDays();
@@ -69911,7 +70074,10 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!pastNonRest.length) return null;
                 var actByDate = {};
                 (activities||[]).forEach(function(a){ if (a && a.dateStr) actByDate[a.dateStr] = true; });
-                var done = pastNonRest.filter(function(d){ return actByDate[d.dateStr]; }).length;
+                var done = pastNonRest.filter(function(d){
+                    // Strength → done flag manual; running → match con activity
+                    return d.isStrength ? d.done : actByDate[d.dateStr];
+                }).length;
                 return { pct: Math.round((done / pastNonRest.length) * 100), done: done, total: pastNonRest.length };
             } catch(_) { return null; }
         }
@@ -70920,7 +71086,7 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
         try { console.log('%c[MR] Míster IA · Fase 2 helpers ready (v2.30.1-p110)', 'color:#7c3aed;font-weight:bold;'); } catch (_) {}
-        try { console.log('%c[MR] Míster IA · Fase 3.3 helpers ready (v2.30.1-p111-fix9) · streaming SSE + system prompt · mapa expand inline + collapse btn', 'color:#a855f7;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Míster IA · Fase 3.3 helpers ready (v2.30.1-p111-fix10) · streaming SSE + system prompt · strength done + swipe guard mapa', 'color:#a855f7;font-weight:bold;'); } catch (_) {}
     })();
 
     </script>
