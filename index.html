@@ -65630,7 +65630,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p111-fix2';
+        window.__mrCorosVersion = 'v2.30.1-p111-fix3';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -70194,19 +70194,28 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
         /* Reemplaza contenido de una burbuja assistant por card error visible.
-           Rojo suave, no rompe layout. */
+           Rojo suave, no rompe layout. Muestra mensaje real de Anthropic si está
+           disponible (err._miDetail) para debug rápido sin ir a consola. */
         function _miShowMsgError(el, err) {
             try {
                 if (!el) return;
                 var msg = 'Algo ha fallado. Prueba de nuevo o revisa tu key.';
                 var status = err && err._miStatus;
-                if (status === 401) msg = 'Tu API key ya no es válida. Revísala en Conexiones > Míster IA.';
+                var detail = err && err._miDetail;
+                if (status === 400) msg = 'Petición inválida (400). Modelo o formato incorrecto.';
+                else if (status === 401) msg = 'Tu API key ya no es válida. Revísala en Conexiones > Míster IA.';
+                else if (status === 403) msg = 'API key sin permisos para este modelo.';
+                else if (status === 404) msg = 'Modelo no encontrado (404). Revisa el modelo seleccionado.';
                 else if (status === 429) msg = 'Rate limit alcanzado. Espera un momento e inténtalo de nuevo.';
-                else if (status >= 500 && status < 600) msg = 'Error del servidor de Anthropic. Vuelve a intentarlo en unos segundos.';
+                else if (status >= 500 && status < 600) msg = 'Error del servidor de Anthropic (' + status + '). Vuelve a intentarlo.';
                 else if (err && err.name === 'AbortError') msg = 'Sin respuesta de Anthropic. Comprueba tu conexión.';
                 else if (err && /NetworkError|Failed to fetch/i.test(String(err.message || err))) msg = 'Sin respuesta de Anthropic. Comprueba tu conexión.';
                 el.classList.add('error');
-                el.innerHTML = '<span style="color:#dc2626;font-weight:700;">⚠ ' + _miEscapeHtml(msg) + '</span>';
+                var html = '<span style="color:#dc2626;font-weight:700;">⚠ ' + _miEscapeHtml(msg) + '</span>';
+                if (detail) {
+                    html += '<div style="margin-top:6px;font-size:11px;color:#dc2626;opacity:.85;font-family:monospace;white-space:pre-wrap;word-break:break-word;">' + _miEscapeHtml(detail) + '</div>';
+                }
+                el.innerHTML = html;
             } catch(_) {}
         }
 
@@ -70328,12 +70337,25 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 if (!resp.ok) {
                     var errMsg = 'HTTP ' + resp.status;
+                    var errDetail = '';
                     try {
                         var errBody = await resp.text();
-                        console.warn('[MR][mi] fetch error body:', errBody.slice(0, 400));
+                        console.warn('[MR][mi] fetch error body:', errBody.slice(0, 800));
+                        // Intentar parsear como JSON estándar Anthropic {type:"error", error:{type, message}}
+                        try {
+                            var errObj = JSON.parse(errBody);
+                            if (errObj && errObj.error && errObj.error.message) {
+                                errDetail = String(errObj.error.type || 'error') + ': ' + errObj.error.message;
+                            } else {
+                                errDetail = errBody.slice(0, 300);
+                            }
+                        } catch(_) {
+                            errDetail = errBody.slice(0, 300);
+                        }
                     } catch(_) {}
                     var e = new Error(errMsg);
                     e._miStatus = resp.status;
+                    e._miDetail = errDetail;
                     throw e;
                 }
 
