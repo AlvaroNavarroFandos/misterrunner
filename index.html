@@ -5807,7 +5807,7 @@
             background: color-mix(in srgb, var(--pcard-h-secondary) 18%, transparent);
             border-color: color-mix(in srgb, var(--pcard-h-secondary) 42%, transparent);
         }
-        /* [v2.30.1-p132] Realce global de texto para MÁXIMA legibilidad
+        /* [v2.30.1-p133] Realce global de texto para MÁXIMA legibilidad
            sobre cualquier paleta. Sombra sutil aplicada a todos los textos.
            Defaults: sombra negra (fondos oscuros). Sevilla/Zaragoza: sombra
            blanca via override en la BD (--pcard-h-text-shadow). */
@@ -6387,17 +6387,24 @@
         .mi-hero-bubble {
             position: relative;
             display: block;
-            width: 180px; height: 180px;
-            margin: 20px auto 12px;
+            width: 125px; height: 125px;
+            margin: 20px auto 14px;
             padding: 0;
             background: transparent;
             border: none;
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
-            transition: transform .18s cubic-bezier(.34,1.56,.64,1);
+            /* [v2.30.1-p133 · FIX DEFINITIVO FLUIDEZ]
+               ELIMINADO transition + :active transform:scale que creaban
+               stacking context al pulsar → Safari recomponía TODA la burbuja
+               (rings + inner + icon + shadows) + backdrop-filter blur del sheet
+               iniciando la subida = lag brutal AL CLICAR EN LA BOLA. Al clicar
+               en la gorra (que sobresale fuera del bubble) el :active no se
+               disparaba y era fluido. Feedback visual del tap = el sheet subiendo. */
+            transition: opacity .1s ease-out;
         }
-        .mi-hero-bubble:active { transform: scale(.94); }
+        .mi-hero-bubble:active { opacity: .82; }
 
         /* Anillo exterior · expande + fade cada 2.6s */
         .mi-hero-bubble__ring-outer {
@@ -6411,7 +6418,7 @@
         }
         /* Anillo medio · mismo pero con delay 0.9s */
         .mi-hero-bubble__ring-mid {
-            position: absolute; inset: 14px;
+            position: absolute; inset: 10px;
             border-radius: 50%;
             border: 2px solid var(--ia-wave-hi, #a855f7);
             opacity: .5;
@@ -6425,7 +6432,7 @@
         }
         /* Anillo interior · pedestal fijo con relieve */
         .mi-hero-bubble__ring-inner {
-            position: absolute; inset: 26px;
+            position: absolute; inset: 18px;
             border-radius: 50%;
             background: linear-gradient(145deg, #ffffff 0%, #f0f0f5 100%);
             box-shadow:
@@ -6444,34 +6451,27 @@
                 inset 0 2px 3px rgba(255, 255, 255, .08),
                 0 0 0 1px rgba(168, 85, 247, .35);
         }
-        /* [v2.30.1-p132 · FIX FLUIDEZ CONFIRMADO] Icon-wrap ARRIBA sobresaliendo
-           SIN `transform` que era el asesino: cualquier transform crea un nuevo
-           stacking context y el compositor de Safari iOS tiene que recomponer
-           todas las capas cada frame junto con backdrop-filter blur del sheet.
-           Solución: centrado con `left: calc(50% - 59px)` (mitad del width 118px).
-           Mismo efecto visual, ZERO stacking context nuevo. */
+        /* [v2.30.1-p133] Icon-wrap ARRIBA sobresaliendo · proporcional bola 150.
+           SIN `transform` — usa `left: calc(50% - 50px)` (50 = mitad del width).
+           top: -15px (más abajo que -26, más incrustada en la bola). */
         .mi-hero-bubble__icon-wrap {
             position: absolute;
-            top: -26px;
-            left: calc(50% - 59px);
-            width: 118px;
-            height: 100px;
+            top: -15px;
+            left: calc(50% - 50px);
+            width: 100px;
+            height: 84px;
             display: flex; align-items: center; justify-content: center;
             z-index: 2;
         }
-        /* Icono con triple drop-shadow (relieve máximo) */
+        /* [v2.30.1-p133] Icono SIN drop-shadow → antes el `filter: drop-shadow`
+           dibujaba una sombra siguiendo el CANAL ALPHA del PNG. Como el PNG
+           incluye píxeles semitransparentes en los bordes (antialiasing) + área
+           transparente arriba, el resultado en el bounding box parecía un
+           rectángulo morado. Sin filter = look limpio, la gorra "flota"
+           natural sobre la bola. */
         .mi-hero-bubble__icon {
             width: 100%; height: 100%;
             object-fit: contain;
-            filter:
-                drop-shadow(0 3px 6px rgba(0, 0, 0, .2))
-                drop-shadow(0 6px 14px rgba(124, 58, 237, .45));
-            transition: filter .3s;
-        }
-        body.dark .mi-hero-bubble__icon {
-            filter:
-                drop-shadow(0 3px 6px rgba(0, 0, 0, .5))
-                drop-shadow(0 8px 20px rgba(168, 85, 247, .75));
         }
         /* Dot verde · sobresale del icon-wrap para ser visible sobre el ring */
         .mi-hero-bubble__dot {
@@ -9272,7 +9272,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 
                 <!-- [v2.30.1-p112] Pill CTA bajo el hero: refuerzo visual "Chat con Míster".
                      Solo visible cuando hay API key (state live). En locked queda oculta. -->
-        <!-- [v2.30.1-p132] Pill CTA "Chat con Míster" OCULTA (Álvaro no la quiere).
+        <!-- [v2.30.1-p133] Pill CTA "Chat con Míster" OCULTA (Álvaro no la quiere).
              Se mantiene el elemento por si en el futuro se reactiva, pero display:none. -->
                 <div id="mi-hero-cta-pill" class="mi-hero-cta-pill" style="display:none;" onclick="if(window.openMistIaChat)window.openMistIaChat()">
                     <span class="mi-hero-cta-pill__icon">💬</span>
@@ -42934,7 +42934,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             pillBd:   cfg.pillBd    || 'rgba(255,255,255,.20)',
             cellBg:   cfg.cellBg    || 'rgba(255,255,255,.06)',
             cellBd:   cfg.cellBd    || 'rgba(255,255,255,.14)',
-            /* [v2.30.1-p132] Realce global de texto + contraste daycard.
+            /* [v2.30.1-p133] Realce global de texto + contraste daycard.
                Defaults optimizados para fondos oscuros. Overrides en Sevilla
                y Zaragoza (fondos claros) → sombra blanca + daycard blanco tinted. */
             textShadow: cfg.textShadow || '0 1px 3px rgba(0,0,0,.55)',
@@ -43429,7 +43429,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return null;
     };
 
-    /* [v2.30.1-p132] Getter paralelo para paleta Home. Devuelve p.home
+    /* [v2.30.1-p133] Getter paralelo para paleta Home. Devuelve p.home
        directamente (no p, no p.palette). Existe porque _mrGetRacePalette
        devuelve p.palette (objeto Míster con .bg/.border/etc) y en Home
        necesitamos p.home (estructura distinta: primary/secondary/accent/
@@ -56973,7 +56973,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
-            // [v2.30.1-p132] Tematizar card por carrera. Usa el getter
+            // [v2.30.1-p133] Tematizar card por carrera. Usa el getter
             // dedicado _mrGetRacePaletteHome (no _mrGetRacePalette que devuelve
             // el objeto Míster y no tiene .bg/.primary/.secondary/etc esperados).
             try {
@@ -71285,7 +71285,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 return ['dom','lun','mar','mié','jue','vie','sáb'][d.getDay()];
             } catch(_) { return ''; }
         }
-        /* [v2.30.1-p132 · Fix B+C] Helpers precisión temporal para snapshot IA. */
+        /* [v2.30.1-p133 · Fix B+C] Helpers precisión temporal para snapshot IA. */
         function _miDayNameFull(iso) {
             try {
                 var d = new Date(iso + 'T12:00:00');
@@ -71560,7 +71560,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     ? profileData.name.split(/\s+/)[0].toUpperCase()
                     : 'USER';
 
-                /* [v2.30.1-p132 · Fix A] HEADER TEMPORAL EXPLÍCITO
+                /* [v2.30.1-p133 · Fix A] HEADER TEMPORAL EXPLÍCITO
                    Anclaje absoluto de fecha/hora para eliminar confusiones del LLM
                    con "ayer", "hace X días", etc. Sin este ancla, el modelo usa su
                    propio calendario interno y desfase de 1 día es común. */
@@ -71587,7 +71587,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 out.push('═══════════════════════════════════════════');
                 out.push('');
 
-                /* [v2.30.1-p132 · Fix C] ÚLTIMAS 3 SESIONES COMPLETADAS
+                /* [v2.30.1-p133 · Fix C] ÚLTIMAS 3 SESIONES COMPLETADAS
                    Bloque destacado al inicio para preguntas frecuentes tipo
                    "qué hice ayer", "cómo me fue la última tirada larga", etc.
                    Cada línea con "HACE X DÍAS" absoluto + nombre día + fecha larga
