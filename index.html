@@ -43369,6 +43369,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return null;
     };
 
+    /* [v2.30.1-p112-fix1] Getter paralelo para paleta Home. Devuelve p.home
+       directamente (no p, no p.palette). Existe porque _mrGetRacePalette
+       devuelve p.palette (objeto Míster con .bg/.border/etc) y en Home
+       necesitamos p.home (estructura distinta: primary/secondary/accent/
+       progress/pillBg/etc). Sin refactor Míster para no romper nada. */
+    window._mrGetRacePaletteHome = function(raceName) {
+        try {
+            if (!raceName) return null;
+            var n = _mrNormalizeRaceName(raceName);
+            if (!n) return null;
+            for (var i = 0; i < _MR_RACE_PALETTES.length; i++) {
+                var p = _MR_RACE_PALETTES[i];
+                for (var j = 0; j < p.keys.length; j++) {
+                    if (n.indexOf(p.keys[j]) >= 0) return p.home || null;
+                }
+            }
+            // Fallback regional: por si en el futuro añaden .home a alguna
+            for (var k = 0; k < _MR_REGION_PALETTES.length; k++) {
+                var r = _MR_REGION_PALETTES[k];
+                for (var m = 0; m < r.keys.length; m++) {
+                    if (n.indexOf(r.keys[m]) >= 0) return r.home || null;
+                }
+            }
+        } catch(_) {}
+        return null;
+    };
+
     window._mrApplyPlanCardPalette = function(card, palette) {
         try {
             if (!card) return;
@@ -43400,10 +43427,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(_) {}
     };
 
-    /* [v2.30.1-p112] Helper Home · aplica palette.home a la card #mr-pc-card
-       usando CSS vars con prefijo --pcard-h-* para NO colisionar con la card
-       Míster (que usa --pcard-*). La palette debe tener .home; si no, reset. */
-    window._mrApplyPlanCardPaletteHome = function(card, palette) {
+    /* [v2.30.1-p112] Helper Home · aplica un objeto home (obtenido vía
+       window._mrGetRacePaletteHome) a la card #mr-pc-card usando CSS vars
+       con prefijo --pcard-h-* para NO colisionar con la card Míster.
+       Argumento `home`: objeto ya extraído (no el wrapper). */
+    window._mrApplyPlanCardPaletteHome = function(card, home) {
         try {
             if (!card) return;
             var vars = ['--pcard-h-bg','--pcard-h-border','--pcard-h-shadow',
@@ -43414,25 +43442,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         '--pcard-h-cell-bg','--pcard-h-cell-bd'];
             vars.forEach(function(v){ card.style.removeProperty(v); });
             card.classList.remove('mr-plan-themed-home');
-            if (!palette || !palette.home) return;
-            var h = palette.home;
-            card.style.setProperty('--pcard-h-bg',        h.bg);
-            card.style.setProperty('--pcard-h-border',    h.border);
-            card.style.setProperty('--pcard-h-shadow',    h.shadow);
-            card.style.setProperty('--pcard-h-primary',   h.primary);
-            card.style.setProperty('--pcard-h-secondary', h.secondary);
-            card.style.setProperty('--pcard-h-accent',    h.accent);
-            card.style.setProperty('--pcard-h-progress',  h.progress);
-            card.style.setProperty('--pcard-h-label',     h.label);
-            card.style.setProperty('--pcard-h-name',      h.name);
-            card.style.setProperty('--pcard-h-sub',       h.sub);
-            card.style.setProperty('--pcard-h-track-bg',  h.trackBg);
-            card.style.setProperty('--pcard-h-track-bd',  h.trackBd);
-            card.style.setProperty('--pcard-h-pill-bg',   h.pillBg);
-            card.style.setProperty('--pcard-h-pill-c',    h.pillC);
-            card.style.setProperty('--pcard-h-pill-bd',   h.pillBd);
-            card.style.setProperty('--pcard-h-cell-bg',   h.cellBg);
-            card.style.setProperty('--pcard-h-cell-bd',   h.cellBd);
+            if (!home) return;
+            card.style.setProperty('--pcard-h-bg',        home.bg);
+            card.style.setProperty('--pcard-h-border',    home.border);
+            card.style.setProperty('--pcard-h-shadow',    home.shadow);
+            card.style.setProperty('--pcard-h-primary',   home.primary);
+            card.style.setProperty('--pcard-h-secondary', home.secondary);
+            card.style.setProperty('--pcard-h-accent',    home.accent);
+            card.style.setProperty('--pcard-h-progress',  home.progress);
+            card.style.setProperty('--pcard-h-label',     home.label);
+            card.style.setProperty('--pcard-h-name',      home.name);
+            card.style.setProperty('--pcard-h-sub',       home.sub);
+            card.style.setProperty('--pcard-h-track-bg',  home.trackBg);
+            card.style.setProperty('--pcard-h-track-bd',  home.trackBd);
+            card.style.setProperty('--pcard-h-pill-bg',   home.pillBg);
+            card.style.setProperty('--pcard-h-pill-c',    home.pillC);
+            card.style.setProperty('--pcard-h-pill-bd',   home.pillBd);
+            card.style.setProperty('--pcard-h-cell-bg',   home.cellBg);
+            card.style.setProperty('--pcard-h-cell-bd',   home.cellBd);
             card.classList.add('mr-plan-themed-home');
         } catch(_) {}
     };
@@ -56882,11 +56909,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
-            // [v2.30.1-p112] Tematizar card por carrera si activePlan.name matchea
-            // en la BD de paletas y la entrada tiene .home. Fallback: sin tematizar.
+            // [v2.30.1-p112-fix1] Tematizar card por carrera. Usa el getter
+            // dedicado _mrGetRacePaletteHome (no _mrGetRacePalette que devuelve
+            // el objeto Míster y no tiene .bg/.primary/.secondary/etc esperados).
             try {
-                if (activePlan && window._mrGetRacePalette && window._mrApplyPlanCardPaletteHome) {
-                    var _palHome = window._mrGetRacePalette(activePlan.name);
+                if (activePlan && window._mrGetRacePaletteHome && window._mrApplyPlanCardPaletteHome) {
+                    var _palHome = window._mrGetRacePaletteHome(activePlan.name);
                     window._mrApplyPlanCardPaletteHome(planCard, _palHome);
                 }
             } catch(_){}
