@@ -5807,7 +5807,7 @@
             background: color-mix(in srgb, var(--pcard-h-secondary) 18%, transparent);
             border-color: color-mix(in srgb, var(--pcard-h-secondary) 42%, transparent);
         }
-        /* [v2.30.1-p120] Realce global de texto para MÁXIMA legibilidad
+        /* [v2.30.1-p121] Realce global de texto para MÁXIMA legibilidad
            sobre cualquier paleta. Sombra sutil aplicada a todos los textos.
            Defaults: sombra negra (fondos oscuros). Sevilla/Zaragoza: sombra
            blanca via override en la BD (--pcard-h-text-shadow). */
@@ -6387,8 +6387,8 @@
         .mi-hero-bubble {
             position: relative;
             display: block;
-            width: 160px; height: 160px;
-            margin: 32px auto 20px;
+            width: 140px; height: 140px;
+            margin: 24px auto 16px;
             padding: 0;
             background: transparent;
             border: none;
@@ -6399,26 +6399,24 @@
         }
         .mi-hero-bubble:active { transform: scale(.94); }
 
-        /* [v2.30.1-p120] Anillo interior · ÚNICO ANILLO (sin outer/mid).
-           Interior TRANSPARENTE (respeta dark/light sin blanco duro).
-           Forma circular = box-shadow morado como border + glow exterior. */
+        /* [v2.30.1-p121] Anillo interior · ÚNICO ANILLO minimal.
+           Interior TRANSPARENTE. Forma circular = 1 solo box-shadow (border+glow).
+           Eliminado inset shadow (era el más caro). */
         .mi-hero-bubble__ring-inner {
             position: absolute; inset: 0;
             border-radius: 50%;
             background: transparent;
             box-shadow:
                 0 0 0 1.5px rgba(124, 58, 237, .30),
-                0 10px 24px -4px rgba(124, 58, 237, .40),
-                inset 0 0 18px rgba(168, 85, 247, .08);
+                0 6px 18px -4px rgba(124, 58, 237, .32);
             z-index: 1;
             pointer-events: none;
             overflow: hidden;
         }
         body.dark .mi-hero-bubble__ring-inner {
             box-shadow:
-                0 0 0 1.5px rgba(168, 85, 247, .45),
-                0 10px 30px -4px rgba(168, 85, 247, .55),
-                inset 0 0 22px rgba(168, 85, 247, .15);
+                0 0 0 1.5px rgba(168, 85, 247, .40),
+                0 6px 22px -4px rgba(168, 85, 247, .45);
         }
 
         /* ── WAVEFORM SIRI · 12 barras dentro de la bola ──
@@ -6473,14 +6471,14 @@
             50%      { transform: scaleY(1);    opacity: 1;   }
         }
 
-        /* [v2.30.1-p120] Gorra ARRIBA · tamaño generoso para que se vea entera */
+        /* [v2.30.1-p121] Gorra ARRIBA · proporcional al bubble 140 */
         .mi-hero-bubble__icon-wrap {
             position: absolute;
-            top: -30px;
+            top: -26px;
             left: 50%;
             transform: translateX(-50%);
-            width: 132px;
-            height: 114px;
+            width: 116px;
+            height: 100px;
             display: flex; align-items: center; justify-content: center;
             z-index: 5;
             pointer-events: none;
@@ -6488,11 +6486,10 @@
         .mi-hero-bubble__icon {
             width: 100%; height: 100%;
             object-fit: contain;
-            filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .25));
-            transition: filter .3s;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .22));
         }
         body.dark .mi-hero-bubble__icon {
-            filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .55));
+            filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .5));
         }
 
         /* Dot verde · ARRIBA-DERECHA encima de la gorra (ESTÁTICO, sin animation) */
@@ -9294,7 +9291,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 
                 <!-- [v2.30.1-p112] Pill CTA bajo el hero: refuerzo visual "Chat con Míster".
                      Solo visible cuando hay API key (state live). En locked queda oculta. -->
-        <!-- [v2.30.1-p120] Pill CTA "Chat con Míster" OCULTA (Álvaro no la quiere).
+        <!-- [v2.30.1-p121] Pill CTA "Chat con Míster" OCULTA (Álvaro no la quiere).
              Se mantiene el elemento por si en el futuro se reactiva, pero display:none. -->
                 <div id="mi-hero-cta-pill" class="mi-hero-cta-pill" style="display:none;" onclick="if(window.openMistIaChat)window.openMistIaChat()">
                     <span class="mi-hero-cta-pill__icon">💬</span>
@@ -22143,14 +22140,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // necesarios para que la salida se anime con la curva spring.
         bd.classList.add('closing');
         bd.classList.remove('show');
-        // [Sheets Premium v4] Timeout ajustado a 360ms (era 560ms) para que
-        // .closing se retire justo tras terminar la nueva animación de salida
-        // (transform .34s) con un buffer mínimo de 20ms.
-        setTimeout(function(){ bd.classList.remove('closing'); }, 360);
-        // Solo quitamos el lock si no queda ningún otro sheet abierto
-        if (!document.querySelector('.sheet-backdrop.show')) {
-            document.body.classList.remove('sheet-open');
-        }
+        // [v2.30.1-p121 · FLUIDEZ] Antes body.sheet-open se quitaba INMEDIATAMENTE
+        // aquí, y todas las animaciones pausadas de la burbuja Míster reanudaban
+        // DURANTE la animación de cierre — con backdrop-filter blur activo → lag.
+        // Ahora se mantiene sheet-open durante los 360ms de animación de cierre
+        // y solo se libera al final, junto con el remove de .closing.
+        setTimeout(function(){
+            bd.classList.remove('closing');
+            // Solo quitamos el lock si no queda ningún otro sheet abierto
+            if (!document.querySelector('.sheet-backdrop.show')) {
+                document.body.classList.remove('sheet-open');
+            }
+        }, 360);
     }
     // ═══════════════════════════════════════════════════════════════════════
     // [v4.0 GAP 4] RPE Quick Sheet — bottom sheet minimal post-Strava
@@ -42956,7 +42957,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             pillBd:   cfg.pillBd    || 'rgba(255,255,255,.20)',
             cellBg:   cfg.cellBg    || 'rgba(255,255,255,.06)',
             cellBd:   cfg.cellBd    || 'rgba(255,255,255,.14)',
-            /* [v2.30.1-p120] Realce global de texto + contraste daycard.
+            /* [v2.30.1-p121] Realce global de texto + contraste daycard.
                Defaults optimizados para fondos oscuros. Overrides en Sevilla
                y Zaragoza (fondos claros) → sombra blanca + daycard blanco tinted. */
             textShadow: cfg.textShadow || '0 1px 3px rgba(0,0,0,.55)',
@@ -43451,7 +43452,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return null;
     };
 
-    /* [v2.30.1-p120] Getter paralelo para paleta Home. Devuelve p.home
+    /* [v2.30.1-p121] Getter paralelo para paleta Home. Devuelve p.home
        directamente (no p, no p.palette). Existe porque _mrGetRacePalette
        devuelve p.palette (objeto Míster con .bg/.border/etc) y en Home
        necesitamos p.home (estructura distinta: primary/secondary/accent/
@@ -56995,7 +56996,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
-            // [v2.30.1-p120] Tematizar card por carrera. Usa el getter
+            // [v2.30.1-p121] Tematizar card por carrera. Usa el getter
             // dedicado _mrGetRacePaletteHome (no _mrGetRacePalette que devuelve
             // el objeto Míster y no tiene .bg/.primary/.secondary/etc esperados).
             try {
@@ -71144,33 +71145,42 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (typeof window.openMistIaConfig === 'function') window.openMistIaConfig();
                 return;
             }
-            // Actualizar header con modelo activo
-            try {
-                var subEl = document.getElementById('mi-chat-header-sub');
-                if (subEl && typeof window._miGetModel === 'function') {
-                    var m = window._miGetModel();
-                    subEl.textContent = (MI_MODEL_LABELS[m] || 'Claude') + ' · Powered by Anthropic';
-                }
-            } catch (_) {}
-            // Hidratar saludo empty state con nombre del user
-            try {
-                var titleEl = document.getElementById('mi-chat-empty-title');
-                if (titleEl) {
-                    var first = _getFirstName();
-                    titleEl.textContent = first ? ('¿Qué quieres saber, ' + first + '?') : '¿Qué quieres saber?';
-                }
-            } catch (_) {}
-            // Reset composer
-            try {
-                var ta = document.getElementById('mi-chat-input');
-                if (ta) {
-                    ta.value = '';
-                    ta.style.height = '';
-                }
-                var sendBtn = document.getElementById('mi-chat-send');
-                if (sendBtn) sendBtn.disabled = true;
-            } catch (_) {}
+            /* [v2.30.1-p121 · FLUIDEZ] openSheet PRIMERO — respuesta INMEDIATA al pulsar.
+               Antes: 4 DOM lookups + textContent updates BLOQUEABAN el thread ANTES
+               de que openSheet arrancara → user percibía "lag al pulsar".
+               Ahora: sheet arranca en el mismo tick del click, las hidrataciones
+               (header, saludo, composer reset) se defieren al siguiente frame con
+               requestAnimationFrame — imperceptible visualmente (~16ms) pero libera
+               el thread para que la animación de subida del sheet arranque limpia. */
             if (typeof openSheet === 'function') openSheet('mister-chat-sheet');
+            requestAnimationFrame(function() {
+                // Actualizar header con modelo activo
+                try {
+                    var subEl = document.getElementById('mi-chat-header-sub');
+                    if (subEl && typeof window._miGetModel === 'function') {
+                        var m = window._miGetModel();
+                        subEl.textContent = (MI_MODEL_LABELS[m] || 'Claude') + ' · Powered by Anthropic';
+                    }
+                } catch (_) {}
+                // Hidratar saludo empty state con nombre del user
+                try {
+                    var titleEl = document.getElementById('mi-chat-empty-title');
+                    if (titleEl) {
+                        var first = _getFirstName();
+                        titleEl.textContent = first ? ('¿Qué quieres saber, ' + first + '?') : '¿Qué quieres saber?';
+                    }
+                } catch (_) {}
+                // Reset composer
+                try {
+                    var ta = document.getElementById('mi-chat-input');
+                    if (ta) {
+                        ta.value = '';
+                        ta.style.height = '';
+                    }
+                    var sendBtn = document.getElementById('mi-chat-send');
+                    if (sendBtn) sendBtn.disabled = true;
+                } catch (_) {}
+            });
             // Autofocus con delay para respetar animación slide-up del sheet
             setTimeout(function() {
                 try {
@@ -71307,7 +71317,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 return ['dom','lun','mar','mié','jue','vie','sáb'][d.getDay()];
             } catch(_) { return ''; }
         }
-        /* [v2.30.1-p120 · Fix B+C] Helpers precisión temporal para snapshot IA. */
+        /* [v2.30.1-p121 · Fix B+C] Helpers precisión temporal para snapshot IA. */
         function _miDayNameFull(iso) {
             try {
                 var d = new Date(iso + 'T12:00:00');
@@ -71582,7 +71592,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     ? profileData.name.split(/\s+/)[0].toUpperCase()
                     : 'USER';
 
-                /* [v2.30.1-p120 · Fix A] HEADER TEMPORAL EXPLÍCITO
+                /* [v2.30.1-p121 · Fix A] HEADER TEMPORAL EXPLÍCITO
                    Anclaje absoluto de fecha/hora para eliminar confusiones del LLM
                    con "ayer", "hace X días", etc. Sin este ancla, el modelo usa su
                    propio calendario interno y desfase de 1 día es común. */
@@ -71609,7 +71619,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 out.push('═══════════════════════════════════════════');
                 out.push('');
 
-                /* [v2.30.1-p120 · Fix C] ÚLTIMAS 3 SESIONES COMPLETADAS
+                /* [v2.30.1-p121 · Fix C] ÚLTIMAS 3 SESIONES COMPLETADAS
                    Bloque destacado al inicio para preguntas frecuentes tipo
                    "qué hice ayer", "cómo me fue la última tirada larga", etc.
                    Cada línea con "HACE X DÍAS" absoluto + nombre día + fecha larga
