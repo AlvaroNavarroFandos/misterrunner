@@ -5807,7 +5807,7 @@
             background: color-mix(in srgb, var(--pcard-h-secondary) 18%, transparent);
             border-color: color-mix(in srgb, var(--pcard-h-secondary) 42%, transparent);
         }
-        /* [v2.30.1-p113] Realce global de texto para MÁXIMA legibilidad
+        /* [v2.30.1-p114] Realce global de texto para MÁXIMA legibilidad
            sobre cualquier paleta. Sombra sutil aplicada a todos los textos.
            Defaults: sombra negra (fondos oscuros). Sevilla/Zaragoza: sombra
            blanca via override en la BD (--pcard-h-text-shadow). */
@@ -42921,7 +42921,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             pillBd:   cfg.pillBd    || 'rgba(255,255,255,.20)',
             cellBg:   cfg.cellBg    || 'rgba(255,255,255,.06)',
             cellBd:   cfg.cellBd    || 'rgba(255,255,255,.14)',
-            /* [v2.30.1-p113] Realce global de texto + contraste daycard.
+            /* [v2.30.1-p114] Realce global de texto + contraste daycard.
                Defaults optimizados para fondos oscuros. Overrides en Sevilla
                y Zaragoza (fondos claros) → sombra blanca + daycard blanco tinted. */
             textShadow: cfg.textShadow || '0 1px 3px rgba(0,0,0,.55)',
@@ -43416,7 +43416,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return null;
     };
 
-    /* [v2.30.1-p113] Getter paralelo para paleta Home. Devuelve p.home
+    /* [v2.30.1-p114] Getter paralelo para paleta Home. Devuelve p.home
        directamente (no p, no p.palette). Existe porque _mrGetRacePalette
        devuelve p.palette (objeto Míster con .bg/.border/etc) y en Home
        necesitamos p.home (estructura distinta: primary/secondary/accent/
@@ -56960,7 +56960,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <div id="mr-pc-daycard"></div>
                     ${_pacesHtml}
                 </div>`;
-            // [v2.30.1-p113] Tematizar card por carrera. Usa el getter
+            // [v2.30.1-p114] Tematizar card por carrera. Usa el getter
             // dedicado _mrGetRacePaletteHome (no _mrGetRacePalette que devuelve
             // el objeto Míster y no tiene .bg/.primary/.secondary/etc esperados).
             try {
@@ -70661,6 +70661,19 @@ window.addEventListener('DOMContentLoaded', function() {
             '· Puedes referenciar el COROS Pace Pro cuando encaje: "míralo en el COROS", "en el training',
             '  hub te sale el gráfico", "el reloj te lo pinta claro".',
             '',
+            '── PRECISIÓN DE DATOS Y FECHAS · REGLA CRÍTICA ──',
+            'Al citar fechas usa el formato que aparece en el CONTEXTO TEMPORAL (nombre día + fecha ISO).',
+            'Cuando digas "ayer", "hace X días", "la semana pasada", "el próximo martes": calcula SIEMPRE',
+            'a partir de "HOY ES" del bloque CONTEXTO TEMPORAL — nunca de tu conocimiento del calendario,',
+            'porque puede estar desfasado. Ese ancla temporal es tu única referencia válida.',
+            'Si el user pregunta por una sesión de un día concreto: cita la línea exacta del bloque',
+            '"ÚLTIMAS 3 SESIONES COMPLETADAS" o "SEMANA ACTUAL" o "ÚLTIMAS 20 ACTIVIDADES", con la fecha',
+            'y las métricas tal cual (distancia, ritmo, FC). No mezcles sesiones ni cambies el orden.',
+            'Si preguntas por cumplimiento del plan: mira el marcador "✓ CUMPLIDA / ✗ SALTADA / 🎯 HOY"',
+            'de cada día en SEMANA ACTUAL y responde con esos marcadores literalmente.',
+            'Si un dato/fecha no está en el contexto: dilo — "no lo tengo registrado, dímelo tú". Nunca',
+            'inventes datos ni te "aproximes" a una fecha que no aparece.',
+            '',
             '── REGLA DE ORO IMPRESCINDIBLE ──',
             'CADA respuesta que des DEBE llevar como mínimo:',
             '  · 2 cuñadeces old school runner (refrán clásico o batallita "en mis tiempos" o',
@@ -71259,6 +71272,55 @@ window.addEventListener('DOMContentLoaded', function() {
                 return ['dom','lun','mar','mié','jue','vie','sáb'][d.getDay()];
             } catch(_) { return ''; }
         }
+        /* [v2.30.1-p114 · Fix B+C] Helpers precisión temporal para snapshot IA. */
+        function _miDayNameFull(iso) {
+            try {
+                var d = new Date(iso + 'T12:00:00');
+                return ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'][d.getDay()];
+            } catch(_) { return ''; }
+        }
+        function _miMonthNameFull(idx0) {
+            return ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'][idx0] || '';
+        }
+        function _miFmtDateEsLong(iso) {
+            try {
+                if (!iso) return '—';
+                var d = new Date(iso.length > 10 ? iso : iso + 'T12:00:00');
+                return _miDayNameFull(d.toISOString().slice(0,10)) + ' ' + d.getDate() + ' de ' + _miMonthNameFull(d.getMonth()) + ' de ' + d.getFullYear();
+            } catch(_) { return iso || '—'; }
+        }
+        function _miAgoDaysLabel(iso) {
+            try {
+                var n = _miDaysSince(iso);
+                if (n == null) return '';
+                if (n === 0) return 'HOY';
+                if (n === 1) return 'ayer';
+                if (n < 0) return 'en ' + Math.abs(n) + ' día' + (Math.abs(n)===1?'':'s');
+                return 'hace ' + n + ' día' + (n===1?'':'s');
+            } catch(_) { return ''; }
+        }
+        function _miIsoWeekNum(d) {
+            try {
+                var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                var dayNum = t.getUTCDay() || 7;
+                t.setUTCDate(t.getUTCDate() + 4 - dayNum);
+                var yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+                return Math.ceil((((t - yearStart) / 86400000) + 1) / 7);
+            } catch(_) { return null; }
+        }
+        function _miFindActivityByDate(iso) {
+            /* Match la activity cuya dateStr coincide con iso (YYYY-MM-DD).
+               Si hay varias ese día, devuelve la de mayor distancia. */
+            try {
+                if (!iso || !Array.isArray(activities)) return null;
+                var matches = activities.filter(function(a){
+                    return a && a.dateStr && String(a.dateStr).slice(0,10) === iso;
+                });
+                if (!matches.length) return null;
+                matches.sort(function(a,b){ return (b.distKm||0) - (a.distKm||0); });
+                return matches[0];
+            } catch(_) { return null; }
+        }
         function _miFmtDurationHms(sec) {
             try {
                 if (!sec || sec <= 0) return '—';
@@ -71478,17 +71540,69 @@ window.addEventListener('DOMContentLoaded', function() {
             try {
                 var out = [];
                 var now = new Date();
+                var todayISO = now.toISOString().slice(0,10);
                 var stamp = now.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' })
                           + ' ' + now.toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
                 var firstName = (profileData && profileData.name)
                     ? profileData.name.split(/\s+/)[0].toUpperCase()
                     : 'USER';
 
-                /* HEADER */
+                /* [v2.30.1-p114 · Fix A] HEADER TEMPORAL EXPLÍCITO
+                   Anclaje absoluto de fecha/hora para eliminar confusiones del LLM
+                   con "ayer", "hace X días", etc. Sin este ancla, el modelo usa su
+                   propio calendario interno y desfase de 1 día es común. */
+                out.push('═══════════════════════════════════════════');
+                out.push('📅 CONTEXTO TEMPORAL · REFERENCIA ABSOLUTA');
+                out.push('═══════════════════════════════════════════');
+                out.push('HOY ES: ' + _miFmtDateEsLong(todayISO));
+                out.push('Hora local: ' + now.toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' }) + ' · zona: Europe/Madrid');
+                out.push('Año en curso: ' + now.getFullYear() + ' · Mes: ' + _miMonthNameFull(now.getMonth()) + ' · Semana ISO: ' + _miIsoWeekNum(now));
+                if (activePlan && activePlan.raceDate) {
+                    var daysToRace = _miDaysUntil(activePlan.raceDate);
+                    if (daysToRace != null && daysToRace >= 0) {
+                        out.push('Días hasta ' + (activePlan.name || 'carrera') + ': ' + daysToRace + ' días (' + _miFmtDateEsLong(activePlan.raceDate) + ')');
+                    }
+                }
+                out.push('');
+                out.push('⚠️ IMPORTANTE: al hablar de fechas ("ayer", "hace X días", "la semana pasada"),');
+                out.push('   calcula SIEMPRE a partir de "HOY ES" arriba. No uses tu calendario interno.');
+                out.push('');
+
+                /* HEADER identidad */
                 out.push('═══════════════════════════════════════════');
                 out.push('CONTEXTO DE ' + firstName + ' · snapshot ' + stamp);
                 out.push('═══════════════════════════════════════════');
                 out.push('');
+
+                /* [v2.30.1-p114 · Fix C] ÚLTIMAS 3 SESIONES COMPLETADAS
+                   Bloque destacado al inicio para preguntas frecuentes tipo
+                   "qué hice ayer", "cómo me fue la última tirada larga", etc.
+                   Cada línea con "HACE X DÍAS" absoluto + nombre día + fecha larga
+                   + tipo + métricas clave. Evita búsquedas en las 20 activities. */
+                if (Array.isArray(activities) && activities.length) {
+                    var _sortedRecent = activities.slice()
+                        .filter(function(a){ return a && a.dateStr; })
+                        .sort(function(a,b){ return String(b.dateStr).localeCompare(String(a.dateStr)); })
+                        .slice(0, 3);
+                    if (_sortedRecent.length) {
+                        out.push('── ÚLTIMAS 3 SESIONES COMPLETADAS ──');
+                        _sortedRecent.forEach(function(a, i){
+                            var iso = String(a.dateStr).slice(0,10);
+                            var ago = _miAgoDaysLabel(iso).toUpperCase();
+                            var lineStr = (i+1) + '. ' + ago + ' · ' + _miDayNameFull(iso) + ' ' + iso
+                                        + ' · ' + _miTypeLabel(a.type)
+                                        + ' · ' + (a.distKm != null ? Number(a.distKm).toFixed(2) + 'km' : '—')
+                                        + ' · ' + _miFmtDurationHms(a.durationSec)
+                                        + ' · ' + _miFmtPaceMinKm(a.durationSec, a.distKm) + '/km';
+                            if (a.avgHr) lineStr += ' · FCavg ' + a.avgHr;
+                            if (a.rpe)   lineStr += ' · RPE ' + a.rpe;
+                            if (a.pr && a.pr.records && a.pr.records.length) lineStr += ' · 🏆 PR';
+                            out.push(lineStr);
+                            if (a.rpe_context) out.push('   Nota: "' + a.rpe_context + '"');
+                        });
+                        out.push('');
+                    }
+                }
 
                 /* QUIÉN ES */
                 out.push('── QUIÉN ES ──');
@@ -71599,29 +71713,50 @@ window.addEventListener('DOMContentLoaded', function() {
                         out.push('');
                     }
 
-                    /* SEMANA ACTUAL entera */
+                    /* SEMANA ACTUAL entera · [Fix F] cruzada con activities reales */
                     var wCur = allDays.filter(function(d){ return d.weekIdx === curWkIdx; });
                     if (wCur.length) {
                         out.push('── SEMANA ACTUAL (sem ' + curWkIdx + '/' + totalWk + ') ──');
                         wCur.forEach(function(d){
+                            var iso = d.dateStr;
                             var mark = '';
-                            if (d.dateStr === todayISO) mark = '🎯 HOY';
-                            else if (d.done) mark = '✓';
-                            else if (d.dateStr < todayISO && d.type !== 'rest') mark = '✗';
-                            var lineStr = _miDayName(d.dateStr) + ' ' + _miFmtDateEsShort(d.dateStr) + ' · '
-                                        + (d.title || _miTypeLabel(d.type));
-                            if (mark) lineStr += ' · ' + mark;
+                            var matchStr = '';
+                            /* Match con activity real de ese día */
+                            if (d.type !== 'rest') {
+                                var act = _miFindActivityByDate(iso);
+                                if (act) {
+                                    var mstr = '';
+                                    if (act.distKm != null) mstr += Number(act.distKm).toFixed(2) + 'km';
+                                    if (act.durationSec) mstr += ' · ' + _miFmtDurationHms(act.durationSec);
+                                    var pace = _miFmtPaceMinKm(act.durationSec, act.distKm);
+                                    if (pace !== '—') mstr += ' · ' + pace + '/km';
+                                    if (act.avgHr) mstr += ' · FCavg ' + act.avgHr;
+                                    if (act.rpe)   mstr += ' · RPE ' + act.rpe;
+                                    matchStr = ' → ✓ CUMPLIDA (' + mstr + ')';
+                                } else if (iso === todayISO) {
+                                    matchStr = ' → 🎯 HOY (aún sin registrar)';
+                                } else if (iso < todayISO) {
+                                    matchStr = ' → ✗ SALTADA';
+                                } else {
+                                    matchStr = ' → PENDIENTE';
+                                }
+                            }
+                            if (iso === todayISO) mark = '🎯 HOY';
+                            var lineStr = _miDayName(iso) + ' ' + iso + ' · '
+                                        + (d.title || _miTypeLabel(d.type))
+                                        + matchStr;
+                            if (mark && !matchStr) lineStr += ' · ' + mark;
                             out.push(lineStr);
                         });
                         out.push('');
                     }
 
-                    /* PRÓXIMA SEMANA entera */
+                    /* PRÓXIMA SEMANA entera · [Fix B] fechas ISO consistentes */
                     var wNext = allDays.filter(function(d){ return d.weekIdx === curWkIdx + 1; });
                     if (wNext.length) {
                         out.push('── PRÓXIMA SEMANA (sem ' + (curWkIdx+1) + '/' + totalWk + ') ──');
                         wNext.forEach(function(d){
-                            out.push(_miDayName(d.dateStr) + ' ' + _miFmtDateEsShort(d.dateStr) + ' · '
+                            out.push(_miDayName(d.dateStr) + ' ' + d.dateStr + ' · '
                                 + (d.title || _miTypeLabel(d.type)));
                         });
                         out.push('');
@@ -71638,7 +71773,8 @@ window.addEventListener('DOMContentLoaded', function() {
                     });
                     var recent = sorted.slice(0, 20);
                     recent.forEach(function(a, idx){
-                        var lineStr = (idx+1) + '. ' + _miFmtDateEsShort(a.dateStr) + ' · '
+                        var iso = String(a.dateStr).slice(0,10);
+                        var lineStr = (idx+1) + '. ' + iso + ' (' + _miDayName(iso) + ') · '
                                     + _miTypeLabel(a.type)
                                     + ' · ' + (a.distKm != null ? Number(a.distKm).toFixed(2) + 'km' : '—')
                                     + ' · ' + _miFmtDurationHms(a.durationSec)
