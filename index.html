@@ -11949,6 +11949,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                             <div style="font-size:15.5px;font-weight:700;color:var(--inj);letter-spacing:-.3px;">Borrar todas mis actividades</div>
                                         </div>
                                     </div>
+                                    <!-- [v2.30.1-p146] REPARAR STREAMS AUTO-IMPORTS STRAVA (visible para todos)
+                                         Diagnostica y repara las cards 2 y 3 vacías en carreras
+                                         auto-importadas de Strava tras perder cache local.
+                                         Lee strava_pending_imports (payloads originales) y regenera
+                                         el .json.gz al bucket activity-streams. Idempotente. -->
+                                    <div id="repair-strava-streams-btn" onclick="_mrRepairStravaWebhookStreams()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                                        <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3BBCE0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <div style="font-size:15.5px;font-weight:700;color:var(--ts);letter-spacing:-.3px;">Reparar auto-imports Strava</div>
+                                            <div style="font-size:11px;color:var(--tm);margin-top:2px;line-height:1.3;">Regenera cards 2 y 3 vacías tras perder caché</div>
+                                        </div>
+                                    </div>
                                     <div onclick="deleteMyAccount()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;">
                                         <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--inj)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
@@ -21268,6 +21282,292 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Visible solo con ?debug=1 en URL o UUID en DEBUG_USER_WHITELIST.
     // Triple confirmación: confirm → prompt "BORRAR TODO" → ejecución.
     // ═══════════════════════════════════════════════════════════════
+    // ─────────────────────────────────────────────────────────────
+    // [v2.30.1-p146] REPARADOR STREAMS AUTO-IMPORTS STRAVA
+    // ─────────────────────────────────────────────────────────────
+    // Motivo: descubrimiento sesión 31 ago 2026 · post datos perdidos.
+    // Las activities importadas vía webhook Strava (auto-import) tenían
+    // metadata OK en tabla `activities` pero `streams_path` NULL o el
+    // archivo del bucket ausente → cards 2/3 vacías en visor cuando el
+    // cache local se pierde (reinstalar PWA, borrar historial Safari).
+    //
+    // Buena noticia: los payloads originales del webhook siguen en
+    // `strava_pending_imports` incluso después de `consumed_at` (no se
+    // purgan). Cada row tiene `streams_payload` (JSONB) con heartrate,
+    // distance, altitude, cadence, latlng, velocity_smooth raw de Strava.
+    //
+    // Este reparador:
+    //   1) SELECT strava_pending_imports WHERE consumed_mr_activity_id IS NOT NULL
+    //   2) Para cada uno, mira si `activities.streams_path` es NULL
+    //   3) Si sí → re-mapea con _stravaToPendingFitData, construye streamsObj,
+    //      sube al bucket con _uploadManualStreams, UPDATE streams_path
+    //   4) Progreso live + toast final
+    // Idempotente: si ya tiene streams válidos, skip silencioso.
+    // ─────────────────────────────────────────────────────────────
+    async function _mrRepairStravaWebhookStreams() {
+        // Confirmación
+        var c1 = window.confirm(
+            'Reparar streams de auto-imports Strava\n\n' +
+            'Buscará todas las carreras auto-importadas de Strava (webhook) que ' +
+            'tienen sus datos detallados perdidos (cards 2 y 3 vacías) y los ' +
+            'regenerará descargando los payloads originales del backend.\n\n' +
+            'Es idempotente: si una carrera ya está OK, se salta.\n\n' +
+            '¿Continuar?'
+        );
+        if (!c1) return;
+
+        var sb = window._sbClient;
+        if (!sb) { alert('No hay conexión con la base de datos'); return; }
+        var sessRes = await sb.auth.getSession();
+        var uid = sessRes && sessRes.data && sessRes.data.session
+                  && sessRes.data.session.user && sessRes.data.session.user.id;
+        if (!uid) { alert('Sesión no iniciada'); return; }
+
+        // ── Overlay progreso (mismo estilo que wipeMyActivities) ──
+        var _overlay = document.createElement('div');
+        _overlay.id = 'mr-repair-overlay';
+        _overlay.style.cssText = [
+            'position:fixed','inset:0','z-index:999999',
+            'background:rgba(10,10,15,.85)',
+            'backdrop-filter:blur(8px)','-webkit-backdrop-filter:blur(8px)',
+            'display:flex','align-items:center','justify-content:center',
+            'opacity:0','transition:opacity .25s ease',
+            'font-family:var(--f, system-ui)'
+        ].join(';');
+        _overlay.innerHTML =
+            '<div style="background:linear-gradient(135deg,#0d1a2b 0%,#182a44 100%);'
+                + 'border:1px solid rgba(59,188,224,.45);border-radius:18px;'
+                + 'padding:24px 24px 22px;min-width:280px;max-width:340px;'
+                + 'box-shadow:0 12px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(59,188,224,.2);">'
+            +    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+            +        '<div id="mr-repair-spinner" style="width:18px;height:18px;border:2.5px solid rgba(59,188,224,.25);'
+            +            'border-top-color:#3BBCE0;border-radius:50%;animation:mrWipeSpin 0.8s linear infinite;flex-shrink:0;"></div>'
+            +        '<div style="font-size:14px;font-weight:700;color:#eaf7fd;letter-spacing:.2px;">Reparando streams…</div>'
+            +    '</div>'
+            +    '<div id="mr-repair-step" style="font-size:12px;color:rgba(234,247,253,.7);margin-bottom:14px;line-height:1.4;min-height:32px;">Consultando pendings…</div>'
+            +    '<div style="background:rgba(59,188,224,.12);height:6px;border-radius:3px;overflow:hidden;">'
+            +        '<div id="mr-repair-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3BBCE0 0%,#7BD9F0 100%);'
+            +            'border-radius:3px;transition:width .35s ease;box-shadow:0 0 8px rgba(59,188,224,.5);"></div>'
+            +    '</div>'
+            +    '<div id="mr-repair-pct" style="font-size:10px;color:rgba(234,247,253,.55);text-align:right;margin-top:6px;font-weight:600;letter-spacing:.3px;">0%</div>'
+            + '</div>';
+        // Reusar keyframes de wipe si existen
+        if (!document.getElementById('mr-wipe-anim-style')) {
+            var animSt = document.createElement('style');
+            animSt.id = 'mr-wipe-anim-style';
+            animSt.textContent = '@keyframes mrWipeSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}';
+            document.head.appendChild(animSt);
+        }
+        document.body.appendChild(_overlay);
+        requestAnimationFrame(function() { _overlay.style.opacity = '1'; });
+
+        function _setStep(txt) {
+            var el = document.getElementById('mr-repair-step');
+            if (el) el.textContent = txt;
+        }
+        function _setPct(pct) {
+            pct = Math.max(0, Math.min(100, Math.round(pct)));
+            var bar = document.getElementById('mr-repair-bar');
+            var lbl = document.getElementById('mr-repair-pct');
+            if (bar) bar.style.width = pct + '%';
+            if (lbl) lbl.textContent = pct + '%';
+        }
+        function _closeOverlay() {
+            if (_overlay && _overlay.parentNode) {
+                _overlay.style.opacity = '0';
+                setTimeout(function(){
+                    if (_overlay.parentNode) _overlay.parentNode.removeChild(_overlay);
+                }, 300);
+            }
+        }
+
+        var stats = {
+            pendingsTotal: 0,
+            checked: 0,
+            skipped: 0,
+            repaired: 0,
+            failed: 0,
+            skippedNoBridge: 0,
+            skippedNoActivity: 0,
+            errors: []
+        };
+
+        try {
+            // ── Paso 1: leer todas las pendings consumidas ────────────
+            _setStep('Consultando pendings consumidos…');
+            var pendResp = await sb.from('strava_pending_imports')
+                .select('id, strava_activity_id, activity_payload, streams_payload, consumed_mr_activity_id')
+                .eq('user_id', uid)
+                .not('consumed_mr_activity_id', 'is', null)
+                .order('created_at', { ascending: false });
+            if (pendResp.error) {
+                console.error('[MR][p146 repair] SELECT pendings error:', pendResp.error);
+                _closeOverlay();
+                alert('Error consultando pendings: ' + pendResp.error.message);
+                return;
+            }
+            var pendings = pendResp.data || [];
+            stats.pendingsTotal = pendings.length;
+
+            if (pendings.length === 0) {
+                _closeOverlay();
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('No hay auto-imports Strava consumidos que revisar', { variant: 'info', duration: 4000 });
+                } else {
+                    alert('No hay auto-imports Strava consumidos que revisar');
+                }
+                return;
+            }
+
+            _setStep('Encontrados ' + pendings.length + ' auto-imports · analizando…');
+
+            // ── Paso 2: batch SELECT en activities para ver quién tiene streams_path NULL ──
+            var actIds = pendings.map(function(p){ return p.consumed_mr_activity_id; }).filter(Boolean);
+            // Chunk en tandas de 100 (evitar URL muy largas en el IN clause)
+            var actRows = [];
+            var _chunkSz = 100;
+            for (var _ci = 0; _ci < actIds.length; _ci += _chunkSz) {
+                var _chunk = actIds.slice(_ci, _ci + _chunkSz);
+                var actResp = await sb.from('activities')
+                    .select('id, streams_path')
+                    .in('id', _chunk)
+                    .eq('user_id', uid);
+                if (actResp.error) {
+                    console.warn('[MR][p146 repair] SELECT activities chunk error:', actResp.error);
+                    continue;
+                }
+                actRows = actRows.concat(actResp.data || []);
+            }
+            var actMap = {};
+            actRows.forEach(function(r){ actMap[r.id] = r; });
+
+            // ── Paso 3: procesar cada pending ────────────────────────
+            for (var i = 0; i < pendings.length; i++) {
+                var p = pendings[i];
+                var pct = (i / pendings.length) * 100;
+                _setPct(pct);
+                _setStep('Revisando ' + (i+1) + '/' + pendings.length + '…');
+                stats.checked++;
+
+                var actRow = actMap[p.consumed_mr_activity_id];
+                if (!actRow) {
+                    stats.skippedNoActivity++;
+                    continue;
+                }
+                // Ya tiene streams_path → skip (asumimos que el bucket lo tiene)
+                if (actRow.streams_path) {
+                    stats.skipped++;
+                    continue;
+                }
+
+                // Necesita reparar
+                _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (activity ' + p.consumed_mr_activity_id.slice(0,8) + '…)');
+
+                // Re-mapear payload → bridge
+                var bridge = null;
+                try {
+                    if (typeof window._stravaToPendingFitData === 'function') {
+                        bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
+                    }
+                } catch (e) {
+                    console.warn('[MR][p146 repair] bridge exception pending=' + p.id + ':', e);
+                }
+                if (!bridge) {
+                    stats.skippedNoBridge++;
+                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'bridge-failed' });
+                    continue;
+                }
+
+                // Construir un `act` mínimo compatible con _uploadManualStreams
+                var actForUpload = {
+                    hrSeries:    bridge.hrSeries  || [],
+                    cadSeries:   bridge.cadSeries || [],
+                    eleSeries:   bridge.eleSeries || [],
+                    distSer:     bridge.distSer   || [],
+                    laps:        bridge.laps      || [],
+                    distKm:      bridge.distKm,
+                    durationSec: bridge.durationSec,
+                    avgHr:       bridge.avgHr,
+                    maxHr:       bridge.maxHr,
+                    ascentM:     bridge.ascentM,
+                    csvBlocks:   bridge.csvBlocks || []
+                };
+
+                var streamsPath = await _uploadManualStreams(sb, uid, p.consumed_mr_activity_id, actForUpload);
+                if (!streamsPath) {
+                    stats.failed++;
+                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'upload-failed' });
+                    continue;
+                }
+                // UPDATE streams_path en activities
+                var updRes = await sb.from('activities')
+                    .update({ streams_path: streamsPath })
+                    .eq('id', p.consumed_mr_activity_id)
+                    .eq('user_id', uid);
+                if (updRes && updRes.error) {
+                    console.warn('[MR][p146 repair] UPDATE streams_path error:', updRes.error);
+                    stats.failed++;
+                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'update-streams-path-failed', msg: updRes.error.message });
+                    continue;
+                }
+                stats.repaired++;
+                console.log('[MR][p146 repair] ✓ activity=' + p.consumed_mr_activity_id.slice(0,8) + '… reparada (streams_path=' + streamsPath.slice(-30) + ')');
+            }
+
+            _setPct(100);
+            _setStep('Terminando…');
+
+            // ── Paso 4: refrescar el cache de streams en memoria ─────
+            // Para que si el usuario abre una recién reparada, no lea del cache viejo.
+            try {
+                if (typeof _streamsCache === 'object' && _streamsCache) {
+                    Object.keys(_streamsCache).forEach(function(k) { delete _streamsCache[k]; });
+                }
+            } catch(_){}
+
+            _closeOverlay();
+
+            // ── Toast final ──────────────────────────────────────────
+            var summaryMsg = '';
+            if (stats.repaired > 0) {
+                summaryMsg = '✅ ' + stats.repaired + ' auto-imports Strava recuperados';
+                if (stats.skipped > 0) summaryMsg += ' · ' + stats.skipped + ' ya OK';
+                if (stats.failed > 0) summaryMsg += ' · ' + stats.failed + ' fallos';
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast(summaryMsg, { variant: 'success', duration: 6000 });
+                } else {
+                    alert(summaryMsg);
+                }
+            } else if (stats.skipped === stats.pendingsTotal) {
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('Todas las auto-imports Strava ya estaban OK (' + stats.skipped + ')', { variant: 'info', duration: 5000 });
+                } else {
+                    alert('Todas las auto-imports Strava ya estaban OK (' + stats.skipped + ')');
+                }
+            } else {
+                summaryMsg = 'Sin cambios · ' + stats.pendingsTotal + ' revisados';
+                if (stats.skippedNoActivity > 0) summaryMsg += ' · ' + stats.skippedNoActivity + ' sin activity';
+                if (stats.skippedNoBridge > 0) summaryMsg += ' · ' + stats.skippedNoBridge + ' payload inválido';
+                if (stats.failed > 0) summaryMsg += ' · ' + stats.failed + ' fallo upload';
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast(summaryMsg, { variant: 'warning', duration: 6000 });
+                } else {
+                    alert(summaryMsg);
+                }
+            }
+
+            console.log('[MR][p146 repair] resumen:', stats);
+            if (stats.errors.length > 0) {
+                console.log('[MR][p146 repair] errores detallados:', stats.errors);
+            }
+        } catch (e) {
+            console.error('[MR][p146 repair] excepción global:', e);
+            _closeOverlay();
+            alert('Error inesperado: ' + (e && e.message ? e.message : String(e)));
+        }
+    }
+    window._mrRepairStravaWebhookStreams = _mrRepairStravaWebhookStreams;
+
     async function wipeMyActivities() {
         // ── Guarda de visibilidad (defensa en profundidad) ────────
         if (!(await isDebugUserAsync())) {
@@ -29510,8 +29810,70 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // que Strava bulk para que loadStreamsForActivity los lea igual.
     // Devuelve el storage_path o null si falla.
     // ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────
+    // [v2.30.1-p146] Helper genérico de retry con backoff exponencial
+    // ─────────────────────────────────────────────────────────────────
+    // Motivo (Sesión 31 ago 2026 · post datos perdidos):
+    //   Los upload a bucket (streams .json.gz + fotos) fallaban silenciosamente
+    //   en el flujo webhook Strava con solo `console.warn`. El usuario nunca
+    //   se enteraba, la activity persistía con metadata pero SIN streams_path.
+    //   Al perder el cache local por reinstalar PWA → cards 2/3 vacías.
+    //
+    // Este helper:
+    //   - Reintenta hasta N veces con backoff exponencial (500ms, 1s, 2s)
+    //   - Log verboso en cada intento fallido (console.warn)
+    //   - Log de éxito solo en intento >1 (para no ensuciar consola en caso normal)
+    //   - Si TODOS los reintentos fallan: console.error + toast rojo al user
+    //   - Toast NO se muestra si opts.silent === true (para batch de reparación
+    //     donde queremos ver el resumen final, no un toast por fallo)
+    //
+    // Uso:
+    //   var ok = await _mrRetryUpload(async () => {
+    //       var r = await sb.storage.from('X').upload(path, blob);
+    //       if (r && r.error) throw new Error(r.error.message);
+    //       return true;
+    //   }, 'streams·' + activityId);
+    // ─────────────────────────────────────────────────────────────────
+    async function _mrRetryUpload(fn, opName, opts) {
+        opts = opts || {};
+        var maxRetries = opts.maxRetries || 3;
+        var backoffMs  = opts.backoffMs  || [500, 1000, 2000];
+        var silent     = !!opts.silent;
+        var lastErr    = null;
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var result = await fn();
+                if (attempt > 1) {
+                    console.log('[MR][p146 retry] ✓ ' + opName + ' OK en intento ' + attempt + '/' + maxRetries);
+                }
+                return { ok: true, result: result, attempts: attempt, error: null };
+            } catch (e) {
+                lastErr = e;
+                var msg = (e && e.message) ? e.message : String(e);
+                console.warn('[MR][p146 retry] intento ' + attempt + '/' + maxRetries + ' fallo · ' + opName + ' · ' + msg);
+                if (attempt < maxRetries) {
+                    var wait = backoffMs[attempt - 1] || 2000;
+                    await new Promise(function(res) { setTimeout(res, wait); });
+                }
+            }
+        }
+        // Todos los reintentos fallaron
+        var finalMsg = (lastErr && lastErr.message) ? lastErr.message : String(lastErr);
+        console.error('[MR][p146 retry] ✗ ' + opName + ' FALLO PERSISTENTE tras ' + maxRetries + ' intentos · ' + finalMsg);
+        if (!silent && typeof window.fxToast === 'function') {
+            window.fxToast('No se pudo subir a la nube: ' + opName.split('·')[0].trim(), { variant: 'error', duration: 5000 });
+        }
+        return { ok: false, result: null, attempts: maxRetries, error: finalMsg };
+    }
+    window._mrRetryUpload = _mrRetryUpload;
+
     async function _uploadManualStreams(sb, uid, activityId, act) {
         try {
+            // [v2.30.1-p146] Verificación pre-upload defensiva
+            if (typeof pako === 'undefined') {
+                console.warn('[MR][6.1] pako no disponible, no se suben streams');
+                return null;
+            }
             // Construir streamsObj con la misma estructura que bulk
             var streamsObj = {
                 version: 1,
@@ -29532,27 +29894,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     csvBlocks:   Array.isArray(act.csvBlocks) ? act.csvBlocks : []
                 }
             };
-            var jsonStr = JSON.stringify(streamsObj);
-            // pako disponible globalmente (lo usa strava bulk)
-            if (typeof pako === 'undefined') {
-                console.warn('[MR][6.1] pako no disponible, no se suben streams');
-                return null;
+            // [v2.30.1-p146] Aviso si los arrays de streams están todos vacíos.
+            // No aborta (permitimos subir esqueleto por si la activity es manual
+            // sin sensor) pero deja huella en consola para diagnóstico.
+            var _sLen = streamsObj.streams.hr.length
+                      + streamsObj.streams.cadence.length
+                      + streamsObj.streams.altitude.length
+                      + streamsObj.streams.distance.length;
+            if (_sLen === 0) {
+                console.warn('[MR][p146] _uploadManualStreams: streams vacíos para activityId=' + activityId + ' (esto puede ser normal en manuales sin sensor)');
             }
+            var jsonStr = JSON.stringify(streamsObj);
             var gzipped = pako.gzip(jsonStr);
             var blob = new Blob([gzipped], { type: 'application/gzip' });
-            var path = uid + '/' + activityId + '.json.gz';
-
-            var upRes = await sb.storage
-                .from('activity-streams')
-                .upload(path, blob, {
-                    cacheControl: '3600',
-                    upsert: true,             // permitir reupload (idempotente)
-                    contentType: 'application/gzip'
-                });
-            if (upRes && upRes.error) {
-                console.warn('[MR][6.1] _uploadManualStreams error:', upRes.error);
+            if (!blob.size) {
+                console.warn('[MR][p146] _uploadManualStreams: blob de 0 bytes, aborto');
                 return null;
             }
+            var path = uid + '/' + activityId + '.json.gz';
+
+            // [v2.30.1-p146] Retry con backoff exponencial
+            var res = await _mrRetryUpload(async function() {
+                var upRes = await sb.storage
+                    .from('activity-streams')
+                    .upload(path, blob, {
+                        cacheControl: '3600',
+                        upsert: true,             // permitir reupload (idempotente)
+                        contentType: 'application/gzip'
+                    });
+                if (upRes && upRes.error) throw new Error(upRes.error.message || String(upRes.error));
+                return upRes;
+            }, 'streams·' + activityId.slice(0,8));
+
+            if (!res.ok) return null;
             return path;
         } catch(e) {
             console.warn('[MR][6.1] _uploadManualStreams exception:', e);
@@ -29584,34 +29958,53 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             // Workaround MIME (lección 19 strava bulk): re-envolver Blob con type forzado
             var blob = new Blob([bytes], { type: mime });
-
-            var path = uid + '/' + activityId + '/0.' + ext;
-            var upRes = await sb.storage
-                .from('activity-photos')
-                .upload(path, blob, {
-                    cacheControl: '3600',
-                    upsert: true,
-                    contentType: mime
-                });
-            if (upRes && upRes.error) {
-                console.warn('[MR][6.1] _uploadManualPhoto upload error:', upRes.error);
+            if (!blob.size) {
+                console.warn('[MR][p146] _uploadManualPhoto: blob de 0 bytes, aborto');
                 return null;
             }
 
-            // Insertar fila en activity_photos
-            var insRes = await sb
-                .from('activity_photos')
-                .insert({
-                    activity_id:       activityId,
-                    user_id:           uid,
-                    storage_path:      path,
-                    original_filename: 'photo.' + ext,
-                    position:          0
-                });
-            if (insRes && insRes.error) {
-                console.warn('[MR][6.1] _uploadManualPhoto insert error:', insRes.error);
-                // El archivo está subido pero la fila no se creó. Aceptable.
-            }
+            var path = uid + '/' + activityId + '/0.' + ext;
+            // [v2.30.1-p146] Retry upload al bucket
+            var upResult = await _mrRetryUpload(async function() {
+                var upRes = await sb.storage
+                    .from('activity-photos')
+                    .upload(path, blob, {
+                        cacheControl: '3600',
+                        upsert: true,
+                        contentType: mime
+                    });
+                if (upRes && upRes.error) throw new Error(upRes.error.message || String(upRes.error));
+                return upRes;
+            }, 'foto·' + activityId.slice(0,8));
+
+            if (!upResult.ok) return null;
+
+            // [v2.30.1-p146] Insertar fila en activity_photos con retry propio
+            var insResult = await _mrRetryUpload(async function() {
+                var insRes = await sb
+                    .from('activity_photos')
+                    .insert({
+                        activity_id:       activityId,
+                        user_id:           uid,
+                        storage_path:      path,
+                        original_filename: 'photo.' + ext,
+                        position:          0
+                    });
+                if (insRes && insRes.error) {
+                    // Ignorar error de duplicado (23505 unique_violation) — foto ya registrada
+                    var errCode = insRes.error.code || '';
+                    if (errCode === '23505') {
+                        console.log('[MR][p146] _uploadManualPhoto: fila activity_photos ya existe (dup) — OK');
+                        return insRes;
+                    }
+                    throw new Error(insRes.error.message || String(insRes.error));
+                }
+                return insRes;
+            }, 'foto·meta·' + activityId.slice(0,8), { silent: true });
+            // silent: true en el INSERT porque el archivo ya se subió al bucket.
+            // Si el INSERT falla, la foto existe pero sin metadata → estado
+            // recuperable via retry en el próximo self-heal (Bloque 3).
+
             return path;
         } catch(e) {
             console.warn('[MR][6.1] _uploadManualPhoto exception:', e);
@@ -34710,6 +35103,49 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + ' needsPhotos=' + isBulkPendingPhotos
                 + ' dbPhotosCount=' + (Array.isArray(act._dbPhotos) ? act._dbPhotos.length : 0));
         }
+
+        // ─────────────────────────────────────────────────────────────
+        // [v2.30.1-p146] SELF-HEAL FOTOS LOCALES → SUPABASE (Bloque 3 · C.3)
+        // ─────────────────────────────────────────────────────────────
+        // Detecta el estado inconsistente: usuario editó activity y añadió foto
+        // manualmente (act.photoB64 es data URI) pero el upload a Supabase falló
+        // silenciosamente en su día (sin retry) → foto solo en local.
+        //
+        // Al abrir la activity, si detectamos este estado, disparamos upload en
+        // background con retry (silent=false para toast rojo si falla).
+        // Idempotente: _uploadManualPhoto usa upsert=true en storage y maneja
+        // duplicate key error 23505 en INSERT metadata.
+        //
+        // NO recupera fotos ya perdidas (esas no existen en ningún sitio) pero
+        // previene futuras pérdidas para users cuyas fotos aún viven en IDB.
+        try {
+            if (act && act._dbActivityId
+                && typeof act.photoB64 === 'string'
+                && act.photoB64.startsWith('data:image/')
+                && (!Array.isArray(act._dbPhotos) || act._dbPhotos.length === 0)) {
+                console.log('[MR][p146 self-heal] photoB64 local sin persistir para ' + act._dbActivityId.slice(0,8) + '… disparando upload en background');
+                (async function() {
+                    try {
+                        var sb = window._sbClient;
+                        if (!sb) return;
+                        var sr = await sb.auth.getSession();
+                        var uidLocal = sr && sr.data && sr.data.session
+                                      && sr.data.session.user && sr.data.session.user.id;
+                        if (!uidLocal) return;
+                        var uploadedPath = await _uploadManualPhoto(sb, uidLocal, act._dbActivityId, act.photoB64);
+                        if (uploadedPath) {
+                            console.log('[MR][p146 self-heal] foto persistida OK · ' + uploadedPath);
+                            // Actualizar act._dbPhotos en memoria para que futuras aperturas
+                            // no re-disparen self-heal (idempotencia en sesión).
+                            if (!Array.isArray(act._dbPhotos)) act._dbPhotos = [];
+                            act._dbPhotos.push({ path: uploadedPath, position: 0 });
+                        }
+                    } catch (e) {
+                        console.warn('[MR][p146 self-heal] excepción:', e);
+                    }
+                })();
+            }
+        } catch(_){}
 
         if (isBulkPendingStreams || isBulkPendingPhotos) {
             // [Efectos UI] Spinner SIN animación de slide: aparece directo, negro,
