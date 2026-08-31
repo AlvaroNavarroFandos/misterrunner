@@ -21974,19 +21974,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var indoorLegit = 0;         // sin polyline (probablemente indoor de verdad)
             var withPhoto = 0;
             var totalIndoor = 0;
+            // [v2.30.1-p152] Listas de activities problemáticas
+            var listNoStreams = [];      // sin archivo en bucket
+            var listBrokenPoly = [];     // polyline rota
+            var listMismatch = [];       // archivo existe pero columna NULL
 
             acts.forEach(function(a){
                 var fname = a.id + '.json.gz';
                 var hasFile = bucketStreams.has(fname);
                 if (hasFile) withStreamsInBucket++;
                 if (a.streams_path) withStreamsPath++;
-                if (!a.streams_path && hasFile) mismatchStreamsPath++;
+                if (!a.streams_path && hasFile) {
+                    mismatchStreamsPath++;
+                    listMismatch.push(a);
+                }
                 if (a.streams_path && !hasFile) missingStreamsFile++;
+                if (!hasFile) {
+                    listNoStreams.push(a);
+                }
 
                 if (a.polyline_encoded) {
                     if (typeof window._polylineIsUseful === 'function') {
                         if (window._polylineIsUseful(a.polyline_encoded)) withPolyline++;
-                        else brokenPolyline++;
+                        else {
+                            brokenPolyline++;
+                            listBrokenPoly.push(a);
+                        }
                     } else {
                         withPolyline++;
                     }
@@ -22001,37 +22014,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             // 5. Reporte
             var pct = total > 0 ? Math.round(withStreamsInBucket / total * 100) : 0;
-            var issues = missingStreamsFile + brokenPolyline;
-            var report = '📊 AUDITORÍA DE DATOS\n\n';
-            report += 'Total actividades: ' + total + '\n\n';
-            report += '💾 STREAMS\n';
-            report += '  ✓ Con datos en bucket: ' + withStreamsInBucket + ' / ' + total + ' (' + pct + '%)\n';
-            if (missingStreamsFile > 0) report += '  ❌ streams_path pero archivo missing: ' + missingStreamsFile + '\n';
-            if (mismatchStreamsPath > 0) report += '  ⚠️ Archivo existe pero columna vacía: ' + mismatchStreamsPath + ' (reparable)\n';
-            report += '\n🗺️ RUTAS GPS\n';
-            report += '  ✓ Con ruta útil: ' + withPolyline + '\n';
-            report += '  🏠 Indoor (sin ruta): ' + indoorLegit + '\n';
-            if (brokenPolyline > 0) report += '  ❌ Polyline rota: ' + brokenPolyline + '\n';
-            report += '\n📷 FOTOS\n';
-            report += '  ✓ Con foto: ' + withPhoto + '\n';
+            var issues = listNoStreams.length + listBrokenPoly.length;
 
-            if (issues > 0) {
-                report += '\n⚠️ Detectados ' + issues + ' problemas reparables.\n';
-                report += '\n¿Ejecutar reparador ahora?';
-                if (confirm(report)) {
-                    if (typeof window._mrRepairStravaWebhookStreams === 'function') {
-                        window._mrRepairStravaWebhookStreams();
-                    }
-                }
+            // [v2.30.1-p152] Si hay activities sin streams o polylines rotas,
+            // mostrar modal custom con la lista detallada + botones de acción.
+            if (issues > 0 || mismatchStreamsPath > 0) {
+                _mrShowAuditDetailModal({
+                    total: total,
+                    withStreamsInBucket: withStreamsInBucket,
+                    pct: pct,
+                    withPolyline: withPolyline,
+                    indoorLegit: indoorLegit,
+                    withPhoto: withPhoto,
+                    mismatchStreamsPath: mismatchStreamsPath,
+                    listNoStreams: listNoStreams,
+                    listBrokenPoly: listBrokenPoly,
+                    listMismatch: listMismatch
+                });
             } else {
+                var report = '📊 AUDITORÍA DE DATOS\n\n';
+                report += 'Total actividades: ' + total + '\n\n';
+                report += '💾 STREAMS\n';
+                report += '  ✓ Con datos en bucket: ' + withStreamsInBucket + ' / ' + total + ' (' + pct + '%)\n';
+                report += '\n🗺️ RUTAS GPS\n';
+                report += '  ✓ Con ruta útil: ' + withPolyline + '\n';
+                report += '  🏠 Indoor (sin ruta): ' + indoorLegit + '\n';
+                report += '\n📷 FOTOS\n';
+                report += '  ✓ Con foto: ' + withPhoto + '\n';
                 report += '\n✅ Todo persistido correctamente. Puedes borrar cache o reinstalar la PWA sin perder nada.';
                 alert(report);
             }
-            console.log('[MR][p151 audit]', {
+            console.log('[MR][p152 audit]', {
                 total: total, withStreamsInBucket: withStreamsInBucket,
                 withStreamsPath: withStreamsPath, missingStreamsFile: missingStreamsFile,
                 mismatchStreamsPath: mismatchStreamsPath, withPolyline: withPolyline,
-                brokenPolyline: brokenPolyline, indoorLegit: indoorLegit, withPhoto: withPhoto
+                brokenPolyline: brokenPolyline, indoorLegit: indoorLegit, withPhoto: withPhoto,
+                listNoStreams: listNoStreams.map(function(a){ return a.id + ' ' + a.start_date + ' ' + a.dist_km + 'km ' + a.source; }),
+                listBrokenPoly: listBrokenPoly.map(function(a){ return a.id + ' ' + a.start_date + ' ' + a.dist_km + 'km ' + a.source; })
             });
         } catch(e) {
             _closeOverlay();
@@ -22040,6 +22059,105 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
     window._mrAuditMyData = _mrAuditMyData;
+
+    // ─────────────────────────────────────────────────────────────
+    // [v2.30.1-p152] Modal detalle auditoría con listado de activities
+    // problemáticas. Sustituye el alert() cuando hay issues.
+    // ─────────────────────────────────────────────────────────────
+    function _mrShowAuditDetailModal(data) {
+        function _fmtDate(iso) {
+            if (!iso) return '?';
+            try {
+                var d = new Date(iso);
+                if (isNaN(d.getTime())) return String(iso).slice(0,10);
+                var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+                return d.getDate() + ' ' + months[d.getMonth()] + ' ' + String(d.getFullYear()).slice(-2)
+                     + ' · ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+            } catch(_) { return String(iso).slice(0,16); }
+        }
+        function _fmtSource(s) {
+            if (!s) return 'bulk';
+            if (s === 'strava_auto') return 'webhook';
+            return s;
+        }
+        function _renderActList(list, colorHex) {
+            if (!list || list.length === 0) return '';
+            // Ordenar por fecha DESC (más recientes primero)
+            list.sort(function(a,b){
+                return String(b.start_date || '').localeCompare(String(a.start_date || ''));
+            });
+            var html = '';
+            list.forEach(function(a){
+                var km = (a.dist_km != null) ? Number(a.dist_km).toFixed(2) : '?';
+                html += '<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04);margin-bottom:5px;border-left:3px solid ' + colorHex + ';">'
+                    + '<div style="font-size:12px;font-weight:600;color:#eaf7fd;">' + _fmtDate(a.start_date) + '</div>'
+                    + '<div style="font-size:11px;color:rgba(234,247,253,.65);margin-top:2px;">' + km + ' km · ' + _fmtSource(a.source) + ' · <span style="opacity:.5;">id ' + String(a.id).slice(0,8) + '…</span></div>'
+                    + '</div>';
+            });
+            return html;
+        }
+
+        var _modal = document.createElement('div');
+        _modal.id = 'mr-audit-detail-modal';
+        _modal.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(10,10,15,.9);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--f, system-ui);opacity:0;transition:opacity .3s ease;';
+
+        var content = '<div style="background:linear-gradient(135deg,#0d1a2b 0%,#182a44 100%);border:1px solid rgba(59,188,224,.4);border-radius:16px;width:100%;max-width:400px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.7);">';
+        // Header (fijo)
+        content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
+        content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%)</div>';
+        content += '</div>';
+        // Body scrolleable
+        content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
+
+        if (data.listNoStreams && data.listNoStreams.length > 0) {
+            content += '<div style="font-size:12px;font-weight:700;color:#ff9d5c;margin-bottom:8px;letter-spacing:.3px;">❌ SIN STREAMS EN BUCKET (' + data.listNoStreams.length + ')</div>';
+            content += '<div style="font-size:10.5px;color:rgba(234,247,253,.5);margin-bottom:8px;line-height:1.4;">Estas actividades NO tienen sus datos detallados (cards 2/3) en la nube. Si son webhook Strava y hay pending payload, el reparador las regenera. Si son manuales antiguas o del bulk sin streams originales, son irrecuperables.</div>';
+            content += _renderActList(data.listNoStreams, '#ff9d5c');
+            content += '<div style="height:14px;"></div>';
+        }
+
+        if (data.listBrokenPoly && data.listBrokenPoly.length > 0) {
+            content += '<div style="font-size:12px;font-weight:700;color:#ffcc5c;margin-bottom:8px;letter-spacing:.3px;">⚠️ POLYLINE ROTA (' + data.listBrokenPoly.length + ')</div>';
+            content += '<div style="font-size:10.5px;color:rgba(234,247,253,.5);margin-bottom:8px;line-height:1.4;">Estas tienen ruta GPS guardada pero decodifica a menos de 2 puntos → aparecen como indoor falsamente. Reparable desde webhook payload.</div>';
+            content += _renderActList(data.listBrokenPoly, '#ffcc5c');
+            content += '<div style="height:14px;"></div>';
+        }
+
+        if (data.mismatchStreamsPath > 0) {
+            content += '<div style="font-size:12px;font-weight:700;color:#7ed957;margin-bottom:8px;letter-spacing:.3px;">🔧 REPARABLE FÁCIL (' + data.mismatchStreamsPath + ')</div>';
+            content += '<div style="font-size:10.5px;color:rgba(234,247,253,.5);margin-bottom:8px;line-height:1.4;">El archivo está en el bucket pero la columna streams_path está vacía. Se auto-repara al ejecutar el reparador.</div>';
+        }
+
+        content += '</div>';
+        // Footer (fijo)
+        content += '<div style="padding:12px 16px;border-top:1px solid rgba(59,188,224,.15);flex-shrink:0;display:flex;gap:10px;">';
+        content += '<button id="mr-audit-close" style="flex:1;padding:11px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#eaf7fd;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Cerrar</button>';
+        content += '<button id="mr-audit-repair" style="flex:2;padding:11px 14px;border-radius:10px;border:none;background:linear-gradient(90deg,#3BBCE0 0%,#7BD9F0 100%);color:#0a1520;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">🔧 Ejecutar reparador</button>';
+        content += '</div>';
+        content += '</div>';
+
+        _modal.innerHTML = content;
+        document.body.appendChild(_modal);
+        requestAnimationFrame(function(){ _modal.style.opacity = '1'; });
+
+        function _close() {
+            _modal.style.opacity = '0';
+            setTimeout(function(){ if (_modal.parentNode) _modal.parentNode.removeChild(_modal); }, 300);
+        }
+        document.getElementById('mr-audit-close').addEventListener('click', _close);
+        document.getElementById('mr-audit-repair').addEventListener('click', function(){
+            _close();
+            if (typeof window._mrRepairStravaWebhookStreams === 'function') {
+                setTimeout(function(){ window._mrRepairStravaWebhookStreams(); }, 350);
+            }
+        });
+        // Tap fuera cierra
+        _modal.addEventListener('click', function(e){
+            if (e.target === _modal) _close();
+        });
+    }
+    window._mrShowAuditDetailModal = _mrShowAuditDetailModal;
 
     async function wipeMyActivities() {
         // ── Guarda de visibilidad (defensa en profundidad) ────────
