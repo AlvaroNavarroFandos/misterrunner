@@ -11949,6 +11949,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                             <div style="font-size:15.5px;font-weight:700;color:var(--inj);letter-spacing:-.3px;">Borrar todas mis actividades</div>
                                         </div>
                                     </div>
+                                    <!-- [v2.30.1-p151] AUDITAR MIS DATOS
+                                         Escanea TODAS las activities y reporta estado de sanidad:
+                                         streams, polylines, fotos. Verificación tranquilizadora
+                                         para el user tras el episodio de datos perdidos. -->
+                                    <div id="audit-my-data-btn" onclick="_mrAuditMyData()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);">
+                                        <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <div style="font-size:15.5px;font-weight:700;color:var(--ts);letter-spacing:-.3px;">Auditar mis datos</div>
+                                            <div style="font-size:11px;color:var(--tm);margin-top:2px;line-height:1.3;">Verifica que todo está persistido en la nube</div>
+                                        </div>
+                                    </div>
                                     <!-- [v2.30.1-p146] REPARAR STREAMS AUTO-IMPORTS STRAVA (visible para todos)
                                          Diagnostica y repara las cards 2 y 3 vacías en carreras
                                          auto-importadas de Strava tras perder cache local.
@@ -21853,6 +21866,180 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
     window._mrRepairStravaWebhookStreams = _mrRepairStravaWebhookStreams;
+
+    // ─────────────────────────────────────────────────────────────
+    // [v2.30.1-p151] AUDITAR MIS DATOS
+    // ─────────────────────────────────────────────────────────────
+    // Verificación tranquilizadora post-incidente datos perdidos:
+    // escanea TODAS las activities del user y reporta estado:
+    //   - Total activities en BD
+    //   - Cuántas tienen streams en el bucket (verificado real)
+    //   - Cuántas tienen streams_path en columna
+    //   - Cuántas tienen polyline_encoded (útil, decodable a ≥2 puntos)
+    //   - Cuántas tienen fotos (activity_photos rows)
+    //   - Discrepancias detectadas (streams_path=NULL pero archivo existe,
+    //     polyline inválida, etc.)
+    // Si detecta problemas ofrece disparar el reparador.
+    // ─────────────────────────────────────────────────────────────
+    async function _mrAuditMyData() {
+        var sb = window._sbClient;
+        if (!sb) { alert('No hay conexión con la base de datos'); return; }
+        var sessRes = await sb.auth.getSession();
+        var uid = sessRes && sessRes.data && sessRes.data.session
+                  && sessRes.data.session.user && sessRes.data.session.user.id;
+        if (!uid) { alert('Sesión no iniciada'); return; }
+
+        // ── Overlay progreso ──────────────────────────────────────
+        var _overlay = document.createElement('div');
+        _overlay.id = 'mr-audit-overlay';
+        _overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(10,10,15,.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .25s ease;font-family:var(--f, system-ui);';
+        _overlay.innerHTML =
+            '<div style="background:linear-gradient(135deg,#0d1f14 0%,#173028 100%);'
+                + 'border:1px solid rgba(34,197,94,.45);border-radius:18px;'
+                + 'padding:24px 24px 22px;min-width:280px;max-width:340px;'
+                + 'box-shadow:0 12px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(34,197,94,.2);">'
+            +    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+            +        '<div style="width:18px;height:18px;border:2.5px solid rgba(34,197,94,.25);'
+            +            'border-top-color:#22c55e;border-radius:50%;animation:mrWipeSpin 0.8s linear infinite;flex-shrink:0;"></div>'
+            +        '<div style="font-size:14px;font-weight:700;color:#e6faee;letter-spacing:.2px;">Auditando datos…</div>'
+            +    '</div>'
+            +    '<div id="mr-audit-step" style="font-size:12px;color:rgba(230,250,238,.7);line-height:1.5;min-height:80px;">Preparando…</div>'
+            + '</div>';
+        if (!document.getElementById('mr-wipe-anim-style')) {
+            var animSt = document.createElement('style');
+            animSt.id = 'mr-wipe-anim-style';
+            animSt.textContent = '@keyframes mrWipeSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}';
+            document.head.appendChild(animSt);
+        }
+        document.body.appendChild(_overlay);
+        requestAnimationFrame(function(){ _overlay.style.opacity = '1'; });
+        function _setStep(txt) {
+            var el = document.getElementById('mr-audit-step');
+            if (el) el.innerHTML = txt;
+        }
+        function _closeOverlay() {
+            if (_overlay && _overlay.parentNode) {
+                _overlay.style.opacity = '0';
+                setTimeout(function(){ if (_overlay.parentNode) _overlay.parentNode.removeChild(_overlay); }, 300);
+            }
+        }
+
+        try {
+            _setStep('Consultando activities…');
+            // 1. Todas las activities
+            var actsResp = await sb.from('activities')
+                .select('id, source, streams_path, polyline_encoded, dist_km, start_date')
+                .eq('user_id', uid);
+            if (actsResp.error) {
+                _closeOverlay();
+                alert('Error consultando activities: ' + actsResp.error.message);
+                return;
+            }
+            var acts = actsResp.data || [];
+            var total = acts.length;
+
+            _setStep('Listando bucket activity-streams…');
+            // 2. Todos los archivos del bucket streams
+            var bucketStreams = new Set();
+            var _off = 0, _sf = 0;
+            while (_sf++ < 20) {
+                var lr = await sb.storage.from('activity-streams').list(uid, { limit: 1000, offset: _off });
+                if (lr.error) break;
+                var items = lr.data || [];
+                items.forEach(function(f){ if (f && f.name) bucketStreams.add(f.name); });
+                if (items.length < 1000) break;
+                _off += 1000;
+            }
+
+            _setStep('Consultando fotos…');
+            // 3. Fotos (COUNT por activity)
+            var photosResp = await sb.from('activity_photos')
+                .select('activity_id')
+                .eq('user_id', uid);
+            var photoSetByActId = {};
+            if (!photosResp.error && photosResp.data) {
+                photosResp.data.forEach(function(p){
+                    if (p.activity_id) photoSetByActId[p.activity_id] = true;
+                });
+            }
+
+            _setStep('Analizando…');
+            // 4. Métricas
+            var withStreamsInBucket = 0;
+            var withStreamsPath = 0;
+            var mismatchStreamsPath = 0; // path=NULL pero archivo existe
+            var missingStreamsFile = 0;  // path=X pero archivo NO existe
+            var withPolyline = 0;
+            var brokenPolyline = 0;      // tiene valor pero decodifica <2 puntos
+            var indoorLegit = 0;         // sin polyline (probablemente indoor de verdad)
+            var withPhoto = 0;
+            var totalIndoor = 0;
+
+            acts.forEach(function(a){
+                var fname = a.id + '.json.gz';
+                var hasFile = bucketStreams.has(fname);
+                if (hasFile) withStreamsInBucket++;
+                if (a.streams_path) withStreamsPath++;
+                if (!a.streams_path && hasFile) mismatchStreamsPath++;
+                if (a.streams_path && !hasFile) missingStreamsFile++;
+
+                if (a.polyline_encoded) {
+                    if (typeof window._polylineIsUseful === 'function') {
+                        if (window._polylineIsUseful(a.polyline_encoded)) withPolyline++;
+                        else brokenPolyline++;
+                    } else {
+                        withPolyline++;
+                    }
+                } else {
+                    indoorLegit++;
+                    totalIndoor++;
+                }
+                if (photoSetByActId[a.id]) withPhoto++;
+            });
+
+            _closeOverlay();
+
+            // 5. Reporte
+            var pct = total > 0 ? Math.round(withStreamsInBucket / total * 100) : 0;
+            var issues = missingStreamsFile + brokenPolyline;
+            var report = '📊 AUDITORÍA DE DATOS\n\n';
+            report += 'Total actividades: ' + total + '\n\n';
+            report += '💾 STREAMS\n';
+            report += '  ✓ Con datos en bucket: ' + withStreamsInBucket + ' / ' + total + ' (' + pct + '%)\n';
+            if (missingStreamsFile > 0) report += '  ❌ streams_path pero archivo missing: ' + missingStreamsFile + '\n';
+            if (mismatchStreamsPath > 0) report += '  ⚠️ Archivo existe pero columna vacía: ' + mismatchStreamsPath + ' (reparable)\n';
+            report += '\n🗺️ RUTAS GPS\n';
+            report += '  ✓ Con ruta útil: ' + withPolyline + '\n';
+            report += '  🏠 Indoor (sin ruta): ' + indoorLegit + '\n';
+            if (brokenPolyline > 0) report += '  ❌ Polyline rota: ' + brokenPolyline + '\n';
+            report += '\n📷 FOTOS\n';
+            report += '  ✓ Con foto: ' + withPhoto + '\n';
+
+            if (issues > 0) {
+                report += '\n⚠️ Detectados ' + issues + ' problemas reparables.\n';
+                report += '\n¿Ejecutar reparador ahora?';
+                if (confirm(report)) {
+                    if (typeof window._mrRepairStravaWebhookStreams === 'function') {
+                        window._mrRepairStravaWebhookStreams();
+                    }
+                }
+            } else {
+                report += '\n✅ Todo persistido correctamente. Puedes borrar cache o reinstalar la PWA sin perder nada.';
+                alert(report);
+            }
+            console.log('[MR][p151 audit]', {
+                total: total, withStreamsInBucket: withStreamsInBucket,
+                withStreamsPath: withStreamsPath, missingStreamsFile: missingStreamsFile,
+                mismatchStreamsPath: mismatchStreamsPath, withPolyline: withPolyline,
+                brokenPolyline: brokenPolyline, indoorLegit: indoorLegit, withPhoto: withPhoto
+            });
+        } catch(e) {
+            _closeOverlay();
+            console.error('[MR][p151 audit] exception:', e);
+            alert('Error auditando: ' + (e && e.message ? e.message : String(e)));
+        }
+    }
+    window._mrAuditMyData = _mrAuditMyData;
 
     async function wipeMyActivities() {
         // ── Guarda de visibilidad (defensa en profundidad) ────────
@@ -31907,6 +32094,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                    && (_saveResult.streamsUploaded === true
                                        || _saveResult.hadStreamsToUpload === false);
                     await window._stravaOnAutoImportSaved(act._dbActivityId || null, _streamsOk);
+                    // [v2.30.1-p151] Si los streams no subieron, programar auto-repair
+                    // en 30s (permite que la conexión se recupere). El auto-repair rescata
+                    // desde strava_pending_imports (que sigue sin marcar consumed_at
+                    // porque _streamsOk era false, ver _stravaOnAutoImportSaved p147).
+                    if (!_streamsOk) {
+                        console.warn('[MR][p151] streams no subieron para activity ' + (act._dbActivityId || '?') + ' · programando auto-repair en 30s');
+                        setTimeout(function(){
+                            if (typeof window._mrTryAutoRepair === 'function') {
+                                // Forzar bypass del rate-limit para este caso urgente
+                                window._mrAutoRepairLastRun = 0;
+                                window._mrTryAutoRepair('post-save-failed-retry');
+                            }
+                        }, 30000);
+                    }
                 }
             } catch(e) {
                 console.warn('[MR][Strava] auto-import post-save (no bloqueante):', e);
@@ -48864,16 +49065,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [v2.30.1-p147] Dispara auto-repair silencioso en background.
             // No bloquea la carga. Solo si detecta activities sin streams_path
             // que puedan tener pending payload en strava_pending_imports.
-            // Rate-limited a 1 vez por sesión (flag en window).
+            // [v2.30.1-p151] Rate-limited por timestamp (cada 5 min máximo)
+            // para permitir múltiples ejecuciones en la misma sesión.
             try {
-                if (!window._mrAutoRepairDone) {
-                    window._mrAutoRepairDone = true;
+                var _lastRun = window._mrAutoRepairLastRun || 0;
+                var _now = Date.now();
+                if (_now - _lastRun > 5 * 60 * 1000) { // ≥ 5 min
+                    window._mrAutoRepairLastRun = _now;
                     var _nullStreams = rows.filter(function(r){
                         return !r.streams_path
                             && (r.source === 'strava_auto' || r.source === 'strava' || r.source === null);
                     });
                     if (_nullStreams.length > 0) {
-                        console.log('[MR][p147 auto-repair] detectadas ' + _nullStreams.length + ' activities sin streams_path · disparando reparación silenciosa en background…');
+                        console.log('[MR][p151 auto-repair] detectadas ' + _nullStreams.length + ' activities sin streams_path · disparando reparación silenciosa en background…');
                         setTimeout(function(){
                             if (typeof window._mrAutoRepairStravaStreamsSilent === 'function') {
                                 window._mrAutoRepairStravaStreamsSilent();
@@ -48888,6 +49092,58 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return [];
         }
     }
+
+    // ──────────────────────────────────────────────────────────────────
+    // [v2.30.1-p151] TRIGGERS ADICIONALES DEL AUTO-REPAIR
+    // ──────────────────────────────────────────────────────────────────
+    // Objetivo (Álvaro post datos perdidos): "que no se vuelva a joder ninguna
+    // actividad nunca más aunque borremos historial y todo eso".
+    //
+    // Ya tenemos auto-repair al arrancar la app (via loadActivitiesFromSupabase).
+    // Ahora añadimos DOS triggers más para maximizar la resiliencia:
+    //
+    //   1) visibilitychange → cuando el user vuelve a la PWA tras minutos/horas
+    //      en background, si han pasado >5 min desde último check, disparar
+    //      auto-repair. Cubre el caso "user importa nueva activity, cierra app
+    //      sin darle tiempo a subir streams, vuelve al día siguiente".
+    //
+    //   2) setInterval cada 15 min mientras la app está en foreground. Cubre
+    //      el caso "user tiene la PWA abierta todo el día".
+    //
+    // Ambos triggers respetan el rate-limit de 5 min entre ejecuciones (ver
+    // _mrAutoRepairLastRun) para no saturar la BD.
+    // ──────────────────────────────────────────────────────────────────
+    function _mrTryAutoRepair(source) {
+        try {
+            var _lastRun = window._mrAutoRepairLastRun || 0;
+            var _now = Date.now();
+            if (_now - _lastRun < 5 * 60 * 1000) return; // rate-limit 5 min
+            window._mrAutoRepairLastRun = _now;
+            console.log('[MR][p151 auto-repair trigger] source=' + source);
+            if (typeof window._mrAutoRepairStravaStreamsSilent === 'function') {
+                window._mrAutoRepairStravaStreamsSilent();
+            }
+        } catch(e) {
+            console.warn('[MR][p151 auto-repair trigger] error:', e);
+        }
+    }
+    window._mrTryAutoRepair = _mrTryAutoRepair;
+
+    // Trigger 1: al recuperar visibilidad (user vuelve a la PWA)
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', function(){
+            if (document.visibilityState === 'visible') {
+                _mrTryAutoRepair('visibilitychange');
+            }
+        });
+    }
+
+    // Trigger 2: intervalo cada 15 min mientras la app está en foreground
+    setInterval(function(){
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+            _mrTryAutoRepair('interval-15min');
+        }
+    }, 15 * 60 * 1000);
 
     // ──────────────────────────────────────────────────────────────────
     // [v2.30.1-p147] AUTO-REPAIR SILENCIOSO STREAMS STRAVA WEBHOOK
