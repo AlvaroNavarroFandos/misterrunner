@@ -68118,10 +68118,46 @@ window._handleStravaReturn = _handleStravaReturn;
                 var pfd = detailResp.body && detailResp.body.pendingFitData;
                 if (!pfd || typeof pfd !== 'object') throw new Error('detail_no_pending');
 
-                // v2.30.1-p121 Fix 1 · Pre-dedup con hermana existente en BD.
+                // v2.30.1-p121 Fix 2 · Idempotencia. ANTES de nada, chequear si
+                // ya existe una activity con este external_id (indep. de source).
+                // Motivo: mi _saveManualActivityToSupabase hace UPSERT onConflict
+                // (uid, source, external_id). Como el INSERT arranca con
+                // source='manual' pero luego UPDATE a 'coros_bulk', cada re-import
+                // crea fila nueva (no encuentra conflict con 'manual' porque las
+                // previas quedaron con source='coros_bulk'). Bug crítico que
+                // llenaba BD de duplicados y sumaba km de zapa cada vez.
+                //
+                // Solución: si YA existe → borrar la vieja (SIN restar km, porque
+                // el nuevo INSERT los mantendrá con misma shoe_id/distKm).
+                var existing = await _corosBFCheckExisting(pfd);
+                if (existing && existing.id) {
+                    console.log('[MR][CBF] existing coros activity detected, replacing id=' + existing.id);
+                    // v2.30.1-p121 Fix 2b · Restar km de la existing antes de
+                    // borrarla. Sin esto, tras el DELETE + INSERT nuevo el Fix 4
+                    // sumaría los km OTRA VEZ → zapa +2x. Ahora resto aquí
+                    // (existing +9) y luego INSERT suma (+9). Neto 0. Idempotente.
+                    if (existing.shoe_id && existing.dist_km > 0) {
+                        await _corosBFAdjustShoeKm(existing.shoe_id, -Number(existing.dist_km));
+                    }
+                    try {
+                        if (typeof window._deleteActivityFromSupabase === 'function') {
+                            await window._deleteActivityFromSupabase({
+                                _dbActivityId: existing.id,
+                                streams_path: existing.streams_path || null,
+                            });
+                        } else {
+                            var sb3 = window._sbClient;
+                            if (sb3) await sb3.from('activities').delete().eq('id', existing.id);
+                        }
+                    } catch(eE) {
+                        console.warn('[MR][CBF] delete previous coros fail (continuamos):', eE);
+                    }
+                }
+
+                // v2.30.1-p121 Fix 3 · Pre-dedup con hermana no-coros existente.
                 // Si hay activity Strava/manual del mismo día+dist+duración,
-                // borrarla y copiar sus campos subjetivos (shoe/rpe/outfit/notes)
-                // a la nueva COROS bulk. Q1-B.
+                // borrarla y copiar sus campos subjetivos. También resta km de
+                // su zapa para evitar duplicación en el próximo hook post-insert.
                 var dedupInfo = await _corosBFPreDedup(pfd);
 
                 var act = _corosBFBuildActFromPending(pfd, dedupInfo.preservedFields);
@@ -68132,6 +68168,18 @@ window._handleStravaReturn = _handleStravaReturn;
                 var saveRes = await window._saveManualActivityToSupabase(act);
                 if (!saveRes || !saveRes.ok) {
                     throw new Error('save_fail_' + (saveRes && saveRes.error || 'unknown'));
+                }
+
+                // v2.30.1-p121 Fix 4 · SUMAR km a la zapa al insertar (bulk silent).
+                // _saveManualActivityToSupabase NO llama a addKmToShoe (a diferencia
+                // de _saveImportedActivityCore que sí). Como ahora la fila COROS
+                // puede llevar shoe_id preservado del pre-dedup (que a su vez
+                // restó los km de la Strava borrada), aquí sumamos igual cantidad
+                // para dejar el saldo neto en 0 (idempotente). Si no había
+                // pre-dedup, sumamos los km "genuinamente" (primera importación
+                // con shoe_id = user asignó zapa a esta activity previamente).
+                if (act.shoeId && act.distKm > 0) {
+                    await _corosBFAdjustShoeKm(act.shoeId, +Number(act.distKm));
                 }
 
                 // Marcar la fila con coros_activity_id + source='coros_bulk' (post-INSERT)
@@ -68372,6 +68420,96 @@ window._handleStravaReturn = _handleStravaReturn;
     }
 
     // ─────────────────────────────────────────────────────────────
+    // v2.30.1-p121 · Helpers de idempotencia + sync km zapatillas
+    // ─────────────────────────────────────────────────────────────
+
+    // Replica exacta de _buildManualExternalId (L30369) para consultar
+    // idempotencia sin depender de estar en el mismo scope.
+    function _corosBFBuildExternalId(pfd) {
+        try {
+            var startIso;
+            if (pfd.startTimeIso) startIso = String(pfd.startTimeIso);
+            else if (pfd.startTimeMs) startIso = new Date(pfd.startTimeMs).toISOString();
+            else if (pfd.dateStr) startIso = pfd.dateStr + 'T00:00:00.000Z';
+            else startIso = new Date().toISOString();
+            var distDm = Math.round((Number(pfd.distKm) || 0) * 100);
+            var durSec = Math.round(Number(pfd.durationSec) || 0);
+            return 'manual:' + startIso + ':' + distDm + ':' + durSec;
+        } catch(_) { return 'manual:' + Date.now(); }
+    }
+
+    // SELECT idempotente. Busca activity con mismo external_id
+    // (independiente de source). Devuelve la row o null.
+    async function _corosBFCheckExisting(pfd) {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return null;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session
+                     && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return null;
+            var externalId = _corosBFBuildExternalId(pfd);
+            var res = await sb.from('activities')
+                .select('id, source, shoe_id, shoes_name, dist_km, streams_path')
+                .eq('user_id', uid).eq('external_id', externalId).maybeSingle();
+            if (res.error) {
+                console.warn('[MR][CBF] checkExisting err:', res.error);
+                return null;
+            }
+            return res.data || null;
+        } catch(e) { console.warn('[MR][CBF] checkExisting exc:', e); return null; }
+    }
+
+    // Ajusta km de zapatilla (delta positivo = suma, negativo = resta) con
+    // sync 3 lugares: user_shoes BD + shoes[] memoria + render + save.
+    // No-op silencioso si shoeId falsy o delta 0.
+    async function _corosBFAdjustShoeKm(shoeId, deltaKm) {
+        if (!shoeId || !deltaKm || !isFinite(deltaKm)) return;
+        try {
+            var sb = window._sbClient;
+            if (!sb) return;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session
+                     && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return;
+
+            // 1. Leer km actual de la BD
+            var cur = await sb.from('user_shoes')
+                .select('id, name, km')
+                .eq('id', shoeId).eq('user_id', uid).maybeSingle();
+            if (cur.error || !cur.data) {
+                console.warn('[MR][CBF] adjustShoeKm no encontrada shoeId=' + shoeId, cur.error);
+                return;
+            }
+            var kmOld = Number(cur.data.km) || 0;
+            var kmNew = Math.max(0, Math.round((kmOld + deltaKm) * 10) / 10);
+            if (kmNew === kmOld) return;   // idempotente
+
+            // 2. Update BD
+            var upd = await sb.from('user_shoes')
+                .update({ km: kmNew })
+                .eq('id', shoeId).eq('user_id', uid);
+            if (upd && upd.error) {
+                console.warn('[MR][CBF] adjustShoeKm BD err:', upd.error);
+                return;
+            }
+            console.log('[MR][CBF] shoe "' + cur.data.name + '" ' + kmOld + '→' + kmNew + 'km (Δ' + (deltaKm > 0 ? '+' : '') + deltaKm + ')');
+
+            // 3. Sync memoria + save + render
+            if (Array.isArray(window.shoes)) {
+                var s2 = window.shoes.find(function(x){ return String(x.id) === String(shoeId); });
+                if (s2) s2.km = kmNew;
+            }
+            try {
+                if (typeof window.saveAppState === 'function') window.saveAppState();
+                if (typeof window.renderShoes === 'function') window.renderShoes();
+            } catch(_){}
+        } catch(e) {
+            console.warn('[MR][CBF] adjustShoeKm exception:', e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // PRE-DEDUP · Al importar una COROS bulk, buscar hermana existente
     // en Supabase (mismo dateStr + distKm ±0.2 + durationSec ±90) y
     // borrarla ANTES del INSERT COROS. Copia campos "subjetivos" del
@@ -68429,6 +68567,14 @@ window._handleStravaReturn = _handleStravaReturn;
             };
             out.deletedActivityId = target.id;
 
+            // v2.30.1-p121 · Restar km de la zapa de la hermana ANTES de borrar.
+            // Sin esto, tras borrar la Strava vieja + insertar COROS con MISMA
+            // zapa preservada, los km quedaban duplicados (los originales de
+            // Strava + los que sumaría la nueva COROS por el hook post-insert).
+            if (target.shoe_id && target.dist_km > 0) {
+                await _corosBFAdjustShoeKm(target.shoe_id, -Number(target.dist_km));
+            }
+
             // Borrar limpio (photos bucket + streams bucket + fila BD)
             // Pasamos una act mínima con lo que _deleteActivityFromSupabase necesita
             if (typeof window._deleteActivityFromSupabase === 'function') {
@@ -68476,7 +68622,7 @@ window._handleStravaReturn = _handleStravaReturn;
             var minSec = durationSec - 90, maxSec = durationSec + 90;
 
             var q = sb.from('activities')
-                .select('id, source, streams_path')
+                .select('id, source, streams_path, shoe_id, dist_km')
                 .eq('user_id', uid)
                 .eq('date_str', dateStr)
                 .gte('dist_km', minKm).lte('dist_km', maxKm)
@@ -68493,6 +68639,12 @@ window._handleStravaReturn = _handleStravaReturn;
             for (var i = 0; i < rows.length; i++) {
                 var target = rows[i];
                 try {
+                    // v2.30.1-p121 · Restar km de la zapa ANTES de borrar
+                    // (el modal Review ya sumó km de la COROS via hook L32961,
+                    // ahora al eliminar la hermana Strava evitamos duplicidad).
+                    if (target.shoe_id && target.dist_km > 0) {
+                        await _corosBFAdjustShoeKm(target.shoe_id, -Number(target.dist_km));
+                    }
                     if (typeof window._deleteActivityFromSupabase === 'function') {
                         await window._deleteActivityFromSupabase({
                             _dbActivityId: target.id,
