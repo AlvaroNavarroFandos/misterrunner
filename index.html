@@ -21389,7 +21389,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             failed: 0,
             skippedNoBridge: 0,
             skippedNoActivity: 0,
-            errors: []
+            errors: [],
+            // [v2.30.1-p148] Breakdown ampliado
+            bucketFileMissing: 0,
+            bucketFileEmptyStreams: 0,
+            payloadEmptyStreams: 0,
+            regeneratedFromEmptyFile: 0
         };
 
         try {
@@ -21406,7 +21411,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 .eq('user_id', uid)
                 .order('created_at', { ascending: false });
             if (pendResp.error) {
-                console.error('[MR][p146 repair] SELECT pendings error:', pendResp.error);
+                console.error('[MR][p148 repair] SELECT pendings error:', pendResp.error);
                 _closeOverlay();
                 alert('Error consultando pendings: ' + pendResp.error.message);
                 return;
@@ -21439,7 +21444,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     .from('activity-streams')
                     .list(uid, { limit: _pageSz, offset: _offset });
                 if (listResp.error) {
-                    console.warn('[MR][p147 repair] list bucket error offset=' + _offset + ':', listResp.error);
+                    console.warn('[MR][p148 repair] list bucket error offset=' + _offset + ':', listResp.error);
                     break;
                 }
                 var items = listResp.data || [];
@@ -21447,50 +21452,131 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (items.length < _pageSz) break;
                 _offset += _pageSz;
             }
-            console.log('[MR][p147 repair] archivos en bucket activity-streams: ' + bucketFiles.size);
+            console.log('[MR][p148 repair] archivos en bucket activity-streams: ' + bucketFiles.size);
 
-            // ── Paso 3: batch SELECT activities. Buscamos por dos vías:
-            //    (A) IDs de consumed_mr_activity_id (matches directos)
-            //    (B) external_id = 'strava:' + strava_activity_id (para pendings sin consumed_mr_activity_id)
+            // ── Paso 3: batch SELECT activities. Ahora TRES vías porque
+            // [v2.30.1-p148] descubrimos que _buildManualExternalId usa prefix
+            // 'manual:' incluso para webhook Strava (todas van por el mismo
+            // pipeline). El prefix 'strava:' NUNCA matcheaba en producción.
             _setStep('Consultando activities…');
+            // Reconstruir el external_id 'manual:' de cada pending desde el
+            // activity_payload (start_date + distance/1000 + moving_time).
+            function _reconstructExternalIdFromPayload(actPayload) {
+                if (!actPayload) return null;
+                try {
+                    var iso = actPayload.start_date || actPayload.start_date_local;
+                    if (!iso) return null;
+                    // El _buildManualExternalId usa ISO exacto, sin normalizar. Lo
+                    // reconstruimos igual: si el startTimeIso original venía como
+                    // "2026-08-15T07:30:00Z", quedará como "2026-08-15T07:30:00.000Z"
+                    // dependiendo de cómo _stravaToPendingFitData lo pase (usa dateStr).
+                    // Fallback: usar el propio start_date del payload → hará match
+                    // en la mayoría de casos (misma cadena que activities.start_date).
+                    return null; // no usamos ext-id reconstruido — mejor matcher robusto en Paso 4
+                } catch(_) { return null; }
+            }
             var actIdsA = pendings.map(function(p){ return p.consumed_mr_activity_id; }).filter(Boolean);
-            var externalIdsB = pendings
-                .filter(function(p){ return !p.consumed_mr_activity_id && p.strava_activity_id; })
-                .map(function(p){ return 'strava:' + p.strava_activity_id; });
             var actRows = [];
             var _chunkSz = 100;
             // (A) por id
             for (var _ci = 0; _ci < actIdsA.length; _ci += _chunkSz) {
                 var _chunk = actIdsA.slice(_ci, _ci + _chunkSz);
                 var actResp = await sb.from('activities')
-                    .select('id, external_id, streams_path')
+                    .select('id, external_id, streams_path, start_date, dist_km, duration_sec, source')
                     .in('id', _chunk)
                     .eq('user_id', uid);
                 if (actResp.error) {
-                    console.warn('[MR][p147 repair] SELECT activities by id chunk error:', actResp.error);
+                    console.warn('[MR][p148 repair] SELECT activities by id chunk error:', actResp.error);
                     continue;
                 }
                 actRows = actRows.concat(actResp.data || []);
             }
-            // (B) por external_id
-            for (var _cj = 0; _cj < externalIdsB.length; _cj += _chunkSz) {
-                var _chunk2 = externalIdsB.slice(_cj, _cj + _chunkSz);
-                var actRespB = await sb.from('activities')
-                    .select('id, external_id, streams_path')
-                    .in('external_id', _chunk2)
-                    .eq('user_id', uid);
-                if (actRespB.error) {
-                    console.warn('[MR][p147 repair] SELECT activities by external_id chunk error:', actRespB.error);
-                    continue;
+            // (B) Para las pendings sin consumed_mr_activity_id, cargar TODAS las
+            // activities del user con source relacionada a strava y matchear por
+            // (start_date, dist_km) aproximado en JS. Menos elegante pero robusto:
+            // el timestamp del start_date del payload webhook debería coincidir al
+            // segundo con activities.start_date.
+            var pendingsNoLink = pendings.filter(function(p){ return !p.consumed_mr_activity_id; });
+            if (pendingsNoLink.length > 0) {
+                var stravaActsResp = await sb.from('activities')
+                    .select('id, external_id, streams_path, start_date, dist_km, duration_sec, source')
+                    .eq('user_id', uid)
+                    .in('source', ['strava_auto', 'strava', 'manual']);
+                if (!stravaActsResp.error && stravaActsResp.data) {
+                    // Solo añadir las que no estén ya en actRows
+                    var seen = {};
+                    actRows.forEach(function(r){ seen[r.id] = true; });
+                    stravaActsResp.data.forEach(function(r){
+                        if (!seen[r.id]) actRows.push(r);
+                    });
                 }
-                actRows = actRows.concat(actRespB.data || []);
             }
-            // Mapa por id y por external_id para lookup rápido
-            var actMapById = {}, actMapByExt = {};
+            // Mapas de lookup: por id, por external_id, y por (isoDate + distDm + durSec)
+            var actMapById = {}, actMapByExt = {}, actMapByDateDistDur = {};
             actRows.forEach(function(r){
                 actMapById[r.id] = r;
                 if (r.external_id) actMapByExt[r.external_id] = r;
+                if (r.start_date && r.dist_km != null && r.duration_sec != null) {
+                    var distDm = Math.round(r.dist_km * 100);
+                    var durSec = Math.round(r.duration_sec);
+                    var key = r.start_date + '|' + distDm + '|' + durSec;
+                    actMapByDateDistDur[key] = r;
+                }
             });
+
+            // Helper: matchear un pending a su activity row (3 estrategias)
+            function _matchPendingToAct(p) {
+                if (p.consumed_mr_activity_id && actMapById[p.consumed_mr_activity_id]) {
+                    return actMapById[p.consumed_mr_activity_id];
+                }
+                // Match por external_id 'strava:'+strava_activity_id (por si el schema cambia)
+                if (p.strava_activity_id && actMapByExt['strava:' + p.strava_activity_id]) {
+                    return actMapByExt['strava:' + p.strava_activity_id];
+                }
+                // Match por (start_date, dist_km, duration_sec) del payload webhook
+                var ap = p.activity_payload;
+                if (ap) {
+                    var iso = ap.start_date || ap.start_date_local;
+                    var distM = ap.distance || 0;
+                    var durSec = ap.moving_time || ap.elapsed_time || 0;
+                    if (iso && distM > 0 && durSec > 0) {
+                        var distDm = Math.round((distM / 1000) * 100);
+                        var key = iso + '|' + distDm + '|' + Math.round(durSec);
+                        if (actMapByDateDistDur[key]) return actMapByDateDistDur[key];
+                        // Match tolerante ±3s en durSec por si Strava redondea
+                        for (var _tolS = -3; _tolS <= 3; _tolS++) {
+                            if (_tolS === 0) continue;
+                            var k2 = iso + '|' + distDm + '|' + (Math.round(durSec) + _tolS);
+                            if (actMapByDateDistDur[k2]) return actMapByDateDistDur[k2];
+                        }
+                    }
+                }
+                return null;
+            }
+
+            // Helper: descargar archivo del bucket y comprobar si tiene streams reales
+            async function _isBucketFileHealthy(activityId) {
+                try {
+                    var path = uid + '/' + activityId + '.json.gz';
+                    var dl = await sb.storage.from('activity-streams').download(path);
+                    if (dl.error || !dl.data) return { ok: false, reason: 'download-failed' };
+                    var arrBuf = await dl.data.arrayBuffer();
+                    var u8 = new Uint8Array(arrBuf);
+                    if (typeof window.pako !== 'object' || typeof window.pako.ungzip !== 'function') {
+                        return { ok: true, reason: 'no-pako-check' }; // no podemos verificar, asume OK
+                    }
+                    var jsonStr = window.pako.ungzip(u8, { to: 'string' });
+                    var obj = JSON.parse(jsonStr);
+                    var streams = obj && obj.streams;
+                    if (!streams) return { ok: false, reason: 'no-streams-key' };
+                    var hrN = Array.isArray(streams.hr) ? streams.hr.length : 0;
+                    var distN = Array.isArray(streams.distance) ? streams.distance.length : 0;
+                    if (hrN === 0 && distN === 0) return { ok: false, reason: 'empty-streams', hrN: hrN, distN: distN };
+                    return { ok: true, hrN: hrN, distN: distN };
+                } catch (e) {
+                    return { ok: false, reason: 'exception', msg: (e && e.message) ? e.message : String(e) };
+                }
+            }
 
             // ── Paso 4: procesar cada pending ────────────────────────
             for (var i = 0; i < pendings.length; i++) {
@@ -21500,40 +21586,54 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 _setStep('Revisando ' + (i+1) + '/' + pendings.length + '…');
                 stats.checked++;
 
-                // Buscar la activity: primero por consumed_mr_activity_id, después por external_id
-                var actRow = null;
-                if (p.consumed_mr_activity_id) actRow = actMapById[p.consumed_mr_activity_id];
-                if (!actRow && p.strava_activity_id) actRow = actMapByExt['strava:' + p.strava_activity_id];
+                var actRow = _matchPendingToAct(p);
 
                 if (!actRow) {
                     stats.skippedNoActivity++;
+                    stats.errors.push({
+                        pendingId: p.id,
+                        stravaActivityId: p.strava_activity_id,
+                        reason: 'no-activity-match',
+                        payloadStartDate: p.activity_payload ? (p.activity_payload.start_date || 'null') : 'null'
+                    });
                     continue;
                 }
 
-                // [v2.30.1-p147] VERDAD ABSOLUTA: chequear si el archivo existe
-                // en el bucket. NO nos fiamos de streams_path (puede tener valor
-                // apuntando a un archivo que fue borrado, o valor stale de un
-                // save que falló silenciosamente).
+                // [v2.30.1-p148] VERDAD ABSOLUTA: no basta con existencia del
+                // archivo — hay que descargarlo y verificar tenga contenido.
+                // Si existe pero está vacío por dentro, tratar como si no existiera.
                 var bucketFilename = actRow.id + '.json.gz';
-                if (bucketFiles.has(bucketFilename)) {
-                    // Además, si streams_path era NULL pero el archivo SÍ existe,
-                    // aprovechamos para escribirlo (self-heal de inconsistencia).
-                    if (!actRow.streams_path) {
-                        var _hackPath = uid + '/' + bucketFilename;
-                        var _updRes = await sb.from('activities')
-                            .update({ streams_path: _hackPath })
-                            .eq('id', actRow.id)
-                            .eq('user_id', uid);
-                        if (_updRes && !_updRes.error) {
-                            console.log('[MR][p147 repair] self-heal streams_path para ' + actRow.id.slice(0,8) + '… (archivo YA estaba en bucket)');
+                var fileExists = bucketFiles.has(bucketFilename);
+                var needsRepair = !fileExists;
+                var repairReason = null;
+
+                if (fileExists) {
+                    _setStep('Verificando contenido ' + (i+1) + '/' + pendings.length + '…');
+                    var healthCheck = await _isBucketFileHealthy(actRow.id);
+                    if (!healthCheck.ok) {
+                        needsRepair = true;
+                        repairReason = healthCheck.reason;
+                        if (healthCheck.reason === 'empty-streams') {
+                            stats.bucketFileEmptyStreams++;
                         }
+                    } else {
+                        // Archivo existe con streams reales → self-heal streams_path si NULL
+                        if (!actRow.streams_path) {
+                            try {
+                                await sb.from('activities')
+                                    .update({ streams_path: uid + '/' + bucketFilename })
+                                    .eq('id', actRow.id).eq('user_id', uid);
+                            } catch(_){}
+                        }
+                        stats.skipped++;
+                        continue;
                     }
-                    stats.skipped++;
-                    continue;
+                } else {
+                    stats.bucketFileMissing++;
                 }
 
-                // Necesita reparar: el archivo NO existe en bucket
-                _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (activity ' + actRow.id.slice(0,8) + '…)');
+                // Necesita reparar
+                _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (' + (repairReason || 'no-file') + ')…');
 
                 // Re-mapear payload → bridge
                 var bridge = null;
@@ -21542,20 +21642,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
                     }
                 } catch (e) {
-                    console.warn('[MR][p147 repair] bridge exception pending=' + p.id + ':', e);
+                    console.warn('[MR][p148 repair] bridge exception pending=' + p.id + ':', e);
                 }
                 if (!bridge) {
                     stats.skippedNoBridge++;
-                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-failed' });
+                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-failed', pendingId: p.id });
                     continue;
                 }
-                // Verificar que el bridge tenga streams no vacíos (si no, el
-                // streams_payload del webhook está vacío y no hay nada que subir).
+                // Verificar que el bridge tenga streams no vacíos
                 var _bridgeStreamLen = (bridge.hrSeries || []).length + (bridge.distSer || []).length;
                 if (_bridgeStreamLen === 0) {
-                    stats.skippedNoBridge++;
-                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-empty-streams', pendingId: p.id });
-                    console.warn('[MR][p147 repair] pending id=' + p.id + ' tiene streams_payload vacío/inválido (no hay datos que recuperar)');
+                    stats.payloadEmptyStreams++;
+                    stats.errors.push({
+                        activityId: actRow.id,
+                        reason: 'payload-empty-streams',
+                        pendingId: p.id,
+                        payloadStreamsKeys: p.streams_payload ? Object.keys(p.streams_payload) : 'null'
+                    });
+                    console.warn('[MR][p148 repair] pending id=' + p.id + ' streams_payload vacío/inválido (activity ' + actRow.id.slice(0,8) + '…, no hay datos que recuperar)');
                     continue;
                 }
 
@@ -21586,13 +21690,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     .eq('id', actRow.id)
                     .eq('user_id', uid);
                 if (updRes && updRes.error) {
-                    console.warn('[MR][p147 repair] UPDATE streams_path error:', updRes.error);
+                    console.warn('[MR][p148 repair] UPDATE streams_path error:', updRes.error);
                     stats.failed++;
                     stats.errors.push({ activityId: actRow.id, reason: 'update-streams-path-failed', msg: updRes.error.message });
                     continue;
                 }
-                // [v2.30.1-p147] Si la pending no tenía consumed_at, marcarla ahora
-                // (recuperamos las que fallaron con el bug pre-p147).
+                // Si la pending no tenía consumed_at, marcarla ahora
                 if (!p.consumed_mr_activity_id) {
                     try {
                         await sb.from('strava_pending_imports')
@@ -21601,10 +21704,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             .is('consumed_at', null);
                     } catch(_){}
                 }
-                // Añadir al set en memoria por si se procesa otra pending del mismo activityId
                 bucketFiles.add(bucketFilename);
                 stats.repaired++;
-                console.log('[MR][p147 repair] ✓ activity=' + actRow.id.slice(0,8) + '… reparada (streams_path=' + streamsPath.slice(-30) + ')');
+                if (repairReason === 'empty-streams') stats.regeneratedFromEmptyFile++;
+                console.log('[MR][p148 repair] ✓ activity=' + actRow.id.slice(0,8) + '… reparada (reason=' + (repairReason||'file-missing') + ', hrN=' + (bridge.hrSeries||[]).length + ', distN=' + (bridge.distSer||[]).length + ')');
             }
 
             _setPct(100);
@@ -21620,41 +21723,47 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             _closeOverlay();
 
-            // ── Toast final ──────────────────────────────────────────
-            var summaryMsg = '';
-            if (stats.repaired > 0) {
-                summaryMsg = '✅ ' + stats.repaired + ' auto-imports Strava recuperados';
-                if (stats.skipped > 0) summaryMsg += ' · ' + stats.skipped + ' ya OK';
-                if (stats.failed > 0) summaryMsg += ' · ' + stats.failed + ' fallos';
-                if (typeof window.fxToast === 'function') {
-                    window.fxToast(summaryMsg, { variant: 'success', duration: 6000 });
-                } else {
-                    alert(summaryMsg);
-                }
-            } else if (stats.skipped === stats.pendingsTotal) {
-                if (typeof window.fxToast === 'function') {
-                    window.fxToast('Todas las auto-imports Strava ya estaban OK (' + stats.skipped + ')', { variant: 'info', duration: 5000 });
-                } else {
-                    alert('Todas las auto-imports Strava ya estaban OK (' + stats.skipped + ')');
-                }
+            // ── [v2.30.1-p148] Toast/modal final ampliado ─────────────
+            // Antes solo mostrábamos "Sin cambios · X revisados". Ahora
+            // desglosamos por causa para que Álvaro entienda qué pasa sin
+            // tener que abrir consola: archivo missing vs archivo vacío vs
+            // payload vacío vs sin match a activity.
+            var linesArr = [];
+            if (stats.repaired > 0) linesArr.push('✅ ' + stats.repaired + ' recuperadas');
+            if (stats.regeneratedFromEmptyFile > 0) linesArr.push('  · ' + stats.regeneratedFromEmptyFile + ' desde archivo vacío');
+            if (stats.skipped > 0) linesArr.push('🟢 ' + stats.skipped + ' ya OK (con datos)');
+            if (stats.skippedNoActivity > 0) linesArr.push('⚠️ ' + stats.skippedNoActivity + ' pending sin match a activity');
+            if (stats.payloadEmptyStreams > 0) linesArr.push('🚫 ' + stats.payloadEmptyStreams + ' con payload webhook vacío (no recuperables)');
+            if (stats.bucketFileMissing > 0 && stats.repaired < stats.bucketFileMissing) linesArr.push('❌ ' + (stats.bucketFileMissing - stats.repaired) + ' archivo missing sin poder reparar');
+            if (stats.skippedNoBridge > 0) linesArr.push('🚫 ' + stats.skippedNoBridge + ' pendings inválidas');
+            if (stats.failed > 0) linesArr.push('❌ ' + stats.failed + ' upload fallidos');
+
+            var summaryMsg = linesArr.join('\n');
+            var variant = 'info';
+            if (stats.repaired > 0) variant = 'success';
+            else if (stats.failed > 0 || stats.bucketFileMissing > 0) variant = 'warning';
+            else if (stats.skipped === stats.pendingsTotal) variant = 'info';
+
+            // Si hay algo raro (skippedNoActivity, payloadEmptyStreams, o failed),
+            // usamos alert() en vez de toast (más visible + copiable).
+            var showAsAlert = (stats.skippedNoActivity > 0 || stats.payloadEmptyStreams > 0 || stats.failed > 0)
+                              && stats.repaired === 0;
+
+            if (showAsAlert) {
+                alert('DIAGNÓSTICO REPARADOR\n\n' + summaryMsg + '\n\nTotal pendings revisadas: ' + stats.pendingsTotal
+                    + '\nArchivos en bucket: (ver consola)\n\nLog detallado disponible en consola con [MR][p148 repair]');
+            } else if (typeof window.fxToast === 'function') {
+                window.fxToast(summaryMsg || ('Sin cambios · ' + stats.pendingsTotal + ' revisados'), { variant: variant, duration: 8000 });
             } else {
-                summaryMsg = 'Sin cambios · ' + stats.pendingsTotal + ' revisados';
-                if (stats.skippedNoActivity > 0) summaryMsg += ' · ' + stats.skippedNoActivity + ' sin activity';
-                if (stats.skippedNoBridge > 0) summaryMsg += ' · ' + stats.skippedNoBridge + ' payload inválido';
-                if (stats.failed > 0) summaryMsg += ' · ' + stats.failed + ' fallo upload';
-                if (typeof window.fxToast === 'function') {
-                    window.fxToast(summaryMsg, { variant: 'warning', duration: 6000 });
-                } else {
-                    alert(summaryMsg);
-                }
+                alert(summaryMsg || ('Sin cambios · ' + stats.pendingsTotal + ' revisados'));
             }
 
-            console.log('[MR][p146 repair] resumen:', stats);
+            console.log('[MR][p148 repair] resumen completo:', stats);
             if (stats.errors.length > 0) {
-                console.log('[MR][p146 repair] errores detallados:', stats.errors);
+                console.log('[MR][p148 repair] errores detallados:', stats.errors);
             }
         } catch (e) {
-            console.error('[MR][p146 repair] excepción global:', e);
+            console.error('[MR][p148 repair] excepción global:', e);
             _closeOverlay();
             alert('Error inesperado: ' + (e && e.message ? e.message : String(e)));
         }
