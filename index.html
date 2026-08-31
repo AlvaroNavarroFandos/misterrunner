@@ -21555,6 +21555,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
 
             // Helper: descargar archivo del bucket y comprobar si tiene streams reales
+            // [v2.30.1-p148] Verificación estricta: comprueba TAMBIÉN que el shape
+            // sea correcto (arrays paralelos de números, NO arrays de objetos que
+            // era el bug de todas las versiones previas de _uploadManualStreams).
             async function _isBucketFileHealthy(activityId) {
                 try {
                     var path = uid + '/' + activityId + '.json.gz';
@@ -21563,16 +21566,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var arrBuf = await dl.data.arrayBuffer();
                     var u8 = new Uint8Array(arrBuf);
                     if (typeof window.pako !== 'object' || typeof window.pako.ungzip !== 'function') {
-                        return { ok: true, reason: 'no-pako-check' }; // no podemos verificar, asume OK
+                        return { ok: true, reason: 'no-pako-check' };
                     }
                     var jsonStr = window.pako.ungzip(u8, { to: 'string' });
                     var obj = JSON.parse(jsonStr);
                     var streams = obj && obj.streams;
                     if (!streams) return { ok: false, reason: 'no-streams-key' };
-                    var hrN = Array.isArray(streams.hr) ? streams.hr.length : 0;
-                    var distN = Array.isArray(streams.distance) ? streams.distance.length : 0;
+                    // [v2.30.1-p148] Chequear shape correcto: streams.time debe existir
+                    // como array de NÚMEROS (no de objetos). Si tiene shape MR-internal
+                    // roto (hr=[{t,v},...]) o falta time completamente, marcar como
+                    // "shape-broken" para regenerar.
+                    var hasTime = Array.isArray(streams.time);
+                    var timeIsNumeric = hasTime && streams.time.length > 0 && typeof streams.time[0] === 'number';
+                    if (!hasTime) return { ok: false, reason: 'no-time-array', shape: 'legacy-broken' };
+                    if (!timeIsNumeric) return { ok: false, reason: 'time-not-numeric', shape: 'legacy-broken' };
+                    // Verificar que hr o distance también sean arrays de números
+                    var hrArr = Array.isArray(streams.hr) ? streams.hr : [];
+                    var distArr = Array.isArray(streams.distance) ? streams.distance : [];
+                    var hrIsNumeric = hrArr.length === 0 || typeof hrArr[0] === 'number' || hrArr[0] === null;
+                    var distIsNumeric = distArr.length === 0 || typeof distArr[0] === 'number' || distArr[0] === null;
+                    if (!hrIsNumeric) return { ok: false, reason: 'hr-not-numeric', shape: 'legacy-broken' };
+                    if (!distIsNumeric) return { ok: false, reason: 'dist-not-numeric', shape: 'legacy-broken' };
+                    // Todo OK: tiene time con números Y (hr o distance) con datos
+                    var hrN = hrArr.filter(function(v){ return v != null; }).length;
+                    var distN = distArr.filter(function(v){ return v != null; }).length;
                     if (hrN === 0 && distN === 0) return { ok: false, reason: 'empty-streams', hrN: hrN, distN: distN };
-                    return { ok: true, hrN: hrN, distN: distN };
+                    return { ok: true, hrN: hrN, distN: distN, timeN: streams.time.length };
                 } catch (e) {
                     return { ok: false, reason: 'exception', msg: (e && e.message) ? e.message : String(e) };
                 }
@@ -21635,53 +21654,32 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Necesita reparar
                 _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (' + (repairReason || 'no-file') + ')…');
 
-                // Re-mapear payload → bridge
-                var bridge = null;
-                try {
-                    if (typeof window._stravaToPendingFitData === 'function') {
-                        bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
-                    }
-                } catch (e) {
-                    console.warn('[MR][p148 repair] bridge exception pending=' + p.id + ':', e);
-                }
-                if (!bridge) {
-                    stats.skippedNoBridge++;
-                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-failed', pendingId: p.id });
-                    continue;
-                }
-                // Verificar que el bridge tenga streams no vacíos
-                var _bridgeStreamLen = (bridge.hrSeries || []).length + (bridge.distSer || []).length;
-                if (_bridgeStreamLen === 0) {
+                // [v2.30.1-p148] Verificar que streams_payload tenga datos
+                // ANTES de intentar upload directo. streams_payload es shape
+                // Strava API oficial: {time: {data: [...]}, heartrate: {data: [...]}, ...}
+                var sp = p.streams_payload;
+                var hasStreamsData = sp && typeof sp === 'object'
+                                   && sp.time && Array.isArray(sp.time.data) && sp.time.data.length > 0
+                                   && ((sp.heartrate && Array.isArray(sp.heartrate.data) && sp.heartrate.data.length > 0)
+                                    || (sp.distance && Array.isArray(sp.distance.data) && sp.distance.data.length > 0));
+                if (!hasStreamsData) {
                     stats.payloadEmptyStreams++;
                     stats.errors.push({
                         activityId: actRow.id,
                         reason: 'payload-empty-streams',
                         pendingId: p.id,
-                        payloadStreamsKeys: p.streams_payload ? Object.keys(p.streams_payload) : 'null'
+                        payloadStreamsKeys: sp ? Object.keys(sp) : 'null'
                     });
-                    console.warn('[MR][p148 repair] pending id=' + p.id + ' streams_payload vacío/inválido (activity ' + actRow.id.slice(0,8) + '…, no hay datos que recuperar)');
+                    console.warn('[MR][p148 repair] pending id=' + p.id + ' streams_payload sin datos (no hay nada que recuperar)');
                     continue;
                 }
 
-                // Construir un `act` mínimo compatible con _uploadManualStreams
-                var actForUpload = {
-                    hrSeries:    bridge.hrSeries  || [],
-                    cadSeries:   bridge.cadSeries || [],
-                    eleSeries:   bridge.eleSeries || [],
-                    distSer:     bridge.distSer   || [],
-                    laps:        bridge.laps      || [],
-                    distKm:      bridge.distKm,
-                    durationSec: bridge.durationSec,
-                    avgHr:       bridge.avgHr,
-                    maxHr:       bridge.maxHr,
-                    ascentM:     bridge.ascentM,
-                    csvBlocks:   bridge.csvBlocks || []
-                };
-
-                var streamsPath = await _uploadManualStreams(sb, uid, actRow.id, actForUpload);
+                // [v2.30.1-p148] UPLOAD DIRECTO shape Strava-native. Bypass del
+                // bridge → MR internal → convert back. Más directo, sin pérdida.
+                var streamsPath = await _uploadStreamsFromWebhookPayload(sb, uid, actRow.id, p.activity_payload, sp);
                 if (!streamsPath) {
                     stats.failed++;
-                    stats.errors.push({ activityId: actRow.id, reason: 'upload-failed' });
+                    stats.errors.push({ activityId: actRow.id, reason: 'direct-upload-failed', pendingId: p.id });
                     continue;
                 }
                 // UPDATE streams_path en activities
@@ -30076,16 +30074,94 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 console.warn('[MR][6.1] pako no disponible, no se suben streams');
                 return null;
             }
-            // Construir streamsObj con la misma estructura que bulk
+            // ─────────────────────────────────────────────────────────
+            // [v2.30.1-p148 · FIX CRÍTICO SHAPE]
+            // ─────────────────────────────────────────────────────────
+            // Bug catastrófico descubierto: TODO archivo generado por versiones
+            // anteriores de _uploadManualStreams tenía shape MR-internal
+            // ({hr: [{t,v},...], distance: [{t,d,spd},...]}) que _mapStreamsToActFields
+            // NO SABE LEER. El visor espera shape Strava-native (arrays paralelos
+            // planos: time, hr, cadence, altitude, distance en METROS).
+            //
+            // Consecuencia del bug: cards 2/3 vacías en TODA activity subida por
+            // este método (webhook Strava aprobadas + manuales .fit/.gpx/.tcx +
+            // reparaciones previas). El bulk import Strava SÍ funcionaba porque
+            // usa `streams: parsed.streams` que ya viene con shape correcto.
+            //
+            // Fix: convertir el shape MR-internal ({t,v}) → Strava-native paralelo.
+            // Recolectamos todos los timestamps únicos, ordenamos, y construimos
+            // arrays paralelos con lookup por t.
+            // ─────────────────────────────────────────────────────────
+            var hrArr   = Array.isArray(act.hrSeries)  ? act.hrSeries  : [];
+            var cadArr  = Array.isArray(act.cadSeries) ? act.cadSeries : [];
+            var distArr = Array.isArray(act.distSer)   ? act.distSer   : [];
+            var eleFlatArr = Array.isArray(act.eleSeries) ? act.eleSeries : []; // ya es plano
+
+            // Recolectar todos los t únicos de todas las series
+            var timeSet = new Set();
+            hrArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            cadArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            distArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            var times = Array.from(timeSet).sort(function(a,b){ return a - b; });
+
+            // Maps t → valor
+            var hrMap = {}, cadMap = {}, distMMap = {}, altMap = {};
+            hrArr.forEach(function(p){ if (p && typeof p.t === 'number') hrMap[p.t] = p.v; });
+            cadArr.forEach(function(p){ if (p && typeof p.t === 'number') cadMap[p.t] = p.v; });
+            distArr.forEach(function(p){
+                if (!p || typeof p.t !== 'number') return;
+                // distSer.d está en CM → convertir a METROS para el shape Strava-native
+                if (typeof p.d === 'number') distMMap[p.t] = p.d / 100;
+                // ele en distSer prevalece si existe
+                if (typeof p.ele === 'number' && p.ele != null) altMap[p.t] = p.ele;
+            });
+            // Si no hay altitudes por t (eleSeries es plano sin timestamps), hacer
+            // mapeo proporcional index → tiempo (mejor esfuerzo).
+            if (Object.keys(altMap).length === 0 && eleFlatArr.length > 1 && times.length > 1) {
+                var eleN = eleFlatArr.length;
+                var tN = times.length;
+                for (var _ti = 0; _ti < tN; _ti++) {
+                    var eleIdx = Math.round(_ti * (eleN - 1) / (tN - 1));
+                    if (eleIdx >= 0 && eleIdx < eleN && eleFlatArr[eleIdx] != null) {
+                        altMap[times[_ti]] = eleFlatArr[eleIdx];
+                    }
+                }
+            }
+
+            // Construir arrays paralelos planos (shape Strava-native)
+            var timeOut = [], hrOut = [], cadOut = [], distOut = [], altOut = [];
+            for (var _i = 0; _i < times.length; _i++) {
+                var t = times[_i];
+                timeOut.push(t);
+                hrOut.push(hrMap[t] != null ? hrMap[t] : null);
+                cadOut.push(cadMap[t] != null ? cadMap[t] : null);
+                distOut.push(distMMap[t] != null ? distMMap[t] : null);
+                altOut.push(altMap[t] != null ? altMap[t] : null);
+            }
+
+            // Splits: shape que _mapStreamsToActFields espera es {km, durationSec, avgHr, elevGainM}
+            // (línea 49312 en el mapper: sp.km, sp.durationSec, sp.avgHr, sp.elevGainM).
+            // act.laps interno tiene shape {n, paceS, avgHr} → convertir.
+            var lapsArr = Array.isArray(act.laps) ? act.laps : [];
+            var splitsOut = lapsArr.map(function(lp){
+                return {
+                    km:           lp.n || 0,
+                    durationSec:  lp.paceS || 0, // en laps auto de 1km, paceS ES el tiempo del km
+                    avgHr:        lp.avgHr != null ? lp.avgHr : null,
+                    elevGainM:    lp.eleGain || 0
+                };
+            });
+
             var streamsObj = {
                 version: 1,
                 streams: {
-                    hr:       Array.isArray(act.hrSeries)  ? act.hrSeries  : [],
-                    cadence:  Array.isArray(act.cadSeries) ? act.cadSeries : [],
-                    altitude: Array.isArray(act.eleSeries) ? act.eleSeries : [],
-                    distance: Array.isArray(act.distSer)   ? act.distSer   : []
+                    time:     timeOut,     // [num] segundos
+                    hr:       hrOut,       // [num] bpm
+                    cadence:  cadOut,      // [num] rpm one-foot (visor lo x2 para spm)
+                    altitude: altOut,      // [num] metros
+                    distance: distOut      // [num] METROS acumulados
                 },
-                splits:   Array.isArray(act.laps) ? act.laps : [],
+                splits:   splitsOut,
                 polyline: null,
                 summary: {
                     distKm:      act.distKm,
@@ -30096,21 +30172,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     csvBlocks:   Array.isArray(act.csvBlocks) ? act.csvBlocks : []
                 }
             };
-            // [v2.30.1-p146] Aviso si los arrays de streams están todos vacíos.
-            // No aborta (permitimos subir esqueleto por si la activity es manual
-            // sin sensor) pero deja huella en consola para diagnóstico.
-            var _sLen = streamsObj.streams.hr.length
-                      + streamsObj.streams.cadence.length
-                      + streamsObj.streams.altitude.length
-                      + streamsObj.streams.distance.length;
+
+            var _sLen = timeOut.length;
             if (_sLen === 0) {
-                console.warn('[MR][p146] _uploadManualStreams: streams vacíos para activityId=' + activityId + ' (esto puede ser normal en manuales sin sensor)');
+                console.warn('[MR][p148] _uploadManualStreams: streams vacíos (0 timestamps) para activityId=' + activityId);
+            } else {
+                console.log('[MR][p148] _uploadManualStreams shape OK · activityId=' + activityId.slice(0,8) + '… · time=' + _sLen + ' hr=' + hrOut.filter(function(v){return v!=null;}).length + ' dist=' + distOut.filter(function(v){return v!=null;}).length + ' alt=' + altOut.filter(function(v){return v!=null;}).length);
             }
             var jsonStr = JSON.stringify(streamsObj);
             var gzipped = pako.gzip(jsonStr);
             var blob = new Blob([gzipped], { type: 'application/gzip' });
             if (!blob.size) {
-                console.warn('[MR][p146] _uploadManualStreams: blob de 0 bytes, aborto');
+                console.warn('[MR][p148] _uploadManualStreams: blob de 0 bytes, aborto');
                 return null;
             }
             var path = uid + '/' + activityId + '.json.gz';
@@ -30135,6 +30208,99 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return null;
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // [v2.30.1-p148] Upload directo desde streams_payload de webhook Strava.
+    // ─────────────────────────────────────────────────────────────────
+    // Bypass del "MR-internal → Strava-native" conversion. El streams_payload
+    // del webhook ya viene con shape casi correcto (arrays con .data envueltos
+    // en objetos). Extraemos los .data y montamos el shape final. Más directo
+    // y sin pérdida de precisión por reconstrucción de timestamps únicos.
+    //
+    // Uso: reparador (herramienta manual + auto-repair silencioso).
+    // ─────────────────────────────────────────────────────────────────
+    async function _uploadStreamsFromWebhookPayload(sb, uid, activityId, activityPayload, streamsPayload) {
+        try {
+            if (typeof pako === 'undefined') {
+                console.warn('[MR][p148] pako no disponible');
+                return null;
+            }
+            if (!streamsPayload || typeof streamsPayload !== 'object') {
+                console.warn('[MR][p148] streamsPayload inválido para ' + activityId);
+                return null;
+            }
+            function _pickData(key) {
+                var s = streamsPayload[key];
+                return (s && Array.isArray(s.data)) ? s.data : [];
+            }
+            var timeArr      = _pickData('time');
+            var hrArr        = _pickData('heartrate');
+            var cadArr       = _pickData('cadence');
+            var altArr       = _pickData('altitude');
+            var distArr      = _pickData('distance'); // Strava: METROS
+            // velocity_smooth y latlng no los usa _mapStreamsToActFields directamente
+
+            if (timeArr.length === 0) {
+                console.warn('[MR][p148] webhook streamsPayload sin time array para ' + activityId);
+                return null;
+            }
+
+            // Splits desde activity_payload.laps (shape que espera el mapper)
+            var laps = (activityPayload && Array.isArray(activityPayload.splits_metric))
+                     ? activityPayload.splits_metric : [];
+            var splitsOut = laps.map(function(sp){
+                return {
+                    km:          sp.split || 0,
+                    durationSec: sp.moving_time || sp.elapsed_time || 0,
+                    avgHr:       sp.average_heartrate != null ? Math.round(sp.average_heartrate) : null,
+                    elevGainM:   sp.elevation_difference || 0
+                };
+            });
+
+            var streamsObj = {
+                version: 1,
+                streams: {
+                    time:     timeArr,
+                    hr:       hrArr,
+                    cadence:  cadArr,
+                    altitude: altArr,
+                    distance: distArr
+                },
+                splits:   splitsOut,
+                polyline: (activityPayload && activityPayload.map && activityPayload.map.summary_polyline) || null,
+                summary: {
+                    distKm:      (activityPayload && activityPayload.distance) ? activityPayload.distance / 1000 : 0,
+                    durationSec: (activityPayload && (activityPayload.moving_time || activityPayload.elapsed_time)) || 0,
+                    avgHr:       (activityPayload && activityPayload.average_heartrate) ? Math.round(activityPayload.average_heartrate) : 0,
+                    maxHr:       (activityPayload && activityPayload.max_heartrate) ? Math.round(activityPayload.max_heartrate) : 0,
+                    ascentM:     (activityPayload && activityPayload.total_elevation_gain) || 0,
+                    csvBlocks:   []
+                }
+            };
+
+            console.log('[MR][p148 direct-upload] activityId=' + activityId.slice(0,8) + '… time=' + timeArr.length + ' hr=' + hrArr.length + ' dist=' + distArr.length + ' alt=' + altArr.length);
+
+            var jsonStr = JSON.stringify(streamsObj);
+            var gzipped = pako.gzip(jsonStr);
+            var blob = new Blob([gzipped], { type: 'application/gzip' });
+            if (!blob.size) {
+                console.warn('[MR][p148 direct-upload] blob 0 bytes para ' + activityId);
+                return null;
+            }
+            var path = uid + '/' + activityId + '.json.gz';
+            var res = await _mrRetryUpload(async function() {
+                var upRes = await sb.storage.from('activity-streams')
+                    .upload(path, blob, { cacheControl: '3600', upsert: true, contentType: 'application/gzip' });
+                if (upRes && upRes.error) throw new Error(upRes.error.message || String(upRes.error));
+                return upRes;
+            }, 'streams-direct·' + activityId.slice(0,8));
+            return res.ok ? path : null;
+        } catch(e) {
+            console.warn('[MR][p148 direct-upload] exception:', e);
+            return null;
+        }
+    }
+    window._uploadStreamsFromWebhookPayload = _uploadStreamsFromWebhookPayload;
 
     // ─────────────────────────────────────────────────────────────────
     // Sube la foto (base64 → Blob → bucket activity-photos) e inserta
@@ -48704,42 +48870,58 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             var repaired = 0, failed = 0, processed = 0;
             var MAX_PROCESS = 30;
+            // [v2.30.1-p148] Helper: verificar shape del archivo existente en bucket.
+            // Reutiliza pako global. Si el archivo tiene shape MR-internal roto o vacío,
+            // return false → regenerar.
+            async function _isBucketFileHealthyQuick(activityId) {
+                try {
+                    var dl = await sb.storage.from('activity-streams').download(uid + '/' + activityId + '.json.gz');
+                    if (dl.error || !dl.data) return false;
+                    var buf = await dl.data.arrayBuffer();
+                    var jsonStr = window.pako.ungzip(new Uint8Array(buf), { to: 'string' });
+                    var obj = JSON.parse(jsonStr);
+                    var s = obj && obj.streams;
+                    if (!s) return false;
+                    // Shape correcto: streams.time debe ser array de números
+                    if (!Array.isArray(s.time) || s.time.length === 0) return false;
+                    if (typeof s.time[0] !== 'number') return false;
+                    // Y hr o distance con datos
+                    var hrN = Array.isArray(s.hr) ? s.hr.filter(function(v){ return v != null; }).length : 0;
+                    var distN = Array.isArray(s.distance) ? s.distance.filter(function(v){ return v != null; }).length : 0;
+                    return (hrN > 0 || distN > 0);
+                } catch(_) { return false; }
+            }
             for (var i = 0; i < pendings.length && processed < MAX_PROCESS; i++) {
                 var p = pendings[i];
                 var actRow = null;
                 if (p.consumed_mr_activity_id) actRow = actMapById[p.consumed_mr_activity_id];
                 if (!actRow && p.strava_activity_id) actRow = actMapByExt['strava:' + p.strava_activity_id];
                 if (!actRow) continue;
+                // [v2.30.1-p148] Verificación con shape check antes de skipear
                 if (bucketFiles.has(actRow.id + '.json.gz')) {
-                    // Ya OK — self-heal streams_path si es NULL
-                    if (!actRow.streams_path) {
-                        try {
-                            await sb.from('activities')
-                                .update({ streams_path: uid + '/' + actRow.id + '.json.gz' })
-                                .eq('id', actRow.id).eq('user_id', uid);
-                        } catch(_){}
+                    var isHealthy = await _isBucketFileHealthyQuick(actRow.id);
+                    if (isHealthy) {
+                        // Ya OK — self-heal streams_path si es NULL
+                        if (!actRow.streams_path) {
+                            try {
+                                await sb.from('activities')
+                                    .update({ streams_path: uid + '/' + actRow.id + '.json.gz' })
+                                    .eq('id', actRow.id).eq('user_id', uid);
+                            } catch(_){}
+                        }
+                        continue;
                     }
-                    continue;
+                    // No healthy → cae al bloque de regeneración abajo
                 }
                 processed++;
-                var bridge = null;
-                try {
-                    if (typeof window._stravaToPendingFitData === 'function') {
-                        bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
-                    }
-                } catch(_){}
-                if (!bridge) continue;
-                var _len = (bridge.hrSeries || []).length + (bridge.distSer || []).length;
-                if (_len === 0) continue;
-
-                var actForUpload = {
-                    hrSeries: bridge.hrSeries || [], cadSeries: bridge.cadSeries || [],
-                    eleSeries: bridge.eleSeries || [], distSer: bridge.distSer || [],
-                    laps: bridge.laps || [], distKm: bridge.distKm, durationSec: bridge.durationSec,
-                    avgHr: bridge.avgHr, maxHr: bridge.maxHr, ascentM: bridge.ascentM,
-                    csvBlocks: bridge.csvBlocks || []
-                };
-                var streamsPath = await _uploadManualStreams(sb, uid, actRow.id, actForUpload);
+                // [v2.30.1-p148] Upload directo desde payload webhook (bypass bridge)
+                var sp = p.streams_payload;
+                var hasStreamsData = sp && typeof sp === 'object'
+                                   && sp.time && Array.isArray(sp.time.data) && sp.time.data.length > 0
+                                   && ((sp.heartrate && Array.isArray(sp.heartrate.data) && sp.heartrate.data.length > 0)
+                                    || (sp.distance && Array.isArray(sp.distance.data) && sp.distance.data.length > 0));
+                if (!hasStreamsData) continue;
+                var streamsPath = await _uploadStreamsFromWebhookPayload(sb, uid, actRow.id, p.activity_payload, sp);
                 if (!streamsPath) { failed++; continue; }
                 var updRes = await sb.from('activities')
                     .update({ streams_path: streamsPath })
