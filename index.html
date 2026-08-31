@@ -21610,10 +21610,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             window._polylineIsUseful = _polylineIsUseful;
 
             // Helper: descargar archivo del bucket y comprobar si tiene streams reales
-            // [v2.30.1-p148] Verificación estricta: comprueba TAMBIÉN que el shape
+            // [v2.30.1-p148/p155] Verificación estricta: comprueba TAMBIÉN que el shape
             // sea correcto (arrays paralelos de números, NO arrays de objetos que
             // era el bug de todas las versiones previas de _uploadManualStreams).
-            async function _isBucketFileHealthy(activityId) {
+            // También detecta csvBlocks vacío cuando el payload tiene laps reales
+            // (series/intervalos del reloj no persistidos por el upload viejo).
+            async function _isBucketFileHealthy(activityId, activityPayload) {
                 try {
                     var path = uid + '/' + activityId + '.json.gz';
                     var dl = await sb.storage.from('activity-streams').download(path);
@@ -21646,7 +21648,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var hrN = hrArr.filter(function(v){ return v != null; }).length;
                     var distN = distArr.filter(function(v){ return v != null; }).length;
                     if (hrN === 0 && distN === 0) return { ok: false, reason: 'empty-streams', hrN: hrN, distN: distN };
-                    return { ok: true, hrN: hrN, distN: distN, timeN: streams.time.length };
+                    // [v2.30.1-p155] csvBlocks: si el file dice vacío pero el payload
+                    // tiene laps que no son ~1km, significa que fue subido con versión
+                    // pre-p153 → regenerar para incluir bloques reales del reloj.
+                    var csvBlocksInFile = (obj.summary && Array.isArray(obj.summary.csvBlocks)) ? obj.summary.csvBlocks.length : 0;
+                    if (csvBlocksInFile === 0 && activityPayload && Array.isArray(activityPayload.laps) && activityPayload.laps.length > 1) {
+                        var allClose1km = activityPayload.laps.every(function(lap){
+                            return Math.abs((lap.distance || 0) - 1000) < 100;
+                        });
+                        if (!allClose1km) {
+                            return { ok: false, reason: 'missing-csvblocks', shape: 'legacy-no-csvblocks', hrN: hrN, distN: distN };
+                        }
+                    }
+                    return { ok: true, hrN: hrN, distN: distN, timeN: streams.time.length, csvBlocksN: csvBlocksInFile };
                 } catch (e) {
                     return { ok: false, reason: 'exception', msg: (e && e.message) ? e.message : String(e) };
                 }
@@ -21683,7 +21697,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 if (fileExists) {
                     _setStep('Verificando contenido ' + (i+1) + '/' + pendings.length + '…');
-                    var healthCheck = await _isBucketFileHealthy(actRow.id);
+                    var healthCheck = await _isBucketFileHealthy(actRow.id, p.activity_payload);
                     if (!healthCheck.ok) {
                         needsRepair = true;
                         repairReason = healthCheck.reason;
@@ -21776,7 +21790,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 bucketFiles.add(bucketFilename);
                 stats.repaired++;
-                if (repairReason === 'empty-streams' || (repairReason && repairReason.indexOf('shape') >= 0) || repairReason === 'time-not-numeric' || repairReason === 'no-time-array') stats.regeneratedFromEmptyFile++;
+                if (repairReason === 'empty-streams' || (repairReason && repairReason.indexOf('shape') >= 0) || repairReason === 'time-not-numeric' || repairReason === 'no-time-array' || repairReason === 'missing-csvblocks') stats.regeneratedFromEmptyFile++;
                 var _spTimeLen = (sp && sp.time && Array.isArray(sp.time.data)) ? sp.time.data.length : 0;
                 var _spHrLen = (sp && sp.heartrate && Array.isArray(sp.heartrate.data)) ? sp.heartrate.data.length : 0;
                 var _spDistLen = (sp && sp.distance && Array.isArray(sp.distance.data)) ? sp.distance.data.length : 0;
@@ -22137,7 +22151,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Header (fijo)
         content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
         content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
-        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p154</span></div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p155</span></div>';
         content += '</div>';
         // Body scrolleable
         content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
@@ -37125,10 +37139,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 var valid = rows.filter(function (r) { return r.paceS > 0; });
                 if (!valid.length) return;
-                var minP = Math.min.apply(null, valid.map(function (r) { return r.paceS; }));
-                var maxP = Math.max.apply(null, valid.map(function (r) { return r.paceS; }));
+                // [v2.30.1-p155] Detectar y excluir residuales imposibles del cálculo
+                // de escala minP/maxP. paceS < 60s/km implica >60km/h → físicamente
+                // imposible correr → residual de Strava (ej. split_metric[N] con
+                // pocos metros y average_speed erróneo → paceS=1). Sin este filtro,
+                // minP=1 rompe la escala y TODAS las barras del resto salen iguales.
+                var validForScale = valid.filter(function(r){ return r.paceS >= 60; });
+                if (!validForScale.length) validForScale = valid; // fallback si todos son residuales
+                var minP = Math.min.apply(null, validForScale.map(function (r) { return r.paceS; }));
+                var maxP = Math.max.apply(null, validForScale.map(function (r) { return r.paceS; }));
                 var fastestFull = null;
-                rows.forEach(function (r) { if (!r.partial && r.paceS > 0 && (fastestFull === null || r.paceS < fastestFull)) fastestFull = r.paceS; });
+                rows.forEach(function (r) { if (!r.partial && r.paceS >= 60 && (fastestFull === null || r.paceS < fastestFull)) fastestFull = r.paceS; });
 
                 var accent = 'var(--det-lbl-accent)';
                 var cols = 'grid-template-columns:26px 46px 1fr 42px 34px;';
@@ -37141,15 +37162,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                      +  '<span>Km</span><span>Ritmo</span><span></span><span style="text-align:right;">Desn.</span><span style="text-align:right;">FC</span>'
                      +  '</div>';
                 rows.forEach(function (r, idx) {
-                    var w = (maxP === minP) ? 100 : (55 + 45 * (maxP - r.paceS) / (maxP - minP));
-                    if (r.paceS <= 0) w = 6;
+                    // [v2.30.1-p155] Residual imposible → sin barra (pero mostrar ritmo)
+                    var isResidual = (r.paceS > 0 && r.paceS < 60);
+                    var w;
+                    if (isResidual) {
+                        w = 0;
+                    } else {
+                        w = (maxP === minP) ? 100 : (55 + 45 * (maxP - r.paceS) / (maxP - minP));
+                        if (r.paceS <= 0) w = 6;
+                    }
                     var isFast = (!r.partial && fastestFull != null && r.paceS === fastestFull);
                     var desn = (r.net != null) ? ((r.net > 0 ? '+' : '') + r.net) : '—';
                     var sep = idx > 0 ? 'border-top:1px solid var(--det-border-lo);' : '';
+                    var barHtml = isResidual
+                        ? '<span style="height:15px;display:flex;align-items:center;"></span>'  // vacío, sin barra
+                        : '<span style="height:15px;display:flex;align-items:center;"><span style="height:15px;border-radius:5px;background:'+accent+';min-width:6px;width:'+w.toFixed(0)+'%;'+(isFast?'box-shadow:0 0 0 1.5px '+accent+';':'')+'"></span></span>';
                     html += '<div style="display:grid;'+cols+'gap:8px;align-items:center;padding:5px 0;'+sep+'">'
-                         +  '<span style="font-size:13px;font-weight:700;color:var(--det-ts);font-family:var(--f);'+(r.partial?'opacity:.7;':'')+'">'+r.label+'</span>'
-                         +  '<span style="font-size:13.5px;font-weight:700;letter-spacing:-.3px;font-family:var(--f);color:'+(isFast?accent:'var(--det-tw)')+';">'+_fmtPace(r.paceS)+'</span>'
-                         +  '<span style="height:15px;display:flex;align-items:center;"><span style="height:15px;border-radius:5px;background:'+accent+';min-width:6px;width:'+w.toFixed(0)+'%;'+(isFast?'box-shadow:0 0 0 1.5px '+accent+';':'')+'"></span></span>'
+                         +  '<span style="font-size:13px;font-weight:700;color:var(--det-ts);font-family:var(--f);'+(r.partial||isResidual?'opacity:.6;':'')+'">'+r.label+'</span>'
+                         +  '<span style="font-size:13.5px;font-weight:700;letter-spacing:-.3px;font-family:var(--f);color:'+(isFast?accent:'var(--det-tw)')+';'+(isResidual?'opacity:.6;':'')+'">'+_fmtPace(r.paceS)+'</span>'
+                         +  barHtml
                          +  '<span style="font-size:12px;font-weight:600;color:var(--det-ts);text-align:right;font-family:var(--f);">'+desn+'</span>'
                          +  '<span style="font-size:12.5px;font-weight:700;color:var(--det-tw);text-align:right;font-family:var(--f);">'+(r.avgHr||'—')+'</span>'
                          +  '</div>';
@@ -49653,7 +49684,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [v2.30.1-p148] Helper: verificar shape del archivo existente en bucket.
             // Reutiliza pako global. Si el archivo tiene shape MR-internal roto o vacío,
             // return false → regenerar.
-            async function _isBucketFileHealthyQuick(activityId) {
+            async function _isBucketFileHealthyQuick(activityId, activityPayload) {
                 try {
                     var dl = await sb.storage.from('activity-streams').download(uid + '/' + activityId + '.json.gz');
                     if (dl.error || !dl.data) return false;
@@ -49668,7 +49699,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // Y hr o distance con datos
                     var hrN = Array.isArray(s.hr) ? s.hr.filter(function(v){ return v != null; }).length : 0;
                     var distN = Array.isArray(s.distance) ? s.distance.filter(function(v){ return v != null; }).length : 0;
-                    return (hrN > 0 || distN > 0);
+                    if (hrN === 0 && distN === 0) return false;
+                    // [v2.30.1-p155] csvBlocks check: si vacío pero payload tiene laps reales, NO healthy
+                    var csvBlocksN = (obj.summary && Array.isArray(obj.summary.csvBlocks)) ? obj.summary.csvBlocks.length : 0;
+                    if (csvBlocksN === 0 && activityPayload && Array.isArray(activityPayload.laps) && activityPayload.laps.length > 1) {
+                        var allClose1km = activityPayload.laps.every(function(lap){
+                            return Math.abs((lap.distance || 0) - 1000) < 100;
+                        });
+                        if (!allClose1km) return false; // hay bloques reales sin persistir → regenerar
+                    }
+                    return true;
                 } catch(_) { return false; }
             }
             for (var i = 0; i < pendings.length && processed < MAX_PROCESS; i++) {
@@ -49679,7 +49719,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (!actRow) continue;
                 // [v2.30.1-p148] Verificación con shape check antes de skipear
                 if (bucketFiles.has(actRow.id + '.json.gz')) {
-                    var isHealthy = await _isBucketFileHealthyQuick(actRow.id);
+                    var isHealthy = await _isBucketFileHealthyQuick(actRow.id, p.activity_payload);
                     if (isHealthy) {
                         // Ya OK — self-heal streams_path si es NULL
                         if (!actRow.streams_path) {
