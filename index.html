@@ -21514,7 +21514,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
             // Mapas de lookup: por id, por external_id, y por (isoDate + distDm + durSec)
-            var actMapById = {}, actMapByExt = {}, actMapByDateDistDur = {};
+            // [v2.30.1-p150] Añadimos también mapa por (día + distKm aprox) para
+            // pillar pendings con timezone offset o timestamp ligeramente distinto.
+            var actMapById = {}, actMapByExt = {}, actMapByDateDistDur = {}, actMapByDayDist = {};
             actRows.forEach(function(r){
                 actMapById[r.id] = r;
                 if (r.external_id) actMapByExt[r.external_id] = r;
@@ -21524,9 +21526,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var key = r.start_date + '|' + distDm + '|' + durSec;
                     actMapByDateDistDur[key] = r;
                 }
+                if (r.start_date && r.dist_km != null) {
+                    var dayKey = r.start_date.slice(0,10) + '|' + Math.round(r.dist_km * 100); // día + distDm
+                    if (!actMapByDayDist[dayKey]) actMapByDayDist[dayKey] = [];
+                    actMapByDayDist[dayKey].push(r);
+                }
             });
 
-            // Helper: matchear un pending a su activity row (3 estrategias)
+            // Helper: matchear un pending a su activity row (estrategias en cascada)
             function _matchPendingToAct(p) {
                 if (p.consumed_mr_activity_id && actMapById[p.consumed_mr_activity_id]) {
                     return actMapById[p.consumed_mr_activity_id];
@@ -21551,10 +21558,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             var k2 = iso + '|' + distDm + '|' + (Math.round(durSec) + _tolS);
                             if (actMapByDateDistDur[k2]) return actMapByDateDistDur[k2];
                         }
+                        // [v2.30.1-p150] Match por día + distancia (tolerancia ±5 decímetros ≈ ±50m)
+                        var dayStr = iso.slice(0,10);
+                        for (var _tolD = -5; _tolD <= 5; _tolD++) {
+                            var dayKey = dayStr + '|' + (distDm + _tolD);
+                            var candidates = actMapByDayDist[dayKey];
+                            if (candidates && candidates.length > 0) {
+                                // Elegir la que más se parezca en duración
+                                var best = null, bestDiff = Infinity;
+                                candidates.forEach(function(c){
+                                    var cDur = Math.round(c.duration_sec);
+                                    var diff = Math.abs(cDur - Math.round(durSec));
+                                    if (diff < bestDiff) { best = c; bestDiff = diff; }
+                                });
+                                if (best && bestDiff < 60) return best; // <1 min de diferencia
+                            }
+                        }
                     }
                 }
                 return null;
             }
+
+            // [v2.30.1-p150] Helper: chequear si un polyline es útil (decodable a ≥ 2 records)
+            function _polylineIsUseful(str) {
+                if (!str || typeof str !== 'string' || str.length < 5) return false;
+                if (typeof window._decodePolyline !== 'function') return true; // asume OK si no puedo verificar
+                try {
+                    var decoded = window._decodePolyline(str);
+                    if (!Array.isArray(decoded) || decoded.length < 2) return false;
+                    // Verificar que al menos 2 puntos no sean (0,0)
+                    var validPts = decoded.filter(function(pt){
+                        return pt && Math.abs(pt.lat) > 0.01 || Math.abs(pt.lon) > 0.01;
+                    });
+                    return validPts.length >= 2;
+                } catch(_) { return false; }
+            }
+            // Exponer globalmente para uso desde auto-repair silencioso
+            window._polylineIsUseful = _polylineIsUseful;
 
             // Helper: descargar archivo del bucket y comprobar si tiene streams reales
             // [v2.30.1-p148] Verificación estricta: comprueba TAMBIÉN que el shape
@@ -21649,7 +21689,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // [v2.30.1-p149] Aunque los streams ya estén OK, la polyline
                         // puede estar NULL. Chequear y reparar si el payload la tiene.
                         try {
-                            if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                            if (!_polylineIsUseful(actRow.polyline_encoded) && p.activity_payload && p.activity_payload.map) {
                                 var polyS = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
                                 if (polyS && typeof polyS === 'string' && polyS.length > 5) {
                                     var polyResS = await sb.from('activities')
@@ -21735,7 +21775,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // como INDOOR visualmente. El activity_payload SÍ tiene map.polyline
                 // o map.summary_polyline en la mayoría de casos.
                 try {
-                    if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                    if (!_polylineIsUseful(actRow.polyline_encoded) && p.activity_payload && p.activity_payload.map) {
                         var poly = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
                         if (poly && typeof poly === 'string' && poly.length > 5) {
                             var polyRes = await sb.from('activities')
@@ -48694,6 +48734,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return [];
         }
     }
+    // [v2.30.1-p150] Exponer globalmente para uso desde reparador
+    window._decodePolyline = _decodePolyline;
 
     function _mapDbRowToAct(row) {
         // dateStr: extraer "YYYY-MM-DD" del ISO start_date
@@ -48957,7 +48999,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         }
                         // [v2.30.1-p149] Reparar polyline_encoded si es NULL
                         try {
-                            if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                            if (!(typeof window._polylineIsUseful === 'function' ? window._polylineIsUseful(actRow.polyline_encoded) : !!actRow.polyline_encoded) && p.activity_payload && p.activity_payload.map) {
                                 var polySkip = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
                                 if (polySkip && typeof polySkip === 'string' && polySkip.length > 5) {
                                     await sb.from('activities')
@@ -48995,7 +49037,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 // [v2.30.1-p149] Reparar polyline_encoded si NULL
                 try {
-                    if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                    if (!(typeof window._polylineIsUseful === 'function' ? window._polylineIsUseful(actRow.polyline_encoded) : !!actRow.polyline_encoded) && p.activity_payload && p.activity_payload.map) {
                         var polyA = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
                         if (polyA && typeof polyA === 'string' && polyA.length > 5) {
                             await sb.from('activities')
