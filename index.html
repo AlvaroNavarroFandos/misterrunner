@@ -21393,12 +21393,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
 
         try {
-            // ── Paso 1: leer todas las pendings consumidas ────────────
-            _setStep('Consultando pendings consumidos…');
+            // ── Paso 1: leer TODAS las pendings del user ──────────────
+            // [v2.30.1-p147] Antes filtrábamos por consumed_mr_activity_id IS NOT NULL.
+            // Ahora leemos TODAS y hacemos el match también por strava_activity_id ↔
+            // activities.external_id. Esto pilla:
+            //   (a) las que se procesaron con consumed_mr_activity_id (flujo normal)
+            //   (b) las viejas del flujo p147- donde consumed_mr_activity_id quedó NULL
+            //   (c) las que consumed_at falló pero la activity SÍ se creó (matcheables por external_id)
+            _setStep('Consultando strava_pending_imports…');
             var pendResp = await sb.from('strava_pending_imports')
                 .select('id, strava_activity_id, activity_payload, streams_payload, consumed_mr_activity_id')
                 .eq('user_id', uid)
-                .not('consumed_mr_activity_id', 'is', null)
                 .order('created_at', { ascending: false });
             if (pendResp.error) {
                 console.error('[MR][p146 repair] SELECT pendings error:', pendResp.error);
@@ -21412,36 +21417,82 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (pendings.length === 0) {
                 _closeOverlay();
                 if (typeof window.fxToast === 'function') {
-                    window.fxToast('No hay auto-imports Strava consumidos que revisar', { variant: 'info', duration: 4000 });
+                    window.fxToast('No hay auto-imports Strava en strava_pending_imports', { variant: 'info', duration: 4000 });
                 } else {
-                    alert('No hay auto-imports Strava consumidos que revisar');
+                    alert('No hay auto-imports Strava en strava_pending_imports');
                 }
                 return;
             }
 
-            _setStep('Encontrados ' + pendings.length + ' auto-imports · analizando…');
+            _setStep('Encontrados ' + pendings.length + ' auto-imports · listando bucket…');
 
-            // ── Paso 2: batch SELECT en activities para ver quién tiene streams_path NULL ──
-            var actIds = pendings.map(function(p){ return p.consumed_mr_activity_id; }).filter(Boolean);
-            // Chunk en tandas de 100 (evitar URL muy largas en el IN clause)
+            // ── Paso 2: listar TODOS los archivos del bucket activity-streams
+            // del user. Paginable en tandas de 1000. Con esto tenemos la
+            // verdad absoluta sobre qué existe y no dependemos del valor
+            // (posiblemente stale) de la columna streams_path.
+            var bucketFiles = new Set();
+            var _offset = 0;
+            var _pageSz = 1000;
+            var _safety = 0;
+            while (_safety++ < 20) {
+                var listResp = await sb.storage
+                    .from('activity-streams')
+                    .list(uid, { limit: _pageSz, offset: _offset });
+                if (listResp.error) {
+                    console.warn('[MR][p147 repair] list bucket error offset=' + _offset + ':', listResp.error);
+                    break;
+                }
+                var items = listResp.data || [];
+                items.forEach(function(f){ if (f && f.name) bucketFiles.add(f.name); });
+                if (items.length < _pageSz) break;
+                _offset += _pageSz;
+            }
+            console.log('[MR][p147 repair] archivos en bucket activity-streams: ' + bucketFiles.size);
+
+            // ── Paso 3: batch SELECT activities. Buscamos por dos vías:
+            //    (A) IDs de consumed_mr_activity_id (matches directos)
+            //    (B) external_id = 'strava:' + strava_activity_id (para pendings sin consumed_mr_activity_id)
+            _setStep('Consultando activities…');
+            var actIdsA = pendings.map(function(p){ return p.consumed_mr_activity_id; }).filter(Boolean);
+            var externalIdsB = pendings
+                .filter(function(p){ return !p.consumed_mr_activity_id && p.strava_activity_id; })
+                .map(function(p){ return 'strava:' + p.strava_activity_id; });
             var actRows = [];
             var _chunkSz = 100;
-            for (var _ci = 0; _ci < actIds.length; _ci += _chunkSz) {
-                var _chunk = actIds.slice(_ci, _ci + _chunkSz);
+            // (A) por id
+            for (var _ci = 0; _ci < actIdsA.length; _ci += _chunkSz) {
+                var _chunk = actIdsA.slice(_ci, _ci + _chunkSz);
                 var actResp = await sb.from('activities')
-                    .select('id, streams_path')
+                    .select('id, external_id, streams_path')
                     .in('id', _chunk)
                     .eq('user_id', uid);
                 if (actResp.error) {
-                    console.warn('[MR][p146 repair] SELECT activities chunk error:', actResp.error);
+                    console.warn('[MR][p147 repair] SELECT activities by id chunk error:', actResp.error);
                     continue;
                 }
                 actRows = actRows.concat(actResp.data || []);
             }
-            var actMap = {};
-            actRows.forEach(function(r){ actMap[r.id] = r; });
+            // (B) por external_id
+            for (var _cj = 0; _cj < externalIdsB.length; _cj += _chunkSz) {
+                var _chunk2 = externalIdsB.slice(_cj, _cj + _chunkSz);
+                var actRespB = await sb.from('activities')
+                    .select('id, external_id, streams_path')
+                    .in('external_id', _chunk2)
+                    .eq('user_id', uid);
+                if (actRespB.error) {
+                    console.warn('[MR][p147 repair] SELECT activities by external_id chunk error:', actRespB.error);
+                    continue;
+                }
+                actRows = actRows.concat(actRespB.data || []);
+            }
+            // Mapa por id y por external_id para lookup rápido
+            var actMapById = {}, actMapByExt = {};
+            actRows.forEach(function(r){
+                actMapById[r.id] = r;
+                if (r.external_id) actMapByExt[r.external_id] = r;
+            });
 
-            // ── Paso 3: procesar cada pending ────────────────────────
+            // ── Paso 4: procesar cada pending ────────────────────────
             for (var i = 0; i < pendings.length; i++) {
                 var p = pendings[i];
                 var pct = (i / pendings.length) * 100;
@@ -21449,19 +21500,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 _setStep('Revisando ' + (i+1) + '/' + pendings.length + '…');
                 stats.checked++;
 
-                var actRow = actMap[p.consumed_mr_activity_id];
+                // Buscar la activity: primero por consumed_mr_activity_id, después por external_id
+                var actRow = null;
+                if (p.consumed_mr_activity_id) actRow = actMapById[p.consumed_mr_activity_id];
+                if (!actRow && p.strava_activity_id) actRow = actMapByExt['strava:' + p.strava_activity_id];
+
                 if (!actRow) {
                     stats.skippedNoActivity++;
                     continue;
                 }
-                // Ya tiene streams_path → skip (asumimos que el bucket lo tiene)
-                if (actRow.streams_path) {
+
+                // [v2.30.1-p147] VERDAD ABSOLUTA: chequear si el archivo existe
+                // en el bucket. NO nos fiamos de streams_path (puede tener valor
+                // apuntando a un archivo que fue borrado, o valor stale de un
+                // save que falló silenciosamente).
+                var bucketFilename = actRow.id + '.json.gz';
+                if (bucketFiles.has(bucketFilename)) {
+                    // Además, si streams_path era NULL pero el archivo SÍ existe,
+                    // aprovechamos para escribirlo (self-heal de inconsistencia).
+                    if (!actRow.streams_path) {
+                        var _hackPath = uid + '/' + bucketFilename;
+                        var _updRes = await sb.from('activities')
+                            .update({ streams_path: _hackPath })
+                            .eq('id', actRow.id)
+                            .eq('user_id', uid);
+                        if (_updRes && !_updRes.error) {
+                            console.log('[MR][p147 repair] self-heal streams_path para ' + actRow.id.slice(0,8) + '… (archivo YA estaba en bucket)');
+                        }
+                    }
                     stats.skipped++;
                     continue;
                 }
 
-                // Necesita reparar
-                _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (activity ' + p.consumed_mr_activity_id.slice(0,8) + '…)');
+                // Necesita reparar: el archivo NO existe en bucket
+                _setStep('Reparando ' + (i+1) + '/' + pendings.length + ' (activity ' + actRow.id.slice(0,8) + '…)');
 
                 // Re-mapear payload → bridge
                 var bridge = null;
@@ -21470,11 +21542,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
                     }
                 } catch (e) {
-                    console.warn('[MR][p146 repair] bridge exception pending=' + p.id + ':', e);
+                    console.warn('[MR][p147 repair] bridge exception pending=' + p.id + ':', e);
                 }
                 if (!bridge) {
                     stats.skippedNoBridge++;
-                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'bridge-failed' });
+                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-failed' });
+                    continue;
+                }
+                // Verificar que el bridge tenga streams no vacíos (si no, el
+                // streams_payload del webhook está vacío y no hay nada que subir).
+                var _bridgeStreamLen = (bridge.hrSeries || []).length + (bridge.distSer || []).length;
+                if (_bridgeStreamLen === 0) {
+                    stats.skippedNoBridge++;
+                    stats.errors.push({ activityId: actRow.id, reason: 'bridge-empty-streams', pendingId: p.id });
+                    console.warn('[MR][p147 repair] pending id=' + p.id + ' tiene streams_payload vacío/inválido (no hay datos que recuperar)');
                     continue;
                 }
 
@@ -21493,25 +21574,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     csvBlocks:   bridge.csvBlocks || []
                 };
 
-                var streamsPath = await _uploadManualStreams(sb, uid, p.consumed_mr_activity_id, actForUpload);
+                var streamsPath = await _uploadManualStreams(sb, uid, actRow.id, actForUpload);
                 if (!streamsPath) {
                     stats.failed++;
-                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'upload-failed' });
+                    stats.errors.push({ activityId: actRow.id, reason: 'upload-failed' });
                     continue;
                 }
                 // UPDATE streams_path en activities
                 var updRes = await sb.from('activities')
                     .update({ streams_path: streamsPath })
-                    .eq('id', p.consumed_mr_activity_id)
+                    .eq('id', actRow.id)
                     .eq('user_id', uid);
                 if (updRes && updRes.error) {
-                    console.warn('[MR][p146 repair] UPDATE streams_path error:', updRes.error);
+                    console.warn('[MR][p147 repair] UPDATE streams_path error:', updRes.error);
                     stats.failed++;
-                    stats.errors.push({ activityId: p.consumed_mr_activity_id, reason: 'update-streams-path-failed', msg: updRes.error.message });
+                    stats.errors.push({ activityId: actRow.id, reason: 'update-streams-path-failed', msg: updRes.error.message });
                     continue;
                 }
+                // [v2.30.1-p147] Si la pending no tenía consumed_at, marcarla ahora
+                // (recuperamos las que fallaron con el bug pre-p147).
+                if (!p.consumed_mr_activity_id) {
+                    try {
+                        await sb.from('strava_pending_imports')
+                            .update({ consumed_at: new Date().toISOString(), consumed_mr_activity_id: actRow.id })
+                            .eq('id', p.id)
+                            .is('consumed_at', null);
+                    } catch(_){}
+                }
+                // Añadir al set en memoria por si se procesa otra pending del mismo activityId
+                bucketFiles.add(bucketFilename);
                 stats.repaired++;
-                console.log('[MR][p146 repair] ✓ activity=' + p.consumed_mr_activity_id.slice(0,8) + '… reparada (streams_path=' + streamsPath.slice(-30) + ')');
+                console.log('[MR][p147 repair] ✓ activity=' + actRow.id.slice(0,8) + '… reparada (streams_path=' + streamsPath.slice(-30) + ')');
             }
 
             _setPct(100);
@@ -30416,6 +30509,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             console.log('[MR][6.1] upsert OK activityId=' + activityId);
 
             // Step 2: streams (no bloqueante, mejor esfuerzo)
+            // [v2.30.1-p147] Trackear resultado para devolverlo al caller.
+            var streamsUploaded = false;
+            var streamsPathUploaded = null;
             try {
                 var streamsPath = await _uploadManualStreams(sb, uid, activityId, act);
                 if (streamsPath) {
@@ -30427,6 +30523,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         console.warn('[MR][6.1] update streams_path error:', updRes.error);
                     } else {
                         console.log('[MR][6.1] streams OK path=' + streamsPath);
+                        streamsUploaded = true;
+                        streamsPathUploaded = streamsPath;
                     }
                 }
             } catch(e) {
@@ -30434,15 +30532,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
 
             // Step 3: foto (si la hay, no bloqueante)
+            // [v2.30.1-p147] Trackear resultado.
+            var photoUploaded = null; // null=no había foto, true=subida, false=intentado y falló
             if (act.photoB64) {
                 try {
-                    await _uploadManualPhoto(sb, uid, activityId, act.photoB64);
+                    var photoPath = await _uploadManualPhoto(sb, uid, activityId, act.photoB64);
+                    photoUploaded = !!photoPath;
                 } catch(e) {
                     console.warn('[MR][6.1] photo exception:', e);
+                    photoUploaded = false;
                 }
             }
 
-            return { ok: true, activityId: activityId, error: null };
+            return {
+                ok: true,
+                activityId: activityId,
+                error: null,
+                // [v2.30.1-p147] Info clave para el consumer webhook Strava:
+                // NO marcar la pending como consumed si streams fallaron. Así
+                // el próximo tap del botón STRAVA (o el auto-repair al arrancar)
+                // podrá reintentar limpio sin duplicar la activity (upsert es
+                // idempotente por (user_id, source, external_id)).
+                streamsUploaded:     streamsUploaded,
+                streamsPath:         streamsPathUploaded,
+                photoUploaded:       photoUploaded,
+                hadStreamsToUpload:  (Array.isArray(act.hrSeries) && act.hrSeries.length > 0)
+                                  || (Array.isArray(act.distSer)  && act.distSer.length  > 0)
+            };
         } catch(e) {
             console.warn('[MR][6.1] _saveManualActivityToSupabase exception:', e);
             return { ok: false, activityId: null, error: String(e && e.message || e) };
@@ -31385,8 +31501,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //   - El upsert no debe bloquear UI ni PRs (que leen BD existente)
             //   - Si falla red, la activity ya está en IDB local (resiliencia)
             //   - El upload incluye weather.condition (necesitamos weather resuelto)
+            // [v2.30.1-p147] Capturamos el resultado para pasar streamsUploaded
+            // al hook post-save del webhook Strava (así no marcamos pending
+            // como consumed si los streams no llegaron al bucket).
+            var _saveResult = null;
             try {
-                await _saveManualActivityToSupabase(act);
+                _saveResult = await _saveManualActivityToSupabase(act);
             } catch(e) {
                 console.warn('[MR][6.1] _saveManualActivityToSupabase falló (no bloqueante):', e);
             }
@@ -31413,15 +31533,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [Strava integration #6 · Paso 6.2] Si esta activity vino de la
             // cola auto-import (consumingFromQueue activo), marcar consumed_at
             // en strava_pending_imports y encadenar con la siguiente pending.
-            // Si el upsert a Supabase falló (no hay act._dbActivityId), igual
-            // se llama con null y la pending se marca consumed con UUID NULL
-            // (acta de que se procesó, aunque la activity sólo viva en IDB).
+            // [v2.30.1-p147] Ahora pasamos también el flag streamsUploaded.
+            // Si los streams fallaron al bucket, NO marcamos consumed → la
+            // pending sobrevive para el próximo retry manual/auto y no
+            // perdemos los datos del webhook.
             try {
                 if (act.filesLoaded === 'strava'
                     && window._stravaPendingState
                     && window._stravaPendingState.consumingFromQueue
                     && typeof window._stravaOnAutoImportSaved === 'function') {
-                    await window._stravaOnAutoImportSaved(act._dbActivityId || null);
+                    var _streamsOk = _saveResult && _saveResult.ok
+                                   && (_saveResult.streamsUploaded === true
+                                       || _saveResult.hadStreamsToUpload === false);
+                    await window._stravaOnAutoImportSaved(act._dbActivityId || null, _streamsOk);
                 }
             } catch(e) {
                 console.warn('[MR][Strava] auto-import post-save (no bloqueante):', e);
@@ -48374,12 +48498,179 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 return [];
             }
             var rows = (qRes && qRes.data) ? qRes.data : [];
+            // [v2.30.1-p147] Dispara auto-repair silencioso en background.
+            // No bloquea la carga. Solo si detecta activities sin streams_path
+            // que puedan tener pending payload en strava_pending_imports.
+            // Rate-limited a 1 vez por sesión (flag en window).
+            try {
+                if (!window._mrAutoRepairDone) {
+                    window._mrAutoRepairDone = true;
+                    var _nullStreams = rows.filter(function(r){
+                        return !r.streams_path
+                            && (r.source === 'strava_auto' || r.source === 'strava' || r.source === null);
+                    });
+                    if (_nullStreams.length > 0) {
+                        console.log('[MR][p147 auto-repair] detectadas ' + _nullStreams.length + ' activities sin streams_path · disparando reparación silenciosa en background…');
+                        setTimeout(function(){
+                            if (typeof window._mrAutoRepairStravaStreamsSilent === 'function') {
+                                window._mrAutoRepairStravaStreamsSilent();
+                            }
+                        }, 3000); // 3s tras arranque para no competir con la primera pintada
+                    }
+                }
+            } catch(_){}
             return rows.map(_mapDbRowToAct);
         } catch(e) {
             console.warn('[MR][FASE 5.2] loadActivitiesFromSupabase exception:', e);
             return [];
         }
     }
+
+    // ──────────────────────────────────────────────────────────────────
+    // [v2.30.1-p147] AUTO-REPAIR SILENCIOSO STREAMS STRAVA WEBHOOK
+    // ──────────────────────────────────────────────────────────────────
+    // Versión silenciosa del reparador manual (sin overlay, sin toast,
+    // sin confirmación). Se dispara automáticamente en background al
+    // arrancar la app si detecta activities Strava sin streams_path.
+    // Rate-limited: 1 vez por sesión + max 30 pendings procesadas por
+    // ejecución (para no bloquear en users con historial gigante).
+    //
+    // Al terminar, si reparó ≥1, muestra toast discreto info y refresca
+    // widgets Home.
+    // ──────────────────────────────────────────────────────────────────
+    async function _mrAutoRepairStravaStreamsSilent() {
+        try {
+            var sb = window._sbClient;
+            if (!sb) return;
+            var sr = await sb.auth.getSession();
+            var uid = sr && sr.data && sr.data.session
+                    && sr.data.session.user && sr.data.session.user.id;
+            if (!uid) return;
+
+            // Leer pendings del user
+            var pendResp = await sb.from('strava_pending_imports')
+                .select('id, strava_activity_id, activity_payload, streams_payload, consumed_mr_activity_id')
+                .eq('user_id', uid)
+                .order('created_at', { ascending: false })
+                .limit(50); // batch máx 50 candidatos
+            if (pendResp.error || !pendResp.data || pendResp.data.length === 0) return;
+            var pendings = pendResp.data;
+
+            // Listar bucket
+            var bucketFiles = new Set();
+            var _offset = 0, _safety = 0;
+            while (_safety++ < 10) {
+                var listResp = await sb.storage.from('activity-streams')
+                    .list(uid, { limit: 1000, offset: _offset });
+                if (listResp.error) break;
+                var items = listResp.data || [];
+                items.forEach(function(f){ if (f && f.name) bucketFiles.add(f.name); });
+                if (items.length < 1000) break;
+                _offset += 1000;
+            }
+
+            // Cargar activities candidatas (por id o external_id)
+            var actIdsA = pendings.map(function(p){ return p.consumed_mr_activity_id; }).filter(Boolean);
+            var externalIdsB = pendings
+                .filter(function(p){ return !p.consumed_mr_activity_id && p.strava_activity_id; })
+                .map(function(p){ return 'strava:' + p.strava_activity_id; });
+            var actRows = [];
+            if (actIdsA.length > 0) {
+                var qA = await sb.from('activities')
+                    .select('id, external_id, streams_path')
+                    .in('id', actIdsA).eq('user_id', uid);
+                if (!qA.error && qA.data) actRows = actRows.concat(qA.data);
+            }
+            if (externalIdsB.length > 0) {
+                var qB = await sb.from('activities')
+                    .select('id, external_id, streams_path')
+                    .in('external_id', externalIdsB).eq('user_id', uid);
+                if (!qB.error && qB.data) actRows = actRows.concat(qB.data);
+            }
+            var actMapById = {}, actMapByExt = {};
+            actRows.forEach(function(r){
+                actMapById[r.id] = r;
+                if (r.external_id) actMapByExt[r.external_id] = r;
+            });
+
+            var repaired = 0, failed = 0, processed = 0;
+            var MAX_PROCESS = 30;
+            for (var i = 0; i < pendings.length && processed < MAX_PROCESS; i++) {
+                var p = pendings[i];
+                var actRow = null;
+                if (p.consumed_mr_activity_id) actRow = actMapById[p.consumed_mr_activity_id];
+                if (!actRow && p.strava_activity_id) actRow = actMapByExt['strava:' + p.strava_activity_id];
+                if (!actRow) continue;
+                if (bucketFiles.has(actRow.id + '.json.gz')) {
+                    // Ya OK — self-heal streams_path si es NULL
+                    if (!actRow.streams_path) {
+                        try {
+                            await sb.from('activities')
+                                .update({ streams_path: uid + '/' + actRow.id + '.json.gz' })
+                                .eq('id', actRow.id).eq('user_id', uid);
+                        } catch(_){}
+                    }
+                    continue;
+                }
+                processed++;
+                var bridge = null;
+                try {
+                    if (typeof window._stravaToPendingFitData === 'function') {
+                        bridge = await window._stravaToPendingFitData(p.activity_payload, p.streams_payload);
+                    }
+                } catch(_){}
+                if (!bridge) continue;
+                var _len = (bridge.hrSeries || []).length + (bridge.distSer || []).length;
+                if (_len === 0) continue;
+
+                var actForUpload = {
+                    hrSeries: bridge.hrSeries || [], cadSeries: bridge.cadSeries || [],
+                    eleSeries: bridge.eleSeries || [], distSer: bridge.distSer || [],
+                    laps: bridge.laps || [], distKm: bridge.distKm, durationSec: bridge.durationSec,
+                    avgHr: bridge.avgHr, maxHr: bridge.maxHr, ascentM: bridge.ascentM,
+                    csvBlocks: bridge.csvBlocks || []
+                };
+                var streamsPath = await _uploadManualStreams(sb, uid, actRow.id, actForUpload);
+                if (!streamsPath) { failed++; continue; }
+                var updRes = await sb.from('activities')
+                    .update({ streams_path: streamsPath })
+                    .eq('id', actRow.id).eq('user_id', uid);
+                if (updRes && updRes.error) { failed++; continue; }
+                if (!p.consumed_mr_activity_id) {
+                    try {
+                        await sb.from('strava_pending_imports')
+                            .update({ consumed_at: new Date().toISOString(), consumed_mr_activity_id: actRow.id })
+                            .eq('id', p.id).is('consumed_at', null);
+                    } catch(_){}
+                }
+                bucketFiles.add(actRow.id + '.json.gz');
+                repaired++;
+            }
+
+            if (repaired > 0) {
+                console.log('[MR][p147 auto-repair] ✓ ' + repaired + ' streams reparados en background (failed=' + failed + ')');
+                // Limpiar cache in-memory para que próxima apertura descargue fresh
+                try {
+                    if (typeof _streamsCache === 'object' && _streamsCache) {
+                        Object.keys(_streamsCache).forEach(function(k){ delete _streamsCache[k]; });
+                    }
+                } catch(_){}
+                // Toast discreto info
+                if (typeof window.fxToast === 'function') {
+                    window.fxToast('🔧 ' + repaired + ' auto-imports Strava recuperados automáticamente', { variant: 'info', duration: 5000 });
+                }
+                // Repaint widgets Home por si algo cambió
+                try {
+                    if (typeof window._mrRepaintHomeAfterActivityChange === 'function') {
+                        window._mrRepaintHomeAfterActivityChange();
+                    }
+                } catch(_){}
+            }
+        } catch(e) {
+            console.warn('[MR][p147 auto-repair] excepción:', e);
+        }
+    }
+    window._mrAutoRepairStravaStreamsSilent = _mrAutoRepairStravaStreamsSilent;
 
     // ══════════════════════════════════════════════════════════════
     // FASE 5.4.2 — Refresh activities[] desde BD + re-render
@@ -65529,37 +65820,53 @@ window._handleStravaReturn = _handleStravaReturn;
     // en BD, avanza counter local, refresca badge y encadena con la
     // siguiente pending (defer 350ms para no pisar la animación del sheet).
     // Si era la última, toast premium con count total de la sesión.
-    async function _stravaOnAutoImportSaved(activityUuid) {
+    async function _stravaOnAutoImportSaved(activityUuid, streamsOk) {
         var state = _stravaPendingState.consumingFromQueue;
         if (!state) return; // No estábamos en cola → no-op silencioso
         var pendingId = state.pendingId;
 
+        // [v2.30.1-p147] streamsOk === undefined → compat con callers viejos
+        // (asumimos true para mantener comportamiento anterior). Solo si el
+        // caller pasa explícitamente false, saltamos el markConsumed.
+        var _skipConsume = (streamsOk === false);
+
         // 1. Marcar consumed en BD (RLS policy: WHERE consumed_at IS NULL
         // + column-level GRANT sólo en consumed_at y consumed_mr_activity_id).
-        try {
-            var sb = window._sbClient;
-            if (sb && pendingId) {
-                var nowIso = new Date().toISOString();
-                var resp = await sb.from('strava_pending_imports')
-                    .update({ consumed_at: nowIso, consumed_mr_activity_id: activityUuid || null })
-                    .eq('id', pendingId)
-                    .is('consumed_at', null); // belt-and-suspenders sobre la policy
-                if (resp.error) {
-                    console.warn('[MR][Strava] markConsumed error pending=' + pendingId + ':', resp.error.message);
-                    // No abortamos: la pending queda como zombie en BD hasta
-                    // que el siguiente _stravaCheckPending la rescate (vuelve
-                    // a aparecer en pendings[]). Es comportamiento aceptable
-                    // (idempotente; el usuario verá un duplicado en próxima
-                    // sesión y _findDuplicateActivity la pillará).
-                } else {
-                    console.log('[MR][Strava] pending id=' + pendingId + ' consumed (activity=' + (activityUuid || 'NULL') + ')');
+        // [v2.30.1-p147] Si streamsOk===false, saltar este paso. La pending
+        // sobrevive con consumed_at=NULL → el próximo tap del botón STRAVA
+        // (o el auto-repair al arrancar) volverá a procesarla limpio. El
+        // upsert en activities es idempotente por (user_id, source, external_id).
+        if (_skipConsume) {
+            console.warn('[MR][p147] pending id=' + pendingId + ' NO marcada consumed porque streams no subieron. Queda para retry.');
+        } else {
+            try {
+                var sb = window._sbClient;
+                if (sb && pendingId) {
+                    var nowIso = new Date().toISOString();
+                    var resp = await sb.from('strava_pending_imports')
+                        .update({ consumed_at: nowIso, consumed_mr_activity_id: activityUuid || null })
+                        .eq('id', pendingId)
+                        .is('consumed_at', null); // belt-and-suspenders sobre la policy
+                    if (resp.error) {
+                        console.warn('[MR][Strava] markConsumed error pending=' + pendingId + ':', resp.error.message);
+                        // No abortamos: la pending queda como zombie en BD hasta
+                        // que el siguiente _stravaCheckPending la rescate (vuelve
+                        // a aparecer en pendings[]). Es comportamiento aceptable
+                        // (idempotente; el usuario verá un duplicado en próxima
+                        // sesión y _findDuplicateActivity la pillará).
+                    } else {
+                        console.log('[MR][Strava] pending id=' + pendingId + ' consumed (activity=' + (activityUuid || 'NULL') + ')');
+                    }
                 }
+            } catch (e) {
+                console.warn('[MR][Strava] markConsumed exception:', e);
             }
-        } catch (e) {
-            console.warn('[MR][Strava] markConsumed exception:', e);
         }
 
         // 2. Avanzar counter + sacar del array local + refrescar badge
+        // [v2.30.1-p147] Si NO se marcó consumed, igual sacamos del array
+        // local para no bloquear la cola en la sesión actual. El auto-repair
+        // la recuperará después (o el próximo tap manual).
         state.processedCount = (state.processedCount || 0) + 1;
         if (_stravaPendingState.pendings.length > 0) {
             _stravaPendingState.pendings.shift();
