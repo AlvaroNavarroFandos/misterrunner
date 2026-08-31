@@ -32338,6 +32338,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return { ok: false, errors: errors };
         }
     }
+    // v2.30.1-p121 · Exponer para el bloque COROS backfill (Fix 1 dedup).
+    // Necesita cross-scope para el pre-DELETE de fila hermana antes del
+    // INSERT COROS bulk cuando ya existe una activity Strava/manual del
+    // mismo día+dist+duration.
+    window._deleteActivityFromSupabase = _deleteActivityFromSupabase;
 
     // ─────────────────────────────────────────────────────────────────
     // [FASE 6.2 · S20] One-shot DEV — Recalcula TRIMP para todas las
@@ -33107,6 +33112,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } catch(e) {
                 console.warn('[MR][Strava] auto-import post-save (no bloqueante):', e);
+            }
+            // v2.30.1-p121 · Hook post-save COROS review-mode.
+            // Cuando el user importa una activity COROS desde el modal individual
+            // (modo "Revisar antes" del sheet backfill), la fila COROS ya está
+            // insertada. Ahora buscamos hermana no-coros del mismo día+dist+dur
+            // y la borramos (Q2-A). Los campos subjetivos (shoe/rpe/outfit) que
+            // el user rellenó en el modal se preservan porque ya están en la
+            // fila COROS nueva. Silencioso, no bloqueante.
+            try {
+                if (act.filesLoaded === 'coros'
+                    && act._dbActivityId
+                    && typeof window._corosBFPostDedup === 'function') {
+                    await window._corosBFPostDedup(act.dateStr, act.distKm, act.durationSec, act._dbActivityId);
+                }
+            } catch(e) {
+                console.warn('[MR][CBF] post-dedup review (no bloqueante):', e);
             }
             // [v4.0 GAP 4] RPE post-save universal: si la activity se guardó
             // sin RPE (Strava auto, Strava bulk, o import manual FIT/TCX/GPX),
@@ -68097,7 +68118,13 @@ window._handleStravaReturn = _handleStravaReturn;
                 var pfd = detailResp.body && detailResp.body.pendingFitData;
                 if (!pfd || typeof pfd !== 'object') throw new Error('detail_no_pending');
 
-                var act = _corosBFBuildActFromPending(pfd);
+                // v2.30.1-p121 Fix 1 · Pre-dedup con hermana existente en BD.
+                // Si hay activity Strava/manual del mismo día+dist+duración,
+                // borrarla y copiar sus campos subjetivos (shoe/rpe/outfit/notes)
+                // a la nueva COROS bulk. Q1-B.
+                var dedupInfo = await _corosBFPreDedup(pfd);
+
+                var act = _corosBFBuildActFromPending(pfd, dedupInfo.preservedFields);
 
                 if (typeof window._saveManualActivityToSupabase !== 'function') {
                     throw new Error('_saveManualActivityToSupabase_missing');
@@ -68238,7 +68265,10 @@ window._handleStravaReturn = _handleStravaReturn;
     // ─────────────────────────────────────────────────────────────
     // BUILDER · pendingFitData → act formato memoria MR
     // ─────────────────────────────────────────────────────────────
-    function _corosBFBuildActFromPending(pfd) {
+    function _corosBFBuildActFromPending(pfd, preservedFields) {
+        // v2.30.1-p121 · preservedFields (opcional) viene del pre-dedup y sobrescribe
+        // los defaults con lo que el user tenía en la fila Strava/manual borrada.
+        var pf = preservedFields || {};
         return {
             id: Date.now() + Math.floor(Math.random() * 1000),
             distKm:      pfd.distKm,
@@ -68271,13 +68301,22 @@ window._handleStravaReturn = _handleStravaReturn;
             trainingEffect:  pfd.trainingEffect,
             vo2maxSuunto:    pfd.vo2maxSuunto,
             recoveryTimeMin: pfd.recoveryTimeMin || null,
-            // Defaults bulk silent
+            // Defaults bulk silent (sobrescribibles por preservedFields del pre-dedup)
             type:      pfd._mrSuggestedType || 'easy',
-            shoeId:    null,
-            shoeName:  null,
-            shoeColor: '',
-            name:      pfd.activityName || null,
-            raceName:  null,
+            shoeId:    pf.shoe_id            || null,
+            shoeName:  pf.shoes_name         || null,
+            shoeColor: pf.shoe_color_hex     || '',
+            // Preferir name custom del user > name de COROS (activityName)
+            name:      pf.name_custom        || pfd.activityName || null,
+            raceName:  pf.race_name          || null,
+            // Preservar contexto subjetivo (RPE + outfit + weather) si venían del user
+            rpe:                (pf.rpe != null ? pf.rpe : null),
+            rpe_context:        pf.rpe_context        || null,
+            outfit:             (pf.outfit ? (function(){
+                                    try { return typeof pf.outfit === 'string' ? JSON.parse(pf.outfit) : pf.outfit; }
+                                    catch(_) { return null; }
+                                })() : null),
+            weather: pf.weather_condition ? { condition: pf.weather_condition } : null,
             // Extra COROS (van a la fila BD como balance_left)
             balanceL: pfd.balanceL || '',
         };
@@ -68333,6 +68372,153 @@ window._handleStravaReturn = _handleStravaReturn;
     }
 
     // ─────────────────────────────────────────────────────────────
+    // PRE-DEDUP · Al importar una COROS bulk, buscar hermana existente
+    // en Supabase (mismo dateStr + distKm ±0.2 + durationSec ±90) y
+    // borrarla ANTES del INSERT COROS. Copia campos "subjetivos" del
+    // usuario (shoe, rpe, outfit, notes, name custom) para preservarlos
+    // en la nueva COROS. Q1-B · Q2-A.
+    //
+    // Retorna { preservedFields: {}, deletedActivityId: uuid|null }.
+    // Si no hay hermana → { preservedFields: {}, deletedActivityId: null }.
+    // Si falla la búsqueda o el DELETE → sigue adelante sin dedup (no bloqueante).
+    // ─────────────────────────────────────────────────────────────
+    async function _corosBFPreDedup(pfd) {
+        var out = { preservedFields: {}, deletedActivityId: null };
+        try {
+            if (!pfd || !pfd.dateStr || !pfd.distKm || !pfd.durationSec) return out;
+            var sb = window._sbClient;
+            if (!sb) return out;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session
+                     && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return out;
+
+            var minKm  = pfd.distKm - 0.2, maxKm  = pfd.distKm + 0.2;
+            var minSec = pfd.durationSec - 90, maxSec = pfd.durationSec + 90;
+
+            var res = await sb.from('activities')
+                .select('id, source, shoe_id, shoes_name, shoe_color_hex, rpe, rpe_context, outfit, weather_condition, race_name, name, streams_path')
+                .eq('user_id', uid)
+                .eq('date_str', pfd.dateStr)
+                .gte('dist_km', minKm).lte('dist_km', maxKm)
+                .gte('duration_sec', minSec).lte('duration_sec', maxSec)
+                .neq('source', 'coros_bulk');
+
+            if (res.error) {
+                console.warn('[MR][CBF] dedup select err:', res.error);
+                return out;
+            }
+            var rows = Array.isArray(res.data) ? res.data : [];
+            if (rows.length === 0) return out;
+
+            // Si hay varios matches (raro), preferir el de source Strava (webhook o bulk)
+            // porque suele ser el que trae más contexto útil. Fallback a la primera.
+            var target = rows.find(function(r){ return /strava/i.test(r.source || ''); }) || rows[0];
+
+            // Copiar campos subjetivos que el user haya rellenado
+            out.preservedFields = {
+                shoe_id:            target.shoe_id            || null,
+                shoes_name:         target.shoes_name         || null,
+                shoe_color_hex:     target.shoe_color_hex     || null,
+                rpe:                target.rpe                != null ? target.rpe : null,
+                rpe_context:        target.rpe_context        || null,
+                outfit:             target.outfit             || null,
+                weather_condition:  target.weather_condition  || null,
+                race_name:          target.race_name          || null,
+                name_custom:        target.name               || null,
+            };
+            out.deletedActivityId = target.id;
+
+            // Borrar limpio (photos bucket + streams bucket + fila BD)
+            // Pasamos una act mínima con lo que _deleteActivityFromSupabase necesita
+            if (typeof window._deleteActivityFromSupabase === 'function') {
+                var delRes = await window._deleteActivityFromSupabase({
+                    _dbActivityId: target.id,
+                    streams_path: target.streams_path || null,
+                });
+                if (delRes && delRes.ok) {
+                    console.log('[MR][CBF] pre-dedup: deleted hermana id=' + target.id + ' (source=' + target.source + ')');
+                } else {
+                    console.warn('[MR][CBF] pre-dedup: delete failed', delRes);
+                    // Fallback: DELETE directo por id (menos limpio pero funcional)
+                    try {
+                        await sb.from('activities').delete().eq('id', target.id);
+                        console.log('[MR][CBF] pre-dedup: fallback direct delete id=' + target.id);
+                    } catch(eD) { console.warn('[MR][CBF] fallback delete err:', eD); }
+                }
+            }
+            // Refrescar Biblioteca local para que la fila borrada desaparezca del render
+            // (best-effort, la nueva COROS se meterá seguidamente y también refresh).
+            return out;
+        } catch(e) {
+            console.warn('[MR][CBF] _corosBFPreDedup exception:', e);
+            return out;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // POST-DEDUP · Modo review: llamada tras save del modal COROS.
+    // Busca hermana no-coros del mismo día+dist+dur y la borra.
+    // Diferente de _corosBFPreDedup: aquí ya tenemos activity COROS creada
+    // (myActivityId), así que la excluimos del search. Q2-A.
+    // ─────────────────────────────────────────────────────────────
+    async function _corosBFPostDedup(dateStr, distKm, durationSec, myActivityId) {
+        try {
+            if (!dateStr || !distKm || !durationSec) return;
+            var sb = window._sbClient;
+            if (!sb) return;
+            var sess = await sb.auth.getSession();
+            var uid = sess && sess.data && sess.data.session
+                     && sess.data.session.user && sess.data.session.user.id;
+            if (!uid) return;
+
+            var minKm  = distKm - 0.2, maxKm  = distKm + 0.2;
+            var minSec = durationSec - 90, maxSec = durationSec + 90;
+
+            var q = sb.from('activities')
+                .select('id, source, streams_path')
+                .eq('user_id', uid)
+                .eq('date_str', dateStr)
+                .gte('dist_km', minKm).lte('dist_km', maxKm)
+                .gte('duration_sec', minSec).lte('duration_sec', maxSec)
+                .neq('source', 'coros_bulk');
+            if (myActivityId) q = q.neq('id', myActivityId);
+            var res = await q;
+            if (res.error) { console.warn('[MR][CBF] postDedup select err:', res.error); return; }
+            var rows = Array.isArray(res.data) ? res.data : [];
+            if (rows.length === 0) return;
+
+            console.log('[MR][CBF] postDedup: found ' + rows.length + ' hermanas para borrar (dateStr=' + dateStr + ')');
+
+            for (var i = 0; i < rows.length; i++) {
+                var target = rows[i];
+                try {
+                    if (typeof window._deleteActivityFromSupabase === 'function') {
+                        await window._deleteActivityFromSupabase({
+                            _dbActivityId: target.id,
+                            streams_path: target.streams_path || null,
+                        });
+                    } else {
+                        await sb.from('activities').delete().eq('id', target.id);
+                    }
+                    console.log('[MR][CBF] postDedup: deleted id=' + target.id + ' source=' + target.source);
+                } catch(eD) {
+                    console.warn('[MR][CBF] postDedup delete err:', eD);
+                }
+            }
+            // Refrescar Biblioteca para que las borradas desaparezcan del render
+            try {
+                if (window._MR_StravaImport
+                    && typeof window._MR_StravaImport.refreshActivities === 'function') {
+                    await window._MR_StravaImport.refreshActivities();
+                }
+            } catch(eR) { console.warn('[MR][CBF] postDedup refresh err:', eR); }
+        } catch(e) {
+            console.warn('[MR][CBF] _corosBFPostDedup exception:', e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // EXPOSE API pública (invocada desde HTML onclick)
     // ─────────────────────────────────────────────────────────────
     window.openCorosBackfill     = openCorosBackfill;
@@ -68341,6 +68527,7 @@ window._handleStravaReturn = _handleStravaReturn;
     window._corosBFToggleSelect  = _corosBFToggleSelect;
     window._corosBFToggleReview  = _corosBFToggleReview;
     window._corosBFDoImport      = _corosBFDoImport;
+    window._corosBFPostDedup     = _corosBFPostDedup;
 
     console.log('[MR][CBF] COROS Backfill v2.30.1-p120 ready');
 
