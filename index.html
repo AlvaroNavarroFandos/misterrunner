@@ -21394,7 +21394,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             bucketFileMissing: 0,
             bucketFileEmptyStreams: 0,
             payloadEmptyStreams: 0,
-            regeneratedFromEmptyFile: 0
+            regeneratedFromEmptyFile: 0,
+            // [v2.30.1-p149] Polylines restauradas (activities outdoor que aparecían como indoor)
+            polylinesRepaired: 0
         };
 
         try {
@@ -21482,7 +21484,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             for (var _ci = 0; _ci < actIdsA.length; _ci += _chunkSz) {
                 var _chunk = actIdsA.slice(_ci, _ci + _chunkSz);
                 var actResp = await sb.from('activities')
-                    .select('id, external_id, streams_path, start_date, dist_km, duration_sec, source')
+                    .select('id, external_id, streams_path, polyline_encoded, start_date, dist_km, duration_sec, source')
                     .in('id', _chunk)
                     .eq('user_id', uid);
                 if (actResp.error) {
@@ -21499,7 +21501,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var pendingsNoLink = pendings.filter(function(p){ return !p.consumed_mr_activity_id; });
             if (pendingsNoLink.length > 0) {
                 var stravaActsResp = await sb.from('activities')
-                    .select('id, external_id, streams_path, start_date, dist_km, duration_sec, source')
+                    .select('id, external_id, streams_path, polyline_encoded, start_date, dist_km, duration_sec, source')
                     .eq('user_id', uid)
                     .in('source', ['strava_auto', 'strava', 'manual']);
                 if (!stravaActsResp.error && stravaActsResp.data) {
@@ -21644,6 +21646,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     .eq('id', actRow.id).eq('user_id', uid);
                             } catch(_){}
                         }
+                        // [v2.30.1-p149] Aunque los streams ya estén OK, la polyline
+                        // puede estar NULL. Chequear y reparar si el payload la tiene.
+                        try {
+                            if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                                var polyS = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
+                                if (polyS && typeof polyS === 'string' && polyS.length > 5) {
+                                    var polyResS = await sb.from('activities')
+                                        .update({ polyline_encoded: polyS })
+                                        .eq('id', actRow.id).eq('user_id', uid);
+                                    if (polyResS && !polyResS.error) {
+                                        if (!stats.polylinesRepaired) stats.polylinesRepaired = 0;
+                                        stats.polylinesRepaired++;
+                                        console.log('[MR][p149] polyline restaurada (skip path) para ' + actRow.id.slice(0,8) + '…');
+                                    }
+                                }
+                            }
+                        } catch(_){}
                         stats.skipped++;
                         continue;
                     }
@@ -21709,6 +21728,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var _spHrLen = (sp && sp.heartrate && Array.isArray(sp.heartrate.data)) ? sp.heartrate.data.length : 0;
                 var _spDistLen = (sp && sp.distance && Array.isArray(sp.distance.data)) ? sp.distance.data.length : 0;
                 console.log('[MR][p148 repair] ✓ activity=' + actRow.id.slice(0,8) + '… reparada (reason=' + (repairReason||'file-missing') + ', time=' + _spTimeLen + ', hr=' + _spHrLen + ', dist=' + _spDistLen + ')');
+
+                // [v2.30.1-p149] REPARAR polyline_encoded si está NULL.
+                // Bug: activities outdoor que vinieron del webhook sin latlng en
+                // streams se guardaron con polyline_encoded=NULL → app las marca
+                // como INDOOR visualmente. El activity_payload SÍ tiene map.polyline
+                // o map.summary_polyline en la mayoría de casos.
+                try {
+                    if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                        var poly = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
+                        if (poly && typeof poly === 'string' && poly.length > 5) {
+                            var polyRes = await sb.from('activities')
+                                .update({ polyline_encoded: poly })
+                                .eq('id', actRow.id)
+                                .eq('user_id', uid);
+                            if (polyRes && !polyRes.error) {
+                                if (!stats.polylinesRepaired) stats.polylinesRepaired = 0;
+                                stats.polylinesRepaired++;
+                                console.log('[MR][p149] polyline restaurada para ' + actRow.id.slice(0,8) + '… (era NULL, ahora ' + poly.length + ' chars)');
+                                actRow.polyline_encoded = poly; // cache para no reprocesar
+                            }
+                        }
+                    }
+                } catch(_){}
             }
 
             _setPct(100);
@@ -21732,6 +21774,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var linesArr = [];
             if (stats.repaired > 0) linesArr.push('✅ ' + stats.repaired + ' recuperadas');
             if (stats.regeneratedFromEmptyFile > 0) linesArr.push('  · ' + stats.regeneratedFromEmptyFile + ' desde archivo vacío');
+            if (stats.polylinesRepaired > 0) linesArr.push('🗺️ ' + stats.polylinesRepaired + ' rutas GPS restauradas (indoor→outdoor)');
             if (stats.skipped > 0) linesArr.push('🟢 ' + stats.skipped + ' ya OK (con datos)');
             if (stats.skippedNoActivity > 0) linesArr.push('⚠️ ' + stats.skippedNoActivity + ' pending sin match a activity');
             if (stats.payloadEmptyStreams > 0) linesArr.push('🚫 ' + stats.payloadEmptyStreams + ' con payload webhook vacío (no recuperables)');
@@ -21741,7 +21784,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             var summaryMsg = linesArr.join('\n');
             var variant = 'info';
-            if (stats.repaired > 0) variant = 'success';
+            if (stats.repaired > 0 || stats.polylinesRepaired > 0) variant = 'success';
             else if (stats.failed > 0 || stats.bucketFileMissing > 0) variant = 'warning';
             else if (stats.skipped === stats.pendingsTotal) variant = 'info';
 
@@ -48855,13 +48898,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var actRows = [];
             if (actIdsA.length > 0) {
                 var qA = await sb.from('activities')
-                    .select('id, external_id, streams_path')
+                    .select('id, external_id, streams_path, polyline_encoded')
                     .in('id', actIdsA).eq('user_id', uid);
                 if (!qA.error && qA.data) actRows = actRows.concat(qA.data);
             }
             if (externalIdsB.length > 0) {
                 var qB = await sb.from('activities')
-                    .select('id, external_id, streams_path')
+                    .select('id, external_id, streams_path, polyline_encoded')
                     .in('external_id', externalIdsB).eq('user_id', uid);
                 if (!qB.error && qB.data) actRows = actRows.concat(qB.data);
             }
@@ -48871,7 +48914,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (r.external_id) actMapByExt[r.external_id] = r;
             });
 
-            var repaired = 0, failed = 0, processed = 0;
+            var repaired = 0, failed = 0, processed = 0, polylinesRepaired = 0;
             var MAX_PROCESS = 30;
             // [v2.30.1-p148] Helper: verificar shape del archivo existente en bucket.
             // Reutiliza pako global. Si el archivo tiene shape MR-internal roto o vacío,
@@ -48912,6 +48955,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     .eq('id', actRow.id).eq('user_id', uid);
                             } catch(_){}
                         }
+                        // [v2.30.1-p149] Reparar polyline_encoded si es NULL
+                        try {
+                            if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                                var polySkip = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
+                                if (polySkip && typeof polySkip === 'string' && polySkip.length > 5) {
+                                    await sb.from('activities')
+                                        .update({ polyline_encoded: polySkip })
+                                        .eq('id', actRow.id).eq('user_id', uid);
+                                    polylinesRepaired++;
+                                    actRow.polyline_encoded = polySkip;
+                                }
+                            }
+                        } catch(_){}
                         continue;
                     }
                     // No healthy → cae al bloque de regeneración abajo
@@ -48937,12 +48993,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             .eq('id', p.id).is('consumed_at', null);
                     } catch(_){}
                 }
+                // [v2.30.1-p149] Reparar polyline_encoded si NULL
+                try {
+                    if (!actRow.polyline_encoded && p.activity_payload && p.activity_payload.map) {
+                        var polyA = p.activity_payload.map.polyline || p.activity_payload.map.summary_polyline || null;
+                        if (polyA && typeof polyA === 'string' && polyA.length > 5) {
+                            await sb.from('activities')
+                                .update({ polyline_encoded: polyA })
+                                .eq('id', actRow.id).eq('user_id', uid);
+                            polylinesRepaired++;
+                            actRow.polyline_encoded = polyA;
+                        }
+                    }
+                } catch(_){}
                 bucketFiles.add(actRow.id + '.json.gz');
                 repaired++;
             }
 
-            if (repaired > 0) {
-                console.log('[MR][p147 auto-repair] ✓ ' + repaired + ' streams reparados en background (failed=' + failed + ')');
+            if (repaired > 0 || polylinesRepaired > 0) {
+                console.log('[MR][p149 auto-repair] ✓ streams=' + repaired + ' polylines=' + polylinesRepaired + ' (failed=' + failed + ')');
                 // Limpiar cache in-memory para que próxima apertura descargue fresh
                 try {
                     if (typeof _streamsCache === 'object' && _streamsCache) {
@@ -48951,7 +49020,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } catch(_){}
                 // Toast discreto info
                 if (typeof window.fxToast === 'function') {
-                    window.fxToast('🔧 ' + repaired + ' auto-imports Strava recuperados automáticamente', { variant: 'info', duration: 5000 });
+                    var _msgParts = [];
+                    if (repaired > 0) _msgParts.push(repaired + ' streams');
+                    if (polylinesRepaired > 0) _msgParts.push(polylinesRepaired + ' rutas GPS');
+                    window.fxToast('🔧 ' + _msgParts.join(' + ') + ' recuperados automáticamente', { variant: 'info', duration: 5000 });
                 }
                 // Repaint widgets Home por si algo cambió
                 try {
@@ -65741,6 +65813,30 @@ window._handleStravaReturn = _handleStravaReturn;
                 if (cadence[i] != null)   rec.cadence = cadence[i];
                 if (distance[i] != null)  rec.dist = distance[i];
                 records.push(rec);
+            }
+        }
+        // [v2.30.1-p149] Fallback: si latlng vino vacío pero activity_payload.map.polyline
+        // SÍ tiene ruta codificada, decodificar y añadir records. Sin esto, las webhook
+        // Strava donde streams.latlng.data llega undefined (a veces pasa) se guardaban
+        // como records=[] → polyline_encoded=NULL en BD → app las marca como INDOOR aun
+        // siendo outdoor. Es el bug retroactivo que arregló p149 en el reparador.
+        if (records.length === 0 && activity && activity.map) {
+            var polyStr = activity.map.polyline || activity.map.summary_polyline || null;
+            if (polyStr && typeof polyStr === 'string' && polyStr.length > 5
+                && typeof window._decodePolyline === 'function') {
+                try {
+                    var decoded = window._decodePolyline(polyStr); // devuelve [{lat,lon}]
+                    if (Array.isArray(decoded) && decoded.length > 1) {
+                        decoded.forEach(function(pt) {
+                            if (pt && typeof pt.lat === 'number' && typeof pt.lon === 'number') {
+                                records.push({ lat: pt.lat, lon: pt.lon });
+                            }
+                        });
+                        console.log('[MR][p149 bridge] map.polyline fallback: ' + records.length + ' records decodificados (streams.latlng estaba vacío)');
+                    }
+                } catch(e) {
+                    console.warn('[MR][p149 bridge] error decodificando map.polyline:', e);
+                }
             }
         }
 
