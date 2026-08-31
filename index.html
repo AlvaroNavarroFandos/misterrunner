@@ -34679,14 +34679,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // (streams ya en cache pero photos no), también muestra spinner para no
     // pegar un parpadeo cuando las URLs llegan post-render.
     async function openActivityDetail(act, initialCard) {
-        var isBulkPendingStreams = act && act._source === 'bulk'
-            && act._dbActivityId
+        // v2.30.1-p145 · FIX HIDRATADOR STREAMS/FOTOS
+        // ─────────────────────────────────────────────────────────────
+        // Bug detectado tras reinstalación PWA (31 ago 2026):
+        // - Al borrar historial Safari + reinstalar PWA se pierde el cache local
+        //   (localStorage + IndexedDB) → hrSeries/distSer/cadSeries vacíos en memoria.
+        // - La condición vieja requería `_source === 'bulk'` para re-hidratar del
+        //   bucket. Cualquier actividad con `_source === 'manual-supabase'` o
+        //   futuras fuentes NUNCA re-descargaba streams aunque estuviesen en el
+        //   bucket `activity-streams` → cards 2/3 (zonas FC + biomecánica) en
+        //   blanco forever.
+        // - Fix: hidrata SIEMPRE que la actividad tenga `_dbActivityId` y no tenga
+        //   los streams cargados. `loadStreamsForActivity` degrada graciosamente
+        //   (return null + console.warn) si el bucket no tiene el archivo, así
+        //   que este cambio es defensivo — nunca rompe activities sin bucket.
+        // - Mismo fix aplicado a fotos: si `_dbPhotos` tiene entries pero
+        //   `_photoUrls` está vacío, re-descargar del bucket `activity-photos`.
+        var isBulkPendingStreams = act && act._dbActivityId
             && (!act.hrSeries || act.hrSeries.length === 0)
             && (!act.distSer  || act.distSer.length  === 0);
-        var isBulkPendingPhotos = act && act._source === 'bulk'
-            && act._dbActivityId
+        var isBulkPendingPhotos = act && act._dbActivityId
             && Array.isArray(act._dbPhotos) && act._dbPhotos.length > 0
             && (!Array.isArray(act._photoUrls) || act._photoUrls.length === 0);
+        // Log ligero para diagnóstico (solo cuando hay algo que hidratar):
+        if (isBulkPendingStreams || isBulkPendingPhotos) {
+            console.log('[MR][p145 hydrate] activityId=' + act._dbActivityId
+                + ' _source=' + act._source
+                + ' streams_path=' + (act.streams_path || 'null')
+                + ' needsStreams=' + isBulkPendingStreams
+                + ' needsPhotos=' + isBulkPendingPhotos
+                + ' dbPhotosCount=' + (Array.isArray(act._dbPhotos) ? act._dbPhotos.length : 0));
+        }
 
         if (isBulkPendingStreams || isBulkPendingPhotos) {
             // [Efectos UI] Spinner SIN animación de slide: aparece directo, negro,
