@@ -21978,6 +21978,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var listNoStreams = [];      // sin archivo en bucket
             var listBrokenPoly = [];     // polyline rota
             var listMismatch = [];       // archivo existe pero columna NULL
+            // [v2.30.1-p154] Indoor sospechoso: sin polyline pero source=strava → outdoor falsamente indoor
+            var listIndoorSuspect = [];  // sin polyline pero fuente webhook/bulk Strava
 
             acts.forEach(function(a){
                 var fname = a.id + '.json.gz';
@@ -22006,15 +22008,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } else {
                     indoorLegit++;
                     totalIndoor++;
+                    // [v2.30.1-p154] Marcar como sospechoso si su source sugiere que
+                    // debería ser outdoor (webhook Strava). Filtro fino se hará al
+                    // cruzar con strava_pending_imports.
+                    if (a.source === 'strava_auto' || a.source === 'strava' || !a.source) {
+                        listIndoorSuspect.push(a);
+                    }
                 }
                 if (photoSetByActId[a.id]) withPhoto++;
             });
+
+            // [v2.30.1-p154] Cruce con strava_pending_imports: si el sospechoso NO
+            // tiene pending correspondiente, no es realmente reparable localmente
+            // (habría que ir a Strava API). Los que SÍ tienen pending pueden
+            // arreglarse con el reparador ordinario (si el payload trae map.polyline).
+            // Marcamos ambos casos para presentarlos.
+            if (listIndoorSuspect.length > 0) {
+                _setStep('Cruzando con pendings Strava…');
+                var suspectIds = listIndoorSuspect.map(function(a){ return a.id; });
+                var suspectHasPending = {};
+                for (var _si = 0; _si < suspectIds.length; _si += 100) {
+                    var _sch = suspectIds.slice(_si, _si + 100);
+                    var pR = await sb.from('strava_pending_imports')
+                        .select('consumed_mr_activity_id')
+                        .in('consumed_mr_activity_id', _sch)
+                        .eq('user_id', uid);
+                    if (!pR.error && pR.data) {
+                        pR.data.forEach(function(r){ if (r.consumed_mr_activity_id) suspectHasPending[r.consumed_mr_activity_id] = true; });
+                    }
+                }
+                // Anotar en cada suspect
+                listIndoorSuspect.forEach(function(a){ a._hasPending = !!suspectHasPending[a.id]; });
+            }
 
             _closeOverlay();
 
             // 5. Reporte
             var pct = total > 0 ? Math.round(withStreamsInBucket / total * 100) : 0;
-            var issues = listNoStreams.length + listBrokenPoly.length;
+            var issues = listNoStreams.length + listBrokenPoly.length + listIndoorSuspect.length;
 
             // [v2.30.1-p152] Si hay activities sin streams o polylines rotas,
             // mostrar modal custom con la lista detallada + botones de acción.
@@ -22029,7 +22060,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     mismatchStreamsPath: mismatchStreamsPath,
                     listNoStreams: listNoStreams,
                     listBrokenPoly: listBrokenPoly,
-                    listMismatch: listMismatch
+                    listMismatch: listMismatch,
+                    listIndoorSuspect: listIndoorSuspect
                 });
             } else {
                 var report = '📊 AUDITORÍA DE DATOS\n\n';
@@ -22105,7 +22137,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Header (fijo)
         content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
         content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
-        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%)</div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p154</span></div>';
         content += '</div>';
         // Body scrolleable
         content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
@@ -22124,6 +22156,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             content += '<div style="height:14px;"></div>';
         }
 
+        // [v2.30.1-p154] Indoor sospechoso: sin polyline pero source Strava.
+        // Distinguir entre los que tienen pending Strava (reparables local desde payload)
+        // y los que no (solo reparables via Strava API fetch).
+        if (data.listIndoorSuspect && data.listIndoorSuspect.length > 0) {
+            var withPending = data.listIndoorSuspect.filter(function(a){ return a._hasPending; });
+            var noPending = data.listIndoorSuspect.filter(function(a){ return !a._hasPending; });
+            content += '<div style="font-size:12px;font-weight:700;color:#e5a3ff;margin-bottom:8px;letter-spacing:.3px;">🕵️ INDOOR SOSPECHOSO (' + data.listIndoorSuspect.length + ')</div>';
+            content += '<div style="font-size:10.5px;color:rgba(234,247,253,.5);margin-bottom:8px;line-height:1.4;">Marcadas como indoor pero provienen de Strava (probablemente son outdoor con GPS perdido). ';
+            if (withPending.length > 0) content += withPending.length + ' recuperables con reparador local. ';
+            if (noPending.length > 0) content += noPending.length + ' solo reparables via fetch Strava API.';
+            content += '</div>';
+            content += _renderActList(data.listIndoorSuspect, '#e5a3ff');
+            content += '<div style="height:14px;"></div>';
+        }
+
         if (data.mismatchStreamsPath > 0) {
             content += '<div style="font-size:12px;font-weight:700;color:#7ed957;margin-bottom:8px;letter-spacing:.3px;">🔧 REPARABLE FÁCIL (' + data.mismatchStreamsPath + ')</div>';
             content += '<div style="font-size:10.5px;color:rgba(234,247,253,.5);margin-bottom:8px;line-height:1.4;">El archivo está en el bucket pero la columna streams_path está vacía. Se auto-repara al ejecutar el reparador.</div>';
@@ -22132,8 +22179,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         content += '</div>';
         // Footer (fijo)
         content += '<div style="padding:12px 16px;border-top:1px solid rgba(59,188,224,.15);flex-shrink:0;display:flex;flex-direction:column;gap:8px;">';
-        // [v2.30.1-p153] Botón Fetch Strava API arriba si hay polylines rotas o sin streams
+        // [v2.30.1-p153/p154] Botón Fetch Strava API arriba si hay polylines rotas, sin streams o indoor sospechoso
         var fetchableCount = (data.listBrokenPoly ? data.listBrokenPoly.length : 0)
+                           + (data.listIndoorSuspect ? data.listIndoorSuspect.length : 0)
                            + (data.listNoStreams ? data.listNoStreams.filter(function(a){
                                  // Solo activities de origen webhook o strava (no bulk viejo)
                                  return a.source === 'strava_auto' || a.source === 'strava' || !a.source;
@@ -22163,14 +22211,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 setTimeout(function(){ window._mrRepairStravaWebhookStreams(); }, 350);
             }
         });
-        // [v2.30.1-p153] Handler botón Fetch Strava API
+        // [v2.30.1-p153/p154] Handler botón Fetch Strava API
         var fetchBtn = document.getElementById('mr-audit-fetch-strava');
         if (fetchBtn) {
             fetchBtn.addEventListener('click', function(){
                 _close();
-                // Construir lista de IDs: primero brokenPoly, luego listNoStreams filtrado
+                // Construir lista de IDs: brokenPoly + indoorSuspect + listNoStreams filtrado
                 var ids = [];
-                if (data.listBrokenPoly) data.listBrokenPoly.forEach(function(a){ ids.push(a.id); });
+                if (data.listBrokenPoly) data.listBrokenPoly.forEach(function(a){ if (ids.indexOf(a.id) < 0) ids.push(a.id); });
+                if (data.listIndoorSuspect) data.listIndoorSuspect.forEach(function(a){ if (ids.indexOf(a.id) < 0) ids.push(a.id); });
                 if (data.listNoStreams) {
                     data.listNoStreams.forEach(function(a){
                         if (a.source === 'strava_auto' || a.source === 'strava' || !a.source) {
