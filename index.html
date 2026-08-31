@@ -22131,9 +22131,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         content += '</div>';
         // Footer (fijo)
-        content += '<div style="padding:12px 16px;border-top:1px solid rgba(59,188,224,.15);flex-shrink:0;display:flex;gap:10px;">';
+        content += '<div style="padding:12px 16px;border-top:1px solid rgba(59,188,224,.15);flex-shrink:0;display:flex;flex-direction:column;gap:8px;">';
+        // [v2.30.1-p153] Botón Fetch Strava API arriba si hay polylines rotas o sin streams
+        var fetchableCount = (data.listBrokenPoly ? data.listBrokenPoly.length : 0)
+                           + (data.listNoStreams ? data.listNoStreams.filter(function(a){
+                                 // Solo activities de origen webhook o strava (no bulk viejo)
+                                 return a.source === 'strava_auto' || a.source === 'strava' || !a.source;
+                             }).length : 0);
+        if (fetchableCount > 0) {
+            content += '<button id="mr-audit-fetch-strava" style="padding:11px 14px;border-radius:10px;border:none;background:linear-gradient(90deg,#FC4C02 0%,#FF7D3F 100%);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">📡 Fetch desde Strava API (' + fetchableCount + ')</button>';
+        }
+        content += '<div style="display:flex;gap:10px;">';
         content += '<button id="mr-audit-close" style="flex:1;padding:11px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#eaf7fd;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Cerrar</button>';
         content += '<button id="mr-audit-repair" style="flex:2;padding:11px 14px;border-radius:10px;border:none;background:linear-gradient(90deg,#3BBCE0 0%,#7BD9F0 100%);color:#0a1520;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">🔧 Ejecutar reparador</button>';
+        content += '</div>';
         content += '</div>';
         content += '</div>';
 
@@ -22152,12 +22163,240 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 setTimeout(function(){ window._mrRepairStravaWebhookStreams(); }, 350);
             }
         });
+        // [v2.30.1-p153] Handler botón Fetch Strava API
+        var fetchBtn = document.getElementById('mr-audit-fetch-strava');
+        if (fetchBtn) {
+            fetchBtn.addEventListener('click', function(){
+                _close();
+                // Construir lista de IDs: primero brokenPoly, luego listNoStreams filtrado
+                var ids = [];
+                if (data.listBrokenPoly) data.listBrokenPoly.forEach(function(a){ ids.push(a.id); });
+                if (data.listNoStreams) {
+                    data.listNoStreams.forEach(function(a){
+                        if (a.source === 'strava_auto' || a.source === 'strava' || !a.source) {
+                            if (ids.indexOf(a.id) < 0) ids.push(a.id);
+                        }
+                    });
+                }
+                if (ids.length > 0 && typeof window._mrFetchAndFixFromStravaApi === 'function') {
+                    setTimeout(function(){ window._mrFetchAndFixFromStravaApi(ids); }, 350);
+                }
+            });
+        }
         // Tap fuera cierra
         _modal.addEventListener('click', function(e){
             if (e.target === _modal) _close();
         });
     }
     window._mrShowAuditDetailModal = _mrShowAuditDetailModal;
+
+    // ─────────────────────────────────────────────────────────────
+    // [v2.30.1-p153] FETCH DESDE STRAVA API — última bala
+    // ─────────────────────────────────────────────────────────────
+    // Cuando el reparador desde strava_pending_imports no puede arreglar una
+    // activity (payload vacío, polyline null en payload, o incluso no hay
+    // pending), este método hace fetch directo al endpoint Strava con el
+    // strava_activity_id → obtiene activity + streams frescos → repara.
+    //
+    // Cómo se resuelve el strava_activity_id de una activity MR:
+    //   1) Consultar strava_import_log WHERE mr_activity_id = XXX
+    //   2) O consultar strava_pending_imports WHERE consumed_mr_activity_id = XXX
+    //
+    // Rate limits Strava: 100 requests / 15 min · 1000 / día
+    // → limitamos a batch de 10 por sesión con delay 800ms entre calls.
+    // ─────────────────────────────────────────────────────────────
+    async function _mrFetchAndFixFromStravaApi(mrActivityIds) {
+        var sb = window._sbClient;
+        if (!sb) { alert('No hay conexión con la base de datos'); return; }
+        var sr = await sb.auth.getSession();
+        var uid = sr && sr.data && sr.data.session
+                && sr.data.session.user && sr.data.session.user.id;
+        if (!uid) { alert('Sesión no iniciada'); return; }
+
+        if (!Array.isArray(mrActivityIds) || mrActivityIds.length === 0) {
+            alert('No hay activities para procesar');
+            return;
+        }
+
+        // Rate limit: máximo 10 por batch para no rebasar Strava API
+        var MAX_BATCH = 10;
+        var actual = mrActivityIds.slice(0, MAX_BATCH);
+        if (mrActivityIds.length > MAX_BATCH) {
+            var confirmMsg = 'Se procesarán ' + MAX_BATCH + ' de ' + mrActivityIds.length + ' activities (rate limit Strava API).\n\n'
+                           + 'Puedes repetir el proceso más tarde para las restantes.\n\n¿Continuar?';
+            if (!confirm(confirmMsg)) return;
+        } else {
+            if (!confirm('Se van a refrescar ' + actual.length + ' activity(s) desde Strava API. Esto contactará servidores Strava y tarda ~' + (actual.length * 1.5).toFixed(0) + 's.\n\n¿Continuar?')) return;
+        }
+
+        // Overlay progreso
+        var _overlay = document.createElement('div');
+        _overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(10,10,15,.9);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .3s;font-family:var(--f, system-ui);';
+        _overlay.innerHTML =
+            '<div style="background:linear-gradient(135deg,#3a1e0d 0%,#5a2f18 100%);border:1px solid rgba(252,76,2,.5);border-radius:16px;padding:24px;min-width:280px;max-width:340px;">'
+            +   '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+            +     '<div style="width:18px;height:18px;border:2.5px solid rgba(252,76,2,.3);border-top-color:#FC4C02;border-radius:50%;animation:mrWipeSpin 0.8s linear infinite;flex-shrink:0;"></div>'
+            +     '<div style="font-size:14px;font-weight:700;color:#ffe6d5;">Fetch desde Strava API…</div>'
+            +   '</div>'
+            +   '<div id="mr-fetch-step" style="font-size:12px;color:rgba(255,230,213,.7);margin-bottom:14px;line-height:1.4;min-height:40px;">Preparando…</div>'
+            +   '<div style="background:rgba(252,76,2,.15);height:6px;border-radius:3px;overflow:hidden;">'
+            +     '<div id="mr-fetch-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#FC4C02 0%,#FF7D3F 100%);border-radius:3px;transition:width .3s;"></div>'
+            +   '</div>'
+            + '</div>';
+        document.body.appendChild(_overlay);
+        requestAnimationFrame(function(){ _overlay.style.opacity = '1'; });
+        function _setStep(t){ var el=document.getElementById('mr-fetch-step'); if(el) el.textContent=t; }
+        function _setPct(p){ var el=document.getElementById('mr-fetch-bar'); if(el) el.style.width=Math.round(p)+'%'; }
+        function _closeOverlay(){
+            _overlay.style.opacity='0';
+            setTimeout(function(){ if(_overlay.parentNode) _overlay.parentNode.removeChild(_overlay); }, 300);
+        }
+
+        var stats = { total: actual.length, fetched: 0, polyRepaired: 0, streamsRepaired: 0, notFound: 0, apiErrors: 0, noStravaId: 0 };
+
+        try {
+            // Paso 1: resolver strava_activity_id de cada activity MR via strava_import_log
+            _setStep('Resolviendo strava_activity_id…');
+            var mrToStravaId = {};
+            // Primero desde strava_import_log
+            var chunkSz = 100;
+            for (var i = 0; i < actual.length; i += chunkSz) {
+                var chunk = actual.slice(i, i + chunkSz);
+                var logResp = await sb.from('strava_import_log')
+                    .select('mr_activity_id, strava_activity_id')
+                    .in('mr_activity_id', chunk)
+                    .eq('user_id', uid);
+                if (!logResp.error && logResp.data) {
+                    logResp.data.forEach(function(r){
+                        if (r.mr_activity_id && r.strava_activity_id) {
+                            mrToStravaId[r.mr_activity_id] = r.strava_activity_id;
+                        }
+                    });
+                }
+            }
+            // Fallback: strava_pending_imports (consumed_mr_activity_id → strava_activity_id)
+            var stillMissing = actual.filter(function(id){ return !mrToStravaId[id]; });
+            if (stillMissing.length > 0) {
+                for (var j = 0; j < stillMissing.length; j += chunkSz) {
+                    var chk = stillMissing.slice(j, j + chunkSz);
+                    var pImp = await sb.from('strava_pending_imports')
+                        .select('consumed_mr_activity_id, strava_activity_id')
+                        .in('consumed_mr_activity_id', chk)
+                        .eq('user_id', uid);
+                    if (!pImp.error && pImp.data) {
+                        pImp.data.forEach(function(r){
+                            if (r.consumed_mr_activity_id && r.strava_activity_id && !mrToStravaId[r.consumed_mr_activity_id]) {
+                                mrToStravaId[r.consumed_mr_activity_id] = r.strava_activity_id;
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Paso 2: procesar cada activity
+            for (var k = 0; k < actual.length; k++) {
+                var mrId = actual[k];
+                _setPct((k / actual.length) * 100);
+                _setStep('Fetching ' + (k+1) + '/' + actual.length + ' (' + mrId.slice(0,8) + '…)');
+
+                var stravaId = mrToStravaId[mrId];
+                if (!stravaId) {
+                    stats.noStravaId++;
+                    console.warn('[MR][p153 fetch] sin strava_activity_id para MR ' + mrId.slice(0,8) + '…');
+                    continue;
+                }
+
+                // Fetch a Strava
+                var apiResp = null;
+                try {
+                    if (typeof window._stravaFetch !== 'function') {
+                        console.error('[MR][p153 fetch] _stravaFetch no disponible');
+                        stats.apiErrors++;
+                        continue;
+                    }
+                    apiResp = await window._stravaFetch('/fetch-activity', {
+                        method: 'POST',
+                        body: JSON.stringify({ strava_activity_id: stravaId })
+                    });
+                } catch(e) {
+                    console.warn('[MR][p153 fetch] excepción fetch-activity:', e);
+                    stats.apiErrors++;
+                    continue;
+                }
+                if (!apiResp || !apiResp.ok || !apiResp.body) {
+                    console.warn('[MR][p153 fetch] respuesta no OK para ' + stravaId + ':', apiResp);
+                    stats.apiErrors++;
+                    continue;
+                }
+                stats.fetched++;
+
+                var activity = apiResp.body.activity;
+                var streams  = apiResp.body.streams;
+
+                // Actualizar polyline si viene y es distinta de la guardada
+                if (activity && activity.map) {
+                    var polyNew = activity.map.polyline || activity.map.summary_polyline || null;
+                    if (polyNew && typeof polyNew === 'string' && polyNew.length > 5) {
+                        try {
+                            var updRes = await sb.from('activities')
+                                .update({ polyline_encoded: polyNew })
+                                .eq('id', mrId).eq('user_id', uid);
+                            if (updRes && !updRes.error) {
+                                stats.polyRepaired++;
+                                console.log('[MR][p153 fetch] ✓ polyline actualizada para ' + mrId.slice(0,8) + '… (' + polyNew.length + ' chars)');
+                            }
+                        } catch(_){}
+                    }
+                }
+
+                // Regenerar streams al bucket (idempotente vía upsert)
+                if (streams && typeof streams === 'object') {
+                    var newPath = await _uploadStreamsFromWebhookPayload(sb, uid, mrId, activity, streams);
+                    if (newPath) {
+                        try {
+                            await sb.from('activities')
+                                .update({ streams_path: newPath })
+                                .eq('id', mrId).eq('user_id', uid);
+                            stats.streamsRepaired++;
+                        } catch(_){}
+                    }
+                }
+
+                // Rate limit friendly: 800ms delay entre calls (evita 100/15min)
+                if (k < actual.length - 1) {
+                    await new Promise(function(r){ setTimeout(r, 800); });
+                }
+            }
+
+            _setPct(100);
+            _setStep('Finalizando…');
+
+            // Limpiar cache streams in-memory
+            try {
+                if (typeof _streamsCache === 'object' && _streamsCache) {
+                    Object.keys(_streamsCache).forEach(function(k){ delete _streamsCache[k]; });
+                }
+            } catch(_){}
+
+            _closeOverlay();
+
+            var summary = '📡 FETCH STRAVA API — Resultado\n\n';
+            summary += 'Procesadas: ' + stats.total + '\n';
+            summary += '  ✓ Fetch API OK: ' + stats.fetched + '\n';
+            summary += '  🗺️ Polyline actualizadas: ' + stats.polyRepaired + '\n';
+            summary += '  💾 Streams regenerados: ' + stats.streamsRepaired + '\n';
+            if (stats.noStravaId > 0) summary += '  ⚠️ Sin strava_activity_id: ' + stats.noStravaId + '\n';
+            if (stats.apiErrors > 0) summary += '  ❌ Errores API: ' + stats.apiErrors + '\n';
+
+            alert(summary);
+            console.log('[MR][p153 fetch] resumen:', stats);
+        } catch(e) {
+            _closeOverlay();
+            console.error('[MR][p153 fetch] excepción global:', e);
+            alert('Error fetching: ' + (e && e.message ? e.message : String(e)));
+        }
+    }
+    window._mrFetchAndFixFromStravaApi = _mrFetchAndFixFromStravaApi;
 
     async function wipeMyActivities() {
         // ── Guarda de visibilidad (defensa en profundidad) ────────
@@ -30636,10 +30875,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 return null;
             }
 
-            // Splits desde activity_payload.laps (shape que espera el mapper)
-            var laps = (activityPayload && Array.isArray(activityPayload.splits_metric))
-                     ? activityPayload.splits_metric : [];
-            var splitsOut = laps.map(function(sp){
+            // Splits desde activity_payload.splits_metric (shape que espera el mapper)
+            var splitsMetric = (activityPayload && Array.isArray(activityPayload.splits_metric))
+                             ? activityPayload.splits_metric : [];
+            var splitsOut = splitsMetric.map(function(sp){
                 return {
                     km:          sp.split || 0,
                     durationSec: sp.moving_time || sp.elapsed_time || 0,
@@ -30647,6 +30886,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     elevGainM:   sp.elevation_difference || 0
                 };
             });
+
+            // [v2.30.1-p153] csvBlocks desde activity_payload.laps con heurística
+            // hasRealLapMarkers (idéntica a _stravaToPendingFitData). Recupera
+            // series de 400m/repeticiones estructuradas del reloj. Sin esto se
+            // perdían al reparar (mi upload directo solo bajaba splits cada 1km).
+            var csvBlocksOut = [];
+            var lapsRaw = (activityPayload && Array.isArray(activityPayload.laps)) ? activityPayload.laps : [];
+            if (lapsRaw.length > 1) {
+                var allClose1km = lapsRaw.every(function(lap){
+                    return Math.abs((lap.distance || 0) - 1000) < 100;
+                });
+                var hasRealLapMarkers = !allClose1km;
+                if (hasRealLapMarkers) {
+                    lapsRaw.forEach(function(lap, idx){
+                        var avgPaceS = (lap.average_speed > 0) ? Math.round(1000 / lap.average_speed) : 0;
+                        csvBlocksOut.push({
+                            n:           lap.lap_index || (idx + 1),
+                            dist:        Math.round((lap.distance || 0)) / 1000,
+                            movingSecs:  lap.moving_time || lap.elapsed_time || 0,
+                            avgPaceS:    avgPaceS,
+                            avgHr:       lap.average_heartrate ? Math.round(lap.average_heartrate) : 0,
+                            maxHr:       lap.max_heartrate ? Math.round(lap.max_heartrate) : 0,
+                            cadence:     lap.average_cadence ? Math.round(lap.average_cadence * 2) : 0,
+                            bestPaceS:   avgPaceS,
+                            eleGain:     lap.total_elevation_gain > 0 ? Math.round(lap.total_elevation_gain) : 0,
+                            temperature: null
+                        });
+                    });
+                }
+            }
 
             var streamsObj = {
                 version: 1,
@@ -30665,11 +30934,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     avgHr:       (activityPayload && activityPayload.average_heartrate) ? Math.round(activityPayload.average_heartrate) : 0,
                     maxHr:       (activityPayload && activityPayload.max_heartrate) ? Math.round(activityPayload.max_heartrate) : 0,
                     ascentM:     (activityPayload && activityPayload.total_elevation_gain) || 0,
-                    csvBlocks:   []
+                    csvBlocks:   csvBlocksOut
                 }
             };
 
-            console.log('[MR][p148 direct-upload] activityId=' + activityId.slice(0,8) + '… time=' + timeArr.length + ' hr=' + hrArr.length + ' dist=' + distArr.length + ' alt=' + altArr.length);
+            console.log('[MR][p153 direct-upload] activityId=' + activityId.slice(0,8) + '… time=' + timeArr.length + ' hr=' + hrArr.length + ' dist=' + distArr.length + ' alt=' + altArr.length + ' csvBlocks=' + csvBlocksOut.length);
 
             var jsonStr = JSON.stringify(streamsObj);
             var gzipped = pako.gzip(jsonStr);
@@ -49995,8 +50264,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } else {
             act.laps = [];
         }
-        // csvBlocks: aplazado a FASE 6 (Strava no exporta bloques estructurados)
-        act.csvBlocks = act.csvBlocks || [];
+        // csvBlocks: bloques estructurados del entreno (series/intervalos del reloj)
+        // [v2.30.1-p153] Leer csvBlocks de streamsObj.summary si existen (persistidos por
+        // _uploadStreamsFromWebhookPayload desde activity_payload.laps con hasRealLapMarkers).
+        // Antes se dejaba SIEMPRE vacío → series/repeticiones perdidas al rehidratar.
+        if (streamsObj && streamsObj.summary && Array.isArray(streamsObj.summary.csvBlocks)
+            && streamsObj.summary.csvBlocks.length > 0) {
+            act.csvBlocks = streamsObj.summary.csvBlocks;
+        } else {
+            act.csvBlocks = act.csvBlocks || [];
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
