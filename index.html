@@ -51697,25 +51697,37 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 return Array.isArray(v) ? v : [];
             }
 
+            // Helper: JSONB objeto (marcas, etc). Devuelve null si no es objeto real.
+            function _obj(v) {
+                return (v && typeof v === 'object' && !Array.isArray(v)) ? v : null;
+            }
+
             var payload = {
-                weight:             _num(pd.weight),
-                height:             _num(pd.height),
-                sex:                _str(pd.sex),
-                dob:                _str(pd.dob),
-                hr_max:             _int(pd.hrMax),
-                hr_rest:            _int(pd.hrRest),
-                lt_value:           (typeof ltValue    === 'number' && isFinite(ltValue))    ? ltValue    : null,
-                pace_value:         (typeof paceValue  === 'number' && isFinite(paceValue))  ? paceValue  : null,
-                lt_manual:          (typeof ltManual   === 'number' && isFinite(ltManual))   ? ltManual   : null,
-                pace_manual:        (typeof paceManual === 'number' && isFinite(paceManual)) ? paceManual : null,
-                meta:               _str(pd.meta),
-                vo2max:             _num(pd.vo2max),
-                weeks_exp:          _int(pd.weeksExp),
-                weeks_exp_saved_at: _str(pd.weeksExpSavedAt),
-                training_days:      _arr(pd.trainingDays),
-                injuries:           _arr(pd.injuries),
-                medallero:          _arr(pd.medallero),
-                annual_km_goal:     _int(pd.annualKmGoal)
+                weight:              _num(pd.weight),
+                height:              _num(pd.height),
+                sex:                 _str(pd.sex),
+                dob:                 _str(pd.dob),
+                hr_max:              _int(pd.hrMax),
+                hr_rest:             _int(pd.hrRest),
+                lt_value:            (typeof ltValue    === 'number' && isFinite(ltValue))    ? ltValue    : null,
+                pace_value:          (typeof paceValue  === 'number' && isFinite(paceValue))  ? paceValue  : null,
+                lt_manual:           (typeof ltManual   === 'number' && isFinite(ltManual))   ? ltManual   : null,
+                pace_manual:         (typeof paceManual === 'number' && isFinite(paceManual)) ? paceManual : null,
+                meta:                _str(pd.meta),
+                vo2max:              _num(pd.vo2max),
+                weeks_exp:           _int(pd.weeksExp),
+                weeks_exp_saved_at:  _str(pd.weeksExpSavedAt),
+                training_days:       _arr(pd.trainingDays),
+                injuries:            _arr(pd.injuries),
+                medallero:           _arr(pd.medallero),
+                annual_km_goal:      _int(pd.annualKmGoal),
+                // [p132] Full Profile Sync Fase 2 · 6 campos nuevos
+                city:                _str(pd.city),
+                flag:                _str(pd.flag),
+                watch:               _str(pd.watch),
+                watch_brand:         _str(pd.watchBrand),
+                marcas:              _obj(pd.marcas),
+                strength_done_dates: _arr(pd.strengthDoneDates)
             };
 
             var res = await ctx.sb.from('profiles').update(payload).eq('id', ctx.uid);
@@ -51834,6 +51846,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (Array.isArray(row.medallero))     profileData.medallero     = row.medallero;
                 if (row.annual_km_goal != null)       profileData.annualKmGoal  = Number(row.annual_km_goal);
 
+                // [p132] Full Profile Sync Fase 2 · hidratar 6 campos nuevos
+                if (row.city                != null) profileData.city              = row.city;
+                if (row.flag                != null) profileData.flag              = row.flag;
+                if (row.watch               != null) profileData.watch             = row.watch;
+                if (row.watch_brand         != null) profileData.watchBrand        = row.watch_brand;
+                if (row.marcas && typeof row.marcas === 'object' && !Array.isArray(row.marcas)) {
+                    profileData.marcas = row.marcas;
+                }
+                if (Array.isArray(row.strength_done_dates)) {
+                    profileData.strengthDoneDates = row.strength_done_dates;
+                }
+
                 // Repaint DOM básico del perfil físico (mismo patrón que loadAppState)
                 try {
                     var _hm=document.getElementById('hrmax-display');
@@ -51860,6 +51884,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (typeof renderInjuries === 'function') renderInjuries();
                     if (typeof renderVO2maxCard === 'function') renderVO2maxCard();
                     if (typeof renderMedallero === 'function') renderMedallero();
+                    // [p132] Repaint cabecera Runner (flag + city + watch) tras hidratar
+                    try {
+                        var _fd = document.getElementById('runner-flag-display');
+                        if (_fd && profileData.flag) {
+                            var _flagInner = _fd.querySelector('.mr-rh-flag');
+                            if (_flagInner) _flagInner.textContent = profileData.flag;
+                        }
+                        var _cd = document.getElementById('city-display');
+                        if (_cd && profileData.city) _cd.textContent = profileData.city + ' ›';
+                        var _wd = document.getElementById('watch-display');
+                        if (_wd && profileData.watch) _wd.textContent = profileData.watch + ' ›';
+                    } catch(_){}
+                    // [p132] Re-render marcas card si helper existe
+                    try { if (typeof renderMarcasCard === 'function') renderMarcasCard(); } catch(_){}
+                    // [p132] Re-render strength done dates (afecta tick verde plan fuerza)
+                    try { if (typeof renderStrengthPlan === 'function') renderStrengthPlan(); } catch(_){}
                 } catch(e) { console.warn('[MR][SYNC] profile apply repaint warn:', e); }
 
                 // Persistir de vuelta a localStorage inmediato (mantener cache local coherente)
