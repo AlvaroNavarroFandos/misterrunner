@@ -6079,16 +6079,14 @@
         .mr-type-pill.type-race     { background: #e879f9; }
         .mr-type-pill.type-test     { background: #06b6d4; }
         /* Variante compacta para minicards de biblioteca (font más pequeño)
-           [p130] inline-flex + flex-wrap para SHRINK-TO-FIT real: la pill
-           se contrae al ancho de la línea más ancha post-wrap (comportamiento
-           estándar de flex containers). Requiere que _mrTypePillHtml emita
-           spans por palabra (implementado en el helper). max-height 27px
-           limita a 2 líneas. */
+           [p131] inline-block + wrap normal. El shrink-to-fit al ancho de la
+           línea más ancha post-wrap NO es posible con CSS puro (límite del
+           algoritmo de layout inline-block/flex). Se resuelve con JS via
+           window._mrTightenCompactPills(container) que se llama tras cada
+           render de mini-cards: mide con Range.getClientRects las líneas
+           reales y aplica width explícito al ancho de la línea más ancha. */
         .mr-type-pill.compact {
-            display: inline-flex;
-            flex-wrap: wrap;
-            column-gap: 0.35em; /* ~3.5px con font-size 10, similar a espacio natural */
-            row-gap: 0;
+            display: inline-block;
             padding: 2px 7px;
             border-radius: 6px;
             font-size: 10px;
@@ -6099,6 +6097,8 @@
             max-height: 27px; /* 2 líneas: 2×(10×1.15) + padding 2+2 */
             max-width: 100%;
             text-align: left;
+            word-break: break-word;
+            /* width: se ajusta dinámicamente via _mrTightenCompactPills */
         }
         /* [p129] Cuando el título lleva una pill dentro, el contenedor vuelve
            a display:block para que la pill (inline-block) se ajuste al ancho
@@ -52379,6 +52379,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             wrap.addEventListener('click', function() { _myaGoToActivity(dateStr); });
         }
 
+        // [p131] Ajustar pills compact al ancho real de línea más ancha post-wrap
+        try { if (typeof window._mrTightenPillsSoon === 'function') window._mrTightenPillsSoon(detail); } catch(_){}
+
         // Pintar canvas del track (rAF diferido, mismo patrón que biblioteca)
         requestAnimationFrame(function() {
             var c = document.getElementById(cId);
@@ -56330,6 +56333,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           + '</div>';
 
         wrap.style.display = 'flex';
+
+        // [p131] Ajustar pills compact al ancho real de línea más ancha post-wrap
+        try { if (typeof window._mrTightenPillsSoon === 'function') window._mrTightenPillsSoon(wrap); } catch(_){}
 
         // Handlers: click corto → visor, long-press → actions modal (si expuesto)
         var swipeWrap = wrap.querySelector('.act-swipe-wrap');
@@ -68233,29 +68239,134 @@ window._handleStravaReturn = _handleStravaReturn;
     // Escape defensivo para XSS · el name viene de user input o API externa.
     // ═══════════════════════════════════════════════════════════════════
     window._mrTypePillHtml = function(name, type, variant) {
-        var raw = String(name == null ? '' : name);
-        var esc = function(s) {
-            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-        };
+        var safe = String(name == null ? '' : name)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
         var t = String(type == null ? '' : type).toLowerCase();
         var whitelist = ['easy','recovery','series','long','race','test'];
-        if (whitelist.indexOf(t) < 0) return esc(raw);
+        if (whitelist.indexOf(t) < 0) return safe;
         var v = (variant === 'hero' || variant === 'compact') ? (' ' + variant) : '';
-        // [p130] Compact: separar palabras en <span> para que inline-flex+wrap
-        // se contraiga al ancho de la línea más ancha post-wrap (bug conocido
-        // de inline-block+wrap: se estira al max-width del padre en vez de
-        // ajustarse al contenido tras el wrap). Hero mantiene texto plano
-        // (nowrap+ellipsis, no wrappea nunca).
-        if (variant === 'compact') {
-            var words = raw.split(/\s+/).filter(Boolean).map(function(w) {
-                return '<span>' + esc(w) + '</span>';
-            }).join('');
-            if (!words) words = esc(raw); // fallback si el nombre no tiene palabras
-            return '<span class="mr-type-pill type-' + t + v + '">' + words + '</span>';
-        }
-        return '<span class="mr-type-pill type-' + t + v + '">' + esc(raw) + '</span>';
+        // [p131] Vuelve a texto plano (revertido p130 spans-por-palabra).
+        // El fix del shrink-to-fit se hace via JS _mrTightenCompactPills tras
+        // render (mide con Range.getClientRects y aplica width real).
+        return '<span class="mr-type-pill type-' + t + v + '">' + safe + '</span>';
     };
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [p131] _mrTightenCompactPills(container?) · Shrink-to-fit pills compact
+    // ───────────────────────────────────────────────────────────────────
+    // CSS puro no permite que una pill inline-block/flex se contraiga al
+    // ancho de la línea más ancha después de wrap (siempre queda al ancho
+    // disponible del padre). Este helper mide las líneas REALES post-wrap
+    // usando Range.getClientRects (que devuelve un DOMRect por cada line box
+    // del texto renderizado) y aplica width explícito al max de esas líneas.
+    //
+    // Uso: llamar desde cada renderer de mini-cards tras el appendChild o
+    // asignación innerHTML, envuelto en requestAnimationFrame para asegurar
+    // que el layout está calculado. Idempotente (puede llamarse múltiples
+    // veces sin efectos raros; reset width='' antes de re-medir).
+    //
+    // container opcional: raíz del subtree a procesar (default: document).
+    // ═══════════════════════════════════════════════════════════════════
+    window._mrTightenCompactPills = function(container) {
+        try {
+            var scope = container || document;
+            var pills = scope.querySelectorAll ? scope.querySelectorAll('.mr-type-pill.compact') : [];
+            if (!pills.length) return;
+            for (var i = 0; i < pills.length; i++) {
+                var pill = pills[i];
+                // Reset width previo para medir sin restricciones (idempotencia)
+                pill.style.width = '';
+                // Forzar reflow implícito al leer offsetHeight abajo
+                var oneLineThreshold = 20; // 1 línea con padding ≈ 15-18px
+                if (pill.offsetHeight <= oneLineThreshold) {
+                    // Cabe en 1 línea → inline-block ya shrink-to-fit natural
+                    continue;
+                }
+                // Multi-línea: medir cada line box del texto interno
+                var range = document.createRange();
+                range.selectNodeContents(pill);
+                var rects = range.getClientRects();
+                var maxLineWidth = 0;
+                for (var j = 0; j < rects.length; j++) {
+                    if (rects[j].width > maxLineWidth) maxLineWidth = rects[j].width;
+                }
+                if (maxLineWidth > 0) {
+                    var cs = getComputedStyle(pill);
+                    var padH = parseFloat(cs.paddingLeft || 0) + parseFloat(cs.paddingRight || 0);
+                    // +1px de holgura por redondeo sub-pixel
+                    pill.style.width = Math.ceil(maxLineWidth + padH + 1) + 'px';
+                }
+            }
+        } catch(e) {
+            // Silencioso · no bloquear render por medición fallida
+            try { console.warn('[MR][pill-tighten] warn:', e); } catch(_){}
+        }
+    };
+    // Alias sin scope para conveniencia desde renderers
+    window._mrTightenPillsSoon = function(container) {
+        // Doble rAF para asegurar layout completo tras innerHTML/appendChild
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                window._mrTightenCompactPills(container);
+            });
+        });
+    };
+
+    // [p131] MutationObserver GLOBAL para auto-tighten pills compact que
+    // aparezcan en cualquier parte del DOM (fallback robusto para todos los
+    // renderers que no llamen explícitamente al helper). Se instala 1 vez
+    // en el body, ignora pills ya tightened (con style.width seteado) para
+    // evitar loops infinitos, y usa un pequeño throttle vía rAF.
+    (function() {
+        if (window._mrPillObserverInstalled) return;
+        window._mrPillObserverInstalled = true;
+        var pending = false;
+        var scheduleTighten = function(root) {
+            if (pending) return;
+            pending = true;
+            requestAnimationFrame(function() {
+                requestAnimationFrame(function() {
+                    pending = false;
+                    try {
+                        if (root && root.querySelectorAll) {
+                            var pills = root.querySelectorAll('.mr-type-pill.compact');
+                            for (var i = 0; i < pills.length; i++) {
+                                // Skip si ya tiene width explícito (ya tightened)
+                                if (pills[i].style.width) continue;
+                                window._mrTightenCompactPills(pills[i].parentElement);
+                            }
+                        }
+                    } catch(_){}
+                });
+            });
+        };
+        var install = function() {
+            if (!document.body || window._mrPillObserverActive) return;
+            window._mrPillObserverActive = true;
+            var obs = new MutationObserver(function(mutations) {
+                var hasNewPill = false;
+                for (var i = 0; i < mutations.length && !hasNewPill; i++) {
+                    var m = mutations[i];
+                    if (m.type === 'childList' && m.addedNodes) {
+                        for (var j = 0; j < m.addedNodes.length; j++) {
+                            var n = m.addedNodes[j];
+                            if (n.nodeType === 1 && (
+                                (n.classList && n.classList.contains('mr-type-pill') && n.classList.contains('compact')) ||
+                                (n.querySelector && n.querySelector('.mr-type-pill.compact'))
+                            )) { hasNewPill = true; break; }
+                        }
+                    }
+                }
+                if (hasNewPill) scheduleTighten(document);
+            });
+            obs.observe(document.body, { childList: true, subtree: true });
+            // Tighten inicial por si ya hay pills al arrancar
+            scheduleTighten(document);
+        };
+        if (document.body) install();
+        else document.addEventListener('DOMContentLoaded', install, { once: true });
+    })();
     // ═══════════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════════
