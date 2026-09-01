@@ -6079,12 +6079,16 @@
         .mr-type-pill.type-race     { background: #e879f9; }
         .mr-type-pill.type-test     { background: #06b6d4; }
         /* Variante compacta para minicards de biblioteca (font más pequeño)
-           [p129] Shrink-to-fit al texto + hasta 2 líneas. Se ajusta al ancho
-           del contenido gracias a display:inline-block heredado del padre.
-           white-space:normal + max-height 27px permite wrap a 2 líneas.
-           Combinado con .mr-lib-title:has(.mr-type-pill){display:block} para
-           que la pill inline-block no se estire full-width. */
+           [p130] inline-flex + flex-wrap para SHRINK-TO-FIT real: la pill
+           se contrae al ancho de la línea más ancha post-wrap (comportamiento
+           estándar de flex containers). Requiere que _mrTypePillHtml emita
+           spans por palabra (implementado en el helper). max-height 27px
+           limita a 2 líneas. */
         .mr-type-pill.compact {
+            display: inline-flex;
+            flex-wrap: wrap;
+            column-gap: 0.35em; /* ~3.5px con font-size 10, similar a espacio natural */
+            row-gap: 0;
             padding: 2px 7px;
             border-radius: 6px;
             font-size: 10px;
@@ -6093,7 +6097,7 @@
             white-space: normal;
             line-height: 1.15;
             max-height: 27px; /* 2 líneas: 2×(10×1.15) + padding 2+2 */
-            word-break: break-word;
+            max-width: 100%;
             text-align: left;
         }
         /* [p129] Cuando el título lleva una pill dentro, el contenedor vuelve
@@ -68229,14 +68233,28 @@ window._handleStravaReturn = _handleStravaReturn;
     // Escape defensivo para XSS · el name viene de user input o API externa.
     // ═══════════════════════════════════════════════════════════════════
     window._mrTypePillHtml = function(name, type, variant) {
-        var safe = String(name == null ? '' : name)
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        var raw = String(name == null ? '' : name);
+        var esc = function(s) {
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        };
         var t = String(type == null ? '' : type).toLowerCase();
         var whitelist = ['easy','recovery','series','long','race','test'];
-        if (whitelist.indexOf(t) < 0) return safe;
+        if (whitelist.indexOf(t) < 0) return esc(raw);
         var v = (variant === 'hero' || variant === 'compact') ? (' ' + variant) : '';
-        return '<span class="mr-type-pill type-' + t + v + '">' + safe + '</span>';
+        // [p130] Compact: separar palabras en <span> para que inline-flex+wrap
+        // se contraiga al ancho de la línea más ancha post-wrap (bug conocido
+        // de inline-block+wrap: se estira al max-width del padre en vez de
+        // ajustarse al contenido tras el wrap). Hero mantiene texto plano
+        // (nowrap+ellipsis, no wrappea nunca).
+        if (variant === 'compact') {
+            var words = raw.split(/\s+/).filter(Boolean).map(function(w) {
+                return '<span>' + esc(w) + '</span>';
+            }).join('');
+            if (!words) words = esc(raw); // fallback si el nombre no tiene palabras
+            return '<span class="mr-type-pill type-' + t + v + '">' + words + '</span>';
+        }
+        return '<span class="mr-type-pill type-' + t + v + '">' + esc(raw) + '</span>';
     };
     // ═══════════════════════════════════════════════════════════════════
 
