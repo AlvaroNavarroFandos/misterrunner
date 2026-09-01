@@ -51670,9 +51670,73 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(_) { return null; }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // [p133] _mrHydrateAvatarFromSupabase(avatarUrl) · Avatar cross-device
+    // ───────────────────────────────────────────────────────────────────
+    // El avatar se sube a bucket media/avatars/{uid}.{png|jpg} durante
+    // saveProfile UI. La URL pública se guarda en profiles.avatar_url.
+    // Al hacer login en un dispositivo nuevo, hay que:
+    //   1. Fetch la imagen del bucket (URL pública, no requiere auth)
+    //   2. Convertir a data:base64 (formato canónico que usa la app)
+    //   3. Guardar en IDB (_idbPhotoSet) para persistencia local
+    //   4. Asignar a profileData.avatar
+    //   5. Repaint via restoreAvatarDOM()
+    //
+    // Skip si ya hay avatar local (data:...) idéntico. Fire-and-forget.
+    // ═══════════════════════════════════════════════════════════════════
+    window._mrHydrateAvatarFromSupabase = async function(avatarUrl) {
+        try {
+            if (!avatarUrl || typeof avatarUrl !== 'string') return;
+            if (!avatarUrl.startsWith('http')) return;
+            // Skip si el avatar local ya está poblado desde IDB (no re-descargar)
+            if (typeof profileData === 'object' && profileData &&
+                profileData.avatar && typeof profileData.avatar === 'string' &&
+                profileData.avatar.startsWith('data:')) {
+                // Ya tenemos avatar local, no re-descargar (evita flash + tráfico)
+                return;
+            }
+            // Fetch la imagen del bucket público
+            var resp = await fetch(avatarUrl, { cache: 'force-cache' });
+            if (!resp.ok) {
+                console.warn('[MR][SYNC][p133] avatar fetch fail:', resp.status);
+                return;
+            }
+            var blob = await resp.blob();
+            // Convertir a data:base64
+            var dataUrl = await new Promise(function(resolve, reject) {
+                var reader = new FileReader();
+                reader.onload = function() { resolve(reader.result); };
+                reader.onerror = function() { reject(new Error('reader failed')); };
+                reader.readAsDataURL(blob);
+            });
+            if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+                console.warn('[MR][SYNC][p133] avatar conversion failed');
+                return;
+            }
+            // Guardar en IDB (fuente canónica desde B1)
+            try {
+                if (typeof _avatarIdbKey === 'function' && typeof _idbPhotoSet === 'function') {
+                    var idbKey = _avatarIdbKey();
+                    await _idbPhotoSet(idbKey, dataUrl);
+                }
+            } catch(e) { console.warn('[MR][SYNC][p133] avatar IDB save warn:', e); }
+            // Asignar a profileData + repaint
+            profileData.avatar = dataUrl;
+            try { if (typeof restoreAvatarDOM === 'function') restoreAvatarDOM(); } catch(_){}
+            console.log('[MR][SYNC][p133] avatar hidratado desde Supabase Storage');
+        } catch(e) {
+            console.warn('[MR][SYNC][p133] avatar hydrate exception:', e);
+        }
+    };
+
     // ── PUSH: profile ──────────────────────────────────────────────────
-    // Envía profileData físico + umbrales a la tabla profiles. NO toca
-    // display_name/avatar_url/username/nutrition/bio (otros flujos).
+    // Envía profileData físico + umbrales + display_name a la tabla profiles.
+    // NO toca: avatar_url (subida via saveProfile UI · async con Storage),
+    //         username (constraint slug único · via saveProfile UI),
+    //         nutrition (otro flujo _rdSaveNutritionToSupabase).
+    // display_name SÍ se envía [p133] porque solo saveProfile UI no basta
+    // para mantenerlo sync — al hacer login en dispositivo nuevo antes se
+    // perdía el nombre. Push con guard: null si vacío (no sobrescribe DB).
     // Trigger DB actualiza updated_at → cross-device sync coherente.
     async function _mrPushProfileToSupabase() {
         try {
@@ -51727,8 +51791,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 watch:               _str(pd.watch),
                 watch_brand:         _str(pd.watchBrand),
                 marcas:              _obj(pd.marcas),
-                strength_done_dates: _arr(pd.strengthDoneDates)
+                strength_done_dates: _arr(pd.strengthDoneDates),
+                // [p133] display_name — solo si tiene valor. Nunca sobrescribe
+                // Supabase con null (así saveProfile UI y este scheduler no se
+                // pisan; el que tenga valor real gana en cada update)
+                display_name:        (pd.name && String(pd.name).trim()) ? String(pd.name).trim() : undefined
             };
+            // [p133] Cleanup undefined del payload (Supabase interpreta undefined
+            // como "no tocar esta columna", null como "set to null")
+            Object.keys(payload).forEach(function(k) {
+                if (payload[k] === undefined) delete payload[k];
+            });
 
             var res = await ctx.sb.from('profiles').update(payload).eq('id', ctx.uid);
             if (res && res.error) {
@@ -51857,6 +51930,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (Array.isArray(row.strength_done_dates)) {
                     profileData.strengthDoneDates = row.strength_done_dates;
                 }
+                // [p133] Hidratar display_name (nombre visible del user) desde
+                // profiles.display_name — antes solo se sync via saveProfile UI
+                // y no se hidrataba en dispositivos nuevos → nombre vacío
+                if (row.display_name && String(row.display_name).trim()) {
+                    profileData.name = String(row.display_name).trim();
+                }
+                // [p133] Guardar avatar_url para descarga async (el bucket es
+                // público, solo hay que fetch + convert to data:base64 + IDB)
+                if (row.avatar_url && String(row.avatar_url).trim()) {
+                    profileData.avatar_url = String(row.avatar_url).trim();
+                    // Trigger descarga async fire-and-forget (no bloqueante)
+                    try {
+                        if (typeof window._mrHydrateAvatarFromSupabase === 'function') {
+                            window._mrHydrateAvatarFromSupabase(profileData.avatar_url);
+                        }
+                    } catch(_){}
+                }
 
                 // Repaint DOM básico del perfil físico (mismo patrón que loadAppState)
                 try {
@@ -51895,6 +51985,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (_cd && profileData.city) _cd.textContent = profileData.city + ' ›';
                         var _wd = document.getElementById('watch-display');
                         if (_wd && profileData.watch) _wd.textContent = profileData.watch + ' ›';
+                    } catch(_){}
+                    // [p133] Repaint NAME (nombre visible en Home + Runner + iniciales avatar)
+                    try {
+                        if (profileData.name) {
+                            var _nd = document.getElementById('runner-name-display');
+                            if (_nd) _nd.textContent = profileData.name;
+                            var _av = document.getElementById('avatar-display');
+                            if (_av) _av.textContent = profileData.name.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase();
+                            // [p105] Home greeting card muestra el nombre — refresh
+                            if (typeof renderHome === 'function') renderHome();
+                        }
                     } catch(_){}
                     // [p132] Re-render marcas card si helper existe
                     try { if (typeof renderMarcasCard === 'function') renderMarcasCard(); } catch(_){}
@@ -51979,21 +52080,35 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var p = pRes.data;
                     var sbTs = p.updated_at ? new Date(p.updated_at).getTime() : 0;
                     var migrated = !!p.migrated_from_local_v1;
+                    // [p133] Ampliado: cuenta CUALQUIER campo de perfil poblado (no solo
+                    // físico) como "hasData" — antes exigir físico bloqueaba la hidratación
+                    // de users que solo tenían nombre/avatar/preferencias en Supabase.
                     var hasPhysicalData = (
                         p.weight != null || p.height != null || p.hr_max != null ||
                         p.hr_rest != null || p.lt_value != null || p.pace_value != null ||
-                        p.annual_km_goal != null ||
+                        p.annual_km_goal != null || p.vo2max != null ||
+                        p.city != null || p.flag != null || p.watch != null || p.watch_brand != null ||
+                        (p.display_name && String(p.display_name).trim()) ||
+                        (p.avatar_url && String(p.avatar_url).trim()) ||
+                        (p.marcas && typeof p.marcas === 'object' && Object.keys(p.marcas).length > 0) ||
                         (Array.isArray(p.training_days) && p.training_days.length > 0) ||
                         (Array.isArray(p.injuries)      && p.injuries.length > 0) ||
-                        (Array.isArray(p.medallero)     && p.medallero.length > 0)
+                        (Array.isArray(p.medallero)     && p.medallero.length > 0) ||
+                        (Array.isArray(p.strength_done_dates) && p.strength_done_dates.length > 0)
                     );
 
                     var localHasData = (typeof profileData === 'object' && profileData) && (
                         profileData.weight != null || profileData.height != null ||
                         profileData.hrMax  != null || profileData.hrRest != null ||
-                        profileData.annualKmGoal != null ||
+                        profileData.annualKmGoal != null || profileData.vo2max != null ||
+                        (profileData.name && String(profileData.name).trim()) ||
+                        (profileData.city && String(profileData.city).trim()) ||
+                        (profileData.flag && String(profileData.flag).trim()) ||
+                        (profileData.watch && String(profileData.watch).trim()) ||
+                        (profileData.marcas && typeof profileData.marcas === 'object' && Object.keys(profileData.marcas).length > 0) ||
                         (Array.isArray(profileData.trainingDays) && profileData.trainingDays.length > 0) ||
-                        (Array.isArray(profileData.injuries)     && profileData.injuries.length > 0)
+                        (Array.isArray(profileData.injuries)     && profileData.injuries.length > 0) ||
+                        (Array.isArray(profileData.strengthDoneDates) && profileData.strengthDoneDates.length > 0)
                     );
 
                     if (!migrated && !hasPhysicalData && localHasData) {
