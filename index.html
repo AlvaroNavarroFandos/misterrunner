@@ -79008,8 +79008,9 @@ window.addEventListener('DOMContentLoaded', function() {
                     lines.push('');
                 }
 
-                /* 3.10 · TOP 5 PRs HISTÓRICOS (Q3=D) */
-                var topPRs = _wrGetTopHistoricalPRs(_pd, 5);
+                /* 3.10 · TOP 5 PRs HISTÓRICOS (Q3=D)
+                       Fallback a bestEfforts si prHistory vacío */
+                var topPRs = _wrGetTopHistoricalPRs(_pd, _acts, weekStartStr, 5);
                 if (topPRs && topPRs.length) {
                     lines.push('TOP PRs HISTÓRICOS DEL USER');
                     for (var tpi = 0; tpi < topPRs.length; tpi++) {
@@ -79259,40 +79260,72 @@ window.addEventListener('DOMContentLoaded', function() {
             } catch (_e) { return null; }
         }
 
-        /* Top N PRs históricos del user (desde profileData.prHistory) */
-        function _wrGetTopHistoricalPRs(pd, nMax) {
+        /* Top N PRs históricos del user
+           Prioridad 1: profileData.prHistory (PRs manuales tipo 5k/10k/hm/m)
+           Prioridad 2 (fallback): mejor tiempo por distancia en activities.bestEfforts
+                                    (auto-detectados desde streams · excluye la
+                                    semana en curso para no contaminar) */
+        function _wrGetTopHistoricalPRs(pd, acts, weekStartYmd, nMax) {
             try {
-                if (!pd || !Array.isArray(pd.prHistory) || pd.prHistory.length === 0) return null;
-                /* Agrupar por dist, quedarse con el mejor (más rápido) de cada uno */
-                var byDist = {};
-                for (var i = 0; i < pd.prHistory.length; i++) {
-                    var p = pd.prHistory[i];
-                    if (!p || !p.dist || !p.time) continue;
-                    if (!byDist[p.dist]) byDist[p.dist] = [];
-                    byDist[p.dist].push(p);
-                }
                 var out = [];
-                /* Orden lógico distancias */
-                var distOrder = ['5k','10k','15k','hm','m'];
-                for (var di = 0; di < distOrder.length; di++) {
-                    var d = distOrder[di];
-                    if (!byDist[d]) continue;
-                    /* El mejor de cada dist = el último (asumiendo prHistory se ordena cronológicamente
-                       y solo se añade si mejora). Alternativa: comparar times. */
-                    var latest = byDist[d][byDist[d].length - 1];
-                    var line = d + ': ' + latest.time;
-                    if (latest.dateISO) line += ' (' + _wrFmtDateShort(latest.dateISO) + ')';
-                    out.push(line);
-                    if (out.length >= (nMax || 5)) break;
+
+                /* Prioridad 1: prHistory manual (agrupar por dist, quedarse con último de cada) */
+                if (pd && Array.isArray(pd.prHistory) && pd.prHistory.length > 0) {
+                    var byDist = {};
+                    for (var i = 0; i < pd.prHistory.length; i++) {
+                        var p = pd.prHistory[i];
+                        if (!p || !p.dist || !p.time) continue;
+                        if (!byDist[p.dist]) byDist[p.dist] = [];
+                        byDist[p.dist].push(p);
+                    }
+                    var distOrder = ['5k','10k','15k','hm','m'];
+                    for (var di = 0; di < distOrder.length; di++) {
+                        var d = distOrder[di];
+                        if (!byDist[d]) continue;
+                        var latest = byDist[d][byDist[d].length - 1];
+                        var line = d + ': ' + latest.time;
+                        if (latest.dateISO) line += ' (' + _wrFmtDateShort(latest.dateISO) + ')';
+                        out.push(line);
+                        if (out.length >= (nMax || 5)) break;
+                    }
                 }
-                return out;
+
+                /* Prioridad 2 (fallback): computar desde bestEfforts históricos.
+                   Solo si prHistory vacío. Excluye acts de la semana en curso. */
+                if (out.length === 0 && Array.isArray(acts) && acts.length > 0 && weekStartYmd) {
+                    var beTargets = ['1km','3km','5km','10km','21km','42km'];
+                    var beBest = {};
+                    for (var ai = 0; ai < acts.length; ai++) {
+                        var a = acts[ai];
+                        if (!a || !a.dateStr || a.dateStr >= weekStartYmd) continue;
+                        var be = a.bestEfforts;
+                        if (!be) continue;
+                        for (var bti = 0; bti < beTargets.length; bti++) {
+                            var tgt = beTargets[bti];
+                            var entry = be[tgt];
+                            if (!entry || entry.time_sec == null || !isFinite(entry.time_sec) || entry.time_sec <= 0) continue;
+                            if (!beBest[tgt] || entry.time_sec < beBest[tgt].time_sec) {
+                                beBest[tgt] = { time_sec: entry.time_sec, activity_date: a.dateStr };
+                            }
+                        }
+                    }
+                    for (var bti2 = 0; bti2 < beTargets.length; bti2++) {
+                        var tgt2 = beTargets[bti2];
+                        var b = beBest[tgt2];
+                        if (!b) continue;
+                        out.push(tgt2 + ' ' + _wrFmtSec(b.time_sec) + ' (' + _wrFmtDateShort(b.activity_date) + ')');
+                        if (out.length >= (nMax || 5)) break;
+                    }
+                }
+
+                return out.length > 0 ? out : null;
             } catch (_e) { return null; }
         }
 
 
         try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 1.2B.1 ready · _wrDetectWeekPRs(weekStart, weekEnd) · fix bestEfforts camelCase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
-        try { console.log('%c[MR] Weekly Report · 1.2C ready · await _wrBuildWeeklyContext(weekStart, weekEnd) · compositor prompt IA', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2C.1 ready · await _wrBuildWeeklyContext(weekStart, weekEnd) · compositor prompt IA + fallback top PRs desde bestEfforts', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
