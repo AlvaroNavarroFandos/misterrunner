@@ -41768,42 +41768,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } else if (typeof showToast === 'function') {
                 showToast(msg, 5500);
             }
-            // [DEBUG p140 temporal · diagnóstico pace stale]
-            try {
-                var lines2 = ['── DEBUG PACES v2 (temporal) ──'];
-                lines2.push('plan.paces.easy: ' + (plan && plan.paces && plan.paces.easy));
-                var todayStr = new Date().toISOString().slice(0,10);
-                lines2.push('hoy: ' + todayStr);
-                lines2.push('');
-                var todaySess = [];
-                var deloadSess = [];
-                var anomalies = [];
-                var easyPace = plan && plan.paces && plan.paces.easy;
-                if (plan && Array.isArray(plan.weeks)) {
-                    plan.weeks.forEach(function(wk){
-                        if (!wk || !Array.isArray(wk.sessions)) return;
-                        wk.sessions.forEach(function(s){
-                            var isHoy = s.dateStr === todayStr;
-                            if (isHoy) todaySess.push({ d: s.dateStr, t: s.type, p: s.pace, ph: wk.phase, isDeload: !!wk.isDeload, desc: (s.desc||'').slice(0,40) });
-                            if (wk.isDeload) deloadSess.push({ d: s.dateStr, t: s.type, p: s.pace, desc: (s.desc||'').slice(0,40) });
-                            if ((s.type === 'easy' || s.type === 'recovery') && easyPace && s.pace && s.pace < easyPace) {
-                                anomalies.push({ d: s.dateStr, t: s.type, p: s.pace, ph: wk.phase });
-                            }
-                        });
-                    });
-                }
-                lines2.push('SESIÓN DE HOY (' + todayStr + '):');
-                if (todaySess.length === 0) lines2.push('· (ninguna encontrada)');
-                todaySess.forEach(function(x){ lines2.push('· ' + x.t + ' | pace=' + x.p + ' | ph=' + x.ph + ' | deload=' + x.isDeload); lines2.push('  desc: ' + x.desc); });
-                lines2.push('');
-                lines2.push('SESIONES DE SEMANA DESCARGA (' + deloadSess.length + '):');
-                deloadSess.slice(0,7).forEach(function(x){ lines2.push('· ' + x.d + ' | ' + x.t + ' | pace=' + x.p); });
-                lines2.push('');
-                lines2.push('ANOMALÍAS (pace < easyPace ' + easyPace + '):');
-                if (anomalies.length === 0) lines2.push('· (ninguna · saneador OK)');
-                anomalies.slice(0,5).forEach(function(x){ lines2.push('· ' + x.d + ' | ' + x.t + ' | pace=' + x.p + ' | ph=' + x.ph); });
-                setTimeout(function(){ try { alert(lines2.join('\n')); } catch(_){} }, 250);
-            } catch(dbgE2) { console.warn('[MR][DBG p140] paces dump:', dbgE2); }
         } catch(e) { console.warn('[MR][p136] corosRadarTap:', e); }
     }
     window._corosRadarTap = _corosRadarTap;
@@ -42481,6 +42445,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 sessionsUpdated: updateResult.updated,
                 weeksTouched: updateResult.weeksTouched
             });
+
+            // [p140] Saneador post-recalibración: _updateFuturePlanPaces skipea
+            // sesión de HOY (dateStr <= fromDate) y puede dejar pace stale
+            // (ej. easy de descarga con pace 4:30 marathon). El saneador cubre
+            // ese hueco corrigiendo cualquier easy/recovery con pace < paces.easy.
+            try {
+                if (typeof _mrEnsurePlanFields === 'function') _mrEnsurePlanFields(plan);
+            } catch(e) { console.warn('[MR][F5·5d] ensureFields post-recalib:', e); }
 
             // 7 · Persistir localStorage/IDB (no hay _updatePlanInSupabase)
             if (typeof saveAppState === 'function') {
@@ -53664,6 +53636,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // Plan
             if (state.activePlan) {
                 activePlan = state.activePlan;
+                // [p140-fix2] Sanea campos faltantes y sesiones easy con pace
+                // stale. Este flujo (loadAppState) es el principal de arranque;
+                // sin el saneador aquí, sesiones de descarga con pace stale
+                // (ej. easy con 4:30 marathon) se muestran mal en Home.
+                try {
+                    if (typeof _mrEnsurePlanFields === 'function' && _mrEnsurePlanFields(activePlan)) {
+                        if (typeof savePlanToStorage === 'function') savePlanToStorage();
+                    }
+                } catch(_){}
                 renderPlanWeek(planCurrentWeek);
                 updatePlanNav();
                 renderMisterPlanCard();
