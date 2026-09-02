@@ -51927,6 +51927,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return null;
         }
     }
+    /* [v2.30.1-p158 · WEEKLY REPORT 1.2A.1] Exponer en window para uso desde
+       bloque _wr* (weekly report) que vive en otro IIFE. Reutiliza el cache
+       interno _streamsCache — cero I/O extra si ya se ha fetcheado antes. */
+    try { window.loadStreamsForActivity = loadStreamsForActivity; } catch(_e) {}
 
     function _mapStreamsToActFields(act, streamsObj) {
         if (!streamsObj || !streamsObj.streams) return;
@@ -78223,7 +78227,7 @@ window.addEventListener('DOMContentLoaded', function() {
            'YYYY-MM-DD', ISO 8601 lunes→domingo Europe/Madrid).
            Devuelve null si inputs inválidos o error interno.
            ═══════════════════════════════════════════════════════════════════ */
-        window._wrComputeWeekMetrics = function(weekStartStr, weekEndStr) {
+        window._wrComputeWeekMetrics = async function(weekStartStr, weekEndStr) {
             try {
                 /* 0 · Validación de inputs */
                 if (typeof weekStartStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) return null;
@@ -78322,38 +78326,98 @@ window.addEventListener('DOMContentLoaded', function() {
                 var pmcEnd   = _wrComputePmcUntil(_acts, weekEndStr);
                 var pmcStart = _wrComputePmcUntil(_acts, _prevEndYmd);
 
-                /* 7 · ACWR (reutilizar computeACWR global si disponible) */
-                var acwr = null;
+                /* 7 · ACWR (reutilizar computeACWR global si disponible)
+                       [v2.30.1-p158 · fix p1] computeACWR devuelve {ratio, zone, ...}
+                       NO {acwr, ...}. Bug del 1.2A original corregido. */
+                var acwr = null, acwr_zone = null, acwr_coverage = null;
                 try {
                     if (typeof window.computeACWR === 'function') {
                         var acwrRes = window.computeACWR(_acts, weekEndStr);
-                        if (acwrRes && acwrRes.acwr != null) {
-                            acwr = Math.round(Number(acwrRes.acwr) * 100) / 100;
+                        if (acwrRes && acwrRes.ratio != null) {
+                            acwr = Math.round(Number(acwrRes.ratio) * 100) / 100;
+                            acwr_zone     = acwrRes.zone || null;
+                            acwr_coverage = (acwrRes.coverage != null) ? acwrRes.coverage : null;
                         }
                     }
                 } catch (_e) {}
 
-                /* 8 · Distribución zonas HR (aproximación por avgHr)
-                       5 zonas: Z1<60%, Z2 60-70%, Z3 70-80%, Z4 80-90%, Z5>90% */
+                /* 8 · Distribución zonas HR PRECISA desde streams reales
+                       ─────────────────────────────────────────────────────
+                       Descarga streams de bucket activity-streams para cada
+                       act de la semana (con _dbActivityId), cuenta tiempo
+                       exacto segundo a segundo en cada zona.
+                       5 zonas: Z1<60%, Z2 60-70%, Z3 70-80%, Z4 80-90%, Z5>90%.
+                       Reutiliza window.loadStreamsForActivity (cache interno
+                       _streamsCache evita fetch duplicado en runs sucesivos).
+                       [v2.30.1-p158 · fix p2] Aproximación avgHr descartada
+                       por sesgo (todas caían en Z3 con avgHr típico runner). */
                 var hrMax = null;
                 try { hrMax = (_pd && _pd.hrMax) ? Number(_pd.hrMax) : null; } catch (_e) {}
+
                 var zones = { z1:0, z2:0, z3:0, z4:0, z5:0 };
                 var zonesDurTotal = 0;
-                if (hrMax && hrMax > 0) {
-                    for (var zi = 0; zi < weekActs.length; zi++) {
-                        var za = weekActs[zi];
-                        var zHr = (za.avgHr != null) ? Number(za.avgHr) : null;
-                        var zDur = Number(za.durationSec) || 0;
-                        if (!zHr || zHr <= 0 || !zDur) continue;
-                        var pct = (zHr / hrMax) * 100;
-                        if      (pct < 60) zones.z1 += zDur;
-                        else if (pct < 70) zones.z2 += zDur;
-                        else if (pct < 80) zones.z3 += zDur;
-                        else if (pct < 90) zones.z4 += zDur;
-                        else               zones.z5 += zDur;
-                        zonesDurTotal += zDur;
+                var zones_source = 'unavailable';
+                var streams_loaded_count = 0;
+                var streams_missing_count = 0;
+
+                if (hrMax && hrMax > 0 && typeof window.loadStreamsForActivity === 'function') {
+                    /* Filtrar acts con _dbActivityId (necesario para fetch bucket) */
+                    var actsToLoad = weekActs.filter(function(a) {
+                        return a && a._dbActivityId;
+                    });
+
+                    if (actsToLoad.length > 0) {
+                        /* Descargar TODOS los streams en paralelo */
+                        var streamsResults = await Promise.all(
+                            actsToLoad.map(function(a) {
+                                return window.loadStreamsForActivity(a._dbActivityId)
+                                    .catch(function() { return null; });
+                            })
+                        );
+
+                        /* Procesar cada stream: contar segundos en cada zona */
+                        for (var si2 = 0; si2 < streamsResults.length; si2++) {
+                            var streamObj = streamsResults[si2];
+                            if (!streamObj || !streamObj.streams) {
+                                streams_missing_count++;
+                                continue;
+                            }
+                            var s = streamObj.streams;
+                            var timeArr = Array.isArray(s.time) ? s.time : null;
+                            var hrArr   = Array.isArray(s.hr)   ? s.hr   : null;
+                            if (!timeArr || !hrArr || timeArr.length < 2 || hrArr.length < 2) {
+                                streams_missing_count++;
+                                continue;
+                            }
+
+                            streams_loaded_count++;
+                            var n = Math.min(timeArr.length, hrArr.length);
+
+                            /* Iterar puntos: cada punto aporta (time[i+1]-time[i])
+                               segundos a la zona correspondiente a hr[i]. Último
+                               punto se ignora (no tiene "duración hasta el siguiente"). */
+                            for (var pi = 0; pi < n - 1; pi++) {
+                                var hrVal = hrArr[pi];
+                                if (hrVal == null || !isFinite(hrVal) || hrVal <= 0) continue;
+                                var dt = timeArr[pi + 1] - timeArr[pi];
+                                if (!isFinite(dt) || dt <= 0 || dt > 60) continue; /* gap >60s = pausa, skip */
+
+                                var pctZ = (Number(hrVal) / hrMax) * 100;
+                                if      (pctZ < 60) zones.z1 += dt;
+                                else if (pctZ < 70) zones.z2 += dt;
+                                else if (pctZ < 80) zones.z3 += dt;
+                                else if (pctZ < 90) zones.z4 += dt;
+                                else                zones.z5 += dt;
+                                zonesDurTotal += dt;
+                            }
+                        }
+
+                        if (zonesDurTotal > 0) {
+                            zones_source = (streams_missing_count === 0) ? 'streams' : 'streams_partial';
+                        }
                     }
                 }
+
                 var zones_pct = { z1:0, z2:0, z3:0, z4:0, z5:0 };
                 if (zonesDurTotal > 0) {
                     zones_pct.z1 = Math.round((zones.z1 / zonesDurTotal) * 100);
@@ -78404,13 +78468,20 @@ window.addEventListener('DOMContentLoaded', function() {
                     tsb_delta:        Math.round((pmcEnd.tsb - pmcStart.tsb) * 10) / 10,
 
                     acwr:             acwr,               /* null si insuficientes datos */
+                    acwr_zone:        acwr_zone,          /* 'undertraining'|'sweet'|'caution'|'high_risk'|null */
+                    acwr_coverage:    acwr_coverage,      /* 0-1: cobertura TRIMP ventana crónica */
 
                     avg_hr:           avg_hr,             /* null si ninguna act con HR */
                     highest_hr:       highest_hr > 0 ? Math.round(highest_hr) : null,
                     elevation_gain_m: Math.round(elevation_gain_m),
 
                     zones_pct:        zones_pct,          /* {z1..z5} % del tiempo total con HR */
-                    zones_source:     (hrMax && hrMax > 0 && zonesDurTotal > 0) ? 'avgHr' : 'unavailable',
+                    zones_source:     zones_source,       /* 'streams'|'streams_partial'|'unavailable' */
+                    zones_debug: {
+                        streams_loaded:  streams_loaded_count,
+                        streams_missing: streams_missing_count,
+                        total_seconds:   Math.round(zonesDurTotal)
+                    },
 
                     sessions_by_day:  sessions_by_day     /* array 7 días L→D */
                 };
@@ -78478,7 +78549,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        try { console.log('%c[MR] Weekly Report · 1.2A ready · _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2A.1 ready · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
