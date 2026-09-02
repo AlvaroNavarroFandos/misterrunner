@@ -78196,6 +78196,294 @@ window.addEventListener('DOMContentLoaded', function() {
 
 
 
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         WEEKLY REPORT · Fase 1 código · [v2.30.1-p158]
+         Motor de métricas y contexto para el reporte semanal Míster IA.
+         Todas las funciones prefijadas _wr* (weekly report). Cero side effects,
+         cero I/O bucket streams, cero UI tocada. Reutiliza:
+           · computeACWR() de línea 31302 (ventanas 7/28)
+           · _computeTRIMP() de línea 17394 (fórmula Banister)
+           · Fórmula PMC kCTL=2/43, kATL=2/8 (motor MR existente)
+           · Vars globales: activities, activePlan, profileData
+         Sub-patches aplicados:
+           1.2A · _wrComputeWeekMetrics(weekStart, weekEnd)  → este bloque
+           1.2B · _wrDetectWeekPRs (próximo)
+           1.2C · _wrBuildWeeklyContext (próximo)
+           1.2D · smoke + expose window (próximo)
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        'use strict';
+
+        /* ═══════════════════════════════════════════════════════════════════
+           1.2A · _wrComputeWeekMetrics(weekStartStr, weekEndStr)
+           ───────────────────────────────────────────────────────────────────
+           Motor de cálculo puro. Devuelve objeto con TODAS las métricas de
+           la semana entre weekStart y weekEnd (ambos inclusive, formato
+           'YYYY-MM-DD', ISO 8601 lunes→domingo Europe/Madrid).
+           Devuelve null si inputs inválidos o error interno.
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrComputeWeekMetrics = function(weekStartStr, weekEndStr) {
+            try {
+                /* 0 · Validación de inputs */
+                if (typeof weekStartStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) return null;
+                if (typeof weekEndStr   !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekEndStr))   return null;
+                if (weekStartStr > weekEndStr) return null;
+
+                /* 1 · Acceso seguro a vars globales */
+                var _acts = (typeof activities !== 'undefined' && Array.isArray(activities)) ? activities
+                          : (typeof window.activities !== 'undefined' && Array.isArray(window.activities)) ? window.activities
+                          : [];
+                var _plan = (typeof activePlan !== 'undefined') ? activePlan
+                          : (typeof window.activePlan !== 'undefined') ? window.activePlan
+                          : null;
+                var _pd   = (typeof profileData !== 'undefined') ? profileData
+                          : (typeof window.profileData !== 'undefined') ? window.profileData
+                          : null;
+
+                /* 2 · Filtrado activities de la semana */
+                var weekActs = _acts.filter(function(a) {
+                    return a && a.dateStr && a.dateStr >= weekStartStr && a.dateStr <= weekEndStr;
+                });
+
+                /* 3 · Cálculo semana anterior (para deltas PMC) */
+                var _startD = new Date(weekStartStr + 'T12:00:00');
+                if (isNaN(_startD.getTime())) return null;
+                var prevEndD = new Date(_startD);
+                prevEndD.setDate(_startD.getDate() - 1);
+                var _prevEndYmd = _wrDateToYmd(prevEndD);
+
+                /* 4 · Agregados de la semana (km, hr, ascenso, by-day) */
+                var km_done = 0, sessions_done = 0, elevation_gain_m = 0;
+                var avg_hr_sum = 0, avg_hr_count = 0, highest_hr = 0;
+                var by_day = {}; /* dateStr → { km, count, type, avgHr, trimp } */
+
+                for (var i = 0; i < weekActs.length; i++) {
+                    var a = weekActs[i];
+                    var km   = Number(a.distKm)      || 0;
+                    var dur  = Number(a.durationSec) || 0;
+                    var aHr  = (a.avgHr != null) ? Number(a.avgHr) : null;
+                    var mHr  = (a.maxHr != null) ? Number(a.maxHr) : null;
+                    var asc  = Number(a.ascentM)     || 0;
+                    var tr   = (a.trimp != null) ? Number(a.trimp) : 0;
+
+                    if (km  > 0)  km_done          += km;
+                    if (dur > 60) sessions_done++;
+                    if (asc > 0)  elevation_gain_m += asc;
+                    if (aHr != null && aHr > 0) { avg_hr_sum += aHr; avg_hr_count++; }
+                    if (mHr != null && mHr > highest_hr) highest_hr = mHr;
+
+                    if (!by_day[a.dateStr]) by_day[a.dateStr] = { km:0, count:0, type:null, avgHr:null, trimp:0 };
+                    var bd = by_day[a.dateStr];
+                    bd.km    += km;
+                    bd.count += 1;
+                    if (a.type && !bd.type) bd.type = a.type;
+                    if (aHr != null && bd.avgHr == null) bd.avgHr = aHr;
+                    if (isFinite(tr)) bd.trimp += tr;
+                }
+
+                var avg_hr = avg_hr_count > 0 ? Math.round(avg_hr_sum / avg_hr_count) : null;
+                km_done = Math.round(km_done * 10) / 10;
+
+                /* 5 · Extracción datos del plan (km_planned, sessions_planned, week X/Y) */
+                var km_planned = null, sessions_planned = null;
+                var week_num_of_plan = null, plan_phase = null, plan_name = null;
+                try {
+                    if (_plan && Array.isArray(_plan.weeks) && _plan.type !== 'strength') {
+                        plan_name = _plan.name || null;
+                        for (var wi = 0; wi < _plan.weeks.length; wi++) {
+                            var wk = _plan.weeks[wi];
+                            if (!wk || wk.weekStart !== weekStartStr) continue;
+                            var kmP = 0, sesP = 0;
+                            if (Array.isArray(wk.sessions)) {
+                                for (var si = 0; si < wk.sessions.length; si++) {
+                                    var s = wk.sessions[si];
+                                    if (!s || s.isStrength) continue;
+                                    var kmS = Number(s.dist != null ? s.dist : (s.distKm != null ? s.distKm : 0)) || 0;
+                                    if (kmS > 0) { kmP += kmS; sesP++; }
+                                }
+                            }
+                            km_planned       = Math.round(kmP * 10) / 10;
+                            sessions_planned = sesP;
+                            week_num_of_plan = (wi + 1) + '/' + _plan.weeks.length;
+                            plan_phase       = wk.phase || wk.focus || null;
+                            break;
+                        }
+                    }
+                } catch (_e) { /* plan malformado, seguimos con nulls */ }
+
+                var compliance_pct = null;
+                if (km_planned != null && km_planned > 0) {
+                    compliance_pct = Math.round((km_done / km_planned) * 100);
+                }
+
+                /* 6 · PMC (CTL/ATL/TSB) al inicio y al fin de la semana
+                       Fórmula EMA: kCTL=2/43, kATL=2/8 (misma que motor MR) */
+                var pmcEnd   = _wrComputePmcUntil(_acts, weekEndStr);
+                var pmcStart = _wrComputePmcUntil(_acts, _prevEndYmd);
+
+                /* 7 · ACWR (reutilizar computeACWR global si disponible) */
+                var acwr = null;
+                try {
+                    if (typeof window.computeACWR === 'function') {
+                        var acwrRes = window.computeACWR(_acts, weekEndStr);
+                        if (acwrRes && acwrRes.acwr != null) {
+                            acwr = Math.round(Number(acwrRes.acwr) * 100) / 100;
+                        }
+                    }
+                } catch (_e) {}
+
+                /* 8 · Distribución zonas HR (aproximación por avgHr)
+                       5 zonas: Z1<60%, Z2 60-70%, Z3 70-80%, Z4 80-90%, Z5>90% */
+                var hrMax = null;
+                try { hrMax = (_pd && _pd.hrMax) ? Number(_pd.hrMax) : null; } catch (_e) {}
+                var zones = { z1:0, z2:0, z3:0, z4:0, z5:0 };
+                var zonesDurTotal = 0;
+                if (hrMax && hrMax > 0) {
+                    for (var zi = 0; zi < weekActs.length; zi++) {
+                        var za = weekActs[zi];
+                        var zHr = (za.avgHr != null) ? Number(za.avgHr) : null;
+                        var zDur = Number(za.durationSec) || 0;
+                        if (!zHr || zHr <= 0 || !zDur) continue;
+                        var pct = (zHr / hrMax) * 100;
+                        if      (pct < 60) zones.z1 += zDur;
+                        else if (pct < 70) zones.z2 += zDur;
+                        else if (pct < 80) zones.z3 += zDur;
+                        else if (pct < 90) zones.z4 += zDur;
+                        else               zones.z5 += zDur;
+                        zonesDurTotal += zDur;
+                    }
+                }
+                var zones_pct = { z1:0, z2:0, z3:0, z4:0, z5:0 };
+                if (zonesDurTotal > 0) {
+                    zones_pct.z1 = Math.round((zones.z1 / zonesDurTotal) * 100);
+                    zones_pct.z2 = Math.round((zones.z2 / zonesDurTotal) * 100);
+                    zones_pct.z3 = Math.round((zones.z3 / zonesDurTotal) * 100);
+                    zones_pct.z4 = Math.round((zones.z4 / zonesDurTotal) * 100);
+                    zones_pct.z5 = Math.round((zones.z5 / zonesDurTotal) * 100);
+                }
+
+                /* 9 · sessions_by_day: array de 7 objetos L→D con {date, km, trimp, type} */
+                var sessions_by_day = [];
+                var dCur = new Date(_startD);
+                for (var di = 0; di < 7; di++) {
+                    var dYmd = _wrDateToYmd(dCur);
+                    var bd2 = by_day[dYmd];
+                    sessions_by_day.push({
+                        date:  dYmd,
+                        km:    bd2 ? Math.round(bd2.km * 10) / 10 : 0,
+                        trimp: bd2 ? Math.round(bd2.trimp)         : 0,
+                        type:  bd2 ? bd2.type                       : null
+                    });
+                    dCur.setDate(dCur.getDate() + 1);
+                }
+
+                /* 10 · Return objeto completo */
+                return {
+                    week_start:       weekStartStr,
+                    week_end:         weekEndStr,
+                    week_num_of_plan: week_num_of_plan,   /* "8/16" | null */
+                    plan_name:        plan_name,          /* "Maratón XL" | null */
+                    plan_phase:       plan_phase,         /* "calidad" | null */
+
+                    km_planned:       km_planned,         /* null si no hay plan */
+                    km_done:          km_done,
+                    compliance_pct:   compliance_pct,     /* null si no hay plan */
+
+                    sessions_planned: sessions_planned,   /* null si no hay plan */
+                    sessions_done:    sessions_done,
+
+                    ctl_start:        pmcStart.ctl,
+                    ctl_end:          pmcEnd.ctl,
+                    ctl_delta:        Math.round((pmcEnd.ctl - pmcStart.ctl) * 10) / 10,
+                    atl_start:        pmcStart.atl,
+                    atl_end:          pmcEnd.atl,
+                    atl_delta:        Math.round((pmcEnd.atl - pmcStart.atl) * 10) / 10,
+                    tsb_start:        pmcStart.tsb,
+                    tsb_end:          pmcEnd.tsb,
+                    tsb_delta:        Math.round((pmcEnd.tsb - pmcStart.tsb) * 10) / 10,
+
+                    acwr:             acwr,               /* null si insuficientes datos */
+
+                    avg_hr:           avg_hr,             /* null si ninguna act con HR */
+                    highest_hr:       highest_hr > 0 ? Math.round(highest_hr) : null,
+                    elevation_gain_m: Math.round(elevation_gain_m),
+
+                    zones_pct:        zones_pct,          /* {z1..z5} % del tiempo total con HR */
+                    zones_source:     (hrMax && hrMax > 0 && zonesDurTotal > 0) ? 'avgHr' : 'unavailable',
+
+                    sessions_by_day:  sessions_by_day     /* array 7 días L→D */
+                };
+            } catch (err) {
+                try { console.warn('[MR][wr] _wrComputeWeekMetrics error:', err && err.message || err); } catch (_) {}
+                return null;
+            }
+        };
+
+        /* ─── Helper interno: Date → 'YYYY-MM-DD' (local, patrón MR) ─── */
+        function _wrDateToYmd(d) {
+            var y = d.getFullYear();
+            var m = String(d.getMonth() + 1).padStart(2, '0');
+            var day = String(d.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + day;
+        }
+
+        /* ─── Helper interno: PMC (CTL/ATL/TSB) hasta una fecha concreta
+               Aplica EMA día a día desde primera actividad hasta endYmd.
+               Suma TRIMP por día (varias actividades el mismo día se suman).
+               Devuelve {ctl, atl, tsb} redondeados a 1 decimal.               ─── */
+        function _wrComputePmcUntil(acts, endYmd) {
+            var out = { ctl: 0, atl: 0, tsb: 0 };
+            try {
+                if (!Array.isArray(acts) || acts.length === 0) return out;
+                if (typeof endYmd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(endYmd)) return out;
+
+                /* 1 · Agregar TRIMP por día */
+                var byDate = {};
+                for (var i = 0; i < acts.length; i++) {
+                    var a = acts[i];
+                    if (!a || !a.dateStr || a.dateStr > endYmd) continue;
+                    var tr = (a.trimp != null) ? Number(a.trimp) : 0;
+                    if (!isFinite(tr)) tr = 0;
+                    if (!byDate[a.dateStr]) byDate[a.dateStr] = 0;
+                    byDate[a.dateStr] += tr;
+                }
+                var dates = Object.keys(byDate).sort();
+                if (dates.length === 0) return out;
+
+                /* 2 · Iterar día a día desde primera fecha hasta endYmd */
+                var kCTL = 2 / 43, kATL = 2 / 8;
+                var ctl = 0, atl = 0, isFirst = true;
+                var cur = new Date(dates[0] + 'T12:00:00');
+                var end = new Date(endYmd    + 'T12:00:00');
+                if (isNaN(cur.getTime()) || isNaN(end.getTime())) return out;
+
+                var guard = 0; /* safety: max 5 años de iteración */
+                while (cur.getTime() <= end.getTime() && guard < 1830) {
+                    var ymd = _wrDateToYmd(cur);
+                    var tr2 = byDate[ymd] || 0;
+                    if (isFirst) { ctl = tr2; atl = tr2; isFirst = false; }
+                    else         { ctl = tr2 * kCTL + ctl * (1 - kCTL);
+                                   atl = tr2 * kATL + atl * (1 - kATL); }
+                    cur.setDate(cur.getDate() + 1);
+                    guard++;
+                }
+
+                out.ctl = Math.round(ctl * 10) / 10;
+                out.atl = Math.round(atl * 10) / 10;
+                out.tsb = Math.round((ctl - atl) * 10) / 10;
+                return out;
+            } catch (_e) {
+                return out;
+            }
+        }
+
+        try { console.log('%c[MR] Weekly Report · 1.2A ready · _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+    })();
+    </script>
+
+
+
     <!-- ═══ p100-fix2 · Modal Nutrición movido literal al final del body
          para escapar de cualquier stacking context (evita bug de
          z-index cuando se abre desde el sheet Editar perfil o modal
