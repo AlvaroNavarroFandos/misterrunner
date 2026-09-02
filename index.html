@@ -40854,9 +40854,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 if (s.pace && paceValueMap[s.pace]) s.pace = paceValueMap[s.pace];
                 // [p140] Sanity check post-mapping: si sesión es easy/recovery
-                // pero pace acabó más rápido que marathon (stale de series),
-                // forzar al easy pace correcto.
-                if ((s.type === 'easy' || s.type === 'recovery') && s.pace && newPaces.marathon && newPaces.easy && s.pace < newPaces.marathon) {
+                // pero pace acabó más rápido que el easy pace (stale de series
+                // o marathon), forzar al easy pace correcto.
+                if ((s.type === 'easy' || s.type === 'recovery') && s.pace && newPaces.easy && s.pace < newPaces.easy) {
                     s.pace = newPaces.easy;
                 }
                 s.desc = replaceInString(s.desc);
@@ -41084,20 +41084,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 console.log('[MR][p138] sanea plan.finalGoalSecs <- goalSecs =', plan.finalGoalSecs);
             }
             // [p140] Sanea sesiones easy/recovery en semanas de descarga cuyo
-            // pace quedó stale del entreno original (series/tempo). Bug del
-            // generador pre-p140: al degradar type=series→easy, sess.pace
-            // mantenía el pace de series y el widget Home mostraba 4:30 en
-            // vez del easy pace correcto. Solo corrige planes ya generados
-            // con el bug (planes nuevos ya salen bien de origen).
-            if (plan.paces && plan.paces.easy && plan.paces.marathon && Array.isArray(plan.weeks)) {
+            // pace quedó stale del entreno original (series/tempo/marathon).
+            // Bug del generador pre-p140: al degradar type=series→easy,
+            // sess.pace mantenía el pace del entreno original y el widget
+            // Home mostraba 4:30 en vez del easy pace correcto (~5:30-5:51).
+            // Criterio: cualquier easy/recovery con pace más rápido que
+            // easyPace es stale (fix1: antes era < marathonPace y fallaba
+            // cuando el pace stale coincidía exactamente con marathon pace).
+            if (plan.paces && plan.paces.easy && Array.isArray(plan.weeks)) {
                 var easyPace = plan.paces.easy;
-                var marathonPace = plan.paces.marathon;
                 var fixedSess = 0;
                 plan.weeks.forEach(function(wk){
                     if (!wk || !Array.isArray(wk.sessions)) return;
                     wk.sessions.forEach(function(s){
-                        // Sanity: easy/recovery con pace más rápido que marathon = stale
-                        if ((s.type === 'easy' || s.type === 'recovery') && s.pace && s.pace < marathonPace) {
+                        if ((s.type === 'easy' || s.type === 'recovery') && s.pace && s.pace < easyPace) {
                             s.pace = easyPace;
                             fixedSess++;
                         }
@@ -41105,7 +41105,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 });
                 if (fixedSess > 0) {
                     mutated = true;
-                    console.log('[MR][p140] sanea', fixedSess, 'sesiones easy/recovery con pace stale de series');
+                    console.log('[MR][p140] sanea', fixedSess, 'sesiones easy/recovery con pace stale');
                 }
             }
         } catch(e) { console.warn('[MR][p138] ensurePlanFields:', e); }
