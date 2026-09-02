@@ -40984,6 +40984,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // Training goal (puente sigmoide SNAP k=8 · F1 confirmado).
     // Retorna segundos redondeados. `nowMs` opcional (inyectable para tests).
     // Snap extremos: prog<=0 → goalW=0.15 exacto · prog>=1 → goalW=1.0 exacto.
+    // ═══════════════════════════════════════════════════════════════════
+    // [p138] Saneador de campos de plan · rescata planes generados por IA
+    // ═══════════════════════════════════════════════════════════════════
+    // Detecta y auto-rellena campos críticos que la generación IA puede
+    // omitir. Sin esto, _mrTrainingGoalSecs corta ante !plan.startDate y
+    // devuelve goal puro → puente sigmoide no se activa → sub-bloque
+    // "Ritmos objetivo del mes" no aparece.
+    //
+    // Rescates:
+    //   · plan.startDate    ← plan.weeks[0].weekStart  (siempre existe)
+    //   · plan.finalGoalSecs ← plan.goalSecs           (legacy)
+    //
+    // Retorna true si mutó el plan (caller debe persistir), false si nada.
+    // Idempotente: llamar múltiples veces sin efecto si ya está saneado.
+    function _mrEnsurePlanFields(plan){
+        if (!plan) return false;
+        var mutated = false;
+        try {
+            if (!plan.startDate && Array.isArray(plan.weeks) && plan.weeks[0] && plan.weeks[0].weekStart) {
+                plan.startDate = plan.weeks[0].weekStart;
+                mutated = true;
+                console.log('[MR][p138] sanea plan.startDate <- weeks[0].weekStart =', plan.startDate);
+            }
+            if (plan.finalGoalSecs == null && plan.goalSecs != null) {
+                plan.finalGoalSecs = plan.goalSecs;
+                mutated = true;
+                console.log('[MR][p138] sanea plan.finalGoalSecs <- goalSecs =', plan.finalGoalSecs);
+            }
+        } catch(e) { console.warn('[MR][p138] ensurePlanFields:', e); }
+        return mutated;
+    }
+    window._mrEnsurePlanFields = _mrEnsurePlanFields;
+
     function _mrTrainingGoalSecs(plan, nowMs){
         if (!plan) return null;
         var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
@@ -40997,9 +41030,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (live != null && live > goal) fit = live;
         }
         if (!fit) fit = goal;
-        if (!plan.startDate || !plan.raceDate) return goal;
+        // [p138] Doble red: si el plan no está saneado aún, inferir startDate
+        // desde weeks[0].weekStart en el propio helper (evita corte con return
+        // goal puro que colapsa el puente).
+        var startD = plan.startDate;
+        if (!startD && Array.isArray(plan.weeks) && plan.weeks[0] && plan.weeks[0].weekStart) {
+            startD = plan.weeks[0].weekStart;
+        }
+        if (!startD || !plan.raceDate) return goal;
         try {
-            var start = new Date(plan.startDate + 'T00:00:00Z').getTime();
+            var start = new Date(startD + 'T00:00:00Z').getTime();
             var race  = new Date(plan.raceDate  + 'T00:00:00Z').getTime();
             if (!isFinite(start) || !isFinite(race)) return goal;
             var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : Date.now();
@@ -41521,38 +41561,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } else if (typeof showToast === 'function') {
                 showToast(msg, 5500);
             }
-            // [DEBUG p138 temporal · quitar cuando identifiquemos el bug del puente]
-            // Muestra los valores crudos del plan tras el toast, para saber
-            // exactamente por qué _mrTrainingGoalSecs no activa el puente.
-            try {
-                var trainingRaw = (plan && typeof window._mrTrainingGoalSecs === 'function') ? window._mrTrainingGoalSecs(plan) : null;
-                var liveRaw = (plan && typeof window._mrCurrentFitnessSecs === 'function') ? window._mrCurrentFitnessSecs(plan) : null;
-                var modeRaw = (typeof window._mrRecalibMode === 'function') ? window._mrRecalibMode() : '?';
-                var rsRaw = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
-                var predKm = (rsRaw && Array.isArray(rsRaw.predictor)) ? rsRaw.predictor.map(function(p){ return (p && p.dist) + '=' + (p && p.duration); }).join(' ') : 'no predictor';
-                var goalRaw = (plan && plan.finalGoalSecs != null) ? plan.finalGoalSecs : (plan && plan.goalSecs);
-                var diff = (trainingRaw != null && goalRaw != null) ? Math.abs(trainingRaw - goalRaw) : 'n/a';
-                var lines = [
-                    '── DEBUG PUENTE (temporal) ──',
-                    'plan.name: ' + (plan ? plan.name : 'null'),
-                    'planDist: ' + (plan ? plan.planDist : 'null'),
-                    'goalSecs: ' + (plan ? plan.goalSecs : 'null'),
-                    'finalGoalSecs: ' + (plan ? plan.finalGoalSecs : 'null'),
-                    'currentFitnessSecs: ' + (plan && plan.currentFitnessSecs != null ? plan.currentFitnessSecs : 'null'),
-                    'startDate: ' + (plan ? plan.startDate : 'null'),
-                    'raceDate: ' + (plan ? plan.raceDate : 'null'),
-                    '',
-                    'mode: ' + modeRaw,
-                    'predictor: ' + predKm,
-                    '_mrCurrentFitnessSecs → ' + (liveRaw != null ? liveRaw : 'null'),
-                    '_mrTrainingGoalSecs  → ' + (trainingRaw != null ? trainingRaw : 'null'),
-                    'diff(tg−goal): ' + diff,
-                    '',
-                    'info.hasBridge: ' + (info ? info.hasBridge : 'null'),
-                    'info.trainingGoalSecs: ' + (info ? info.trainingGoalSecs : 'null')
-                ];
-                setTimeout(function(){ try { alert(lines.join('\n')); } catch(_){} }, 250);
-            } catch(dbgE) { console.warn('[MR][DBG] radar dump:', dbgE); }
         } catch(e) { console.warn('[MR][p136] corosRadarTap:', e); }
     }
     window._corosRadarTap = _corosRadarTap;
@@ -50168,7 +50176,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     function savePlanToStorage(){try{localStorage.setItem(_uk('mr_plan'),JSON.stringify(activePlan));}catch(e){} try{ if(typeof saveAppState==='function') saveAppState(); }catch(_){} try{ if(typeof window._corosCheckPlanChanged==='function') window._corosCheckPlanChanged(); }catch(_){}}
     function saveStrengthPlanToStorage(){try{localStorage.setItem(_uk('mr_strength_plan'),JSON.stringify(activeStrengthPlan));}catch(e){} try{ if(typeof window._mrScheduleStrengthPlanSync === 'function') window._mrScheduleStrengthPlanSync(); }catch(_){}}
     function loadPlanFromStorage(){
-        try{const s=localStorage.getItem(_uk('mr_plan'));if(s){activePlan=JSON.parse(s);renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();}}catch(e){}
+        try{const s=localStorage.getItem(_uk('mr_plan'));if(s){activePlan=JSON.parse(s);
+            // [p138] Sanea campos faltantes (startDate, finalGoalSecs) y persiste si mutó
+            try {
+                if (typeof _mrEnsurePlanFields === 'function' && _mrEnsurePlanFields(activePlan)) {
+                    if (typeof savePlanToStorage === 'function') savePlanToStorage();
+                }
+            } catch(_){}
+            renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();}}catch(e){}
     }
 
     document.addEventListener('click',e=>{
@@ -52363,6 +52378,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             _mrSyncSuppressPush = true;
             try {
                 activePlan = row.plan_data;
+                // [p138] Sanea campos faltantes ANTES de persistir → los nuevos
+                // valores viajan al localStorage y al próximo push a Supabase.
+                try {
+                    if (typeof _mrEnsurePlanFields === 'function') _mrEnsurePlanFields(activePlan);
+                } catch(_){}
                 try { localStorage.setItem(_uk('mr_plan'), JSON.stringify(activePlan)); } catch(_){}
                 try { if (typeof saveAppState === 'function') saveAppState({immediate:true}); } catch(_){}
                 // Reposicionar semana actual (misma lógica que bootApp)
