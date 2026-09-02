@@ -41082,6 +41082,111 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     window._mrEnsurePlanFields = _mrEnsurePlanFields;
 
+    // ═══════════════════════════════════════════════════════════════════
+    // [p139] Hidratador preventivo · planes recién generados
+    // ═══════════════════════════════════════════════════════════════════
+    // Complementa _mrEnsurePlanFields (curativo, en carga). Este actúa
+    // en la GENERACIÓN, ANTES de que el plan se persista, para que ya
+    // salga bien de origen:
+    //
+    //   1 · Sanea startDate + finalGoalSecs (mismo que _mrEnsurePlanFields)
+    //   2 · Pobla currentFitnessSecs desde el predictor COROS activo
+    //       si está disponible (mode==='coros' + predictor con dist matching).
+    //       Si no hay predictor, deja null → la card "Primera calibración"
+    //       aparecerá cuando el user conecte COROS o vía flow VDOT.
+    //   3 · Si currentFitnessSecs se pobló Y difiere del goal,
+    //       recalcula plan.paces con el training goal correcto (sigmoide)
+    //       Y reescribe las sesiones futuras vía _updateFuturePlanPaces.
+    //       Así el plan sale desde el minuto 0 con ritmos coherentes con
+    //       la forma real del user, no con la asunción optimista fit=goal.
+    //
+    // Llamar SOLO en generación (acceptPlan / renderPlanPreview post-gen).
+    // NO llamar en cargas normales (usa _mrEnsurePlanFields para eso).
+    function _mrHydrateNewPlanFields(plan){
+        if (!plan) return false;
+        var mutated = false;
+        try {
+            // 1 · Saneos base (mismo que ensurePlanFields)
+            if (!plan.startDate && Array.isArray(plan.weeks) && plan.weeks[0] && plan.weeks[0].weekStart) {
+                plan.startDate = plan.weeks[0].weekStart;
+                mutated = true;
+                console.log('[MR][p139] hidrata plan.startDate <- weeks[0].weekStart =', plan.startDate);
+            }
+            if (plan.finalGoalSecs == null && plan.goalSecs != null) {
+                plan.finalGoalSecs = plan.goalSecs;
+                mutated = true;
+                console.log('[MR][p139] hidrata plan.finalGoalSecs <- goalSecs =', plan.finalGoalSecs);
+            }
+
+            // 2 · Pre-calibrar con predictor COROS si está disponible
+            if (plan.currentFitnessSecs == null && plan.planDist) {
+                var mode = (typeof window._mrRecalibMode === 'function') ? window._mrRecalibMode() : 'vdot';
+                if (mode === 'coros') {
+                    var rs = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                    if (rs && Array.isArray(rs.predictor)) {
+                        var predKey = (plan.planDist === 'marathon_intermediate' || plan.planDist === 'marathon_xl')
+                            ? 'marathon'
+                            : (plan.planDist === 'first_5k') ? '5k'
+                            : plan.planDist;
+                        var pred = rs.predictor.find(function(p){ return p && p.dist === predKey; });
+                        if (pred && pred.duration > 0) {
+                            plan.currentFitnessSecs = pred.duration;
+                            mutated = true;
+                            console.log('[MR][p139] hidrata plan.currentFitnessSecs <- COROS predictor =', pred.duration);
+
+                            // 3 · Regenerar paces y sesiones con el training goal correcto
+                            //     (solo si fit real difiere del goal → puente real)
+                            try {
+                                var finalGoal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+                                if (finalGoal && Math.abs(pred.duration - finalGoal) > 5) {
+                                    var trainingGoal = (typeof window._mrTrainingGoalSecs === 'function')
+                                        ? window._mrTrainingGoalSecs(plan) : null;
+                                    if (trainingGoal && trainingGoal > 0 && typeof pacesFromGoal === 'function') {
+                                        var newPaces = pacesFromGoal(trainingGoal, plan.planDist);
+                                        if (newPaces) {
+                                            var fromDate = plan.startDate || new Date().toISOString().slice(0,10);
+                                            // fromDate 1 día antes que startDate para no saltar sesiones día 1
+                                            var fromD = new Date(fromDate + 'T00:00:00');
+                                            fromD.setDate(fromD.getDate() - 1);
+                                            var fromDateStr = fromD.toISOString().slice(0,10);
+                                            if (typeof _updateFuturePlanPaces === 'function') {
+                                                var r = _updateFuturePlanPaces(plan, newPaces, fromDateStr);
+                                                console.log('[MR][p139] pre-calibrado en generación · sesiones actualizadas:', r && r.updated, '· semanas:', r && r.weeksTouched);
+                                            }
+                                            plan.paces = newPaces;
+                                            // Registrar en historial como pre-calibración
+                                            plan.recalibHistory = Array.isArray(plan.recalibHistory) ? plan.recalibHistory : [];
+                                            plan.recalibHistory.push({
+                                                date: new Date().toISOString(),
+                                                source: 'coros_pregen',
+                                                oldFitnessSecs: null,
+                                                newFitnessSecs: pred.duration,
+                                                trainingGoalOld: null,
+                                                trainingGoalNew: trainingGoal,
+                                                hasBridge: true,
+                                                deltaSecs: 0,
+                                                deltaPct: 0,
+                                                threshold: 0,
+                                                firstTime: true,
+                                                sessionsUpdated: (r && r.updated) || 0,
+                                                weeksTouched: (r && r.weeksTouched) || 0,
+                                                note: 'Auto-calibrado en generación con predictor COROS'
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch(e2) { console.warn('[MR][p139] pre-calibración paces:', e2); }
+                        }
+                    }
+                }
+            }
+        } catch(e) { console.warn('[MR][p139] hydrateNewPlanFields:', e); }
+        return mutated;
+    }
+    window._mrHydrateNewPlanFields = _mrHydrateNewPlanFields;
+
+    // ═══════════════════════════════════════════════════════════════════
+
     function _mrTrainingGoalSecs(plan, nowMs){
         if (!plan) return null;
         var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
@@ -45384,6 +45489,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 return;
             }
             generatedPlanData = p5k;
+            // [p139] Hidrata campos críticos también para first_5k
+            try { if (typeof _mrHydrateNewPlanFields === 'function') _mrHydrateNewPlanFields(generatedPlanData); } catch(_){}
             renderPlanPreview(generatedPlanData);
             if(btn){btn.disabled=false;btn.textContent='⚡ Generar plan personalizado';}
             return;
@@ -45783,6 +45890,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             generatedPlanData = {...generatedPlanData, weeks: adapted, hasInjuryAdaptation:true};
             showToast('⚠️ Plan adaptado por lesiones activas — sesiones de calidad modificadas', 5000);
         }
+        // [p139] Hidrata campos críticos ANTES de la preview (startDate,
+        // finalGoalSecs, currentFitnessSecs desde predictor COROS si disponible,
+        // + regenera paces con training goal correcto). Preventivo permanente.
+        try { if (typeof _mrHydrateNewPlanFields === 'function') _mrHydrateNewPlanFields(generatedPlanData); } catch(_){}
         renderPlanPreview(generatedPlanData);
         } catch(err) {
             console.error('generatePlan error:', err);
