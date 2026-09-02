@@ -41521,6 +41521,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } else if (typeof showToast === 'function') {
                 showToast(msg, 5500);
             }
+            // [DEBUG p138 temporal · quitar cuando identifiquemos el bug del puente]
+            // Muestra los valores crudos del plan tras el toast, para saber
+            // exactamente por qué _mrTrainingGoalSecs no activa el puente.
+            try {
+                var trainingRaw = (plan && typeof window._mrTrainingGoalSecs === 'function') ? window._mrTrainingGoalSecs(plan) : null;
+                var liveRaw = (plan && typeof window._mrCurrentFitnessSecs === 'function') ? window._mrCurrentFitnessSecs(plan) : null;
+                var modeRaw = (typeof window._mrRecalibMode === 'function') ? window._mrRecalibMode() : '?';
+                var rsRaw = (typeof window._mrRaceStatusCached === 'function') ? window._mrRaceStatusCached() : null;
+                var predKm = (rsRaw && Array.isArray(rsRaw.predictor)) ? rsRaw.predictor.map(function(p){ return (p && p.dist) + '=' + (p && p.duration); }).join(' ') : 'no predictor';
+                var goalRaw = (plan && plan.finalGoalSecs != null) ? plan.finalGoalSecs : (plan && plan.goalSecs);
+                var diff = (trainingRaw != null && goalRaw != null) ? Math.abs(trainingRaw - goalRaw) : 'n/a';
+                var lines = [
+                    '── DEBUG PUENTE (temporal) ──',
+                    'plan.name: ' + (plan ? plan.name : 'null'),
+                    'planDist: ' + (plan ? plan.planDist : 'null'),
+                    'goalSecs: ' + (plan ? plan.goalSecs : 'null'),
+                    'finalGoalSecs: ' + (plan ? plan.finalGoalSecs : 'null'),
+                    'currentFitnessSecs: ' + (plan && plan.currentFitnessSecs != null ? plan.currentFitnessSecs : 'null'),
+                    'startDate: ' + (plan ? plan.startDate : 'null'),
+                    'raceDate: ' + (plan ? plan.raceDate : 'null'),
+                    '',
+                    'mode: ' + modeRaw,
+                    'predictor: ' + predKm,
+                    '_mrCurrentFitnessSecs → ' + (liveRaw != null ? liveRaw : 'null'),
+                    '_mrTrainingGoalSecs  → ' + (trainingRaw != null ? trainingRaw : 'null'),
+                    'diff(tg−goal): ' + diff,
+                    '',
+                    'info.hasBridge: ' + (info ? info.hasBridge : 'null'),
+                    'info.trainingGoalSecs: ' + (info ? info.trainingGoalSecs : 'null')
+                ];
+                setTimeout(function(){ try { alert(lines.join('\n')); } catch(_){} }, 250);
+            } catch(dbgE) { console.warn('[MR][DBG] radar dump:', dbgE); }
         } catch(e) { console.warn('[MR][p136] corosRadarTap:', e); }
     }
     window._corosRadarTap = _corosRadarTap;
