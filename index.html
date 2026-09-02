@@ -41345,142 +41345,159 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window._findPendingCorosRecalibration = _findPendingCorosRecalibration;
 
     // ═══════════════════════════════════════════════════════════════════
-    // v2.30.1-p135 · Radar diagnóstico COROS (badge Home widget Plan Activo)
+    // v2.30.1-p136 · Radar diagnóstico "Objetivo" (badge widget Plan Activo)
     // ═══════════════════════════════════════════════════════════════════
-    // Espejo de _findPendingCorosRecalibration SIN el filtro de threshold
-    // (guardia 4). Retorna siempre el delta y el umbral aplicable si el
-    // usuario está en modo COROS con predictor válido, para poder
-    // visualizar cuán cerca está de una recalibración.
+    // Reescrito respecto a p135: en lugar de comparar contra el
+    // currentFitnessSecs guardado (que daba 0,0% cuando el plan estaba
+    // recién calibrado), ahora compara la FORMA ACTUAL contra el
+    // OBJETIVO FINAL del plan → dato emocionalmente relevante
+    // ("cuánto me falta para mi meta").
+    //
+    // Fuente de forma actual (prioridad):
+    //   1 · predictor COROS marathon (si modo coros + rs.predictor)
+    //   2 · _mrCurrentFitnessSecs(plan) (test/VDOT/fitness compuesto)
+    //   3 · plan.currentFitnessSecs guardado
     //
     // Retorna null si:
-    //  · plan inválido
-    //  · modo != 'coros'
-    //  · sin predictor COROS con dist matching
-    //  · sin refFitness computable
+    //  · plan inválido o sin goalSecs
+    //  · sin fuente de fitness computable
     //
-    // Shape: { newFitnessSecs, refFitnessSecs, deltaSecs, deltaPct,
-    //          threshold, hasBridge, firstTime, ratio }
-    //   deltaPct  → % con signo (negativo = mejora)
-    //   threshold → % umbral aplicable (5 sin puente · 3 con puente)
-    //   ratio     → |deltaPct| / threshold (0..1+ · >=1 supera umbral)
+    // Estado según |deltaPct| vs objetivo:
+    //   ok   → <2%   verde
+    //   warn → 2..5% ámbar
+    //   hot  → >=5%  rojo
+    //
+    // Incluye trainingGoalSecs (fase actual del puente sigmoide) para
+    // que el toast pueda mostrar "entrenando a X" sin abrir sub-bloques.
     function _corosRadarInfo(plan){
         try {
-            if (!plan || !plan.planDist) return null;
+            if (!plan) return null;
+            var goalSecs = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+            if (!goalSecs || goalSecs <= 0) return null;
+
+            // Fuente de forma actual (prioridad predictor COROS → fitness compuesto → guardado)
+            var newFitnessSecs = null;
             var mode = (typeof window._mrRecalibMode === 'function')
                 ? window._mrRecalibMode() : 'vdot';
-            if (mode !== 'coros') return null;
-            var rs = (typeof window._mrRaceStatusCached === 'function')
-                ? window._mrRaceStatusCached() : null;
-            if (!rs || !Array.isArray(rs.predictor)) return null;
-            var predKey = (plan.planDist === 'marathon_intermediate' || plan.planDist === 'marathon_xl')
-                ? 'marathon'
-                : (plan.planDist === 'first_5k') ? '5k'
-                : plan.planDist;
-            var pred = rs.predictor.find(function(p){ return p && p.dist === predKey; });
-            if (!pred || !pred.duration || pred.duration <= 0) return null;
-            var newFitnessSecs = pred.duration;
-            var oldFitnessSecs = (plan.currentFitnessSecs != null) ? plan.currentFitnessSecs : null;
-            var refFitnessSecs = (oldFitnessSecs != null)
-                ? oldFitnessSecs
-                : ((typeof window._mrCurrentFitnessSecs === 'function')
-                    ? window._mrCurrentFitnessSecs(plan) : null);
-            if (!refFitnessSecs || refFitnessSecs <= 0) return null;
-            var deltaSecs = newFitnessSecs - refFitnessSecs;
-            var deltaPct  = deltaSecs / refFitnessSecs;
-            var finalGoal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
-            var hasBridge = false;
-            try {
-                if (finalGoal && typeof window._mrTrainingGoalSecs === 'function') {
-                    var tGoal = window._mrTrainingGoalSecs(plan);
-                    hasBridge = (tGoal && Math.abs(tGoal - finalGoal) > 5);
+            if (mode === 'coros' && plan.planDist) {
+                var rs = (typeof window._mrRaceStatusCached === 'function')
+                    ? window._mrRaceStatusCached() : null;
+                if (rs && Array.isArray(rs.predictor)) {
+                    var predKey = (plan.planDist === 'marathon_intermediate' || plan.planDist === 'marathon_xl')
+                        ? 'marathon'
+                        : (plan.planDist === 'first_5k') ? '5k'
+                        : plan.planDist;
+                    var pred = rs.predictor.find(function(p){ return p && p.dist === predKey; });
+                    if (pred && pred.duration > 0) newFitnessSecs = pred.duration;
                 }
-            } catch(_){}
-            var threshold = hasBridge ? _MR_COROS_TH_BRIDGE : _MR_COROS_TH_NOBRIDGE;
-            var ratio = Math.abs(deltaPct) / threshold;
-            // Dismissed hoy? (para nota en tap toast)
-            var dismissedToday = false;
-            try {
-                var dateStr = new Date().toISOString().slice(0,10);
-                dismissedToday = (localStorage.getItem('mr.corosRecalib.dismissed.' + dateStr) === '1');
-            } catch(_){}
+            }
+            if (!newFitnessSecs && typeof window._mrCurrentFitnessSecs === 'function') {
+                newFitnessSecs = window._mrCurrentFitnessSecs(plan);
+            }
+            if (!newFitnessSecs && plan.currentFitnessSecs > 0) {
+                newFitnessSecs = plan.currentFitnessSecs;
+            }
+            if (!newFitnessSecs || newFitnessSecs <= 0) return null;
+
+            var deltaSecs = newFitnessSecs - goalSecs;
+            var deltaPct  = (deltaSecs / goalSecs) * 100;
+            var absPct = Math.abs(deltaPct);
+            var state = 'ok';
+            if (absPct >= 5)      state = 'hot';
+            else if (absPct >= 2) state = 'warn';
+
+            // Training goal (fase actual del puente sigmoide) — para el toast
+            var trainingGoalSecs = (typeof window._mrTrainingGoalSecs === 'function')
+                ? window._mrTrainingGoalSecs(plan) : null;
+            var hasBridge = (trainingGoalSecs && Math.abs(trainingGoalSecs - goalSecs) > 5);
+
             return {
                 newFitnessSecs: newFitnessSecs,
-                refFitnessSecs: refFitnessSecs,
+                goalSecs: goalSecs,
                 deltaSecs: deltaSecs,
-                deltaPct: deltaPct * 100,
-                threshold: threshold * 100,
+                deltaPct: deltaPct,
+                state: state,
+                trainingGoalSecs: trainingGoalSecs,
                 hasBridge: hasBridge,
-                firstTime: (oldFitnessSecs == null),
-                ratio: ratio,
-                dismissedToday: dismissedToday
+                mode: mode
             };
-        } catch(e) { console.warn('[MR][p135] corosRadarInfo:', e); return null; }
+        } catch(e) { console.warn('[MR][p136] corosRadarInfo:', e); return null; }
     }
     window._corosRadarInfo = _corosRadarInfo;
 
-    // _corosRadarHTML(info): HTML del badge en widget Plan Activo. null → ''.
+    // Helper local · formato M:SS a partir de segundos abs.
+    function _radarFmtMS(secs){
+        var abs = Math.abs(secs);
+        var m = Math.floor(abs / 60);
+        var s = Math.round(abs - m*60);
+        if (s === 60) { m += 1; s = 0; }
+        return m + ':' + (s<10?'0':'') + s;
+    }
+
+    // _corosRadarHTML(info): HTML del badge. Muestra gap M:SS + delta %.
     function _corosRadarHTML(info){
         if (!info) return '';
         try {
+            var gapStr = _radarFmtMS(info.deltaSecs || 0);
             var absPct = Math.abs(info.deltaPct || 0);
-            var sign = (info.deltaSecs < 0) ? '\u2212' : (info.deltaSecs > 0 ? '+' : '');
-            var deltaStr = sign + absPct.toFixed(1).replace('.', ',') + '%';
-            var thStr = 'umbral ' + (info.threshold >= 4 ? '5' : '3') + '%';
-            var state = 'ok';
-            if (info.ratio >= 1)      state = 'hot';
-            else if (info.ratio >= 0.6) state = 'warn';
+            var pctStr = absPct.toFixed(1).replace('.', ',') + '%';
+            // Signo: '+' te falta · '−' super-fitness · '' en objetivo
+            var sign = '';
+            if (info.deltaSecs > 0)      sign = '+';
+            else if (info.deltaSecs < 0) sign = '\u2212';
             return ''
-                + '<button type="button" class="mr-pc-radar" data-state="' + state + '"'
-                +   ' aria-label="Diagnóstico COROS"'
+                + '<button type="button" class="mr-pc-radar" data-state="' + info.state + '"'
+                +   ' aria-label="Diferencia con objetivo del plan"'
                 +   ' onclick="if(window._corosRadarTap)window._corosRadarTap(event)">'
                 +   '<span class="mr-pc-radar-dot"></span>'
-                +   '<span class="mr-pc-radar-delta">' + deltaStr + '</span>'
-                +   '<span class="mr-pc-radar-th">' + thStr + '</span>'
+                +   '<span class="mr-pc-radar-delta">' + sign + gapStr + '</span>'
+                +   '<span class="mr-pc-radar-th">' + sign + pctStr + '</span>'
                 + '</button>';
-        } catch(e) { console.warn('[MR][p135] corosRadarHTML:', e); return ''; }
+        } catch(e) { console.warn('[MR][p136] corosRadarHTML:', e); return ''; }
     }
     window._corosRadarHTML = _corosRadarHTML;
 
-    // Tap handler → toast con detalle del delta actual + estado.
+    // Tap → toast con detalle emocional. Incluye training goal si hay puente.
     function _corosRadarTap(evt){
         try {
             if (evt) { evt.stopPropagation(); evt.preventDefault(); }
             var plan = (typeof activePlan !== 'undefined') ? activePlan : window.activePlan;
             var info = _corosRadarInfo(plan);
             if (!info) {
-                if (typeof fxToast === 'function') fxToast('COROS sin datos', { variant: 'info' });
+                if (typeof fxToast === 'function') fxToast('Sin datos de forma', { variant: 'info' });
                 return;
             }
-            var fmtHM = (function(secs){
+            var fmtHM = function(secs){
                 var h = Math.floor(secs / 3600);
                 var m = Math.round((secs - h*3600) / 60);
                 if (m === 60) { h += 1; m = 0; }
                 return h + ':' + (m<10?'0':'') + m;
-            });
-            var refHM = fmtHM(info.refFitnessSecs);
-            var newHM = fmtHM(info.newFitnessSecs);
+            };
+            var fitHM  = fmtHM(info.newFitnessSecs);
+            var goalHM = fmtHM(info.goalSecs);
+            var gapStr = _radarFmtMS(info.deltaSecs);
             var absPct = Math.abs(info.deltaPct).toFixed(1).replace('.', ',');
-            var arrow = (info.deltaSecs < 0) ? '\u2193' : (info.deltaSecs > 0 ? '\u2191' : '=');
-            var bridgeTxt = info.hasBridge ? ' · puente' : '';
+            var phaseTxt = info.hasBridge ? ' · fase actual ' + fmtHM(info.trainingGoalSecs) : '';
             var msg;
-            if (info.ratio >= 1) {
-                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · supera umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
-                if (info.dismissedToday) msg += ' · descartado hoy';
-            } else if (info.ratio >= 0.6) {
-                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · cerca del umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
+            if (info.deltaSecs > 0) {
+                // Falta para el objetivo
+                msg = 'Forma actual ' + fitHM + ' · faltan ' + gapStr + ' (+' + absPct + '%) para objetivo ' + goalHM + phaseTxt;
+            } else if (info.deltaSecs < 0) {
+                // Super-fitness
+                msg = 'Forma actual ' + fitHM + ' · ' + gapStr + ' m\u00e1s r\u00e1pido que objetivo ' + goalHM + phaseTxt;
             } else {
-                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · forma estable · umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
+                msg = 'Forma actual ' + fitHM + ' · en objetivo' + phaseTxt;
             }
+            var variant = (info.state === 'hot') ? 'warn' : 'info';
             if (typeof fxToast === 'function') {
-                var variant = (info.ratio >= 1) ? 'warn' : 'info';
-                fxToast(msg, { variant: variant, duration: 5000 });
+                fxToast(msg, { variant: variant, duration: 5500 });
             } else if (typeof showToast === 'function') {
-                showToast(msg, 5000);
+                showToast(msg, 5500);
             }
-        } catch(e) { console.warn('[MR][p135] corosRadarTap:', e); }
+        } catch(e) { console.warn('[MR][p136] corosRadarTap:', e); }
     }
     window._corosRadarTap = _corosRadarTap;
-    // ═══ fin Radar diagnóstico p135 ══════════════════════════════════════
+    // ═══ fin Radar diagnóstico p136 ══════════════════════════════════════
     // ═══ fin detector Fase 5 Push 5a ═════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════════
