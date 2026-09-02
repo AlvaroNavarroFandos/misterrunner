@@ -78641,7 +78641,176 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+
+        /* ═══════════════════════════════════════════════════════════════════
+           1.2B · _wrDetectWeekPRs(weekStartStr, weekEndStr)
+           ───────────────────────────────────────────────────────────────────
+           Detecta PRs (récords personales) de la semana especificada:
+             · official_prs      → entradas de profileData.prHistory con
+                                    dateISO dentro de la semana (PRs manuales
+                                    tipo 5k/10k/hm/m subidos por Álvaro)
+             · best_efforts_prs  → distancias donde la semana bate el histórico
+                                    previo (auto-detectado desde act.best_efforts)
+             · weekly_bests      → mejor esfuerzo de la semana en cada distancia,
+                                    aunque no rompa récord (útil para reporte)
+
+           Distancias evaluadas (Opción B · las 8 completas de _computeBestEfforts):
+             100m, 1km, 1mi, 3km, 5km, 10km, 21km, 42km
+
+           Función SÍNCRONA (no async): solo lee de memoria (activities globales
+           + profileData.prHistory + act.best_efforts precomputados). Devuelve
+           null si inputs inválidos o error interno.
+
+           IMPORTANTE: se compara SOLO contra el histórico ANTERIOR a weekStart
+           (no incluye la propia semana → evita self-reference bug).
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrDetectWeekPRs = function(weekStartStr, weekEndStr) {
+            try {
+                /* 0 · Validación inputs */
+                if (typeof weekStartStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) return null;
+                if (typeof weekEndStr   !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekEndStr))   return null;
+                if (weekStartStr > weekEndStr) return null;
+
+                /* 1 · Acceso globals */
+                var _acts = (typeof activities !== 'undefined' && Array.isArray(activities)) ? activities
+                          : (typeof window.activities !== 'undefined' && Array.isArray(window.activities)) ? window.activities
+                          : [];
+                var _pd   = (typeof profileData !== 'undefined') ? profileData
+                          : (typeof window.profileData !== 'undefined') ? window.profileData
+                          : null;
+
+                /* 2 · Filtrado week + pre-week */
+                var weekActs = _acts.filter(function(a) {
+                    return a && a.dateStr && a.dateStr >= weekStartStr && a.dateStr <= weekEndStr;
+                });
+                var preWeekActs = _acts.filter(function(a) {
+                    return a && a.dateStr && a.dateStr < weekStartStr;
+                });
+
+                /* Distancias estándar (Opción B: 8 completas) */
+                var TARGETS = ['100m', '1km', '1mi', '3km', '5km', '10km', '21km', '42km'];
+
+                /* 3 · weekly_bests: mejor time_sec por distancia EN LA SEMANA */
+                var weekly_bests = {};
+                var activities_with_be_count = 0;
+
+                for (var i = 0; i < weekActs.length; i++) {
+                    var a = weekActs[i];
+                    var be = a.best_efforts;
+                    if (!be || typeof be !== 'object') continue;
+                    activities_with_be_count++;
+
+                    for (var ti = 0; ti < TARGETS.length; ti++) {
+                        var tgt = TARGETS[ti];
+                        var entry = be[tgt];
+                        if (!entry || entry.time_sec == null || !isFinite(entry.time_sec) || entry.time_sec <= 0) continue;
+
+                        if (!weekly_bests[tgt] || entry.time_sec < weekly_bests[tgt].time_sec) {
+                            weekly_bests[tgt] = {
+                                dist:          tgt,
+                                time_sec:      entry.time_sec,
+                                pace_sec:      (entry.pace_sec != null) ? entry.pace_sec : null,
+                                hr_avg:        (entry.hr_avg != null)   ? entry.hr_avg   : null,
+                                activity_id:   a._dbActivityId || null,
+                                activity_date: a.dateStr,
+                                activity_type: a.type || null
+                            };
+                        }
+                    }
+                }
+
+                /* 4 · best_efforts_prs: weekly_bests que baten el histórico previo */
+                var best_efforts_prs = [];
+                for (var ti2 = 0; ti2 < TARGETS.length; ti2++) {
+                    var tgt2 = TARGETS[ti2];
+                    var weekBest = weekly_bests[tgt2];
+                    if (!weekBest) continue;
+
+                    /* Buscar mejor time_sec histórico pre-semana */
+                    var histBestSec = null;
+                    for (var hi = 0; hi < preWeekActs.length; hi++) {
+                        var ha = preWeekActs[hi];
+                        var hbe = ha.best_efforts;
+                        if (!hbe || !hbe[tgt2] || hbe[tgt2].time_sec == null) continue;
+                        var hSec = Number(hbe[tgt2].time_sec);
+                        if (!isFinite(hSec) || hSec <= 0) continue;
+                        if (histBestSec == null || hSec < histBestSec) {
+                            histBestSec = hSec;
+                        }
+                    }
+
+                    if (histBestSec == null) {
+                        /* Sin histórico previo → primera vez que se alcanza esa distancia */
+                        best_efforts_prs.push({
+                            dist:          tgt2,
+                            time_sec:      weekBest.time_sec,
+                            pace_sec:      weekBest.pace_sec,
+                            activity_id:   weekBest.activity_id,
+                            activity_date: weekBest.activity_date,
+                            activity_type: weekBest.activity_type,
+                            prev_best_sec: null,
+                            delta_sec:     null,
+                            is_first_ever: true
+                        });
+                    } else if (weekBest.time_sec < histBestSec) {
+                        /* Bate histórico → PR real */
+                        best_efforts_prs.push({
+                            dist:          tgt2,
+                            time_sec:      weekBest.time_sec,
+                            pace_sec:      weekBest.pace_sec,
+                            activity_id:   weekBest.activity_id,
+                            activity_date: weekBest.activity_date,
+                            activity_type: weekBest.activity_type,
+                            prev_best_sec: histBestSec,
+                            delta_sec:     weekBest.time_sec - histBestSec, /* negativo = más rápido */
+                            is_first_ever: false
+                        });
+                    }
+                }
+
+                /* 5 · official_prs: entradas de prHistory con dateISO en semana */
+                var official_prs = [];
+                try {
+                    var prHist = (_pd && Array.isArray(_pd.prHistory)) ? _pd.prHistory : [];
+                    for (var pi = 0; pi < prHist.length; pi++) {
+                        var pr = prHist[pi];
+                        if (!pr || !pr.dateISO) continue;
+                        if (pr.dateISO >= weekStartStr && pr.dateISO <= weekEndStr) {
+                            official_prs.push({
+                                dist:    pr.dist,
+                                time:    pr.time,
+                                dateISO: pr.dateISO
+                            });
+                        }
+                    }
+                } catch (_e) {}
+
+                /* 6 · Return */
+                return {
+                    week_start:       weekStartStr,
+                    week_end:         weekEndStr,
+                    official_prs:     official_prs,
+                    best_efforts_prs: best_efforts_prs,
+                    weekly_bests:     weekly_bests,
+                    debug: {
+                        activities_in_week:    weekActs.length,
+                        activities_with_be:    activities_with_be_count,
+                        activities_pre_week:   preWeekActs.length,
+                        targets_evaluated:     TARGETS,
+                        official_prs_count:    official_prs.length,
+                        best_efforts_prs_count: best_efforts_prs.length,
+                        first_ever_count:      best_efforts_prs.filter(function(p){return p.is_first_ever;}).length
+                    }
+                };
+            } catch (err) {
+                try { console.warn('[MR][wr] _wrDetectWeekPRs error:', err && err.message || err); } catch (_) {}
+                return null;
+            }
+        };
+
+
         try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2B ready · _wrDetectWeekPRs(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
