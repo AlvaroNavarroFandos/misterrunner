@@ -78811,8 +78811,488 @@ window.addEventListener('DOMContentLoaded', function() {
         };
 
 
+        /* ═══════════════════════════════════════════════════════════════════
+           1.2C · _wrBuildWeeklyContext(weekStartStr, weekEndStr)
+           ───────────────────────────────────────────────────────────────────
+           COMPOSITOR FINAL: coge output de _wrComputeWeekMetrics + _wrDetectWeekPRs
+           + info user/plan/race + warnings auto + tendencia 4 semanas + top PRs
+           históricos, y arma el TEXTO ~4-6KB que se enviará a la API Anthropic
+           como contexto del prompt del weekly report.
+
+           ASYNC porque internamente llama _wrComputeWeekMetrics (async → streams).
+           Devuelve string listo para enviar (o null si error/no metrics).
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrBuildWeeklyContext = async function(weekStartStr, weekEndStr) {
+            try {
+                /* 0 · Validación */
+                if (typeof weekStartStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) return null;
+                if (typeof weekEndStr   !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekEndStr))   return null;
+
+                /* 1 · Cargar metrics + PRs en paralelo */
+                var metrics = await window._wrComputeWeekMetrics(weekStartStr, weekEndStr);
+                if (!metrics) return null;
+                var prs = window._wrDetectWeekPRs(weekStartStr, weekEndStr);
+
+                /* 2 · Acceso globals */
+                var _pd = (typeof profileData !== 'undefined') ? profileData
+                        : (typeof window.profileData !== 'undefined') ? window.profileData : null;
+                var _plan = (typeof activePlan !== 'undefined') ? activePlan
+                          : (typeof window.activePlan !== 'undefined') ? window.activePlan : null;
+                var _acts = (typeof activities !== 'undefined' && Array.isArray(activities)) ? activities : [];
+
+                /* 3 · Composición sección por sección */
+                var lines = [];
+                lines.push('═══════════════════════════════════════════');
+                lines.push('WEEKLY REPORT · SEMANA ' + _wrFmtDateRange(weekStartStr, weekEndStr));
+                lines.push('═══════════════════════════════════════════');
+                lines.push('');
+
+                /* 3.1 · CONTEXTO USER */
+                lines.push('CONTEXTO USER');
+                var userLine = '';
+                if (_pd) {
+                    var firstName = (_pd.name || '').split(' ')[0];
+                    if (firstName) userLine += firstName;
+                    var age = _wrCalcAge(_pd.dob);
+                    if (age != null) userLine += ' (' + age;
+                    if (_pd.city) userLine += (age != null ? ' · ' : ' (') + _pd.city;
+                    if (age != null || _pd.city) userLine += ')';
+                    if (_pd.watch) userLine += ' · ' + _pd.watch;
+                }
+                if (userLine) lines.push(userLine);
+                var physLine = [];
+                if (_pd && _pd.hrMax)  physLine.push('HRmax ' + _pd.hrMax);
+                if (_pd && _pd.hrRest) physLine.push('HRrest ' + _pd.hrRest);
+                var lthr_now = (typeof window._mrLthrLatest === 'function') ? window._mrLthrLatest() : null;
+                if (lthr_now == null && typeof ltValue !== 'undefined' && ltValue) lthr_now = Number(ltValue);
+                if (lthr_now) physLine.push('LTHR ' + lthr_now);
+                if (physLine.length) lines.push(physLine.join(' · '));
+
+                /* 3.2 · RACE OBJETIVO (si plan activo con raceDate) */
+                if (_plan && _plan.raceDate) {
+                    var raceD  = _plan.raceDate;
+                    var daysToRace = _wrDaysBetween(weekEndStr, raceD);
+                    var raceLine = 'Race objetivo: ' + (_plan.name || 'Race') + ' · ' + _wrFmtDateShort(raceD);
+                    if (daysToRace != null && daysToRace > 0) raceLine += ' (' + daysToRace + ' días)';
+                    lines.push(raceLine);
+                }
+                lines.push('');
+
+                /* 3.3 · PLAN ACTIVO */
+                if (_plan && _plan.type !== 'strength') {
+                    lines.push('PLAN ACTIVO');
+                    var planLine = _plan.name || 'Plan sin nombre';
+                    if (metrics.week_num_of_plan) planLine += ' · Semana ' + metrics.week_num_of_plan;
+                    if (metrics.plan_phase)        planLine += ' · Fase: ' + metrics.plan_phase;
+                    lines.push(planLine);
+                    lines.push('');
+                }
+
+                /* 3.4 · LA SEMANA EN NÚMEROS */
+                lines.push('LA SEMANA EN NÚMEROS');
+                var kmLine = 'Km ';
+                if (metrics.km_planned != null) {
+                    kmLine += 'plan/hecho: ' + metrics.km_planned + '/' + metrics.km_done;
+                    if (metrics.compliance_pct != null) kmLine += ' (' + metrics.compliance_pct + '%)';
+                } else {
+                    kmLine += 'hecho: ' + metrics.km_done;
+                }
+                if (metrics.sessions_planned != null) {
+                    kmLine += ' · Sesiones: ' + metrics.sessions_done + '/' + metrics.sessions_planned;
+                } else {
+                    kmLine += ' · Sesiones: ' + metrics.sessions_done;
+                }
+                lines.push(kmLine);
+                lines.push('CTL ' + metrics.ctl_start + '→' + metrics.ctl_end + ' (' + _wrFmtDelta(metrics.ctl_delta) + ')'
+                         + ' · ATL ' + metrics.atl_start + '→' + metrics.atl_end + ' (' + _wrFmtDelta(metrics.atl_delta) + ')'
+                         + ' · TSB ' + metrics.tsb_start + '→' + metrics.tsb_end + ' (' + _wrFmtDelta(metrics.tsb_delta) + ')');
+                var extraLine = [];
+                if (metrics.acwr != null) {
+                    var acwrTxt = 'ACWR ' + metrics.acwr;
+                    if (metrics.acwr_zone) acwrTxt += ' (' + metrics.acwr_zone + ')';
+                    extraLine.push(acwrTxt);
+                }
+                if (metrics.avg_hr) extraLine.push('HR medio ' + metrics.avg_hr + '/max ' + (metrics.highest_hr || '—'));
+                if (metrics.elevation_gain_m > 0) extraLine.push('Ascenso ' + metrics.elevation_gain_m + 'm');
+                if (extraLine.length) lines.push(extraLine.join(' · '));
+                if (metrics.zones_source === 'streams' || metrics.zones_source === 'streams_partial') {
+                    lines.push('Zonas: Z1 ' + metrics.zones_pct.z1 + '% · Z2 ' + metrics.zones_pct.z2
+                             + '% · Z3 ' + metrics.zones_pct.z3 + '% · Z4 ' + metrics.zones_pct.z4
+                             + '% · Z5 ' + metrics.zones_pct.z5 + '%');
+                }
+                lines.push('');
+
+                /* 3.5 · CALENDARIO L→D */
+                lines.push('CALENDARIO');
+                var dayShorts = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+                var calItems = [];
+                for (var di = 0; di < metrics.sessions_by_day.length; di++) {
+                    var day = metrics.sessions_by_day[di];
+                    if (!day || day.km === 0) {
+                        calItems.push(dayShorts[di] + ' —');
+                    } else {
+                        var typeShort = _wrTypeLabelShort(day.type);
+                        calItems.push(dayShorts[di] + ' ' + typeShort + ' ' + day.km + 'k T' + day.trimp);
+                    }
+                }
+                lines.push(calItems.join(' · '));
+                lines.push('');
+
+                /* 3.6 · MEJORES ESFUERZOS + PRs */
+                if (prs && Object.keys(prs.weekly_bests).length > 0) {
+                    lines.push('MEJORES ESFUERZOS SEMANA');
+                    var beOrder = ['100m','1km','1mi','3km','5km','10km','21km','42km'];
+                    for (var bi = 0; bi < beOrder.length; bi++) {
+                        var wb = prs.weekly_bests[beOrder[bi]];
+                        if (!wb) continue;
+                        var wbLine = beOrder[bi] + ' ' + _wrFmtSec(wb.time_sec)
+                                   + ' (' + _wrFmtPace(wb.pace_sec) + '/km';
+                        if (wb.hr_avg) wbLine += ' · HR' + wb.hr_avg;
+                        wbLine += ' · ' + (wb.activity_type || 'run') + ')';
+                        lines.push(wbLine);
+                    }
+                    var prCount = prs.best_efforts_prs.filter(function(p){return !p.is_first_ever;}).length;
+                    var firstEverCount = prs.best_efforts_prs.filter(function(p){return p.is_first_ever;}).length;
+                    var prSummary = 'PRs nuevos: ' + prCount;
+                    if (firstEverCount > 0) prSummary += ' · Primera vez alcanzada: ' + firstEverCount;
+                    prSummary += ' · Carreras oficiales: ' + prs.official_prs.length;
+                    lines.push(prSummary);
+
+                    /* Detalle de PRs si hay */
+                    if (prs.best_efforts_prs.length > 0) {
+                        lines.push('');
+                        lines.push('PRs DETECTADOS ESTA SEMANA:');
+                        for (var pri = 0; pri < prs.best_efforts_prs.length; pri++) {
+                            var pr = prs.best_efforts_prs[pri];
+                            if (pr.is_first_ever) {
+                                lines.push('· ' + pr.dist + ' ' + _wrFmtSec(pr.time_sec) + ' (PRIMERA VEZ)');
+                            } else {
+                                lines.push('· ' + pr.dist + ' ' + _wrFmtSec(pr.time_sec)
+                                         + ' (anterior: ' + _wrFmtSec(pr.prev_best_sec)
+                                         + ' · ' + _wrFmtDelta(pr.delta_sec) + 's)');
+                            }
+                        }
+                    }
+                    lines.push('');
+                }
+
+                /* 3.7 · WARNINGS AUTO-DETECTADAS */
+                var warnings = _wrDetectWarnings(metrics);
+                lines.push('WARNINGS AUTO-DETECTADAS');
+                if (warnings.length === 0) {
+                    lines.push('(ninguna)');
+                } else {
+                    for (var wi = 0; wi < warnings.length; wi++) {
+                        var w = warnings[wi];
+                        lines.push('· [' + w.severity + '] ' + w.text);
+                    }
+                }
+                lines.push('');
+
+                /* 3.8 · PRÓXIMA SEMANA DEL PLAN */
+                if (_plan && Array.isArray(_plan.weeks) && metrics.week_num_of_plan) {
+                    var nextWeekLines = _wrGetNextWeekPlan(_plan, weekEndStr, metrics.km_done);
+                    if (nextWeekLines && nextWeekLines.length) {
+                        lines.push.apply(lines, nextWeekLines);
+                        lines.push('');
+                    }
+                }
+
+                /* 3.9 · TENDENCIA ÚLTIMAS 4 SEMANAS (Q3=D) */
+                var trend4 = _wrGet4WeekTrend(_acts, weekEndStr);
+                if (trend4 && trend4.length) {
+                    lines.push('TENDENCIA ÚLTIMAS 4 SEMANAS (más antigua → esta)');
+                    for (var ti = 0; ti < trend4.length; ti++) {
+                        lines.push(trend4[ti]);
+                    }
+                    lines.push('');
+                }
+
+                /* 3.10 · TOP 5 PRs HISTÓRICOS (Q3=D) */
+                var topPRs = _wrGetTopHistoricalPRs(_pd, 5);
+                if (topPRs && topPRs.length) {
+                    lines.push('TOP PRs HISTÓRICOS DEL USER');
+                    for (var tpi = 0; tpi < topPRs.length; tpi++) {
+                        lines.push('· ' + topPRs[tpi]);
+                    }
+                    lines.push('');
+                }
+
+                /* 3.11 · INSTRUCCIONES AL MODELO */
+                lines.push('═══════════════════════════════════════════');
+                lines.push('INSTRUCCIONES:');
+                lines.push('Genera reporte semanal para ' + ((_pd && (_pd.name || '').split(' ')[0]) || 'el user') + ' con tu personalidad Míster habitual');
+                lines.push('(veterano runner old-school + castizo suave con mus + gen-Z puntual · honestidad brutal · SIN cheerleading · NUNCA "cuñado/cuñao" → usa "un colega mío" o "un compañero del club").');
+                lines.push('');
+                lines.push('Formato: texto natural en 4 secciones con emojis:');
+                lines.push('  📊 LA SEMANA (2-3 líneas resumen)');
+                lines.push('  🏆 HITOS (si hay PRs/logros destacables; si NO hay, skip esta sección entera)');
+                lines.push('  ⚠️ VIGILAR (basado en warnings arriba + tu observación experta)');
+                lines.push('  🎯 SIGUIENTE SEMANA (1-2 sesiones clave del plan + consejo accionable)');
+                lines.push('');
+                lines.push('Longitud target: 180-280 palabras. Sin repetir números que ya están arriba salvo los 2-3 más importantes.');
+                lines.push('Idioma: español España. Tono: como si le mandaras un mensaje al colega tras el long dominical.');
+                lines.push('═══════════════════════════════════════════');
+
+                var result = lines.join('\n');
+                /* Cap seguridad: no enviar >12KB al modelo (típico será 3-6KB) */
+                if (result.length > 12000) result = result.slice(0, 12000) + '\n\n[...truncado a 12KB]';
+                return result;
+
+            } catch (err) {
+                try { console.warn('[MR][wr] _wrBuildWeeklyContext error:', err && err.message || err); } catch (_) {}
+                return null;
+            }
+        };
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           1.2C · Helpers internos (formateo + detección)
+           ═══════════════════════════════════════════════════════════════════ */
+
+        /* Rango fecha "24-30 ago 2026" o "24 ago-06 sep 2026" (cross-month) */
+        function _wrFmtDateRange(startYmd, endYmd) {
+            try {
+                var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+                var s = new Date(startYmd + 'T12:00:00');
+                var e = new Date(endYmd   + 'T12:00:00');
+                var sMonth = s.getMonth(), eMonth = e.getMonth();
+                if (sMonth === eMonth) {
+                    return s.getDate() + '-' + e.getDate() + ' ' + months[eMonth] + ' ' + e.getFullYear();
+                }
+                return s.getDate() + ' ' + months[sMonth] + '-' + e.getDate() + ' ' + months[eMonth] + ' ' + e.getFullYear();
+            } catch (_e) { return startYmd + ' → ' + endYmd; }
+        }
+
+        /* "27 feb 2027" corto */
+        function _wrFmtDateShort(ymd) {
+            try {
+                var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+                var d = new Date(ymd + 'T12:00:00');
+                return d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+            } catch (_e) { return ymd; }
+        }
+
+        function _wrCalcAge(dobISO) {
+            try {
+                if (!dobISO) return null;
+                var dob = new Date(dobISO + 'T12:00:00');
+                var now = new Date();
+                var age = now.getFullYear() - dob.getFullYear();
+                if (now.getMonth() < dob.getMonth() ||
+                    (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate())) age--;
+                return (age >= 0 && age <= 120) ? age : null;
+            } catch (_e) { return null; }
+        }
+
+        function _wrDaysBetween(fromYmd, toYmd) {
+            try {
+                var f = new Date(fromYmd + 'T12:00:00').getTime();
+                var t = new Date(toYmd   + 'T12:00:00').getTime();
+                if (!isFinite(f) || !isFinite(t)) return null;
+                return Math.round((t - f) / 86400000);
+            } catch (_e) { return null; }
+        }
+
+        /* +3.4 con signo, "0.0" si cero */
+        function _wrFmtDelta(n) {
+            if (n == null || !isFinite(n)) return '—';
+            var num = Number(n);
+            if (num === 0) return '0.0';
+            var sign = num > 0 ? '+' : '';
+            return sign + num.toFixed(1);
+        }
+
+        /* Segundos → "5:04" o "1:22:30" */
+        function _wrFmtSec(sec) {
+            if (sec == null || !isFinite(sec) || sec < 0) return '—';
+            var s = Math.round(Number(sec));
+            var h = Math.floor(s / 3600);
+            var m = Math.floor((s % 3600) / 60);
+            var ss = s % 60;
+            if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+            return m + ':' + String(ss).padStart(2,'0');
+        }
+
+        /* Segundos/km → "5:04" */
+        function _wrFmtPace(paceSec) {
+            if (paceSec == null || !isFinite(paceSec) || paceSec <= 0) return '—';
+            var s = Math.round(Number(paceSec));
+            var m = Math.floor(s / 60);
+            var ss = s % 60;
+            return m + ':' + String(ss).padStart(2,'0');
+        }
+
+        /* Tipo sesión abreviado para calendario */
+        function _wrTypeLabelShort(t) {
+            var map = { 'easy':'Easy', 'recovery':'Rec', 'series':'Series',
+                        'long':'Long', 'race':'Race', 'test':'Test',
+                        'rest':'—', 'strength':'Fuerza', 'warmup':'Warm',
+                        'hills':'Cuestas', 'fartlek':'Fartlek', 'tempo':'Tempo' };
+            return map[t] || (t || 'Run');
+        }
+
+        /* Detección de warnings auto (Q1=A · los 7) */
+        function _wrDetectWarnings(m) {
+            var out = [];
+            if (!m) return out;
+            /* ACWR */
+            if (m.acwr != null) {
+                if (m.acwr >= 1.50)      out.push({ type:'acwr_high',       severity:'high',   text:'ACWR ' + m.acwr + ' — riesgo alto lesión, semana next debe ser recovery' });
+                else if (m.acwr >= 1.30) out.push({ type:'acwr_rising',     severity:'medium', text:'ACWR ' + m.acwr + ' subiendo, próxima semana no metas más volumen sin bajar intensidad' });
+            }
+            /* TSB */
+            if (m.tsb_end != null) {
+                if (m.tsb_end <= -30)      out.push({ type:'tsb_severe',    severity:'high',   text:'TSB ' + m.tsb_end + ' — fatiga severa acumulada' });
+                else if (m.tsb_end <= -20) out.push({ type:'tsb_deep',      severity:'medium', text:'TSB ' + m.tsb_end + ' — fatiga acumulada, considerar semana de recovery' });
+            }
+            /* Días consecutivos duros (TRIMP>100) */
+            var maxStreak = 0, curStreak = 0;
+            if (Array.isArray(m.sessions_by_day)) {
+                for (var di = 0; di < m.sessions_by_day.length; di++) {
+                    var d = m.sessions_by_day[di];
+                    if (d && d.trimp > 100) { curStreak++; if (curStreak > maxStreak) maxStreak = curStreak; }
+                    else curStreak = 0;
+                }
+            }
+            if (maxStreak >= 3) out.push({ type:'consecutive_hard', severity:'medium', text:maxStreak + ' días consecutivos con TRIMP>100 — cuidado con la carga acumulada' });
+            /* Compliance */
+            if (m.compliance_pct != null && m.compliance_pct < 60) {
+                out.push({ type:'low_compliance', severity:'low', text:'Cumplimiento plan ' + m.compliance_pct + '% — revisar si el plan encaja con tu vida real' });
+            }
+            /* Mucha intensidad */
+            if (m.zones_pct) {
+                var highIntensity = (m.zones_pct.z4 || 0) + (m.zones_pct.z5 || 0);
+                if (highIntensity > 30) {
+                    out.push({ type:'high_intensity', severity:'medium', text:'Z4+Z5 = ' + highIntensity + '% del tiempo — mucha intensidad, cuidado con la recuperación' });
+                }
+            }
+            return out;
+        }
+
+        /* Próxima semana del plan (después de weekEnd): resumen de sesiones */
+        function _wrGetNextWeekPlan(plan, weekEndYmd, thisWeekKm) {
+            try {
+                var lines = [];
+                var weeks = plan.weeks;
+                if (!Array.isArray(weeks)) return null;
+                /* Buscar índice de la semana actual y coger la siguiente */
+                var nextIdx = -1;
+                for (var wi = 0; wi < weeks.length; wi++) {
+                    var wk = weeks[wi];
+                    if (!wk || !wk.weekStart) continue;
+                    /* La semana siguiente empieza el día después de weekEndYmd */
+                    var nextStartD = new Date(weekEndYmd + 'T12:00:00');
+                    nextStartD.setDate(nextStartD.getDate() + 1);
+                    var nextStartYmd = nextStartD.getFullYear() + '-'
+                                     + String(nextStartD.getMonth()+1).padStart(2,'0') + '-'
+                                     + String(nextStartD.getDate()).padStart(2,'0');
+                    if (wk.weekStart === nextStartYmd) { nextIdx = wi; break; }
+                }
+                if (nextIdx < 0) return null;
+                var nextWk = weeks[nextIdx];
+                lines.push('PRÓXIMA SEMANA (' + (nextIdx + 1) + '/' + weeks.length
+                         + (nextWk.phase ? ' · ' + nextWk.phase : '') + ')');
+                var kmTotal = 0, sessBits = [];
+                var dayShorts = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+                if (Array.isArray(nextWk.sessions)) {
+                    for (var si = 0; si < nextWk.sessions.length; si++) {
+                        var s = nextWk.sessions[si];
+                        if (!s || s.isStrength) continue;
+                        var km = Number(s.dist != null ? s.dist : (s.distKm != null ? s.distKm : 0)) || 0;
+                        if (km <= 0) continue;
+                        kmTotal += km;
+                        var dow = null;
+                        if (s.dateStr) {
+                            var dowD = new Date(s.dateStr + 'T12:00:00');
+                            /* getDay: 0=dom, 1=lun...6=sáb → convertir a 0=lun */
+                            dow = (dowD.getDay() + 6) % 7;
+                        }
+                        var lbl = (dow != null ? dayShorts[dow] : '?') + ' ' + _wrTypeLabelShort(s.type) + ' ' + km + 'k';
+                        sessBits.push(lbl);
+                    }
+                }
+                if (sessBits.length) lines.push(sessBits.join(' · '));
+                if (kmTotal > 0) {
+                    var deltaTxt = '';
+                    if (thisWeekKm && thisWeekKm > 0) {
+                        var dPct = Math.round(((kmTotal - thisWeekKm) / thisWeekKm) * 100);
+                        deltaTxt = ' (' + (dPct >= 0 ? '+' : '') + dPct + '% vs esta semana)';
+                    }
+                    lines.push('Total ' + Math.round(kmTotal * 10) / 10 + 'km' + deltaTxt);
+                }
+                return lines;
+            } catch (_e) { return null; }
+        }
+
+        /* Tendencia 4 semanas: [oldest, ..., current] resumen km + sesiones + TRIMP total */
+        function _wrGet4WeekTrend(acts, weekEndYmd) {
+            try {
+                if (!Array.isArray(acts) || acts.length === 0) return null;
+                var out = [];
+                var endD = new Date(weekEndYmd + 'T12:00:00');
+                for (var offset = 3; offset >= 0; offset--) {
+                    /* Semana con offset atrás: [weekEnd-6-7*offset ... weekEnd-7*offset] */
+                    var weekEnd = new Date(endD);
+                    weekEnd.setDate(endD.getDate() - 7 * offset);
+                    var weekStart = new Date(weekEnd);
+                    weekStart.setDate(weekEnd.getDate() - 6);
+                    var wsYmd = weekStart.getFullYear() + '-'
+                              + String(weekStart.getMonth()+1).padStart(2,'0') + '-'
+                              + String(weekStart.getDate()).padStart(2,'0');
+                    var weYmd = weekEnd.getFullYear() + '-'
+                              + String(weekEnd.getMonth()+1).padStart(2,'0') + '-'
+                              + String(weekEnd.getDate()).padStart(2,'0');
+                    var km = 0, sess = 0, trimp = 0;
+                    for (var i = 0; i < acts.length; i++) {
+                        var a = acts[i];
+                        if (!a || !a.dateStr || a.dateStr < wsYmd || a.dateStr > weYmd) continue;
+                        km    += Number(a.distKm)      || 0;
+                        if (Number(a.durationSec) > 60) sess++;
+                        trimp += Number(a.trimp)       || 0;
+                    }
+                    var lbl = 'Sem ' + weekStart.getDate() + '/' + String(weekStart.getMonth()+1).padStart(2,'0');
+                    if (offset === 0) lbl += ' (esta)';
+                    out.push('· ' + lbl + ': ' + (Math.round(km * 10) / 10) + 'km · ' + sess + ' sesiones · TRIMP ' + Math.round(trimp));
+                }
+                return out;
+            } catch (_e) { return null; }
+        }
+
+        /* Top N PRs históricos del user (desde profileData.prHistory) */
+        function _wrGetTopHistoricalPRs(pd, nMax) {
+            try {
+                if (!pd || !Array.isArray(pd.prHistory) || pd.prHistory.length === 0) return null;
+                /* Agrupar por dist, quedarse con el mejor (más rápido) de cada uno */
+                var byDist = {};
+                for (var i = 0; i < pd.prHistory.length; i++) {
+                    var p = pd.prHistory[i];
+                    if (!p || !p.dist || !p.time) continue;
+                    if (!byDist[p.dist]) byDist[p.dist] = [];
+                    byDist[p.dist].push(p);
+                }
+                var out = [];
+                /* Orden lógico distancias */
+                var distOrder = ['5k','10k','15k','hm','m'];
+                for (var di = 0; di < distOrder.length; di++) {
+                    var d = distOrder[di];
+                    if (!byDist[d]) continue;
+                    /* El mejor de cada dist = el último (asumiendo prHistory se ordena cronológicamente
+                       y solo se añade si mejora). Alternativa: comparar times. */
+                    var latest = byDist[d][byDist[d].length - 1];
+                    var line = d + ': ' + latest.time;
+                    if (latest.dateISO) line += ' (' + _wrFmtDateShort(latest.dateISO) + ')';
+                    out.push(line);
+                    if (out.length >= (nMax || 5)) break;
+                }
+                return out;
+            } catch (_e) { return null; }
+        }
+
+
         try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 1.2B.1 ready · _wrDetectWeekPRs(weekStart, weekEnd) · fix bestEfforts camelCase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2C ready · await _wrBuildWeeklyContext(weekStart, weekEnd) · compositor prompt IA', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
