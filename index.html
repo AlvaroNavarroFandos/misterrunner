@@ -5296,8 +5296,13 @@
             cursor: pointer;
             user-select: none;
             transition: opacity .12s;
+            gap: 8px;
         }
         .mr-pc-paces-hdr:active { opacity: .7; }
+        .mr-pc-paces-hdr-l {
+            display: flex; align-items: center; gap: 8px;
+            min-width: 0; flex: 1;
+        }
         .mr-pc-paces-title {
             font-size: 11px; font-weight: 800; color: var(--gold-text);
             text-transform: uppercase; letter-spacing: 1.2px;
@@ -5305,6 +5310,31 @@
         .mr-pc-paces-month {
             color: var(--tw); text-transform: capitalize;
             letter-spacing: normal; margin-left: 4px;
+        }
+        /* [p137] Badge "fase" en cabecera colapsada — muestra training goal
+           siempre visible sin tener que expandir el bloque. */
+        .mr-pc-paces-tg {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 8px 3px 7px;
+            border-radius: 999px;
+            background: rgba(201,162,74,.14);
+            border: 1px solid rgba(201,162,74,.32);
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        body.dark-mode .mr-pc-paces-tg {
+            background: rgba(232,197,112,.16);
+            border-color: rgba(232,197,112,.36);
+        }
+        .mr-pc-paces-tg-lbl {
+            font-size: 8px; font-weight: 800; color: var(--tm);
+            letter-spacing: .8px; text-transform: uppercase;
+        }
+        .mr-pc-paces-tg-val {
+            font-family: var(--f);
+            font-size: 10.5px; font-weight: 800; color: var(--gold-text);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -.2px;
         }
         .mr-pc-paces-chev {
             color: var(--tm); flex-shrink: 0;
@@ -40968,7 +40998,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!plan) return null;
         var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
         if (!goal) return null;
-        var fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
+        // [p137] Fix puente sigmoide: si currentFitnessSecs es null o <= goal
+        // (asunción optimista de la generación IA "user ya está en forma para
+        // su objetivo"), consulta el fitness compuesto en vivo (predictor COROS
+        // > VDOT > ...). Solo lo usa si es peor que goal → señala un puente real.
+        // Con esto se recupera el sub-bloque "Ritmos objetivo del mes" y las
+        // recalibraciones cuando el plan JSONB llega con currentFitnessSecs=goal.
+        var fit = plan.currentFitnessSecs;
+        if (fit == null || fit <= goal) {
+            var live = _mrCurrentFitnessSecs(plan);
+            if (live != null && live > goal) fit = live;
+        }
         if (!fit) fit = goal;
         if (!plan.startDate || !plan.raceDate) return goal;
         try {
@@ -50107,7 +50147,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // se llama en el arranque. Sin esta línea, mover sesiones actualizaba
     // mr_plan pero no APP_KEY → al reabrir la PWA el plan retrocedía.
     function savePlanToStorage(){try{localStorage.setItem(_uk('mr_plan'),JSON.stringify(activePlan));}catch(e){} try{ if(typeof saveAppState==='function') saveAppState(); }catch(_){} try{ if(typeof window._corosCheckPlanChanged==='function') window._corosCheckPlanChanged(); }catch(_){}}
-    function saveStrengthPlanToStorage(){try{localStorage.setItem(_uk('mr_strength_plan'),JSON.stringify(activeStrengthPlan));}catch(e){}}
+    function saveStrengthPlanToStorage(){try{localStorage.setItem(_uk('mr_strength_plan'),JSON.stringify(activeStrengthPlan));}catch(e){} try{ if(typeof window._mrScheduleStrengthPlanSync === 'function') window._mrScheduleStrengthPlanSync(); }catch(_){}}
     function loadPlanFromStorage(){
         try{const s=localStorage.getItem(_uk('mr_plan'));if(s){activePlan=JSON.parse(s);renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();}}catch(e){}
     }
@@ -52120,6 +52160,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
     }
 
+    // ── PUSH: activeStrengthPlan (JSONB) ───────────────────────────────
+    // [p137] Mismo patrón que rehab. Tabla user_active_strength_plans.
+    async function _mrPushActiveStrengthPlanToSupabase() {
+        try {
+            var ctx = await _mrGetSyncSession();
+            if (!ctx) return { ok:false, reason:'no-session' };
+            var strPlan = (typeof activeStrengthPlan !== 'undefined') ? activeStrengthPlan : null;
+
+            if (!strPlan) {
+                var delRes = await ctx.sb.from('user_active_strength_plans').delete().eq('user_id', ctx.uid);
+                if (delRes && delRes.error) console.warn('[MR][SYNC] strength delete warn:', delRes.error);
+                return { ok:true, deleted:true };
+            }
+
+            var payload = { user_id: ctx.uid, plan_data: strPlan };
+            var res = await ctx.sb.from('user_active_strength_plans').upsert(payload, { onConflict:'user_id' });
+            if (res && res.error) {
+                console.warn('[MR][SYNC] strength push warn:', res.error);
+                return { ok:false, error:res.error };
+            }
+            return { ok:true };
+        } catch(e) {
+            console.warn('[MR][SYNC] strength push exception:', e);
+            return { ok:false, error:e };
+        }
+    }
+
     // ── Debounce schedulers ────────────────────────────────────────────
     function _mrScheduleProfileSync() {
         if (_mrSyncSuppressPush) return;
@@ -52143,6 +52210,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _mrSyncTimers.rehab = setTimeout(function(){
             _mrSyncTimers.rehab = null;
             _mrPushActiveRehabPlanToSupabase();
+        }, _MR_SYNC_DEBOUNCE_MS);
+    }
+    // [p137] Scheduler para strength · debounced 5s como los demás.
+    function _mrScheduleStrengthPlanSync() {
+        if (_mrSyncSuppressPush) return;
+        if (_mrSyncTimers.strength) clearTimeout(_mrSyncTimers.strength);
+        _mrSyncTimers.strength = setTimeout(function(){
+            _mrSyncTimers.strength = null;
+            _mrPushActiveStrengthPlanToSupabase();
         }, _MR_SYNC_DEBOUNCE_MS);
     }
 
@@ -52301,6 +52377,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) { console.warn('[MR][SYNC] apply rehab exception:', e); }
     }
 
+    // [p137] Apply strength desde Supabase. Escribe activeStrengthPlan +
+    // localStorage y dispara re-renders relevantes (plan card + week).
+    function _mrApplyActiveStrengthPlanFromSupabase(row) {
+        try {
+            if (!row || !row.plan_data) return;
+            _mrSyncSuppressPush = true;
+            try {
+                activeStrengthPlan = row.plan_data;
+                try { localStorage.setItem(_uk('mr_strength_plan'), JSON.stringify(activeStrengthPlan)); } catch(_){}
+                try { if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard(); } catch(_){}
+                try { if (typeof updatePlanNav === 'function') updatePlanNav(); } catch(_){}
+                try { if (typeof renderPlanWeek === 'function' && typeof planCurrentWeek !== 'undefined') renderPlanWeek(planCurrentWeek); } catch(_){}
+                try { if (typeof renderHome === 'function') renderHome(); } catch(_){}
+            } finally { _mrSyncSuppressPush = false; }
+        } catch(e) { console.warn('[MR][SYNC] apply strength exception:', e); }
+    }
+
     // ── HYDRATE + Migration ────────────────────────────────────────────
     // Se llama desde bootApp fire-and-forget. Compara timestamps server vs
     // local.ts. Migración one-time: si Supabase no tiene datos físicos +
@@ -52313,19 +52406,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             var localTs = _mrGetLocalProfileTs();
 
-            // 3 fetches paralelos
+            // 4 fetches paralelos ([p137] añadido strength)
             var results;
             try {
                 results = await Promise.all([
                     ctx.sb.from('profiles').select('*').eq('id', ctx.uid).maybeSingle(),
                     ctx.sb.from('user_active_plans').select('*').eq('user_id', ctx.uid).maybeSingle(),
-                    ctx.sb.from('user_active_rehab_plans').select('*').eq('user_id', ctx.uid).maybeSingle()
+                    ctx.sb.from('user_active_rehab_plans').select('*').eq('user_id', ctx.uid).maybeSingle(),
+                    ctx.sb.from('user_active_strength_plans').select('*').eq('user_id', ctx.uid).maybeSingle()
                 ]);
             } catch(e) { console.warn('[MR][SYNC] hydrate fetch exception:', e); return; }
 
             var pRes    = results[0];
             var planRes = results[1];
             var rehabRes = results[2];
+            var strRes   = results[3];
 
             // ─── PROFILE ─────────────────────────────────────────────
             try {
@@ -52437,6 +52532,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } catch(e) { console.warn('[MR][SYNC] hydrate rehab branch exception:', e); }
 
+            // ─── STRENGTH PLAN ───────────────────────────────────────
+            // [p137] Mismo patrón que rehab: si Supabase más nuevo → apply;
+            // si Supabase vacío + local poblado → push migración one-time.
+            try {
+                if (strRes && !strRes.error) {
+                    if (strRes.data && strRes.data.plan_data) {
+                        var strSbTs = strRes.data.updated_at ? new Date(strRes.data.updated_at).getTime() : 0;
+                        if (strSbTs > localTs) {
+                            console.log('[MR][SYNC] strength Supabase > local → aplicando');
+                            _mrApplyActiveStrengthPlanFromSupabase(strRes.data);
+                        }
+                    } else if (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan) {
+                        console.log('[MR][SYNC] strength local poblado + Supabase vacío → push migración');
+                        var strPushRes = await _mrPushActiveStrengthPlanToSupabase();
+                        if (strPushRes && strPushRes.ok) {
+                            var strVerify = await ctx.sb.from('user_active_strength_plans').select('plan_data').eq('user_id', ctx.uid).maybeSingle();
+                            if (strVerify && strVerify.data && strVerify.data.plan_data) {
+                                await ctx.sb.from('user_active_strength_plans').update({ migrated_from_local_v1: true }).eq('user_id', ctx.uid);
+                                console.log('[MR][SYNC] migración strength completada + flag set');
+                            } else {
+                                console.warn('[MR][SYNC] migración strength: verificación falló, NO se marca migrated');
+                            }
+                        }
+                    }
+                }
+            } catch(e) { console.warn('[MR][SYNC] hydrate strength branch exception:', e); }
+
         } catch(e) { console.warn('[MR][SYNC] hydrate exception:', e); }
     }
 
@@ -52445,9 +52567,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         window._mrScheduleProfileSync         = _mrScheduleProfileSync;
         window._mrSchedulePlanSync            = _mrSchedulePlanSync;
         window._mrScheduleRehabPlanSync       = _mrScheduleRehabPlanSync;
+        window._mrScheduleStrengthPlanSync    = _mrScheduleStrengthPlanSync;
         window._mrPushProfileToSupabase       = _mrPushProfileToSupabase;
         window._mrPushActivePlanToSupabase    = _mrPushActivePlanToSupabase;
         window._mrPushActiveRehabPlanToSupabase = _mrPushActiveRehabPlanToSupabase;
+        window._mrPushActiveStrengthPlanToSupabase = _mrPushActiveStrengthPlanToSupabase;
         window._mrFullSyncHydrate             = _mrFullSyncHydrate;
     } catch(_){}
 
@@ -60409,11 +60533,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                           +   '<div class="mr-pc-paces-accent"></div>'
                           +   '<div class="mr-pc-paces-body">'
                           +     '<div class="mr-pc-paces-hdr" onclick="if(window._togglePacesBlock)window._togglePacesBlock(event)">'
-                          +       '<span class="mr-pc-paces-title">Ritmos objetivo<span class="mr-pc-paces-month"> \u00b7 ' + _monthLong + '</span></span>'
+                          +       '<div class="mr-pc-paces-hdr-l">'
+                          +         '<span class="mr-pc-paces-title">Ritmos objetivo<span class="mr-pc-paces-month"> \u00b7 ' + _monthLong + '</span></span>'
+                          +         '<div class="mr-pc-paces-tg" aria-label="Ritmo objetivo de la fase actual">'
+                          +           '<span class="mr-pc-paces-tg-lbl">fase</span>'
+                          +           '<span class="mr-pc-paces-tg-val">' + _tgHMS + '</span>'
+                          +         '</div>'
+                          +       '</div>'
                           +       '<svg class="mr-pc-paces-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>'
                           +     '</div>'
                           +     '<div class="mr-pc-paces-collapse">'
-                          +       '<div class="mr-pc-paces-ctx">Entrenando a <b>' + _tgHMS + '</b> esta fase</div>'
                           +       '<div class="mr-pc-paces-grid">'
                           +         '<div class="mr-pc-pace-cell"><span class="lbl">Easy</span><span class="val">' + _fmt(_paces.easy) + '<small>/km</small></span></div>'
                           +         '<div class="mr-pc-pace-cell"><span class="lbl">Marathon</span><span class="val">' + _fmt(_paces.marathon) + '<small>/km</small></span></div>'
