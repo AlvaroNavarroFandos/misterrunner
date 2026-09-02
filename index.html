@@ -78347,21 +78347,23 @@ window.addEventListener('DOMContentLoaded', function() {
                        act de la semana (con _dbActivityId), cuenta tiempo
                        exacto segundo a segundo en cada zona.
 
-                       [v2.30.1-p158 · fix p5] Fórmula: % LTHR (Umbral Funcional)
-                       — la MISMA que usan COROS/Garmin/TrainingPeaks/Joe Friel.
-                       LTHR = Lactate Threshold Heart Rate. Reutiliza el LTHR
-                       ya presente en MR (window._mrLthrLatest() → auto COROS,
-                       fallback var global ltValue, fallback final 0.88*hrMax).
+                       [v2.30.1-p158 · fix p5+p6] Fórmula: % LTHR integer-compat
+                       Coros/Garmin/Joe Friel. Redondea pctZ a entero antes de
+                       comparar → mismo bucketing que muestra el reloj Coros.
+                       Reutiliza el LTHR ya presente en MR (window._mrLthrLatest()
+                       → auto COROS, fallback var global ltValue, fallback final
+                       0.88*hrMax).
 
-                       5 zonas Joe Friel (fusiona Coros Z5+Z6 en mi Z5):
-                         Z1 <80%    LTHR (recuperación)
-                         Z2 80-90%  LTHR (aeróbico easy · base)
-                         Z3 90-96%  LTHR (potencia aeróbica · marathon pace)
-                         Z4 96-103% LTHR (umbral · tempo)
-                         Z5 >103%   LTHR (anaeróbico · VO2max · sprint)
+                       5 zonas Coros compactas (fusiona Coros Z5+Z6 en Z5):
+                         Z1 <80%     LTHR (recuperación)
+                         Z2 80-90%   LTHR (aeróbico easy · base)
+                         Z3 91-95%   LTHR (potencia aeróbica · marathon pace)
+                         Z4 96-102%  LTHR (umbral · tempo)
+                         Z5 ≥103%    LTHR (anaeróbico + VO2max + sprint)
 
-                       Con LTHR=170 (Álvaro/COROS) da boundaries BPM:
-                         Z1<136, Z2 136-153, Z3 153-163, Z4 163-175, Z5>175.
+                       Con LTHR=170 (Álvaro/COROS) da starts BPM:
+                         Z1<136, Z2 136-154, Z3 155-162, Z4 163-174, Z5≥175
+                         (match exacto Coros: 136 / 155 / 163 / 175).
                        ═══════════════════════════════════════════════════════
                        Reutiliza window.loadStreamsForActivity (cache interno
                        _streamsCache evita fetch duplicado en runs sucesivos). */
@@ -78394,16 +78396,20 @@ window.addEventListener('DOMContentLoaded', function() {
                     lthr_source = 'estimated_from_hrmax';
                 }
 
-                /* Boundaries en % LTHR (Joe Friel / COROS 5 zonas) */
-                var Z_BOUNDS_PCT = { z1_max:80, z2_max:90, z3_max:96, z4_max:103 };
-                /* Boundaries en BPM absolutos (para trazabilidad) */
+                /* Boundaries en % LTHR (Coros integer-compat exacto)
+                   Coros: Z1<80, Z2=80-90, Z3=91-95, Z4=96-102, Z5=103-106, Z6>106
+                   Yo (5 zonas): fusiono Coros Z5+Z6 en Z5.
+                   Comparamos con pctZ REDONDEADO a entero (Math.round) para
+                   respetar exactamente la lógica de bucketing Coros. */
+                var Z_BOUNDS_PCT = { z1_max:80, z2_max:91, z3_max:96, z4_max:103 };
+                /* Boundaries en BPM absolutos (starts de cada zona · match Coros) */
                 var Z_BOUNDS_BPM = null;
                 if (lthr && lthr > 0) {
                     Z_BOUNDS_BPM = {
-                        z1_max: Math.round(lthr * (Z_BOUNDS_PCT.z1_max / 100)),
-                        z2_max: Math.round(lthr * (Z_BOUNDS_PCT.z2_max / 100)),
-                        z3_max: Math.round(lthr * (Z_BOUNDS_PCT.z3_max / 100)),
-                        z4_max: Math.round(lthr * (Z_BOUNDS_PCT.z4_max / 100))
+                        z2_start: Math.round(lthr * 0.80),  /* Coros muestra "136" */
+                        z3_start: Math.round(lthr * 0.91),  /* Coros muestra "155" */
+                        z4_start: Math.round(lthr * 0.96),  /* Coros muestra "163" */
+                        z5_start: Math.round(lthr * 1.03)   /* Coros muestra "175" */
                     };
                 }
 
@@ -78455,8 +78461,10 @@ window.addEventListener('DOMContentLoaded', function() {
                                 var dt = timeArr[pi + 1] - timeArr[pi];
                                 if (!isFinite(dt) || dt <= 0 || dt > 60) continue; /* gap >60s = pausa, skip */
 
-                                /* Fórmula % LTHR (Joe Friel/COROS) */
-                                var pctZ = (Number(hrVal) / lthr) * 100;
+                                /* Fórmula % LTHR (Coros integer-compat):
+                                   redondear a entero antes de comparar → mismo
+                                   bucketing que muestra el reloj. */
+                                var pctZ = Math.round((Number(hrVal) / lthr) * 100);
 
                                 if      (pctZ < Z_BOUNDS_PCT.z1_max) zones.z1 += dt;
                                 else if (pctZ < Z_BOUNDS_PCT.z2_max) zones.z2 += dt;
@@ -78536,11 +78544,11 @@ window.addEventListener('DOMContentLoaded', function() {
                         streams_loaded:      streams_loaded_count,
                         streams_missing:     streams_missing_count,
                         total_seconds:       Math.round(zonesDurTotal),
-                        formula:             'pct_lthr_friel',
+                        formula:             'pct_lthr_coros',
                         lthr:                lthr,
                         lthr_source:         lthr_source,    /* 'coros_auto'|'ltvalue_global'|'estimated_from_hrmax'|'none' */
-                        bounds_pct_lthr:     Z_BOUNDS_PCT,   /* {z1_max:80, z2_max:90, z3_max:96, z4_max:103} */
-                        bounds_bpm:          Z_BOUNDS_BPM    /* {z1_max, z2_max, z3_max, z4_max} en BPM absolutos */
+                        bounds_pct_lthr:     Z_BOUNDS_PCT,   /* {z1_max:80, z2_max:91, z3_max:96, z4_max:103} cutoffs pctZ rounded */
+                        bounds_bpm:          Z_BOUNDS_BPM    /* {z2_start, z3_start, z4_start, z5_start} bpm inicio zona (match Coros) */
                     },
 
                     sessions_by_day:  sessions_by_day     /* array 7 días L→D */
@@ -78609,7 +78617,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        try { console.log('%c[MR] Weekly Report · 1.2A.4 ready · zones % LTHR Joe Friel (80/90/96/103) · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2A.5 ready · zones %LTHR Coros integer-compat · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
