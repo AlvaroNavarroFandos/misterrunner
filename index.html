@@ -78452,11 +78452,35 @@ window.addEventListener('DOMContentLoaded', function() {
                             streams_loaded_count++;
                             var n = Math.min(timeArr.length, hrArr.length);
 
+                            /* Pre-suavizado: moving average window ±2 (5 puntos = ~5s)
+                               ─────────────────────────────────────────────────
+                               [v2.30.1-p158 · fix p7] Los relojes GPS aplican
+                               suavizado al HR antes de calcular zonas para
+                               absorber micro-picos puntuales (aceleraciones
+                               cortas, rampas, artifacts). Sin este suavizado,
+                               segundos aislados con HR alto empujan tiempo
+                               a zonas superiores incorrectamente.
+                               Window = 5 puntos → suaviza spikes <3s. */
+                            var hrSmoothed = new Array(n);
+                            for (var sm = 0; sm < n; sm++) {
+                                var _sum = 0, _cnt = 0;
+                                for (var _k = -2; _k <= 2; _k++) {
+                                    var _idx = sm + _k;
+                                    if (_idx < 0 || _idx >= n) continue;
+                                    var _v = hrArr[_idx];
+                                    if (_v == null || !isFinite(_v) || _v <= 0) continue;
+                                    _sum += Number(_v);
+                                    _cnt++;
+                                }
+                                hrSmoothed[sm] = (_cnt > 0) ? (_sum / _cnt) : null;
+                            }
+
                             /* Iterar puntos: cada punto aporta (time[i+1]-time[i])
-                               segundos a la zona correspondiente a hr[i]. Último
-                               punto se ignora (no tiene "duración hasta el siguiente"). */
+                               segundos a la zona correspondiente a hrSmoothed[i].
+                               Último punto se ignora (no tiene "duración hasta
+                               el siguiente"). */
                             for (var pi = 0; pi < n - 1; pi++) {
-                                var hrVal = hrArr[pi];
+                                var hrVal = hrSmoothed[pi];
                                 if (hrVal == null || !isFinite(hrVal) || hrVal <= 0) continue;
                                 var dt = timeArr[pi + 1] - timeArr[pi];
                                 if (!isFinite(dt) || dt <= 0 || dt > 60) continue; /* gap >60s = pausa, skip */
@@ -78544,7 +78568,7 @@ window.addEventListener('DOMContentLoaded', function() {
                         streams_loaded:      streams_loaded_count,
                         streams_missing:     streams_missing_count,
                         total_seconds:       Math.round(zonesDurTotal),
-                        formula:             'pct_lthr_coros',
+                        formula:             'pct_lthr_coros_smoothed_5s',
                         lthr:                lthr,
                         lthr_source:         lthr_source,    /* 'coros_auto'|'ltvalue_global'|'estimated_from_hrmax'|'none' */
                         bounds_pct_lthr:     Z_BOUNDS_PCT,   /* {z1_max:80, z2_max:91, z3_max:96, z4_max:103} cutoffs pctZ rounded */
@@ -78617,7 +78641,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        try { console.log('%c[MR] Weekly Report · 1.2A.5 ready · zones %LTHR Coros integer-compat · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
