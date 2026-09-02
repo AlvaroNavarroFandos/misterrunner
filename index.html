@@ -40853,6 +40853,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     } catch(e) { console.warn('[MR][Long] re-derive:', e); }
                 }
                 if (s.pace && paceValueMap[s.pace]) s.pace = paceValueMap[s.pace];
+                // [p140] Sanity check post-mapping: si sesión es easy/recovery
+                // pero pace acabó más rápido que marathon (stale de series),
+                // forzar al easy pace correcto.
+                if ((s.type === 'easy' || s.type === 'recovery') && s.pace && newPaces.marathon && newPaces.easy && s.pace < newPaces.marathon) {
+                    s.pace = newPaces.easy;
+                }
                 s.desc = replaceInString(s.desc);
                 (s.blocks || []).forEach(updateBlock);
                 updated++;
@@ -41076,6 +41082,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 plan.finalGoalSecs = plan.goalSecs;
                 mutated = true;
                 console.log('[MR][p138] sanea plan.finalGoalSecs <- goalSecs =', plan.finalGoalSecs);
+            }
+            // [p140] Sanea sesiones easy/recovery en semanas de descarga cuyo
+            // pace quedó stale del entreno original (series/tempo). Bug del
+            // generador pre-p140: al degradar type=series→easy, sess.pace
+            // mantenía el pace de series y el widget Home mostraba 4:30 en
+            // vez del easy pace correcto. Solo corrige planes ya generados
+            // con el bug (planes nuevos ya salen bien de origen).
+            if (plan.paces && plan.paces.easy && plan.paces.marathon && Array.isArray(plan.weeks)) {
+                var easyPace = plan.paces.easy;
+                var marathonPace = plan.paces.marathon;
+                var fixedSess = 0;
+                plan.weeks.forEach(function(wk){
+                    if (!wk || !Array.isArray(wk.sessions)) return;
+                    wk.sessions.forEach(function(s){
+                        // Sanity: easy/recovery con pace más rápido que marathon = stale
+                        if ((s.type === 'easy' || s.type === 'recovery') && s.pace && s.pace < marathonPace) {
+                            s.pace = easyPace;
+                            fixedSess++;
+                        }
+                    });
+                });
+                if (fixedSess > 0) {
+                    mutated = true;
+                    console.log('[MR][p140] sanea', fixedSess, 'sesiones easy/recovery con pace stale de series');
+                }
             }
         } catch(e) { console.warn('[MR][p138] ensurePlanFields:', e); }
         return mutated;
@@ -45663,6 +45694,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         dist: newDist,
                         type: finalType,
                         desc: newDesc,
+                        // [p140] Bug fix: al degradar type a easy en semana descarga,
+                        // sess.pace se quedaba con el ritmo original de series
+                        // (~4:28/km). El widget Home carrusel → card día usa
+                        // _mrTodayLine2(sess) que lee sess.pace directo → mostraba
+                        // 4:30/km en vez del easy pace correcto (~5:51). La pestaña
+                        // Plan usa blocks[] y no se veía afectada.
+                        pace: wasSeries ? paces.easy : s.pace,
                         blocks: wasSeries
                             ? [{label:'🔄 Semana descarga',detail:`Rodaje suave ${newDist}km · recuperación activa`,color:'#4ade80',km:newDist}]
                             : (s.blocks||[]).map(b=>({...b,km:b.km?Math.max(2,Math.round(b.km*0.70)):b.km})),
