@@ -78347,45 +78347,63 @@ window.addEventListener('DOMContentLoaded', function() {
                        act de la semana (con _dbActivityId), cuenta tiempo
                        exacto segundo a segundo en cada zona.
 
-                       [v2.30.1-p158 · fix p4] Fórmula: Karvonen HR Reserve
-                       con boundaries "runner-style" (no genéricos 60/70/80/90).
-                       Ajustados para coincidir con la mayoría de zonas por
-                       defecto en relojes de running (Coros/Garmin/Polar):
-                         Z1 <65%   HRR (recuperación)
-                         Z2 65-80% HRR (rodaje aeróbico easy)
-                         Z3 80-87% HRR (marathon pace / aeróbico moderado)
-                         Z4 87-94% HRR (threshold / tempo)
-                         Z5 >94%   HRR (VO2max / intervalos)
+                       [v2.30.1-p158 · fix p5] Fórmula: % LTHR (Umbral Funcional)
+                       — la MISMA que usan COROS/Garmin/TrainingPeaks/Joe Friel.
+                       LTHR = Lactate Threshold Heart Rate. Reutiliza el LTHR
+                       ya presente en MR (window._mrLthrLatest() → auto COROS,
+                       fallback var global ltValue, fallback final 0.88*hrMax).
 
-                       Con hrMax=185 hrRest=45 esto da boundaries BPM:
-                         Z1<136, Z2 136-157, Z3 157-167, Z4 167-176, Z5>176.
+                       5 zonas Joe Friel (fusiona Coros Z5+Z6 en mi Z5):
+                         Z1 <80%    LTHR (recuperación)
+                         Z2 80-90%  LTHR (aeróbico easy · base)
+                         Z3 90-96%  LTHR (potencia aeróbica · marathon pace)
+                         Z4 96-103% LTHR (umbral · tempo)
+                         Z5 >103%   LTHR (anaeróbico · VO2max · sprint)
 
+                       Con LTHR=170 (Álvaro/COROS) da boundaries BPM:
+                         Z1<136, Z2 136-153, Z3 153-163, Z4 163-175, Z5>175.
+                       ═══════════════════════════════════════════════════════
                        Reutiliza window.loadStreamsForActivity (cache interno
                        _streamsCache evita fetch duplicado en runs sucesivos). */
-                var hrMax = null, hrRest = null;
+
+                /* Obtener LTHR con cascada de fallbacks */
+                var lthr = null, lthr_source = 'none';
                 try {
-                    hrMax  = (_pd && _pd.hrMax)  ? Number(_pd.hrMax)  : null;
-                    hrRest = (_pd && _pd.hrRest) ? Number(_pd.hrRest) : null;
+                    /* Prioridad 1: helper COROS latest (más fresco, auto-medido) */
+                    if (typeof window._mrLthrLatest === 'function') {
+                        var _lc = window._mrLthrLatest();
+                        if (_lc != null && isFinite(_lc) && _lc > 0) {
+                            lthr = Number(_lc);
+                            lthr_source = 'coros_auto';
+                        }
+                    }
+                    /* Prioridad 2: variable global ltValue (Manual + auto en tiempo real) */
+                    if (lthr == null && typeof ltValue !== 'undefined' && ltValue != null
+                        && isFinite(ltValue) && Number(ltValue) > 0) {
+                        lthr = Number(ltValue);
+                        lthr_source = 'ltvalue_global';
+                    }
                 } catch (_e) {}
-                /* Fallback hrRest=60 si no configurado (media adulto sedentario);
-                   igualmente marcamos en debug si se ha usado fallback. */
-                var hrRest_fallback_used = false;
-                if (!hrRest || hrRest <= 0) {
-                    hrRest = 60;
-                    hrRest_fallback_used = true;
+
+                /* Prioridad 3: fallback estimado = 0.88 * hrMax
+                   (media empírica LTHR ~85-90% HRmax en runners entrenados) */
+                var hrMax_local = null;
+                try { hrMax_local = (_pd && _pd.hrMax) ? Number(_pd.hrMax) : null; } catch (_e) {}
+                if (lthr == null && hrMax_local && hrMax_local > 0) {
+                    lthr = Math.round(hrMax_local * 0.88);
+                    lthr_source = 'estimated_from_hrmax';
                 }
 
-                /* Boundaries en % HRR runner-style */
-                var Z_BOUNDS_PCT = { z1_max:65, z2_max:80, z3_max:87, z4_max:94 };
-                /* Boundaries en BPM (para trazabilidad en debug) */
+                /* Boundaries en % LTHR (Joe Friel / COROS 5 zonas) */
+                var Z_BOUNDS_PCT = { z1_max:80, z2_max:90, z3_max:96, z4_max:103 };
+                /* Boundaries en BPM absolutos (para trazabilidad) */
                 var Z_BOUNDS_BPM = null;
-                if (hrMax && hrMax > 0 && (hrMax - hrRest) > 0) {
-                    var _hrr = hrMax - hrRest;
+                if (lthr && lthr > 0) {
                     Z_BOUNDS_BPM = {
-                        z1_max: Math.round(hrRest + (Z_BOUNDS_PCT.z1_max / 100) * _hrr),
-                        z2_max: Math.round(hrRest + (Z_BOUNDS_PCT.z2_max / 100) * _hrr),
-                        z3_max: Math.round(hrRest + (Z_BOUNDS_PCT.z3_max / 100) * _hrr),
-                        z4_max: Math.round(hrRest + (Z_BOUNDS_PCT.z4_max / 100) * _hrr)
+                        z1_max: Math.round(lthr * (Z_BOUNDS_PCT.z1_max / 100)),
+                        z2_max: Math.round(lthr * (Z_BOUNDS_PCT.z2_max / 100)),
+                        z3_max: Math.round(lthr * (Z_BOUNDS_PCT.z3_max / 100)),
+                        z4_max: Math.round(lthr * (Z_BOUNDS_PCT.z4_max / 100))
                     };
                 }
 
@@ -78395,9 +78413,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 var streams_loaded_count = 0;
                 var streams_missing_count = 0;
 
-                if (hrMax && hrMax > 0 && (hrMax - hrRest) > 0 && typeof window.loadStreamsForActivity === 'function') {
-                    var hrReserveRange = hrMax - hrRest;  /* denominador Karvonen */
-
+                if (lthr && lthr > 0 && typeof window.loadStreamsForActivity === 'function') {
                     /* Filtrar acts con _dbActivityId (necesario para fetch bucket) */
                     var actsToLoad = weekActs.filter(function(a) {
                         return a && a._dbActivityId;
@@ -78439,9 +78455,8 @@ window.addEventListener('DOMContentLoaded', function() {
                                 var dt = timeArr[pi + 1] - timeArr[pi];
                                 if (!isFinite(dt) || dt <= 0 || dt > 60) continue; /* gap >60s = pausa, skip */
 
-                                /* Fórmula Karvonen HR Reserve (%HRR) */
-                                var pctZ = ((Number(hrVal) - hrRest) / hrReserveRange) * 100;
-                                if (pctZ < 0) pctZ = 0;  /* HR bajo hrRest → cuenta como Z1 */
+                                /* Fórmula % LTHR (Joe Friel/COROS) */
+                                var pctZ = (Number(hrVal) / lthr) * 100;
 
                                 if      (pctZ < Z_BOUNDS_PCT.z1_max) zones.z1 += dt;
                                 else if (pctZ < Z_BOUNDS_PCT.z2_max) zones.z2 += dt;
@@ -78521,11 +78536,10 @@ window.addEventListener('DOMContentLoaded', function() {
                         streams_loaded:      streams_loaded_count,
                         streams_missing:     streams_missing_count,
                         total_seconds:       Math.round(zonesDurTotal),
-                        formula:             'karvonen_hrr_runner',
-                        hrMax:               hrMax,
-                        hrRest:              hrRest,
-                        hrRest_fallback:     hrRest_fallback_used,
-                        bounds_pct_hrr:      Z_BOUNDS_PCT,   /* {z1_max:65, z2_max:80, z3_max:87, z4_max:94} */
+                        formula:             'pct_lthr_friel',
+                        lthr:                lthr,
+                        lthr_source:         lthr_source,    /* 'coros_auto'|'ltvalue_global'|'estimated_from_hrmax'|'none' */
+                        bounds_pct_lthr:     Z_BOUNDS_PCT,   /* {z1_max:80, z2_max:90, z3_max:96, z4_max:103} */
                         bounds_bpm:          Z_BOUNDS_BPM    /* {z1_max, z2_max, z3_max, z4_max} en BPM absolutos */
                     },
 
@@ -78595,7 +78609,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        try { console.log('%c[MR] Weekly Report · 1.2A.3 ready · zones Karvonen HRR runner (65/80/87/94) · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2A.4 ready · zones % LTHR Joe Friel (80/90/96/103) · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
