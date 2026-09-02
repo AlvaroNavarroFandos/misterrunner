@@ -5296,8 +5296,13 @@
             cursor: pointer;
             user-select: none;
             transition: opacity .12s;
+            gap: 8px;
         }
         .mr-pc-paces-hdr:active { opacity: .7; }
+        .mr-pc-paces-hdr-l {
+            display: flex; align-items: center; gap: 8px;
+            min-width: 0; flex: 1;
+        }
         .mr-pc-paces-title {
             font-size: 11px; font-weight: 800; color: var(--gold-text);
             text-transform: uppercase; letter-spacing: 1.2px;
@@ -5305,6 +5310,30 @@
         .mr-pc-paces-month {
             color: var(--tw); text-transform: capitalize;
             letter-spacing: normal; margin-left: 4px;
+        }
+        /* [p137] Badge "fase" en cabecera colapsada */
+        .mr-pc-paces-tg {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 8px 3px 7px;
+            border-radius: 999px;
+            background: rgba(201,162,74,.14);
+            border: 1px solid rgba(201,162,74,.32);
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        body.dark-mode .mr-pc-paces-tg {
+            background: rgba(232,197,112,.16);
+            border-color: rgba(232,197,112,.36);
+        }
+        .mr-pc-paces-tg-lbl {
+            font-size: 8px; font-weight: 800; color: var(--tm);
+            letter-spacing: .8px; text-transform: uppercase;
+        }
+        .mr-pc-paces-tg-val {
+            font-family: var(--f);
+            font-size: 10.5px; font-weight: 800; color: var(--gold-text);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -.2px;
         }
         .mr-pc-paces-chev {
             color: var(--tm); flex-shrink: 0;
@@ -5323,15 +5352,6 @@
         .mr-pc-paces[data-expanded="1"] .mr-pc-paces-collapse {
             max-height: 500px;
             padding-bottom: 12px;
-        }
-        .mr-pc-paces-ctx {
-            font-size: 10.5px; color: var(--ts); margin-bottom: 10px; font-style: italic;
-            padding-top: 2px;
-        }
-        .mr-pc-paces-ctx b {
-            color: var(--gold-text); font-family: var(--f);
-            font-weight: 700; font-variant-numeric: tabular-nums;
-            font-style: normal; letter-spacing: -.2px;
         }
         .mr-pc-paces-grid {
             display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
@@ -40968,7 +40988,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (!plan) return null;
         var goal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
         if (!goal) return null;
-        var fit = plan.currentFitnessSecs || _mrCurrentFitnessSecs(plan);
+        // [p137] Fix puente sigmoide: si currentFitnessSecs es null o <= goal
+        // (asunción optimista IA que colapsa el puente), consulta el fitness
+        // en vivo. Solo lo usa si es peor que goal → puente real.
+        var fit = plan.currentFitnessSecs;
+        if (fit == null || fit <= goal) {
+            var live = _mrCurrentFitnessSecs(plan);
+            if (live != null && live > goal) fit = live;
+        }
         if (!fit) fit = goal;
         if (!plan.startDate || !plan.raceDate) return goal;
         try {
@@ -60498,11 +60525,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                           +   '<div class="mr-pc-paces-accent"></div>'
                           +   '<div class="mr-pc-paces-body">'
                           +     '<div class="mr-pc-paces-hdr" onclick="if(window._togglePacesBlock)window._togglePacesBlock(event)">'
-                          +       '<span class="mr-pc-paces-title">Ritmos objetivo<span class="mr-pc-paces-month"> \u00b7 ' + _monthLong + '</span></span>'
+                          +       '<div class="mr-pc-paces-hdr-l">'
+                          +         '<span class="mr-pc-paces-title">Ritmos objetivo<span class="mr-pc-paces-month"> \u00b7 ' + _monthLong + '</span></span>'
+                          +         '<div class="mr-pc-paces-tg" aria-label="Ritmo objetivo de la fase actual">'
+                          +           '<span class="mr-pc-paces-tg-lbl">fase</span>'
+                          +           '<span class="mr-pc-paces-tg-val">' + _tgHMS + '</span>'
+                          +         '</div>'
+                          +       '</div>'
                           +       '<svg class="mr-pc-paces-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>'
                           +     '</div>'
                           +     '<div class="mr-pc-paces-collapse">'
-                          +       '<div class="mr-pc-paces-ctx">Entrenando a <b>' + _tgHMS + '</b> esta fase</div>'
                           +       '<div class="mr-pc-paces-grid">'
                           +         '<div class="mr-pc-pace-cell"><span class="lbl">Easy</span><span class="val">' + _fmt(_paces.easy) + '<small>/km</small></span></div>'
                           +         '<div class="mr-pc-pace-cell"><span class="lbl">Marathon</span><span class="val">' + _fmt(_paces.marathon) + '<small>/km</small></span></div>'
