@@ -78347,19 +78347,18 @@ window.addEventListener('DOMContentLoaded', function() {
                        act de la semana (con _dbActivityId), cuenta tiempo
                        exacto segundo a segundo en cada zona.
 
-                       [v2.30.1-p158 · fix p3] Fórmula: Karvonen HR Reserve
-                       (%HRR = (HR - hrRest) / (hrMax - hrRest) * 100).
-                       Es la fórmula estándar que MR usa internamente vía
-                       _miZoneHR. Ajusta por HR de reposo → más preciso para
-                       deportistas entrenados (hrRest bajo). La versión previa
-                       usaba %HRmax puro y sobreestimaba las zonas altas.
+                       [v2.30.1-p158 · fix p4] Fórmula: Karvonen HR Reserve
+                       con boundaries "runner-style" (no genéricos 60/70/80/90).
+                       Ajustados para coincidir con la mayoría de zonas por
+                       defecto en relojes de running (Coros/Garmin/Polar):
+                         Z1 <65%   HRR (recuperación)
+                         Z2 65-80% HRR (rodaje aeróbico easy)
+                         Z3 80-87% HRR (marathon pace / aeróbico moderado)
+                         Z4 87-94% HRR (threshold / tempo)
+                         Z5 >94%   HRR (VO2max / intervalos)
 
-                       5 zonas Karvonen HRR:
-                         Z1 <60%   (recuperación)
-                         Z2 60-70% (rodaje aeróbico easy)
-                         Z3 70-80% (aeróbico moderado / marathon pace)
-                         Z4 80-90% (threshold / tempo)
-                         Z5 >90%   (VO2max / intervalos)
+                       Con hrMax=185 hrRest=45 esto da boundaries BPM:
+                         Z1<136, Z2 136-157, Z3 157-167, Z4 167-176, Z5>176.
 
                        Reutiliza window.loadStreamsForActivity (cache interno
                        _streamsCache evita fetch duplicado en runs sucesivos). */
@@ -78374,6 +78373,20 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!hrRest || hrRest <= 0) {
                     hrRest = 60;
                     hrRest_fallback_used = true;
+                }
+
+                /* Boundaries en % HRR runner-style */
+                var Z_BOUNDS_PCT = { z1_max:65, z2_max:80, z3_max:87, z4_max:94 };
+                /* Boundaries en BPM (para trazabilidad en debug) */
+                var Z_BOUNDS_BPM = null;
+                if (hrMax && hrMax > 0 && (hrMax - hrRest) > 0) {
+                    var _hrr = hrMax - hrRest;
+                    Z_BOUNDS_BPM = {
+                        z1_max: Math.round(hrRest + (Z_BOUNDS_PCT.z1_max / 100) * _hrr),
+                        z2_max: Math.round(hrRest + (Z_BOUNDS_PCT.z2_max / 100) * _hrr),
+                        z3_max: Math.round(hrRest + (Z_BOUNDS_PCT.z3_max / 100) * _hrr),
+                        z4_max: Math.round(hrRest + (Z_BOUNDS_PCT.z4_max / 100) * _hrr)
+                    };
                 }
 
                 var zones = { z1:0, z2:0, z3:0, z4:0, z5:0 };
@@ -78430,11 +78443,11 @@ window.addEventListener('DOMContentLoaded', function() {
                                 var pctZ = ((Number(hrVal) - hrRest) / hrReserveRange) * 100;
                                 if (pctZ < 0) pctZ = 0;  /* HR bajo hrRest → cuenta como Z1 */
 
-                                if      (pctZ < 60) zones.z1 += dt;
-                                else if (pctZ < 70) zones.z2 += dt;
-                                else if (pctZ < 80) zones.z3 += dt;
-                                else if (pctZ < 90) zones.z4 += dt;
-                                else                zones.z5 += dt;
+                                if      (pctZ < Z_BOUNDS_PCT.z1_max) zones.z1 += dt;
+                                else if (pctZ < Z_BOUNDS_PCT.z2_max) zones.z2 += dt;
+                                else if (pctZ < Z_BOUNDS_PCT.z3_max) zones.z3 += dt;
+                                else if (pctZ < Z_BOUNDS_PCT.z4_max) zones.z4 += dt;
+                                else                                 zones.z5 += dt;
                                 zonesDurTotal += dt;
                             }
                         }
@@ -78508,10 +78521,12 @@ window.addEventListener('DOMContentLoaded', function() {
                         streams_loaded:      streams_loaded_count,
                         streams_missing:     streams_missing_count,
                         total_seconds:       Math.round(zonesDurTotal),
-                        formula:             'karvonen_hrr',
+                        formula:             'karvonen_hrr_runner',
                         hrMax:               hrMax,
                         hrRest:              hrRest,
-                        hrRest_fallback:     hrRest_fallback_used
+                        hrRest_fallback:     hrRest_fallback_used,
+                        bounds_pct_hrr:      Z_BOUNDS_PCT,   /* {z1_max:65, z2_max:80, z3_max:87, z4_max:94} */
+                        bounds_bpm:          Z_BOUNDS_BPM    /* {z1_max, z2_max, z3_max, z4_max} en BPM absolutos */
                     },
 
                     sessions_by_day:  sessions_by_day     /* array 7 días L→D */
@@ -78580,7 +78595,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        try { console.log('%c[MR] Weekly Report · 1.2A.2 ready · zones Karvonen HRR · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 1.2A.3 ready · zones Karvonen HRR runner (65/80/87/94) · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
