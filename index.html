@@ -4962,6 +4962,86 @@
             background: var(--pc-a-tint); color: var(--pc-a); border: 1px solid var(--pc-a-bd);
             margin-bottom: 0; font-variant-numeric: tabular-nums;
         }
+        /* ═══ [v2.30.1-p135] Radar diagnóstico COROS (badge widget Plan Activo)
+           Ubicación absoluta esquina superior derecha del .mr-pc-card.
+           Hereda paleta del plan vía --pc-a / --pc-a-bd.
+           Estados: ok (verde) · warn (ámbar) · hot (rojo) · off (gris).
+           Dot con halo pulsante — animación en color/opacity únicamente
+           para evitar recompose del backdrop-filter en iOS Safari. */
+        .mr-pc-radar {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 9px 5px 7px;
+            border-radius: 999px;
+            background: rgba(0,0,0,.22);
+            border: 1px solid var(--pc-a-bd, rgba(255,255,255,.18));
+            font-size: 9.5px;
+            font-weight: 800;
+            letter-spacing: .5px;
+            text-transform: uppercase;
+            line-height: 1;
+            cursor: pointer;
+            z-index: 3;
+            transition: background .18s, border-color .18s;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        body:not(.dark-mode) .mr-pc-radar { background: rgba(255,255,255,.55); }
+        .mr-pc-radar:active { background: rgba(0,0,0,.32); }
+        body:not(.dark-mode) .mr-pc-radar:active { background: rgba(255,255,255,.75); }
+        .mr-pc-radar-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            flex-shrink: 0;
+            background: currentColor;
+        }
+        .mr-pc-radar-delta {
+            color: var(--tw);
+            font-family: var(--f);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -.1px;
+            font-size: 10.5px;
+            font-weight: 800;
+        }
+        .mr-pc-radar-th {
+            color: var(--tm);
+            font-size: 8.5px;
+            font-weight: 700;
+            letter-spacing: .3px;
+            padding-left: 6px;
+            border-left: 1px solid rgba(255,255,255,.16);
+            font-variant-numeric: tabular-nums;
+        }
+        body:not(.dark-mode) .mr-pc-radar-th { border-left-color: rgba(0,0,0,.14); }
+        .mr-pc-radar[data-state="ok"]   .mr-pc-radar-dot { color: #22c55e; animation: mrRadarPulseOk 2.6s ease-in-out infinite; }
+        .mr-pc-radar[data-state="warn"] .mr-pc-radar-dot { color: #f59e0b; animation: mrRadarPulseWarn 1.9s ease-in-out infinite; }
+        .mr-pc-radar[data-state="hot"]  .mr-pc-radar-dot { color: #ef4444; animation: mrRadarPulseHot 1.3s ease-in-out infinite; }
+        .mr-pc-radar[data-state="off"]  { opacity: .55; }
+        .mr-pc-radar[data-state="off"]  .mr-pc-radar-dot { color: rgba(255,255,255,.35); }
+        body:not(.dark-mode) .mr-pc-radar[data-state="off"] .mr-pc-radar-dot { color: rgba(0,0,0,.25); }
+        @keyframes mrRadarPulseOk {
+            0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
+            50%     { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+        }
+        @keyframes mrRadarPulseWarn {
+            0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,.65); }
+            50%     { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
+        }
+        @keyframes mrRadarPulseHot {
+            0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.75); }
+            50%     { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+        }
+        /* Ocultar en pantallas muy estrechas si compite con título largo */
+        @media (max-width: 340px) {
+            .mr-pc-radar-th { display: none; }
+            .mr-pc-radar { padding-right: 8px; }
+        }
+        /* ═══ fin Radar diagnóstico p135 ════════════════════════════════ */
+
         .mr-pc-obj-l {
             font-size: 9px;
             color: var(--tm);
@@ -41263,6 +41343,144 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) { console.warn('[MR][F5·5a] findPendingCoros:', e); return null; }
     }
     window._findPendingCorosRecalibration = _findPendingCorosRecalibration;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v2.30.1-p135 · Radar diagnóstico COROS (badge Home widget Plan Activo)
+    // ═══════════════════════════════════════════════════════════════════
+    // Espejo de _findPendingCorosRecalibration SIN el filtro de threshold
+    // (guardia 4). Retorna siempre el delta y el umbral aplicable si el
+    // usuario está en modo COROS con predictor válido, para poder
+    // visualizar cuán cerca está de una recalibración.
+    //
+    // Retorna null si:
+    //  · plan inválido
+    //  · modo != 'coros'
+    //  · sin predictor COROS con dist matching
+    //  · sin refFitness computable
+    //
+    // Shape: { newFitnessSecs, refFitnessSecs, deltaSecs, deltaPct,
+    //          threshold, hasBridge, firstTime, ratio }
+    //   deltaPct  → % con signo (negativo = mejora)
+    //   threshold → % umbral aplicable (5 sin puente · 3 con puente)
+    //   ratio     → |deltaPct| / threshold (0..1+ · >=1 supera umbral)
+    function _corosRadarInfo(plan){
+        try {
+            if (!plan || !plan.planDist) return null;
+            var mode = (typeof window._mrRecalibMode === 'function')
+                ? window._mrRecalibMode() : 'vdot';
+            if (mode !== 'coros') return null;
+            var rs = (typeof window._mrRaceStatusCached === 'function')
+                ? window._mrRaceStatusCached() : null;
+            if (!rs || !Array.isArray(rs.predictor)) return null;
+            var predKey = (plan.planDist === 'marathon_intermediate' || plan.planDist === 'marathon_xl')
+                ? 'marathon'
+                : (plan.planDist === 'first_5k') ? '5k'
+                : plan.planDist;
+            var pred = rs.predictor.find(function(p){ return p && p.dist === predKey; });
+            if (!pred || !pred.duration || pred.duration <= 0) return null;
+            var newFitnessSecs = pred.duration;
+            var oldFitnessSecs = (plan.currentFitnessSecs != null) ? plan.currentFitnessSecs : null;
+            var refFitnessSecs = (oldFitnessSecs != null)
+                ? oldFitnessSecs
+                : ((typeof window._mrCurrentFitnessSecs === 'function')
+                    ? window._mrCurrentFitnessSecs(plan) : null);
+            if (!refFitnessSecs || refFitnessSecs <= 0) return null;
+            var deltaSecs = newFitnessSecs - refFitnessSecs;
+            var deltaPct  = deltaSecs / refFitnessSecs;
+            var finalGoal = (plan.finalGoalSecs != null) ? plan.finalGoalSecs : plan.goalSecs;
+            var hasBridge = false;
+            try {
+                if (finalGoal && typeof window._mrTrainingGoalSecs === 'function') {
+                    var tGoal = window._mrTrainingGoalSecs(plan);
+                    hasBridge = (tGoal && Math.abs(tGoal - finalGoal) > 5);
+                }
+            } catch(_){}
+            var threshold = hasBridge ? _MR_COROS_TH_BRIDGE : _MR_COROS_TH_NOBRIDGE;
+            var ratio = Math.abs(deltaPct) / threshold;
+            // Dismissed hoy? (para nota en tap toast)
+            var dismissedToday = false;
+            try {
+                var dateStr = new Date().toISOString().slice(0,10);
+                dismissedToday = (localStorage.getItem('mr.corosRecalib.dismissed.' + dateStr) === '1');
+            } catch(_){}
+            return {
+                newFitnessSecs: newFitnessSecs,
+                refFitnessSecs: refFitnessSecs,
+                deltaSecs: deltaSecs,
+                deltaPct: deltaPct * 100,
+                threshold: threshold * 100,
+                hasBridge: hasBridge,
+                firstTime: (oldFitnessSecs == null),
+                ratio: ratio,
+                dismissedToday: dismissedToday
+            };
+        } catch(e) { console.warn('[MR][p135] corosRadarInfo:', e); return null; }
+    }
+    window._corosRadarInfo = _corosRadarInfo;
+
+    // _corosRadarHTML(info): HTML del badge en widget Plan Activo. null → ''.
+    function _corosRadarHTML(info){
+        if (!info) return '';
+        try {
+            var absPct = Math.abs(info.deltaPct || 0);
+            var sign = (info.deltaSecs < 0) ? '\u2212' : (info.deltaSecs > 0 ? '+' : '');
+            var deltaStr = sign + absPct.toFixed(1).replace('.', ',') + '%';
+            var thStr = 'umbral ' + (info.threshold >= 4 ? '5' : '3') + '%';
+            var state = 'ok';
+            if (info.ratio >= 1)      state = 'hot';
+            else if (info.ratio >= 0.6) state = 'warn';
+            return ''
+                + '<button type="button" class="mr-pc-radar" data-state="' + state + '"'
+                +   ' aria-label="Diagnóstico COROS"'
+                +   ' onclick="if(window._corosRadarTap)window._corosRadarTap(event)">'
+                +   '<span class="mr-pc-radar-dot"></span>'
+                +   '<span class="mr-pc-radar-delta">' + deltaStr + '</span>'
+                +   '<span class="mr-pc-radar-th">' + thStr + '</span>'
+                + '</button>';
+        } catch(e) { console.warn('[MR][p135] corosRadarHTML:', e); return ''; }
+    }
+    window._corosRadarHTML = _corosRadarHTML;
+
+    // Tap handler → toast con detalle del delta actual + estado.
+    function _corosRadarTap(evt){
+        try {
+            if (evt) { evt.stopPropagation(); evt.preventDefault(); }
+            var plan = (typeof activePlan !== 'undefined') ? activePlan : window.activePlan;
+            var info = _corosRadarInfo(plan);
+            if (!info) {
+                if (typeof fxToast === 'function') fxToast('COROS sin datos', { variant: 'info' });
+                return;
+            }
+            var fmtHM = (function(secs){
+                var h = Math.floor(secs / 3600);
+                var m = Math.round((secs - h*3600) / 60);
+                if (m === 60) { h += 1; m = 0; }
+                return h + ':' + (m<10?'0':'') + m;
+            });
+            var refHM = fmtHM(info.refFitnessSecs);
+            var newHM = fmtHM(info.newFitnessSecs);
+            var absPct = Math.abs(info.deltaPct).toFixed(1).replace('.', ',');
+            var arrow = (info.deltaSecs < 0) ? '\u2193' : (info.deltaSecs > 0 ? '\u2191' : '=');
+            var bridgeTxt = info.hasBridge ? ' · puente' : '';
+            var msg;
+            if (info.ratio >= 1) {
+                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · supera umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
+                if (info.dismissedToday) msg += ' · descartado hoy';
+            } else if (info.ratio >= 0.6) {
+                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · cerca del umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
+            } else {
+                msg = 'COROS ' + newHM + ' vs plan ' + refHM + ' ' + arrow + ' ' + absPct + '% · forma estable · umbral ' + info.threshold.toFixed(0) + '%' + bridgeTxt;
+            }
+            if (typeof fxToast === 'function') {
+                var variant = (info.ratio >= 1) ? 'warn' : 'info';
+                fxToast(msg, { variant: variant, duration: 5000 });
+            } else if (typeof showToast === 'function') {
+                showToast(msg, 5000);
+            }
+        } catch(e) { console.warn('[MR][p135] corosRadarTap:', e); }
+    }
+    window._corosRadarTap = _corosRadarTap;
+    // ═══ fin Radar diagnóstico p135 ══════════════════════════════════════
     // ═══ fin detector Fase 5 Push 5a ═════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════════
@@ -60193,8 +60411,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             } catch(_){ /* silently skip if helpers not ready */ }
 
+            // [v2.30.1-p135] Badge radar diagnóstico COROS (esquina sup. dcha)
+            // Espejo del detector recalibración pero sin filtrar threshold.
+            // Solo pinta si _corosRadarInfo devuelve info (modo COROS + predictor).
+            let _radarHtml = '';
+            try {
+                const _radarInfo = (typeof window._corosRadarInfo === 'function')
+                    ? window._corosRadarInfo(activePlan) : null;
+                if (_radarInfo && typeof window._corosRadarHTML === 'function') {
+                    _radarHtml = window._corosRadarHTML(_radarInfo);
+                }
+            } catch(_){ /* silently skip */ }
+
             planCard.innerHTML =
                 `<div class="mr-pc-bar"></div>
+                ${_radarHtml}
                 <div class="mr-pc-body">
                     <div class="mr-pc-head">
                         <div>
