@@ -78282,7 +78282,7 @@ window.addEventListener('DOMContentLoaded', function() {
     <style>
     /* ─── Card Weekly Report en Home ─────────────────────────────────── */
     .mr-wr-home-card {
-        position:relative; margin-top:10px;
+        position:relative; margin-top:4px;
         border-radius:16px; padding:16px 18px;
         background:linear-gradient(135deg,#3d2a05 0%,#5a3c08 45%,#7a4d0a 100%);
         color:#f4e6b8;
@@ -80136,7 +80136,7 @@ window.addEventListener('DOMContentLoaded', function() {
                         try {
                             if      (kind === 'ctl')      _wrRenderChartCTL(b, report.week_end);
                             else if (kind === 'tsb')      _wrRenderChartTSB(b, report.week_end);
-                            else if (kind === 'sessions') _wrRenderChartComplianceSessions(b, metrics);
+                            else if (kind === 'sessions') _wrRenderChartComplianceSessions(b, metrics, report);
                             else if (kind === 'heatmap')  _wrRenderChartHeatmap(b, metrics);
                             else if (kind === 'zones')    _wrRenderChartDonutZones(b, metrics);
                         } catch (chartErr) {
@@ -80428,7 +80428,104 @@ window.addEventListener('DOMContentLoaded', function() {
             return svg;
         }
 
-        /* Sparkline TSB mini para la card Home (embedded) */
+        /* Sparkline PREMIUM: curva smooth (bezier catmull-rom), gradiente
+           vertical en el fill, glow en dot final, etiquetas min/max discretas.
+           Uso reservado para gráficos macro (CTL, TSB) — más pesado que sparkline
+           estándar pero mucho más impactante. */
+        function _wrBuildPremiumSparkline(series, opts) {
+            opts = opts || {};
+            var w = opts.w || 320, h = opts.h || 80;
+            var padX = 12, padY = 14;
+            var accessor  = opts.accessor || function(d){ return d.value; };
+            var strokeCol = opts.stroke   || '#f4c96a';
+            var fillTop   = opts.fillTop  || 'rgba(244,201,106,.32)';
+            var fillBot   = opts.fillBot  || 'rgba(244,201,106,0)';
+            var gradId    = 'wrpg' + Math.random().toString(36).slice(2, 8);
+
+            if (!Array.isArray(series) || series.length < 2) {
+                return '<svg class="mr-wr-chart-svg" viewBox="0 0 ' + w + ' ' + h + '"><text x="' + (w/2) + '" y="' + (h/2) + '" text-anchor="middle" fill="#666" font-size="11">Datos insuficientes</text></svg>';
+            }
+
+            var values = series.map(accessor);
+            var minV = Math.min.apply(null, values);
+            var maxV = Math.max.apply(null, values);
+            if (opts.centerZero) {
+                var maxAbs = Math.max(Math.abs(minV), Math.abs(maxV));
+                minV = -maxAbs; maxV = maxAbs;
+            }
+            if (minV === maxV) { maxV = minV + 1; }
+            var range = maxV - minV;
+            var stepX = (w - padX * 2) / (series.length - 1);
+            var toY = function(v) { return h - padY - ((v - minV) / range) * (h - padY * 2); };
+
+            /* Construir puntos */
+            var pts = series.map(function(d, i){
+                return { x: padX + i * stepX, y: toY(accessor(d)), v: accessor(d) };
+            });
+
+            /* Path smooth con Catmull-Rom → Bezier */
+            function smoothPath(points) {
+                if (points.length < 2) return '';
+                var d = 'M' + points[0].x + ',' + points[0].y;
+                for (var i = 0; i < points.length - 1; i++) {
+                    var p0 = points[i - 1] || points[i];
+                    var p1 = points[i];
+                    var p2 = points[i + 1];
+                    var p3 = points[i + 2] || p2;
+                    var tension = 0.5;
+                    var c1x = p1.x + (p2.x - p0.x) / 6 * tension;
+                    var c1y = p1.y + (p2.y - p0.y) / 6 * tension;
+                    var c2x = p2.x - (p3.x - p1.x) / 6 * tension;
+                    var c2y = p2.y - (p3.y - p1.y) / 6 * tension;
+                    d += ' C' + c1x + ',' + c1y + ' ' + c2x + ',' + c2y + ' ' + p2.x + ',' + p2.y;
+                }
+                return d;
+            }
+
+            var linePath = smoothPath(pts);
+            var areaPath = linePath
+                        + ' L' + pts[pts.length - 1].x + ',' + (h - padY)
+                        + ' L' + pts[0].x + ',' + (h - padY) + ' Z';
+
+            var lastPt = pts[pts.length - 1];
+            var lastVal = accessor(series[series.length - 1]);
+            var firstVal = accessor(series[0]);
+            var deltaVal = lastVal - firstVal;
+
+            var svg = '<svg class="mr-wr-chart-svg" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg">';
+            /* Defs: gradiente vertical */
+            svg += '<defs>'
+                + '<linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">'
+                +   '<stop offset="0%" stop-color="' + strokeCol + '" stop-opacity=".38"/>'
+                +   '<stop offset="100%" stop-color="' + strokeCol + '" stop-opacity="0"/>'
+                + '</linearGradient>'
+                + '<filter id="' + gradId + 'g" x="-50%" y="-50%" width="200%" height="200%">'
+                +   '<feGaussianBlur stdDeviation="2.4"/>'
+                + '</filter>'
+                + '</defs>';
+            /* Zero line si centerZero (TSB) */
+            if (opts.centerZero) {
+                var zeroY = toY(0);
+                svg += '<line x1="' + padX + '" y1="' + zeroY + '" x2="' + (w - padX) + '" y2="' + zeroY + '" stroke="rgba(255,255,255,.10)" stroke-dasharray="3 4" stroke-width="1"/>';
+            }
+            /* Área con gradiente */
+            svg += '<path d="' + areaPath + '" fill="url(#' + gradId + ')"/>';
+            /* Línea suave */
+            svg += '<path d="' + linePath + '" fill="none" stroke="' + strokeCol + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
+            /* Dot final con glow */
+            svg += '<circle cx="' + lastPt.x + '" cy="' + lastPt.y + '" r="6" fill="' + strokeCol + '" opacity=".35" filter="url(#' + gradId + 'g)"/>';
+            svg += '<circle cx="' + lastPt.x + '" cy="' + lastPt.y + '" r="4" fill="' + strokeCol + '"/>';
+            svg += '<circle cx="' + lastPt.x + '" cy="' + lastPt.y + '" r="2" fill="#fff"/>';
+            /* Etiquetas min/max en extremos si hay margen */
+            if (opts.showRange !== false) {
+                svg += '<text x="' + padX + '" y="' + (h - 3) + '" fill="rgba(255,255,255,.35)" font-size="9" font-weight="600">' + (opts.centerZero && firstVal >= 0 ? '+' : '') + firstVal.toFixed(0) + '</text>';
+                svg += '<text x="' + (w - padX) + '" y="' + (h - 3) + '" text-anchor="end" fill="rgba(255,255,255,.35)" font-size="9" font-weight="600">' + (opts.centerZero && lastVal >= 0 ? '+' : '') + lastVal.toFixed(0) + '</text>';
+            }
+            svg += '</svg>';
+            return { svg: svg, deltaVal: deltaVal, firstVal: firstVal, lastVal: lastVal };
+        }
+
+
         function _wrBuildTSBMiniSparkline(weekEndYmd, nWeeks, w, h) {
             try {
                 var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, nWeeks);
@@ -80445,40 +80542,55 @@ window.addEventListener('DOMContentLoaded', function() {
             } catch (_e) { return ''; }
         }
 
-        /* Gráfico 1: Sparkline CTL 12 semanas */
+        /* Gráfico 1: Sparkline CTL 12 semanas (PREMIUM) */
         function _wrRenderChartCTL(container, weekEndYmd) {
             var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, 12);
             var lastVal = series && series.length ? series[series.length - 1].ctl : 0;
+            var premium = _wrBuildPremiumSparkline(series || [], {
+                w: 320, h: 78,
+                accessor: function(d){ return d.ctl; },
+                stroke: '#4CAF50'
+            });
+            var deltaTxt = '', deltaColor = '#888';
+            if (premium && typeof premium === 'object' && series && series.length) {
+                var d12 = premium.deltaVal;
+                deltaColor = d12 >= 0 ? '#4CAF50' : '#F44336';
+                deltaTxt = (d12 >= 0 ? '+' : '') + d12.toFixed(1) + ' en 12 sem';
+            }
             container.innerHTML =
-                '<div class="mr-wr-chart-title">CTL · Fitness (12 sem)</div>'
-              + '<div class="mr-wr-chart-value">' + lastVal.toFixed(1) + '</div>'
-              + _wrBuildSparklineSvg(series || [], {
-                    w: 320, h: 60,
-                    accessor: function(d){ return d.ctl; },
-                    stroke: '#4CAF50', fill: 'rgba(76,175,80,.15)'
-                })
+                '<div class="mr-wr-chart-title">CTL · Fitness</div>'
+              + '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;">'
+              +   '<div class="mr-wr-chart-value" style="margin-bottom:0;">' + lastVal.toFixed(1) + '</div>'
+              +   '<div style="font-size:11px;font-weight:700;color:' + deltaColor + ';letter-spacing:.2px;">' + deltaTxt + '</div>'
+              + '</div>'
+              + (premium && premium.svg ? premium.svg : premium)
               + '<div class="mr-wr-chart-hint">Tu forma física acumulada. Sube con volumen constante — es tu banco de fitness.</div>';
         }
 
-        /* Gráfico 2: Sparkline TSB 12 semanas */
+        /* Gráfico 2: Sparkline TSB 12 semanas (PREMIUM) */
         function _wrRenderChartTSB(container, weekEndYmd) {
             var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, 12);
             var lastVal = series && series.length ? series[series.length - 1].tsb : 0;
             var color = lastVal >= 0 ? '#4CAF50' : (lastVal <= -20 ? '#F44336' : '#f4c96a');
-            var hint;
-            if (lastVal >= 5)       hint = 'Frescura alta: cuerpo descansado, listo para picar.';
-            else if (lastVal >= -10) hint = 'Frescura equilibrada: absorbiendo carga sin fatiga excesiva.';
-            else if (lastVal >= -20) hint = 'Fatiga acumulada: fase de construcción, esperado.';
-            else                     hint = 'Fatiga severa: toca semana de descarga ya.';
+            var hint, stateLabel;
+            if (lastVal >= 5)        { hint = 'Frescura alta: cuerpo descansado, listo para picar.';         stateLabel = 'Fresco'; }
+            else if (lastVal >= -10) { hint = 'Frescura equilibrada: absorbiendo carga sin fatiga excesiva.'; stateLabel = 'Neutro'; }
+            else if (lastVal >= -20) { hint = 'Fatiga acumulada: fase de construcción, esperado.';           stateLabel = 'Cargado'; }
+            else                     { hint = 'Fatiga severa: toca semana de descarga ya.';                   stateLabel = 'Fundido'; }
+
+            var premium = _wrBuildPremiumSparkline(series || [], {
+                w: 320, h: 78,
+                accessor: function(d){ return d.tsb; },
+                stroke: color, centerZero: true
+            });
+
             container.innerHTML =
-                '<div class="mr-wr-chart-title">TSB · Forma (12 sem)</div>'
-              + '<div class="mr-wr-chart-value" style="color:' + color + ';">' + (lastVal >= 0 ? '+' : '') + lastVal.toFixed(1) + '</div>'
-              + _wrBuildSparklineSvg(series || [], {
-                    w: 320, h: 60,
-                    accessor: function(d){ return d.tsb; },
-                    stroke: color, fill: 'rgba(244,201,106,.10)',
-                    centerZero: true
-                })
+                '<div class="mr-wr-chart-title">TSB · Forma</div>'
+              + '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px;">'
+              +   '<div class="mr-wr-chart-value" style="margin-bottom:0;color:' + color + ';">' + (lastVal >= 0 ? '+' : '') + lastVal.toFixed(1) + '</div>'
+              +   '<div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:' + color + ';padding:3px 8px;border-radius:999px;background:' + color + '22;">' + stateLabel + '</div>'
+              + '</div>'
+              + (premium && premium.svg ? premium.svg : premium)
               + '<div class="mr-wr-chart-hint">' + hint + '</div>';
         }
 
@@ -80511,28 +80623,108 @@ window.addEventListener('DOMContentLoaded', function() {
               + svg;
         }
 
-        /* Gráfico 3: Dots compliance sesiones */
-        function _wrRenderChartComplianceSessions(container, metrics) {
+        /* Helpers específicos gráfico Sesiones: cuenta fuerza done/planned
+           desde profileData.strengthDoneDates + activePlan.weeks[X].sessions */
+        function _wrCountStrengthDone(weekStartYmd, weekEndYmd) {
+            try {
+                var _pd = (typeof profileData !== 'undefined') ? profileData : null;
+                if (!_pd || !Array.isArray(_pd.strengthDoneDates)) return 0;
+                var count = 0;
+                for (var i = 0; i < _pd.strengthDoneDates.length; i++) {
+                    var d = _pd.strengthDoneDates[i];
+                    if (typeof d === 'string' && d >= weekStartYmd && d <= weekEndYmd) count++;
+                }
+                return count;
+            } catch (_) { return 0; }
+        }
+        function _wrCountStrengthPlanned(weekStartYmd) {
+            try {
+                var _ap = (typeof activePlan !== 'undefined') ? activePlan : null;
+                if (!_ap || !Array.isArray(_ap.weeks)) return 0;
+                for (var wi = 0; wi < _ap.weeks.length; wi++) {
+                    var wk = _ap.weeks[wi];
+                    if (!wk || wk.weekStart !== weekStartYmd) continue;
+                    if (!Array.isArray(wk.sessions)) return 0;
+                    var cnt = 0;
+                    for (var si = 0; si < wk.sessions.length; si++) {
+                        if (wk.sessions[si] && wk.sessions[si].isStrength) cnt++;
+                    }
+                    return cnt;
+                }
+                return 0;
+            } catch (_) { return 0; }
+        }
+
+        /* Gráfico 3: Dots compliance sesiones (running + fuerza) */
+        function _wrRenderChartComplianceSessions(container, metrics, report) {
             if (!metrics) { container.innerHTML = '<div class="mr-wr-chart-title">Sesiones · sin datos</div>'; return; }
-            var done    = metrics.sessions_done    || 0;
-            var planned = metrics.sessions_planned;
-            var total   = Math.max(done, planned || 0, 1);
-            var dotsHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">';
-            for (var i = 0; i < total; i++) {
-                var color;
-                if (i < done) color = '#4CAF50';
-                else if (planned && i < planned) color = 'rgba(255,255,255,.15)';
-                else color = 'transparent';
-                dotsHtml += '<div style="width:22px;height:22px;border-radius:50%;background:' + color + ';flex-shrink:0;box-shadow:' + (i < done ? '0 2px 6px rgba(76,175,80,.30)' : 'none') + ';"></div>';
+
+            /* Running */
+            var runDone    = metrics.sessions_done    || 0;
+            var runPlanned = metrics.sessions_planned;
+            var runTotal   = Math.max(runDone, runPlanned || 0, 1);
+            var runDots = '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+            for (var i = 0; i < runTotal; i++) {
+                var rc;
+                if (i < runDone) rc = '#4CAF50';
+                else if (runPlanned && i < runPlanned) rc = 'rgba(255,255,255,.15)';
+                else rc = 'transparent';
+                runDots += '<div style="width:22px;height:22px;border-radius:50%;background:' + rc + ';flex-shrink:0;box-shadow:' + (i < runDone ? '0 2px 6px rgba(76,175,80,.30)' : 'none') + ';"></div>';
             }
-            dotsHtml += '</div>';
-            var hint = planned
-                ? (done >= planned ? 'Todas completadas. Consistencia clave.' : 'Faltaron ' + (planned - done) + ' del plan.')
-                : 'Sesiones completadas esta semana.';
+            runDots += '</div>';
+
+            /* Fuerza (recomputada desde profileData en tiempo real) */
+            var strengthDone = 0, strengthPlanned = 0;
+            try {
+                if (report && report.week_start && report.week_end) {
+                    strengthDone    = _wrCountStrengthDone(report.week_start, report.week_end);
+                    strengthPlanned = _wrCountStrengthPlanned(report.week_start);
+                }
+            } catch (_e) {}
+
+            var strengthBlock = '';
+            if (strengthDone > 0 || strengthPlanned > 0) {
+                var stTotal = Math.max(strengthDone, strengthPlanned, 1);
+                var stDots = '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+                for (var si = 0; si < stTotal; si++) {
+                    var sc;
+                    if (si < strengthDone) sc = '#c4881e';
+                    else if (strengthPlanned && si < strengthPlanned) sc = 'rgba(196,136,30,.18)';
+                    else sc = 'transparent';
+                    stDots += '<div style="width:22px;height:22px;border-radius:50%;background:' + sc + ';flex-shrink:0;box-shadow:' + (si < strengthDone ? '0 2px 6px rgba(196,136,30,.30)' : 'none') + ';"></div>';
+                }
+                stDots += '</div>';
+                strengthBlock =
+                    '<div style="display:flex;align-items:center;gap:10px;margin-top:12px;">'
+                  +   '<div style="font-size:10px;font-weight:800;color:#c4881e;letter-spacing:.8px;text-transform:uppercase;min-width:52px;">Fuerza</div>'
+                  +   stDots
+                  +   '<div style="font-size:11px;color:var(--ts,#888);font-weight:700;margin-left:auto;">' + strengthDone + '/' + (strengthPlanned || strengthDone) + '</div>'
+                  + '</div>';
+            }
+
+            var runLabel = (strengthBlock)
+                ? '<div style="display:flex;align-items:center;gap:10px;">'
+                +   '<div style="font-size:10px;font-weight:800;color:#4CAF50;letter-spacing:.8px;text-transform:uppercase;min-width:52px;">Running</div>'
+                +   runDots
+                +   '<div style="font-size:11px;color:var(--ts,#888);font-weight:700;margin-left:auto;">' + runDone + '/' + (runPlanned || runDone) + '</div>'
+                + '</div>'
+                : runDots;
+
+            var totalDone    = runDone + strengthDone;
+            var totalPlanned = (runPlanned || 0) + (strengthPlanned || 0);
+            var hint;
+            if (totalPlanned) {
+                if (totalDone >= totalPlanned) hint = 'Todas completadas. Consistencia clave.';
+                else hint = 'Faltaron ' + (totalPlanned - totalDone) + ' del plan (running + fuerza).';
+            } else {
+                hint = 'Sesiones completadas esta semana.';
+            }
+
             container.innerHTML =
                 '<div class="mr-wr-chart-title">Sesiones</div>'
-              + '<div class="mr-wr-chart-value">' + done + (planned != null ? ' / ' + planned : '') + '</div>'
-              + dotsHtml
+              + '<div class="mr-wr-chart-value">' + totalDone + (totalPlanned ? ' / ' + totalPlanned : '') + '</div>'
+              + runLabel
+              + strengthBlock
               + '<div class="mr-wr-chart-hint">' + hint + '</div>';
         }
 
