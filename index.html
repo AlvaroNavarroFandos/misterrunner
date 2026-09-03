@@ -72721,6 +72721,58 @@ window.addEventListener('DOMContentLoaded', function() {
         } catch(e) { return { name:'long.derive', ok:false, info:'EXCEPCIÓN: ' + e.message }; }
     }
 
+    /* ═══════════════════════════════════════════════════════════════════
+       [v2.30.1-p158 · WEEKLY REPORT 1.2D] Tests smoke Fase 1 código
+       ───────────────────────────────────────────────────────────────────
+       Verifican que las 3 funciones _wr* están expuestas en window y que
+       la dependencia loadStreamsForActivity también está disponible para
+       el cómputo de zonas HR desde streams reales.
+       ═══════════════════════════════════════════════════════════════════ */
+    function _testWrFunctionsPresent() {
+        var missing = [];
+        if (typeof window._wrComputeWeekMetrics !== 'function') missing.push('_wrComputeWeekMetrics');
+        if (typeof window._wrDetectWeekPRs      !== 'function') missing.push('_wrDetectWeekPRs');
+        if (typeof window._wrBuildWeeklyContext !== 'function') missing.push('_wrBuildWeeklyContext');
+        return missing.length === 0
+            ? { name:'wr.functions_present', ok:true, info:'3 funciones _wr* expuestas en window' }
+            : { name:'wr.functions_present', ok:false, info:'faltan: ' + missing.join(', ') };
+    }
+
+    function _testWrDetectWeekPRsShape() {
+        try {
+            if (typeof window._wrDetectWeekPRs !== 'function') {
+                return { name:'wr.detect_prs_shape', ok:false, info:'_wrDetectWeekPRs no expuesta' };
+            }
+            /* Semana vacía en el pasado: shape debe ser válida aunque sin datos */
+            var result = window._wrDetectWeekPRs('2020-01-06', '2020-01-12');
+            if (!result || typeof result !== 'object') {
+                return { name:'wr.detect_prs_shape', ok:false, info:'return null o no-object' };
+            }
+            var required = ['week_start','week_end','official_prs','best_efforts_prs','weekly_bests','debug'];
+            var missing = required.filter(function(k){ return !(k in result); });
+            if (missing.length > 0) {
+                return { name:'wr.detect_prs_shape', ok:false, info:'faltan keys: ' + missing.join(', ') };
+            }
+            /* Validaciones adicionales de tipos */
+            if (!Array.isArray(result.official_prs))      return { name:'wr.detect_prs_shape', ok:false, info:'official_prs no es array' };
+            if (!Array.isArray(result.best_efforts_prs))  return { name:'wr.detect_prs_shape', ok:false, info:'best_efforts_prs no es array' };
+            if (typeof result.weekly_bests !== 'object')  return { name:'wr.detect_prs_shape', ok:false, info:'weekly_bests no es object' };
+            return { name:'wr.detect_prs_shape', ok:true, info:'shape correcta {official_prs, best_efforts_prs, weekly_bests, debug} · tipos OK' };
+        } catch (e) {
+            return { name:'wr.detect_prs_shape', ok:false, info:'EXCEPCIÓN: ' + e.message };
+        }
+    }
+
+    function _testWrStreamsHelperExposed() {
+        /* Dependencia crítica: loadStreamsForActivity debe estar en window
+           (expuesta por bloque 1.2A.1 tras su definición original línea ~51930).
+           Sin ella, _wrComputeWeekMetrics no puede computar zones desde streams. */
+        if (typeof window.loadStreamsForActivity !== 'function') {
+            return { name:'wr.streams_helper', ok:false, info:'window.loadStreamsForActivity no expuesta · zones HR fallarán' };
+        }
+        return { name:'wr.streams_helper', ok:true, info:'loadStreamsForActivity expuesta en window' };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent, _testStravaAutoImportRealtimePresent],
@@ -72747,6 +72799,8 @@ window.addEventListener('DOMContentLoaded', function() {
         vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions],
         // [v5.3 Long tiempo] Derivación por tiempo + invariante D3A
         long:    [_testLongTimeDerivation],
+        // [v2.30.1-p158 · WEEKLY REPORT 1.2D] Grupo wr — Fase 1 código motor reporte semanal
+        wr:      [_testWrFunctionsPresent, _testWrDetectWeekPRsShape, _testWrStreamsHelperExposed],
         // [v5.5 SKIP] Saltar sesión + detector de patrones (long_streak + quality_streak)
         // Wrapper lazy porque window._testSkipDetection se registra en un script POSTERIOR
         // (el bloque SKIP va después del smoke runner). Pasar la referencia directa aquí
