@@ -7404,7 +7404,11 @@
             -webkit-tap-highlight-color: transparent;
             -webkit-touch-callout: none;
             user-select: none;
-            clip-path: circle(50% at 50% 50%);
+            /* [v2.30.1-p174 · SIRI] clip-path eliminado: bloqueaba el blob
+               morphing + squish (recortaba la burbuja a círculo perfecto).
+               Trade-off: las esquinas del bounding box 180x180 son tap-target
+               aunque visualmente no haya burbuja. Aceptable porque el efecto
+               visual Siri prevalece y las esquinas son muy pequeñas. */
         }
         /* Sin :active custom (evita repaint durante backdrop-filter blur del sheet) */
 
@@ -7417,20 +7421,21 @@
            - Heartbeat (.pulse-2): doble pulso rítmico 2s (mantiene)
            - Halo (.ring-outer): radial pulsante 3s (mantiene) */
         .mi-hero-bubble__pulse-1 {
-            position: absolute; inset: -8px;
-            border-radius: 50%;
+            /* [v2.30.1-p174 · SIRI] blur 12→35px, inset -8→-20px, sin border-radius
+               fijo (lo anima mi-blob-morph-a). Aro circular disuelto. */
+            position: absolute; inset: -20px;
             background: conic-gradient(from 0deg,
-                rgba(124,  58, 237, .55)   0deg,
+                rgba(124,  58, 237, .70)   0deg,
                 rgba(124,  58, 237, 0)    60deg,
-                rgba(236,  72, 153, .55) 120deg,
+                rgba(236,  72, 153, .70) 120deg,
                 rgba(236,  72, 153, 0)   180deg,
-                rgba( 59, 130, 246, .55) 240deg,
+                rgba( 59, 130, 246, .70) 240deg,
                 rgba( 59, 130, 246, 0)   300deg,
-                rgba(124,  58, 237, .55) 360deg);
-            filter: blur(12px);
+                rgba(124,  58, 237, .70) 360deg);
+            filter: blur(35px);
             z-index: 0;
             pointer-events: none;
-            animation: mi-aurora-rotate 10s linear infinite;
+            animation: mi-aurora-rotate 10s linear infinite, mi-blob-morph-a 9s ease-in-out infinite;
         }
         body.dark .mi-hero-bubble__pulse-1 {
             background: conic-gradient(from 0deg,
@@ -7505,17 +7510,19 @@
            doble hipnótico. Sin máscara circular (ya no es marco tipo "cargando"
            como antes) — llenado difuso con blur suave. */
         .mi-hero-bubble__ring-mid {
-            position: absolute; inset: 4px;
-            border-radius: 50%;
+            /* [v2.30.1-p174 · SIRI] blur 8→22px, inset 4→-3px, opacity .55→.70,
+               sin border-radius fijo (lo anima mi-blob-morph-b, distinto ritmo
+               que pulse-1 para desincronía orgánica). */
+            position: absolute; inset: -3px;
             background: conic-gradient(from 180deg,
                 rgba(168,  85, 247, 0)     0deg,
-                rgba(168,  85, 247, .45)  90deg,
+                rgba(168,  85, 247, .55)  90deg,
                 rgba(168,  85, 247, 0)   180deg,
-                rgba(216, 180, 254, .45) 270deg,
+                rgba(216, 180, 254, .55) 270deg,
                 rgba(168,  85, 247, 0)   360deg);
-            filter: blur(8px);
-            opacity: .55;
-            animation: mi-aurora-rotate-rev 14s linear infinite;
+            filter: blur(22px);
+            opacity: .70;
+            animation: mi-aurora-rotate-rev 14s linear infinite, mi-blob-morph-b 11s ease-in-out infinite;
             pointer-events: none;
             z-index: 0;
         }
@@ -7580,16 +7587,32 @@
             0%, 100% { opacity: .30; transform: scale(.85); }
             50%      { opacity: .80; transform: scale(1.05); }
         }
-        /* V2 · La burbuja completa respira sutilmente (4% cada 4s).
-           El clip-path circle(50%) del contenedor escala junto con el elemento
-           gracias a que se aplica en coordenadas locales POST-transform,
-           así que no hay recorte. */
+        /* V2 · La burbuja completa hace SQUISH orgánico (scale no uniforme).
+           [v2.30.1-p174 · SIRI] Reemplazado el breathe uniforme (scale 1→1.04)
+           por squish: escala 1.03,.97 → .97,1.03 alternando ancho/alto. Efecto
+           gelatinoso. Combinado con blob morphing de las auroras y blur extremo,
+           logra el "estilo Siri" — burbuja orgánica sin forma circular fija. */
         .mi-hero-bubble {
-            animation: mi-bubble-breathe 4s ease-in-out infinite;
+            animation: mi-bubble-squish 6s ease-in-out infinite;
         }
-        @keyframes mi-bubble-breathe {
-            0%, 100% { transform: scale(1);    }
-            50%      { transform: scale(1.04); }
+        @keyframes mi-bubble-squish {
+            0%, 100% { transform: scale(1.03, .97); }
+            50%      { transform: scale(.97, 1.03); }
+        }
+        /* [v2.30.1-p174 · SIRI] Blob morphing de las auroras. Dos keyframes con
+           ritmos distintos (9s / 11s) para desincronía natural. Border-radius
+           irregular (4 pares para cada esquina X/Y radii) simula deformación
+           orgánica sin lograr nunca un círculo perfecto. */
+        @keyframes mi-blob-morph-a {
+            0%, 100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+            25%      { border-radius: 55% 45% 48% 52% / 52% 48% 45% 55%; }
+            50%      { border-radius: 48% 52% 55% 45% / 55% 45% 52% 48%; }
+            75%      { border-radius: 52% 48% 45% 55% / 48% 55% 55% 45%; }
+        }
+        @keyframes mi-blob-morph-b {
+            0%, 100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+            30%      { border-radius: 45% 55% 52% 48% / 55% 45% 48% 52%; }
+            60%      { border-radius: 52% 48% 55% 45% / 45% 55% 52% 48%; }
         }
         /* Pausar TAMBIÉN las nuevas animaciones cuando hay sheet abierto. */
         body.sheet-open .mi-hero-bubble,
@@ -23447,7 +23470,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Header (fijo)
         content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
         content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
-        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p173</span></div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p174</span></div>';
         content += '</div>';
         // Body scrolleable
         content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
