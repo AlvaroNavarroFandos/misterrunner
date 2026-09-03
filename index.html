@@ -23388,7 +23388,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Header (fijo)
         content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
         content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
-        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p161</span></div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p162</span></div>';
         content += '</div>';
         // Body scrolleable
         content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
@@ -26885,31 +26885,31 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     },
     {
         name: 'Potencia Aeróbica',
-        pctMin: 0.91,
+        pctMin: 0.90,
         pctMax: 0.95,
         color: '#FFC107',
-        pctLabel: '91%–95%',
+        pctLabel: '90%–95%',
         desc: 'Rodajes exigentes · sub-umbral'
     },
     {
         name: 'Umbral',
-        pctMin: 0.96,
+        pctMin: 0.95,
         pctMax: 1.02,
         color: '#FF9800',
-        pctLabel: '96%–102%',
+        pctLabel: '95%–102%',
         desc: 'Ritmo de tempo · lactato sostenido'
     },
     {
         name: 'Resistencia Anaeróbica',
-        pctMin: 1.03,
+        pctMin: 1.02,
         pctMax: 1.06,
         color: '#FF5722',
-        pctLabel: '103%–106%',
+        pctLabel: '102%–106%',
         desc: 'Series largas · máximo aeróbico'
     },
     {
         name: 'Potencia Anaeróbica',
-        pctMin: 1.07,
+        pctMin: 1.06,
         pctMax: null,
         color: '#F44336',
         pctLabel: '>106%',
@@ -26937,26 +26937,26 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     },
     {
         name: 'Potencia Aeróbica',
-        pctMin: 0.86,
+        pctMin: 0.85,
         pctMax: 0.93,
         color: '#FFC107',
-        pctLabel: '86%–93%',
+        pctLabel: '85%–93%',
         desc: 'Rodajes exigentes · sub-umbral'
     },
     {
         name: 'Umbral',
-        pctMin: 0.94,
+        pctMin: 0.93,
         pctMax: 1.02,
         color: '#FF9800',
-        pctLabel: '94%–102%',
+        pctLabel: '93%–102%',
         desc: 'Ritmo de tempo · lactato sostenido'
     },
     {
         name: 'Resistencia Anaeróbica',
-        pctMin: 1.03,
+        pctMin: 1.02,
         pctMax: 1.12,
         color: '#FF5722',
-        pctLabel: '103%–112%',
+        pctLabel: '102%–112%',
         desc: 'Series largas · máximo aeróbico'
     },
     {
@@ -38614,20 +38614,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         c2.style.cssText = 'overflow:hidden;display:flex;flex-direction:column;padding-top:66px;';
 
         // Zone definitions
-        const ZDEFS = [
-            {name:'Recuperación',              color:'#3BBCE0'},
-            {name:'Resistencia Aeróbica',      color:'#4CAF50'},
-            {name:'Potencia Aeróbica',         color:'#FFC107'},
-            {name:'Umbral',                    color:'#FF9800'},
-            {name:'Resistencia Anaeróbica',    color:'#FF5722'},
-            {name:'Potencia Anaeróbica',       color:'#F44336'},
-        ];
+        // [v2.30.1-p162] ZDEFS_HR y ZDEFS_PC derivados de FC_ZONES y PACE_ZONES
+        // canónicos (L26869 y L26921). Antes eran arrays independientes con
+        // nombres cortos y boundaries hardcoded que divergían del sheet "Zonas
+        // de FC/ritmo" del perfil. Ahora ambos sitios muestran EXACTAMENTE los
+        // mismos rangos, con LTHR y LTSP sincronizados con COROS vía
+        // window._mrApplyCorosThresholds (o valores manuales si desconectado).
+        // Los gaps 90-91% / 95-96% / 102-103% / 106-107% (FC) y 85-86% /
+        // 93-94% / 102-103% (pace) de las definiciones canónicas fueron
+        // cerrados en este mismo patch para que las labels del perfil también
+        // reflejen continuidad numérica sin huecos entre zonas.
+        const ZDEFS_HR = FC_ZONES;
+        const ZDEFS_PC = PACE_ZONES;
         function secsToT(s){if(!s||s<=0)return '0:00';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=Math.round(s%60);return h>0?h+':'+String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0'):m+':'+String(ss).padStart(2,'0');}
         function paceLabel(s){if(s>=9999)return ">10'";const m=Math.floor(s/60),ss=Math.round(s%60);return m+"'"+String(ss).padStart(2,'0')+'"';}
 
         // ── HR Zones ──────────────────────────────────────────────
+        // Boundaries derivados de FC_ZONES.pctMax (todas menos la última que
+        // es null → zona superior abierta). Lógica bucketing: hr<fcB[i] → zona
+        // i. Idéntica a la del sheet "Zonas de FC" del perfil (renderZones).
         const lt = (typeof ltValue !== 'undefined' ? ltValue : 170);
-        const fcB = [Math.round(lt*.80),Math.round(lt*.91),Math.round(lt*.96),Math.round(lt*1.03),Math.round(lt*1.07)];
+        const fcB = ZDEFS_HR.slice(0, -1).map(z => Math.round(lt * z.pctMax));
         const hrZS = [0,0,0,0,0,0];
         (act.hrSeries||[]).forEach((p,i,arr) => {
             const dt = i>0 ? p.t-arr[i-1].t : 1;
@@ -38647,7 +38654,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         ];
 
         // ── Pace Zones ────────────────────────────────────────────
-        const pB = [354, 294, 272, 248, 226];
+        // Boundaries inversos: en ritmo, %LTSP más alto = paceSec menor (más
+        // rápido). Fórmula: paceSec_boundary = LTSP / pctMax. Antes: valores
+        // absolutos hardcoded [354,294,272,248,226] que IGNORABAN paceValue
+        // del usuario → mismas fronteras para todos los runners.
+        const pv = (typeof paceValue !== 'undefined' ? paceValue : 262);
+        const pB = ZDEFS_PC.slice(0, -1).map(z => Math.round(pv / z.pctMax));
         const pcZS = [0,0,0,0,0,0];
         const ds = act.distSer || [];
         for (let i=1;i<ds.length;i++) {
@@ -38664,22 +38676,36 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             else                    pcZS[5]+=dt;
         }
         const pcTotal = pcZS.reduce((a,b)=>a+b,0)||1;
-        const pcLabels = [">5'54\"","4'54\"-5'54\"","4'32\"-4'53\"","4'08\"-4'31\"","3'46\"-4'07\"","<3'46\""];
+        const pcLabels = [
+            '>'+paceLabel(pB[0]),
+            paceLabel(pB[1])+'-'+paceLabel(pB[0]),
+            paceLabel(pB[2])+'-'+paceLabel(pB[1]),
+            paceLabel(pB[3])+'-'+paceLabel(pB[2]),
+            paceLabel(pB[4])+'-'+paceLabel(pB[3]),
+            '<'+paceLabel(pB[4])
+        ];
 
         // Build compact zone bar row (no separate section headers, fits below chart)
-        function buildZoneMini(zoneSecsArr, total, labels, colors) {
+        // [v2.30.1-p162] Cuarto parámetro cambia de `colors` (array de strings)
+        // a `zonesDef` (array de objetos con .name y .color) para leer ambos
+        // desde la misma fuente canónica (FC_ZONES o PACE_ZONES). Añadido
+        // ellipsis + nowrap al div del nombre por si el largo "Resistencia
+        // Aeróbica (Zona 2)" no cabe en pantallas estrechas.
+        function buildZoneMini(zoneSecsArr, total, labels, zonesDef) {
             const div = document.createElement('div');
             div.style.cssText = 'flex-shrink:0;padding:0 14px 4px;';
             zoneSecsArr.forEach((secs, i) => {
                 if (secs < 10) return; // [v2.16.0-p6] oculta zonas residuales (<10 s)
                 const pct = secs/total;
+                const col = zonesDef[i].color;
+                const nm  = zonesDef[i].name;
                 div.insertAdjacentHTML('beforeend',
                     '<div style="display:flex;align-items:center;gap:6px;padding:2.5px 0;">'
-                    +'<div style="width:8px;height:8px;border-radius:2px;flex-shrink:0;background:'+colors[i]+'"></div>'
-                    +'<div style="font-size:11px;color:var(--det-ts);flex:1;font-family:var(--f);">'+ZDEFS[i].name+'</div>'
+                    +'<div style="width:8px;height:8px;border-radius:2px;flex-shrink:0;background:'+col+'"></div>'
+                    +'<div style="font-size:11px;color:var(--det-ts);flex:1;min-width:0;font-family:var(--f);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+nm+'</div>'
                     +'<div style="font-size:10px;color:var(--det-tt);width:78px;text-align:right;">'+labels[i]+'</div>'
                     +'<div style="width:50px;height:4px;background:var(--det-elev-hi);border-radius:2px;overflow:hidden;">'
-                    +'<div style="width:'+Math.round(pct*100)+'%;height:100%;border-radius:2px;background:'+colors[i]+'"></div></div>'
+                    +'<div style="width:'+Math.round(pct*100)+'%;height:100%;border-radius:2px;background:'+col+'"></div></div>'
                     +'<div style="font-size:11px;color:var(--det-ts);width:30px;text-align:right;">'+Math.round(pct*100)+'%</div>'
                     +'<div style="font-size:10px;color:var(--det-tt);width:44px;text-align:right;">'+secsToT(secs)+'</div>'
                     +'</div>');
@@ -38698,7 +38724,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         pcCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;';
         pcCanvas.dataset.type = 'pace';
         c2.appendChild(pcCanvas);
-        c2.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS.map(z=>z.color)));
+        c2.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS_PC));
 
         // Divider
         const div2 = document.createElement('div');
@@ -38716,7 +38742,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         hrCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;';
         hrCanvas.dataset.type = 'hr';
         c2.appendChild(hrCanvas);
-        c2.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS.map(z=>z.color)));
+        c2.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS_HR));
 
         track.appendChild(c2);
 
