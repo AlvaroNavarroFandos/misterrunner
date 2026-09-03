@@ -72779,17 +72779,17 @@ window.addEventListener('DOMContentLoaded', function() {
     }
 
     function _testWrModalDomPresent() {
-        var backdrop = document.getElementById('mr-wr-modal-backdrop');
-        var sheet    = document.getElementById('mr-wr-modal-sheet');
-        var body     = document.getElementById('mr-wr-modal-body');
+        var sheet    = document.getElementById('mr-wr-sheet');
+        var body     = document.getElementById('mr-wr-sheet-body');
         var readBtn  = document.getElementById('mr-wr-hdr-read');
         var missing = [];
-        if (!backdrop) missing.push('backdrop');
         if (!sheet)    missing.push('sheet');
         if (!body)     missing.push('body');
         if (!readBtn)  missing.push('readBtn');
+        var hasStandardClass = sheet && sheet.classList.contains('sheet-backdrop');
+        if (!hasStandardClass && sheet) missing.push('sheet-backdrop-class');
         return missing.length === 0
-            ? { name:'wr.modal_dom', ok:true, info:'modal DOM completo (backdrop+sheet+body+readBtn)' }
+            ? { name:'wr.modal_dom', ok:true, info:'sheet DOM completo · usa patrón estándar .sheet-backdrop' }
             : { name:'wr.modal_dom', ok:false, info:'faltan: ' + missing.join(', ') };
     }
 
@@ -78282,7 +78282,7 @@ window.addEventListener('DOMContentLoaded', function() {
     <style>
     /* ─── Card Weekly Report en Home ─────────────────────────────────── */
     .mr-wr-home-card {
-        position:relative; margin-top:4px;
+        position:relative; margin-top:10px;
         border-radius:16px; padding:16px 18px;
         background:linear-gradient(135deg,#3d2a05 0%,#5a3c08 45%,#7a4d0a 100%);
         color:#f4e6b8;
@@ -78323,50 +78323,10 @@ window.addEventListener('DOMContentLoaded', function() {
         margin-left:2px;
     }
 
-    /* ─── Modal backdrop + sheet ─────────────────────────────────────── */
-    .mr-wr-modal-backdrop {
-        position:fixed; inset:0; z-index:2147480000 !important;
-        background:rgba(0,0,0,.72); backdrop-filter:blur(6px);
-        -webkit-backdrop-filter:blur(6px);
-        display:none; opacity:0;
-        transition:opacity .25s ease;
-    }
-    .mr-wr-modal-backdrop.open { display:block; opacity:1; }
-    .mr-wr-modal-sheet {
-        position:fixed; left:0; right:0; bottom:0;
-        max-height:92vh; z-index:2147480001 !important;
-        background:var(--bg,#0a0a0a);
-        border-radius:22px 22px 0 0;
-        box-shadow:0 -20px 60px rgba(0,0,0,.55);
-        display:flex; flex-direction:column; overflow:hidden;
-        transform:translateY(100%);
-        transition:transform .3s cubic-bezier(.32,.72,0,1);
-    }
-    .mr-wr-modal-backdrop.open .mr-wr-modal-sheet {
-        transform:translateY(0);
-    }
-
-    /* ─── Modal header ───────────────────────────────────────────────── */
-    .mr-wr-modal-hdr {
-        padding:10px 16px 12px; flex-shrink:0;
-        border-bottom:1px solid rgba(255,255,255,.06);
-        background:linear-gradient(180deg, rgba(122,77,10,.15) 0%, transparent 100%);
-    }
-    .mr-wr-grabber {
-        width:44px; height:5px; margin:0 auto 12px;
-        background:rgba(255,255,255,.20); border-radius:3px;
-    }
+    /* ─── Header del sheet (dentro de .sheet-handle-wrap estándar) ────── */
     .mr-wr-hdr-row {
-        display:flex; align-items:center; gap:10px;
+        display:flex; align-items:center; gap:10px; padding-top:8px;
     }
-    .mr-wr-hdr-close {
-        flex-shrink:0; width:32px; height:32px;
-        display:flex; align-items:center; justify-content:center;
-        border-radius:50%; background:rgba(255,255,255,.06);
-        color:var(--tw,#fff); font-size:18px; line-height:1;
-        border:none; cursor:pointer; padding:0;
-    }
-    .mr-wr-hdr-close:active { background:rgba(255,255,255,.12); }
     .mr-wr-hdr-title {
         flex:1; min-width:0;
     }
@@ -78387,12 +78347,6 @@ window.addEventListener('DOMContentLoaded', function() {
     }
     .mr-wr-hdr-read:active { transform:scale(.97); }
     .mr-wr-hdr-read.marked { background:rgba(76,175,80,.20); color:#4CAF50; box-shadow:none; }
-
-    /* ─── Modal body ─────────────────────────────────────────────────── */
-    .mr-wr-modal-body {
-        flex:1; overflow-y:auto; padding:18px 16px 40px;
-        -webkit-overflow-scrolling:touch;
-    }
 
     /* ─── Narrativa Míster IA ────────────────────────────────────────── */
     .mr-wr-narrative {
@@ -80067,8 +80021,11 @@ window.addEventListener('DOMContentLoaded', function() {
         window._wrOpenReportModal = function(report) {
             try {
                 if (!report || !report.content) return;
-                var backdrop = document.getElementById('mr-wr-modal-backdrop');
-                if (!backdrop) return;
+                var sheet = document.getElementById('mr-wr-sheet');
+                if (!sheet) return;
+
+                /* Cachear reporte para el handler del botón "Marcar leído" */
+                window._wrCurrentReport = report;
 
                 var content = report.content || {};
                 var metrics = content.metrics || null;
@@ -80091,7 +80048,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 }
 
                 /* Body */
-                var body = document.getElementById('mr-wr-modal-body');
+                var body = document.getElementById('mr-wr-sheet-body');
                 if (!body) return;
 
                 var html = '';
@@ -80126,7 +80083,7 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 body.innerHTML = html;
 
-                /* Renderizar los 6 gráficos SVG en sus containers */
+                /* Renderizar los 5 gráficos SVG en sus containers */
                 var grid = document.getElementById('mr-wr-charts-grid');
                 if (grid) {
                     var blocks = grid.querySelectorAll('[data-chart]');
@@ -80146,98 +80103,44 @@ window.addEventListener('DOMContentLoaded', function() {
                     }
                 }
 
-                /* Body scroll top al abrir */
-                body.scrollTop = 0;
-
-                /* Abrir modal con animación */
-                backdrop.classList.add('open');
-                /* Bloquear scroll del body */
-                document.body.style.overflow = 'hidden';
-
-                /* ─── Swipe down para cerrar (sin marcar leído) ───────
-                   Handlers en header grabber/area — no en body para
-                   no interferir con scroll interno del contenido. */
-                _wrAttachSwipeDown();
+                /* Abrir usando sistema estándar MR (openSheet)
+                   → spring animation + swipe-to-dismiss + backdrop blur nativo */
+                if (typeof window.openSheet === 'function') {
+                    window.openSheet('mr-wr-sheet');
+                } else {
+                    /* Fallback si openSheet no disponible */
+                    sheet.classList.add('show');
+                }
             } catch (err) {
                 try { console.warn('[MR][wr] openReportModal error:', err && err.message || err); } catch (_) {}
             }
         };
 
-        /* Adjunta touch handlers para swipe-down-to-close al abrir modal.
-           Solo en el header (grabber + hdr-row) para no interferir con
-           el scroll del body del modal. */
-        var _wrSwipeState = { startY:0, curY:0, tracking:false, sheet:null };
-        function _wrAttachSwipeDown() {
+        /* Handler del botón "Marcar leído": marca + cierra + retira card Home */
+        window._wrHandleMarkReadClick = async function() {
             try {
-                var hdr = document.querySelector('#mr-wr-modal-sheet .mr-wr-modal-hdr');
-                var sheet = document.getElementById('mr-wr-modal-sheet');
-                if (!hdr || !sheet) return;
-                /* Idempotencia: si ya adjuntado, no re-adjuntar */
-                if (hdr._wrSwipeAttached) return;
-                hdr._wrSwipeAttached = true;
-
-                hdr.addEventListener('touchstart', function(e) {
-                    if (!e.touches || e.touches.length !== 1) return;
-                    _wrSwipeState.startY   = e.touches[0].clientY;
-                    _wrSwipeState.curY     = e.touches[0].clientY;
-                    _wrSwipeState.tracking = true;
-                    _wrSwipeState.sheet    = sheet;
-                    sheet.style.transition = 'none';
-                }, { passive: true });
-
-                hdr.addEventListener('touchmove', function(e) {
-                    if (!_wrSwipeState.tracking || !e.touches || e.touches.length !== 1) return;
-                    _wrSwipeState.curY = e.touches[0].clientY;
-                    var dy = _wrSwipeState.curY - _wrSwipeState.startY;
-                    if (dy < 0) dy = 0;  /* solo abajo, no arriba */
-                    sheet.style.transform = 'translateY(' + dy + 'px)';
-                }, { passive: true });
-
-                var endHandler = function() {
-                    if (!_wrSwipeState.tracking) return;
-                    _wrSwipeState.tracking = false;
-                    var dy = _wrSwipeState.curY - _wrSwipeState.startY;
-                    sheet.style.transition = 'transform .28s cubic-bezier(.32,.72,0,1)';
-                    if (dy > 90) {
-                        /* Cerrar sin marcar leído */
-                        window._wrCloseReportModal(false);
-                        /* Restaurar transform tras animación (evita "atascado abajo") */
-                        setTimeout(function(){ sheet.style.transform = ''; }, 320);
-                    } else {
-                        /* Snap back */
-                        sheet.style.transform = 'translateY(0)';
+                var readBtn = document.getElementById('mr-wr-hdr-read');
+                var reportId = readBtn && readBtn.getAttribute('data-report-id');
+                if (reportId) {
+                    var res = await _wrMarkReportAsRead(reportId);
+                    if (res && res.success) {
+                        try { window._wrRemoveHomeCard(); } catch (_e) {}
                     }
-                };
-                hdr.addEventListener('touchend', endHandler,   { passive: true });
-                hdr.addEventListener('touchcancel', endHandler, { passive: true });
+                }
+                if (typeof window.closeSheet === 'function') {
+                    window.closeSheet('mr-wr-sheet');
+                }
+                window._wrCurrentReport = null;
             } catch (_e) {}
-        }
+        };
 
-        window._wrCloseReportModal = async function(markAsRead) {
+        window._wrCloseReportModal = function() {
+            /* Compat: mantengo la firma pero delego a closeSheet estándar */
             try {
-                var backdrop = document.getElementById('mr-wr-modal-backdrop');
-                var sheet    = document.getElementById('mr-wr-modal-sheet');
-                if (backdrop) backdrop.classList.remove('open');
-                /* Reset transform residual del swipe (para próxima apertura) */
-                if (sheet) {
-                    setTimeout(function(){
-                        sheet.style.transform  = '';
-                        sheet.style.transition = '';
-                    }, 320);
+                if (typeof window.closeSheet === 'function') {
+                    window.closeSheet('mr-wr-sheet');
                 }
-                document.body.style.overflow = '';
-
-                if (markAsRead) {
-                    var readBtn = document.getElementById('mr-wr-hdr-read');
-                    var reportId = readBtn && readBtn.getAttribute('data-report-id');
-                    if (reportId) {
-                        var res = await _wrMarkReportAsRead(reportId);
-                        if (res && res.success) {
-                            /* Retirar la card del Home */
-                            try { window._wrRemoveHomeCard(); } catch (_e) {}
-                        }
-                    }
-                }
+                window._wrCurrentReport = null;
             } catch (_e) {}
         };
 
@@ -80894,29 +80797,27 @@ window.addEventListener('DOMContentLoaded', function() {
 
     <!-- ═══════════════════════════════════════════════════════════════════════
          WEEKLY REPORT · Fase 2 UI · HTML modal
-         Portalizado al final del body para escapar de stacking contexts.
-         Se abre/cierra vía window._wrOpenReportModal / _wrCloseReportModal.
+         Refactorizado a patrón estándar MR (.sheet-backdrop + .sheet) para
+         reutilizar openSheet/closeSheet + swipe-to-dismiss + animación spring
+         nativa MR. Wrap interno propio con clases mr-wr-* para estilo custom.
          ═══════════════════════════════════════════════════════════════════════ -->
-    <div id="mr-wr-modal-backdrop" class="mr-wr-modal-backdrop"
-         onclick="if(event.target===this) window._wrCloseReportModal && window._wrCloseReportModal(false)">
-        <div class="mr-wr-modal-sheet" id="mr-wr-modal-sheet">
-            <div class="mr-wr-modal-hdr">
-                <div class="mr-wr-grabber"></div>
+    <div id="mr-wr-sheet" class="sheet-backdrop"
+         onclick="if(event.target===this) closeSheet('mr-wr-sheet')">
+        <div class="sheet">
+            <div class="sheet-handle-wrap">
+                <div class="sheet-handle"></div>
                 <div class="mr-wr-hdr-row">
-                    <button class="mr-wr-hdr-close" type="button"
-                            onclick="window._wrCloseReportModal && window._wrCloseReportModal(false)"
-                            aria-label="Cerrar">✕</button>
                     <div class="mr-wr-hdr-title">
                         <div class="mr-wr-hdr-eyebrow">Reporte semanal</div>
                         <div class="mr-wr-hdr-week" id="mr-wr-hdr-week">—</div>
                     </div>
                     <button class="mr-wr-hdr-read" id="mr-wr-hdr-read" type="button"
-                            onclick="window._wrCloseReportModal && window._wrCloseReportModal(true)">
+                            onclick="window._wrHandleMarkReadClick && window._wrHandleMarkReadClick()">
                         Marcar leído
                     </button>
                 </div>
             </div>
-            <div class="mr-wr-modal-body" id="mr-wr-modal-body">
+            <div class="sheet-body" id="mr-wr-sheet-body">
                 <!-- populated dynamically by _wrOpenReportModal -->
             </div>
         </div>
