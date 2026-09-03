@@ -72730,11 +72730,12 @@ window.addEventListener('DOMContentLoaded', function() {
        ═══════════════════════════════════════════════════════════════════ */
     function _testWrFunctionsPresent() {
         var missing = [];
-        if (typeof window._wrComputeWeekMetrics !== 'function') missing.push('_wrComputeWeekMetrics');
-        if (typeof window._wrDetectWeekPRs      !== 'function') missing.push('_wrDetectWeekPRs');
-        if (typeof window._wrBuildWeeklyContext !== 'function') missing.push('_wrBuildWeeklyContext');
+        if (typeof window._wrComputeWeekMetrics       !== 'function') missing.push('_wrComputeWeekMetrics');
+        if (typeof window._wrDetectWeekPRs            !== 'function') missing.push('_wrDetectWeekPRs');
+        if (typeof window._wrBuildWeeklyContext       !== 'function') missing.push('_wrBuildWeeklyContext');
+        if (typeof window._wrGenerateReportIfPending  !== 'function') missing.push('_wrGenerateReportIfPending');
         return missing.length === 0
-            ? { name:'wr.functions_present', ok:true, info:'3 funciones _wr* expuestas en window' }
+            ? { name:'wr.functions_present', ok:true, info:'4 funciones _wr* expuestas en window' }
             : { name:'wr.functions_present', ok:false, info:'faltan: ' + missing.join(', ') };
     }
 
@@ -79377,9 +79378,271 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
 
+        /* ═══════════════════════════════════════════════════════════════════
+           2.1 · _wrGenerateReportIfPending(options)
+           ───────────────────────────────────────────────────────────────────
+           Genera un weekly report vía API Anthropic (BYOK del user) y persiste
+           el resultado en Supabase mister_reports.
+
+           options (todos opcionales):
+             · force:     bool → regenera aunque ya exista status='ready'
+             · weekStart: 'YYYY-MM-DD' → modo MANUAL: semana específica
+             · weekEnd:   'YYYY-MM-DD' → modo MANUAL: semana específica
+
+           Sin options → modo AUTO: busca el reporte 'queued' más reciente.
+
+           Return: { success, weekStart, weekEnd, narrativeChars, model,
+                     elapsedMs, usage, reportId } | { success:false, error }
+                   { success:true, noPending:true } si modo auto sin pending
+                   { success:true, alreadyGenerated:true } si ya ready y sin force
+
+           Modelo: Sonnet 5 (Q1=A · calidad > coste, 1x/semana).
+           Content JSONB (Q2=B): { narrative_full, metrics, prs, usage, ... }
+                   → snapshot inmutable, render instantáneo al abrir modal.
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrGenerateReportIfPending = async function(options) {
+            var opts = options || {};
+            var force = !!opts.force;
+            var explicitWs = opts.weekStart || null;
+            var explicitWe = opts.weekEnd   || null;
+            var t0 = Date.now();
+
+            try {
+                /* 1 · Supabase client + user autenticado */
+                var sb = window._sbClient;
+                if (!sb) return { success:false, error:'Supabase client no disponible' };
+
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                          && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false, error:'Usuario no autenticado' };
+
+                /* 2 · BYOK Anthropic key */
+                var apiKey = (typeof window._miGetApiKey === 'function') ? window._miGetApiKey() : null;
+                if (!apiKey || typeof apiKey !== 'string' || apiKey.indexOf('sk-ant-') !== 0) {
+                    return { success:false, error:'API key Anthropic no configurada (BYOK). Configúrala en Míster IA primero.' };
+                }
+
+                /* 3 · Determinar semana target y row en Supabase */
+                var targetWs = null, targetWe = null, reportRow = null;
+
+                if (explicitWs && explicitWe) {
+                    /* Modo MANUAL */
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(explicitWs) || !/^\d{4}-\d{2}-\d{2}$/.test(explicitWe)) {
+                        return { success:false, error:'weekStart/weekEnd formato inválido (esperado YYYY-MM-DD)' };
+                    }
+                    targetWs = explicitWs;
+                    targetWe = explicitWe;
+
+                    /* Buscar row existente para esta semana */
+                    var exResp = await sb
+                        .from('mister_reports')
+                        .select('*')
+                        .eq('user_id', uid)
+                        .eq('week_start', targetWs)
+                        .maybeSingle();
+
+                    if (exResp.error) return { success:false, error:'Query error: ' + exResp.error.message };
+                    var existing = exResp.data;
+
+                    if (existing && existing.status === 'ready' && !force) {
+                        return { success:true, alreadyGenerated:true, weekStart:targetWs, weekEnd:targetWe, reportId:existing.id };
+                    }
+
+                    if (!existing) {
+                        /* Insert nuevo queued */
+                        var insResp = await sb
+                            .from('mister_reports')
+                            .insert({ user_id:uid, week_start:targetWs, week_end:targetWe, status:'queued' })
+                            .select()
+                            .single();
+                        if (insResp.error) return { success:false, error:'Insert error: ' + insResp.error.message };
+                        reportRow = insResp.data;
+                    } else {
+                        reportRow = existing;
+                    }
+                } else {
+                    /* Modo AUTO: buscar queued más reciente */
+                    var pendResp = await sb
+                        .from('mister_reports')
+                        .select('*')
+                        .eq('user_id', uid)
+                        .eq('status', 'queued')
+                        .order('week_start', { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+
+                    if (pendResp.error) return { success:false, error:'Query pending error: ' + pendResp.error.message };
+                    if (!pendResp.data) return { success:true, noPending:true };
+
+                    reportRow = pendResp.data;
+                    targetWs  = pendResp.data.week_start;
+                    targetWe  = pendResp.data.week_end;
+                }
+
+                /* 4 · Componer contexto + metrics + PRs (paralelo) */
+                var results = await Promise.all([
+                    window._wrBuildWeeklyContext(targetWs, targetWe),
+                    window._wrComputeWeekMetrics(targetWs, targetWe),
+                    Promise.resolve(window._wrDetectWeekPRs(targetWs, targetWe))
+                ]);
+                var context = results[0], metrics = results[1], prs = results[2];
+
+                if (!context || !metrics) {
+                    return { success:false, error:'No se pudo componer contexto/metrics para semana ' + targetWs };
+                }
+
+                /* 5 · System prompt Míster para weekly report */
+                var firstName = 'Runner';
+                try {
+                    if (typeof profileData !== 'undefined' && profileData && profileData.name) {
+                        firstName = (String(profileData.name).split(' ')[0]) || 'Runner';
+                    }
+                } catch (_e) {}
+
+                var systemPrompt =
+                    'Eres Míster, el entrenador personal de ' + firstName + ' dentro de MisterRunner. ' +
+                    'Personalidad: veterano runner old-school (muchos años en la calle) + castizo suave ' +
+                    '(mus puntual, sin abusar) + gen-Z ocasional como sabor. Honestidad brutal, ' +
+                    'sin cheerleading barato ni frases hechas de coach de Instagram. ' +
+                    'NUNCA uses "cuñado" o "cuñao" — usa "un colega mío" o "un compañero del club". ' +
+                    'Español de España. Tono cercano pero técnico cuando toca.\n\n' +
+                    'AHORA MISMO tu tarea es generar el REPORTE SEMANAL de ' + firstName + '. ' +
+                    'Lee TODO el bloque de contexto de abajo — es tu única fuente sobre él y la única verdad. ' +
+                    'Sigue EXACTAMENTE el formato pedido en las INSTRUCCIONES al final del contexto. ' +
+                    'NO inventes datos, NO añadas secciones extra, NO uses markdown pesado (nada de **negrita**, ' +
+                    'nada de ### headers — solo texto natural con los 4 emojis-sección pedidos). ' +
+                    'Longitud target: 180-280 palabras. Escribe como si le mandaras un mensaje al colega ' +
+                    'el domingo por la noche después de mirar sus datos con un café.';
+
+                /* 6 · Modelo (Sonnet 5 · Q1=A) */
+                var apiModel = 'claude-sonnet-5';
+                try {
+                    /* Preferir el mapeo global si existe (por si Anthropic cambia el string) */
+                    if (typeof MI_MODEL_API !== 'undefined' && MI_MODEL_API['sonnet-5']) {
+                        apiModel = MI_MODEL_API['sonnet-5'];
+                    }
+                } catch (_e) {}
+
+                /* 7 · Llamada API Anthropic (sin streaming, one-shot, timeout 45s) */
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function(){ controller.abort(); }, 45000);
+                var resp = null;
+
+                try {
+                    resp = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': apiKey,
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-dangerous-direct-browser-access': 'true',
+                            'content-type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model:      apiModel,
+                            max_tokens: 1500,
+                            system:     systemPrompt,
+                            messages:   [{ role:'user', content: context }]
+                        }),
+                        signal: controller.signal
+                    });
+                } catch (fetchErr) {
+                    clearTimeout(timeoutId);
+                    var msg = (fetchErr && fetchErr.name === 'AbortError')
+                            ? 'Timeout (45s) — la API tardó demasiado'
+                            : ('Fetch error: ' + (fetchErr.message || String(fetchErr)));
+                    return { success:false, error:msg };
+                }
+                clearTimeout(timeoutId);
+
+                if (!resp.ok) {
+                    var errText = '';
+                    try { errText = await resp.text(); } catch (_) {}
+                    var errDetail = '';
+                    try {
+                        var errObj = JSON.parse(errText);
+                        if (errObj && errObj.error && errObj.error.message) {
+                            errDetail = String(errObj.error.type || 'error') + ': ' + errObj.error.message;
+                        }
+                    } catch (_) { errDetail = errText.slice(0, 300); }
+                    return { success:false, error:'API HTTP ' + resp.status + ' — ' + errDetail };
+                }
+
+                /* 8 · Parse respuesta */
+                var data;
+                try { data = await resp.json(); }
+                catch (parseErr) { return { success:false, error:'Respuesta API no-JSON: ' + parseErr.message }; }
+
+                var narrativeText = '';
+                if (Array.isArray(data.content)) {
+                    for (var ci = 0; ci < data.content.length; ci++) {
+                        var block = data.content[ci];
+                        if (block && block.type === 'text' && typeof block.text === 'string') {
+                            narrativeText += block.text;
+                        }
+                    }
+                }
+                narrativeText = narrativeText.trim();
+                if (!narrativeText) return { success:false, error:'API respuesta vacía (sin texto)' };
+
+                var elapsedMs = Date.now() - t0;
+
+                /* 9 · Guardar en Supabase con snapshot completo (Q2=B) */
+                var contentJson = {
+                    _v:                        1,
+                    narrative_full:            narrativeText,
+                    metrics:                   metrics,
+                    prs:                       prs,
+                    generated_context_chars:   context.length,
+                    generated_narrative_chars: narrativeText.length,
+                    usage:                     data.usage || null,
+                    elapsed_ms:                elapsedMs,
+                    generated_by:              'client_byok',
+                    week_start:                targetWs,
+                    week_end:                  targetWe
+                };
+
+                var updResp = await sb
+                    .from('mister_reports')
+                    .update({
+                        status:       'ready',
+                        content:      contentJson,
+                        model_used:   apiModel,
+                        generated_at: new Date().toISOString()
+                    })
+                    .eq('id', reportRow.id)
+                    .eq('user_id', uid);
+
+                if (updResp.error) return { success:false, error:'Update error: ' + updResp.error.message };
+
+                try {
+                    console.log('%c[MR][wr] Reporte generado OK · semana ' + targetWs
+                              + ' · ' + narrativeText.length + ' chars · ' + elapsedMs + 'ms',
+                              'color:#4CAF50;font-weight:bold;');
+                } catch (_) {}
+
+                return {
+                    success:        true,
+                    reportId:       reportRow.id,
+                    weekStart:      targetWs,
+                    weekEnd:        targetWe,
+                    narrativeChars: narrativeText.length,
+                    model:          apiModel,
+                    elapsedMs:      elapsedMs,
+                    usage:          data.usage || null
+                };
+
+            } catch (err) {
+                try { console.warn('[MR][wr] _wrGenerateReportIfPending exception:', err && err.message || err); } catch (_) {}
+                return { success:false, error:(err && err.message) || String(err) };
+            }
+        };
+
+
         try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 1.2B.1 ready · _wrDetectWeekPRs(weekStart, weekEnd) · fix bestEfforts camelCase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 1.2C.1 ready · await _wrBuildWeeklyContext(weekStart, weekEnd) · compositor prompt IA + fallback top PRs desde bestEfforts', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 2.1 ready · await _wrGenerateReportIfPending([{force?, weekStart?, weekEnd?}]) · llamada API Anthropic + persist Supabase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
