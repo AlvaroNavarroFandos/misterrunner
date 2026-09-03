@@ -72734,8 +72734,12 @@ window.addEventListener('DOMContentLoaded', function() {
         if (typeof window._wrDetectWeekPRs            !== 'function') missing.push('_wrDetectWeekPRs');
         if (typeof window._wrBuildWeeklyContext       !== 'function') missing.push('_wrBuildWeeklyContext');
         if (typeof window._wrGenerateReportIfPending  !== 'function') missing.push('_wrGenerateReportIfPending');
+        if (typeof window._wrPollForReadyReport       !== 'function') missing.push('_wrPollForReadyReport');
+        if (typeof window._wrRenderHomeCard           !== 'function') missing.push('_wrRenderHomeCard');
+        if (typeof window._wrOpenReportModal          !== 'function') missing.push('_wrOpenReportModal');
+        if (typeof window._wrCloseReportModal         !== 'function') missing.push('_wrCloseReportModal');
         return missing.length === 0
-            ? { name:'wr.functions_present', ok:true, info:'4 funciones _wr* expuestas en window' }
+            ? { name:'wr.functions_present', ok:true, info:'8 funciones _wr* expuestas en window' }
             : { name:'wr.functions_present', ok:false, info:'faltan: ' + missing.join(', ') };
     }
 
@@ -72774,6 +72778,21 @@ window.addEventListener('DOMContentLoaded', function() {
         return { name:'wr.streams_helper', ok:true, info:'loadStreamsForActivity expuesta en window' };
     }
 
+    function _testWrModalDomPresent() {
+        var backdrop = document.getElementById('mr-wr-modal-backdrop');
+        var sheet    = document.getElementById('mr-wr-modal-sheet');
+        var body     = document.getElementById('mr-wr-modal-body');
+        var readBtn  = document.getElementById('mr-wr-hdr-read');
+        var missing = [];
+        if (!backdrop) missing.push('backdrop');
+        if (!sheet)    missing.push('sheet');
+        if (!body)     missing.push('body');
+        if (!readBtn)  missing.push('readBtn');
+        return missing.length === 0
+            ? { name:'wr.modal_dom', ok:true, info:'modal DOM completo (backdrop+sheet+body+readBtn)' }
+            : { name:'wr.modal_dom', ok:false, info:'faltan: ' + missing.join(', ') };
+    }
+
     var GROUPS = {
         boot:    [_testBootGuard],
         dom:     [_testDomCritical, _testGlobalsCritical, _testStorageAuditPresent, _testStravaIntegrationPresent, _testStravaImportFlowPresent, _testStravaAutoImportConsumerPresent, _testStravaAutoImportRealtimePresent],
@@ -72800,8 +72819,8 @@ window.addEventListener('DOMContentLoaded', function() {
         vdot:    [_testVdotHelpersPresent, _testVdotPreviewLogic, _testVdotUIPresence, _testVdotOrchestrator, _testVdotPredictions],
         // [v5.3 Long tiempo] Derivación por tiempo + invariante D3A
         long:    [_testLongTimeDerivation],
-        // [v2.30.1-p158 · WEEKLY REPORT 1.2D] Grupo wr — Fase 1 código motor reporte semanal
-        wr:      [_testWrFunctionsPresent, _testWrDetectWeekPRsShape, _testWrStreamsHelperExposed],
+        // [v2.30.1-p158 · WEEKLY REPORT 1.2D+2.4] Grupo wr — Fase 1+2 (motor + UI)
+        wr:      [_testWrFunctionsPresent, _testWrDetectWeekPRsShape, _testWrStreamsHelperExposed, _testWrModalDomPresent],
         // [v5.5 SKIP] Saltar sesión + detector de patrones (long_streak + quality_streak)
         // Wrapper lazy porque window._testSkipDetection se registra en un script POSTERIOR
         // (el bloque SKIP va después del smoke runner). Pasar la referencia directa aquí
@@ -78256,6 +78275,201 @@ window.addEventListener('DOMContentLoaded', function() {
 
 
     <!-- ═══════════════════════════════════════════════════════════════════════
+         WEEKLY REPORT · Fase 2 UI · CSS
+         Estilos para la card en Home + modal informe visual + gráficos SVG.
+         Se inyecta justo antes del bloque JS del WEEKLY REPORT.
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <style>
+    /* ─── Card Weekly Report en Home ─────────────────────────────────── */
+    .mr-wr-home-card {
+        position:relative; margin-top:10px;
+        border-radius:16px; padding:14px 16px;
+        background:linear-gradient(135deg,#3d2a05 0%,#5a3c08 45%,#7a4d0a 100%);
+        color:#f4e6b8;
+        box-shadow: 0 10px 28px rgba(0,0,0,.35), 0 3px 8px rgba(0,0,0,.20),
+                    inset 0 1px 0 rgba(255,255,255,.10);
+        cursor:pointer; overflow:hidden;
+        transition:transform .15s ease, box-shadow .2s ease;
+    }
+    .mr-wr-home-card:active { transform:scale(.985); }
+    .mr-wr-home-card::before {
+        content:''; position:absolute; inset:0;
+        background:radial-gradient(circle at top right, rgba(255,215,120,.18) 0%, transparent 65%);
+        pointer-events:none;
+    }
+    .mr-wr-hc-row { position:relative; display:flex; align-items:center; gap:14px; }
+    .mr-wr-hc-icon {
+        font-size:28px; line-height:1; flex-shrink:0;
+        filter:drop-shadow(0 2px 4px rgba(0,0,0,.30));
+    }
+    .mr-wr-hc-txt { flex:1; min-width:0; }
+    .mr-wr-hc-eyebrow {
+        font-size:10px; font-weight:800; letter-spacing:1.4px;
+        text-transform:uppercase; color:#f4c96a; opacity:.90; margin-bottom:3px;
+    }
+    .mr-wr-hc-title {
+        font-size:16px; font-weight:800; color:#fff8e0;
+        letter-spacing:-.2px; line-height:1.2;
+    }
+    .mr-wr-hc-sub {
+        font-size:11.5px; color:#e2c893; margin-top:3px; font-weight:500;
+    }
+    .mr-wr-hc-badge {
+        flex-shrink:0; font-size:10px; font-weight:800;
+        letter-spacing:.6px; text-transform:uppercase;
+        padding:4px 8px; border-radius:999px;
+        background:#f4c96a; color:#3d2a05;
+        box-shadow:0 2px 6px rgba(244,201,106,.35);
+    }
+    .mr-wr-hc-arrow {
+        flex-shrink:0; font-size:20px; color:#f4c96a; opacity:.65;
+        margin-left:6px;
+    }
+    .mr-wr-hc-sparkline {
+        margin-top:10px; height:28px; width:100%;
+        display:block; opacity:.85;
+    }
+
+    /* ─── Modal backdrop + sheet ─────────────────────────────────────── */
+    .mr-wr-modal-backdrop {
+        position:fixed; inset:0; z-index:2147480000 !important;
+        background:rgba(0,0,0,.72); backdrop-filter:blur(6px);
+        -webkit-backdrop-filter:blur(6px);
+        display:none; opacity:0;
+        transition:opacity .25s ease;
+    }
+    .mr-wr-modal-backdrop.open { display:block; opacity:1; }
+    .mr-wr-modal-sheet {
+        position:fixed; left:0; right:0; bottom:0;
+        max-height:92vh; z-index:2147480001 !important;
+        background:var(--bg,#0a0a0a);
+        border-radius:22px 22px 0 0;
+        box-shadow:0 -20px 60px rgba(0,0,0,.55);
+        display:flex; flex-direction:column; overflow:hidden;
+        transform:translateY(100%);
+        transition:transform .3s cubic-bezier(.32,.72,0,1);
+    }
+    .mr-wr-modal-backdrop.open .mr-wr-modal-sheet {
+        transform:translateY(0);
+    }
+
+    /* ─── Modal header ───────────────────────────────────────────────── */
+    .mr-wr-modal-hdr {
+        padding:10px 16px 12px; flex-shrink:0;
+        border-bottom:1px solid rgba(255,255,255,.06);
+        background:linear-gradient(180deg, rgba(122,77,10,.15) 0%, transparent 100%);
+    }
+    .mr-wr-grabber {
+        width:44px; height:5px; margin:0 auto 12px;
+        background:rgba(255,255,255,.20); border-radius:3px;
+    }
+    .mr-wr-hdr-row {
+        display:flex; align-items:center; gap:10px;
+    }
+    .mr-wr-hdr-close {
+        flex-shrink:0; width:32px; height:32px;
+        display:flex; align-items:center; justify-content:center;
+        border-radius:50%; background:rgba(255,255,255,.06);
+        color:var(--tw,#fff); font-size:18px; line-height:1;
+        border:none; cursor:pointer; padding:0;
+    }
+    .mr-wr-hdr-close:active { background:rgba(255,255,255,.12); }
+    .mr-wr-hdr-title {
+        flex:1; min-width:0;
+    }
+    .mr-wr-hdr-eyebrow {
+        font-size:10px; font-weight:800; letter-spacing:1.2px;
+        text-transform:uppercase; color:#f4c96a; opacity:.9;
+    }
+    .mr-wr-hdr-week {
+        font-size:16px; font-weight:800; color:var(--tw,#fff);
+        letter-spacing:-.3px; margin-top:1px;
+    }
+    .mr-wr-hdr-read {
+        flex-shrink:0; padding:8px 12px; border-radius:10px;
+        background:#f4c96a; color:#3d2a05;
+        font-size:11px; font-weight:800; letter-spacing:.4px;
+        text-transform:uppercase; border:none; cursor:pointer;
+        box-shadow:0 2px 8px rgba(244,201,106,.30);
+    }
+    .mr-wr-hdr-read:active { transform:scale(.97); }
+    .mr-wr-hdr-read.marked { background:rgba(76,175,80,.20); color:#4CAF50; box-shadow:none; }
+
+    /* ─── Modal body ─────────────────────────────────────────────────── */
+    .mr-wr-modal-body {
+        flex:1; overflow-y:auto; padding:18px 16px 40px;
+        -webkit-overflow-scrolling:touch;
+    }
+
+    /* ─── Narrativa Míster IA ────────────────────────────────────────── */
+    .mr-wr-narrative {
+        background:var(--card,#1a1a1a);
+        border-radius:14px; padding:16px 16px 4px;
+        margin-bottom:20px;
+        border:1px solid rgba(244,201,106,.15);
+    }
+    .mr-wr-narrative-eyebrow {
+        font-size:10px; font-weight:800; letter-spacing:1.2px;
+        text-transform:uppercase; color:#f4c96a; opacity:.85;
+        margin-bottom:8px;
+    }
+    .mr-wr-narrative-body {
+        font-size:14px; line-height:1.55; color:var(--tw,#e8e8e8);
+        white-space:pre-wrap; word-wrap:break-word;
+        font-family:var(--f, -apple-system, sans-serif);
+    }
+
+    /* ─── Grid de gráficos ───────────────────────────────────────────── */
+    .mr-wr-charts-hdr {
+        font-size:10px; font-weight:800; letter-spacing:1.2px;
+        text-transform:uppercase; color:#f4c96a; opacity:.85;
+        margin:8px 4px 12px;
+    }
+    .mr-wr-charts-grid {
+        display:grid; grid-template-columns:1fr; gap:12px;
+    }
+    @media (min-width:520px) {
+        .mr-wr-charts-grid { grid-template-columns:1fr 1fr; }
+    }
+    .mr-wr-chart-block {
+        background:var(--card,#1a1a1a);
+        border-radius:12px; padding:12px 14px;
+        border:1px solid rgba(255,255,255,.06);
+    }
+    .mr-wr-chart-title {
+        font-size:11px; font-weight:700; color:var(--ts,#aaa);
+        text-transform:uppercase; letter-spacing:.4px; margin-bottom:8px;
+    }
+    .mr-wr-chart-value {
+        font-size:20px; font-weight:800; color:var(--tw,#fff);
+        margin-bottom:8px; letter-spacing:-.4px;
+    }
+    .mr-wr-chart-svg {
+        width:100%; height:auto; display:block;
+    }
+    .mr-wr-chart-tooltip {
+        position:absolute; pointer-events:none;
+        background:rgba(0,0,0,.90); color:#fff;
+        padding:5px 8px; border-radius:6px; font-size:11px;
+        white-space:nowrap; z-index:10;
+        box-shadow:0 4px 12px rgba(0,0,0,.4);
+        opacity:0; transition:opacity .12s ease;
+    }
+    .mr-wr-chart-tooltip.visible { opacity:1; }
+    .mr-wr-chart-wrap { position:relative; }
+
+    /* ─── Meta info footer del modal ─────────────────────────────────── */
+    .mr-wr-meta {
+        margin-top:20px; padding-top:14px;
+        border-top:1px solid rgba(255,255,255,.06);
+        font-size:10.5px; color:var(--ts,#888);
+        text-align:center; line-height:1.7;
+    }
+    </style>
+
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
          WEEKLY REPORT · Fase 1 código · [v2.30.1-p158]
          Motor de métricas y contexto para el reporte semanal Míster IA.
          Todas las funciones prefijadas _wr* (weekly report). Cero side effects,
@@ -79641,11 +79855,772 @@ window.addEventListener('DOMContentLoaded', function() {
 
         try { console.log('%c[MR] Weekly Report · 1.2A.6 ready · zones %LTHR Coros + HR smoothing 5s · await _wrComputeWeekMetrics(weekStart, weekEnd)', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 1.2B.1 ready · _wrDetectWeekPRs(weekStart, weekEnd) · fix bestEfforts camelCase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        /* ═══════════════════════════════════════════════════════════════════
+           2.2 · Poller Home
+           ───────────────────────────────────────────────────────────────────
+           Al arrancar la app y cada 30 min:
+             1. Query mister_reports WHERE status='ready' AND read_at IS NULL
+                → si hay, cachea en window._wrPendingReport y renderiza card
+             2. Query mister_reports WHERE status='queued' + BYOK configurado
+                → dispara _wrGenerateReportIfPending() automáticamente
+             3. Ambos con guard idempotente contra concurrent calls
+           ═══════════════════════════════════════════════════════════════════ */
+        var _wrPollerInProgress = false;
+        var _wrPollerInterval   = null;
+        var _WR_POLL_MS         = 30 * 60 * 1000;  /* 30 min */
+
+        window._wrPollForReadyReport = async function() {
+            if (_wrPollerInProgress) return { skipped:'in_progress' };
+            _wrPollerInProgress = true;
+            try {
+                var sb = window._sbClient;
+                if (!sb) return { skipped:'no_sb' };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                        && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { skipped:'no_uid' };
+
+                /* Paso 1: reporte ready sin leer */
+                var readyResp = await sb
+                    .from('mister_reports')
+                    .select('*')
+                    .eq('user_id', uid)
+                    .eq('status', 'ready')
+                    .is('read_at', null)
+                    .order('week_start', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (!readyResp.error && readyResp.data) {
+                    window._wrPendingReport = readyResp.data;
+                    /* Render card (idempotente: si ya está en DOM, actualiza) */
+                    try { window._wrRenderHomeCard(readyResp.data); } catch (_e) {}
+                    return { found_ready: true, reportId: readyResp.data.id };
+                }
+
+                /* Paso 2: hay queued? dispararlo si BYOK ok */
+                var queuedResp = await sb
+                    .from('mister_reports')
+                    .select('id, week_start')
+                    .eq('user_id', uid)
+                    .eq('status', 'queued')
+                    .order('week_start', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (!queuedResp.error && queuedResp.data) {
+                    var apiKey = (typeof window._miGetApiKey === 'function') ? window._miGetApiKey() : null;
+                    if (apiKey && apiKey.indexOf('sk-ant-') === 0) {
+                        /* Fire-and-forget: al terminar, re-poll para renderizar card */
+                        window._wrGenerateReportIfPending().then(function(genRes){
+                            if (genRes && genRes.success && !genRes.noPending && !genRes.alreadyGenerated) {
+                                setTimeout(function(){ window._wrPollForReadyReport(); }, 300);
+                            }
+                        });
+                        return { triggered_generation: true };
+                    }
+                    return { queued_pending_byok: true };
+                }
+
+                return { no_reports: true };
+            } catch (err) {
+                try { console.warn('[MR][wr] poll error:', err && err.message || err); } catch (_) {}
+                return { error: (err && err.message) || String(err) };
+            } finally {
+                _wrPollerInProgress = false;
+            }
+        };
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           2.3 · Card en Home
+           ───────────────────────────────────────────────────────────────────
+           MutationObserver detecta la card de saludo "Buenos días" al render
+           de Home y inserta la card Weekly Report JUSTO después. Guard
+           idempotente por data-attribute para no duplicar.
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrRenderHomeCard = function(report) {
+            try {
+                if (!report || !report.content) return;
+
+                /* Localizar container Home */
+                var container = document.getElementById('home-content');
+                if (!container) return;
+
+                /* Localizar card saludo (data-ho="greeting") */
+                var greetCard = container.querySelector('[data-ho="greeting"]');
+                if (!greetCard) return;
+
+                /* Guard idempotente: si ya existe una card WR con este report id, no re-insertar */
+                var existing = container.querySelector('[data-wr-report-id]');
+                if (existing && existing.getAttribute('data-wr-report-id') === String(report.id)) {
+                    return;
+                }
+                /* Si hay una de otro report id (semana anterior), retirarla */
+                if (existing) {
+                    try { existing.remove(); } catch (_e) {}
+                }
+
+                /* Construir card */
+                var card = document.createElement('div');
+                card.className = 'mr-wr-home-card';
+                card.setAttribute('data-wr-report-id', String(report.id));
+                card.setAttribute('role', 'button');
+                card.setAttribute('tabindex', '0');
+                card.setAttribute('aria-label', 'Abrir reporte semanal de Míster');
+
+                var weekRangeStr = _wrFmtDateRange(report.week_start, report.week_end);
+                var content = report.content || {};
+                var metrics = content.metrics || null;
+
+                /* Mini sparkline TSB (últimas 12 semanas) generado ad-hoc */
+                var tsbSparklineSvg = _wrBuildTSBMiniSparkline(report.week_end, 12, 320, 28);
+
+                card.innerHTML =
+                    '<div class="mr-wr-hc-row">'
+                  +   '<div class="mr-wr-hc-icon">📊</div>'
+                  +   '<div class="mr-wr-hc-txt">'
+                  +     '<div class="mr-wr-hc-eyebrow">Míster · Reporte semanal</div>'
+                  +     '<div class="mr-wr-hc-title">' + _wrEscapeHtml(weekRangeStr) + '</div>'
+                  +     '<div class="mr-wr-hc-sub">Toca para leer el análisis completo</div>'
+                  +   '</div>'
+                  +   '<div class="mr-wr-hc-badge">Nuevo</div>'
+                  +   '<div class="mr-wr-hc-arrow">›</div>'
+                  + '</div>'
+                  + (tsbSparklineSvg || '');
+
+                /* Insert JUSTO después de la card saludo */
+                if (greetCard.nextSibling) {
+                    container.insertBefore(card, greetCard.nextSibling);
+                } else {
+                    container.appendChild(card);
+                }
+
+                /* Click handler */
+                card.addEventListener('click', function() {
+                    window._wrOpenReportModal(report);
+                });
+                card.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        window._wrOpenReportModal(report);
+                    }
+                });
+            } catch (err) {
+                try { console.warn('[MR][wr] renderHomeCard error:', err && err.message || err); } catch (_) {}
+            }
+        };
+
+        /* Retirar la card del Home (si existe) */
+        window._wrRemoveHomeCard = function() {
+            try {
+                var container = document.getElementById('home-content');
+                if (!container) return;
+                var existing = container.querySelector('[data-wr-report-id]');
+                if (existing) existing.remove();
+                window._wrPendingReport = null;
+            } catch (_e) {}
+        };
+
+        /* MutationObserver: cuando renderHome rehidrata el container y aparece
+           la card saludo, re-insertamos la card WR si hay pending report cacheado. */
+        (function _wrSetupHomeObserver() {
+            try {
+                var container = null;
+                var attempts = 0;
+                var findAndObserve = function() {
+                    container = document.getElementById('home-content');
+                    if (!container) {
+                        if (attempts++ < 40) setTimeout(findAndObserve, 250);
+                        return;
+                    }
+                    var obs = new MutationObserver(function(muts) {
+                        /* Si hay report pending y la card saludo aparece pero WR no está → re-insertar */
+                        if (!window._wrPendingReport) return;
+                        var greet = container.querySelector('[data-ho="greeting"]');
+                        var wr    = container.querySelector('[data-wr-report-id]');
+                        if (greet && !wr) {
+                            try { window._wrRenderHomeCard(window._wrPendingReport); } catch (_e) {}
+                        }
+                    });
+                    obs.observe(container, { childList: true, subtree: false });
+                };
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', findAndObserve);
+                } else {
+                    findAndObserve();
+                }
+            } catch (_e) {}
+        })();
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           2.4 · Modal informe visual
+           ───────────────────────────────────────────────────────────────────
+           Sheet full-height con:
+             · Header · rango semana + botones cerrar/marcar-leído
+             · Body · narrativa Míster IA + 6 gráficos SVG puros:
+               1. Sparkline CTL 12 semanas
+               2. Sparkline TSB 12 semanas
+               3. Barra compliance km
+               4. Barra compliance sesiones (dots)
+               5. Heatmap 7 días
+               6. Donut zonas HR
+           ═══════════════════════════════════════════════════════════════════ */
+        window._wrOpenReportModal = function(report) {
+            try {
+                if (!report || !report.content) return;
+                var backdrop = document.getElementById('mr-wr-modal-backdrop');
+                if (!backdrop) return;
+
+                var content = report.content || {};
+                var metrics = content.metrics || null;
+                var prs     = content.prs || null;
+                var narrative = content.narrative_full || '(sin narrativa)';
+
+                /* Header semana + reset botón "Marcar leído" */
+                var weekEl = document.getElementById('mr-wr-hdr-week');
+                if (weekEl) weekEl.textContent = _wrFmtDateRange(report.week_start, report.week_end);
+                var readBtn = document.getElementById('mr-wr-hdr-read');
+                if (readBtn) {
+                    if (report.read_at) {
+                        readBtn.textContent = '✓ Leído';
+                        readBtn.classList.add('marked');
+                    } else {
+                        readBtn.textContent = 'Marcar leído';
+                        readBtn.classList.remove('marked');
+                    }
+                    readBtn.setAttribute('data-report-id', report.id);
+                }
+
+                /* Body */
+                var body = document.getElementById('mr-wr-modal-body');
+                if (!body) return;
+
+                var html = '';
+                /* Narrativa */
+                html += '<div class="mr-wr-narrative">'
+                     +   '<div class="mr-wr-narrative-eyebrow">Análisis Míster</div>'
+                     +   '<div class="mr-wr-narrative-body">' + _wrRenderMisterNarrative(narrative) + '</div>'
+                     + '</div>';
+
+                /* Gráficos header */
+                html += '<div class="mr-wr-charts-hdr">Los números en visual</div>';
+                html += '<div class="mr-wr-charts-grid" id="mr-wr-charts-grid">'
+                     +   '<div class="mr-wr-chart-block" data-chart="ctl"></div>'
+                     +   '<div class="mr-wr-chart-block" data-chart="tsb"></div>'
+                     +   '<div class="mr-wr-chart-block" data-chart="km"></div>'
+                     +   '<div class="mr-wr-chart-block" data-chart="sessions"></div>'
+                     +   '<div class="mr-wr-chart-block" data-chart="heatmap"></div>'
+                     +   '<div class="mr-wr-chart-block" data-chart="zones"></div>'
+                     + '</div>';
+
+                /* Meta footer */
+                var metaBits = [];
+                if (report.model_used)   metaBits.push('Modelo: ' + report.model_used);
+                if (report.generated_at) metaBits.push('Generado ' + _wrFmtDateTimeShort(report.generated_at));
+                if (content.usage) {
+                    var u = content.usage;
+                    if (u.input_tokens && u.output_tokens) {
+                        metaBits.push(u.input_tokens + ' in / ' + u.output_tokens + ' out tokens');
+                    }
+                }
+                if (content.elapsed_ms) metaBits.push((content.elapsed_ms / 1000).toFixed(1) + 's');
+                html += '<div class="mr-wr-meta">' + metaBits.join(' · ') + '</div>';
+
+                body.innerHTML = html;
+
+                /* Renderizar los 6 gráficos SVG en sus containers */
+                var grid = document.getElementById('mr-wr-charts-grid');
+                if (grid) {
+                    var blocks = grid.querySelectorAll('[data-chart]');
+                    for (var bi = 0; bi < blocks.length; bi++) {
+                        var b = blocks[bi];
+                        var kind = b.getAttribute('data-chart');
+                        try {
+                            if      (kind === 'ctl')      _wrRenderChartCTL(b, report.week_end);
+                            else if (kind === 'tsb')      _wrRenderChartTSB(b, report.week_end);
+                            else if (kind === 'km')       _wrRenderChartComplianceKm(b, metrics);
+                            else if (kind === 'sessions') _wrRenderChartComplianceSessions(b, metrics);
+                            else if (kind === 'heatmap')  _wrRenderChartHeatmap(b, metrics);
+                            else if (kind === 'zones')    _wrRenderChartDonutZones(b, metrics);
+                        } catch (chartErr) {
+                            b.innerHTML = '<div class="mr-wr-chart-title">Error al renderizar</div>';
+                            try { console.warn('[MR][wr] chart ' + kind + ' error:', chartErr); } catch(_) {}
+                        }
+                    }
+                }
+
+                /* Body scroll top al abrir */
+                body.scrollTop = 0;
+
+                /* Abrir modal con animación */
+                backdrop.classList.add('open');
+                /* Bloquear scroll del body */
+                document.body.style.overflow = 'hidden';
+            } catch (err) {
+                try { console.warn('[MR][wr] openReportModal error:', err && err.message || err); } catch (_) {}
+            }
+        };
+
+        window._wrCloseReportModal = async function(markAsRead) {
+            try {
+                var backdrop = document.getElementById('mr-wr-modal-backdrop');
+                if (backdrop) backdrop.classList.remove('open');
+                document.body.style.overflow = '';
+
+                if (markAsRead) {
+                    var readBtn = document.getElementById('mr-wr-hdr-read');
+                    var reportId = readBtn && readBtn.getAttribute('data-report-id');
+                    if (reportId) {
+                        var res = await _wrMarkReportAsRead(reportId);
+                        if (res && res.success) {
+                            /* Retirar la card del Home */
+                            try { window._wrRemoveHomeCard(); } catch (_e) {}
+                        }
+                    }
+                }
+            } catch (_e) {}
+        };
+
+        async function _wrMarkReportAsRead(reportId) {
+            try {
+                var sb = window._sbClient;
+                if (!sb) return { success:false, error:'no_sb' };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                        && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false, error:'no_uid' };
+
+                var updResp = await sb
+                    .from('mister_reports')
+                    .update({ status:'read', read_at: new Date().toISOString() })
+                    .eq('id', reportId)
+                    .eq('user_id', uid);
+
+                if (updResp.error) return { success:false, error:updResp.error.message };
+                try { console.log('[MR][wr] Reporte marcado como leído · ' + reportId); } catch(_){}
+                return { success:true };
+            } catch (err) {
+                return { success:false, error:(err && err.message) || String(err) };
+            }
+        }
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           2.4b · Helpers modal (formateo + narrativa + escapado)
+           ═══════════════════════════════════════════════════════════════════ */
+        function _wrEscapeHtml(s) {
+            if (s == null) return '';
+            return String(s)
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        /* Render narrativa Míster IA: preserva line breaks, escapa HTML,
+           permite emojis. Preserva **bold** simple con <strong> por si acaso */
+        function _wrRenderMisterNarrative(text) {
+            if (!text) return '';
+            var escaped = _wrEscapeHtml(text);
+            /* **bold** → <strong> (opcional, por si el modelo escribe pese a instrucciones) */
+            escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            return escaped;
+        }
+
+        function _wrFmtDateTimeShort(iso) {
+            try {
+                var d = new Date(iso);
+                if (isNaN(d.getTime())) return iso;
+                var months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+                var day = d.getDate();
+                var mon = months[d.getMonth()];
+                var hh = String(d.getHours()).padStart(2,'0');
+                var mm = String(d.getMinutes()).padStart(2,'0');
+                return day + ' ' + mon + ' ' + hh + ':' + mm;
+            } catch (_e) { return iso; }
+        }
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           2.4c · GRÁFICOS SVG puros (6 gráficos)
+           ───────────────────────────────────────────────────────────────────
+           Todos generan HTML string con SVG inline. Cero libraries externas.
+           Colores basados en paleta MR (dorado + verde/rojo semaforos).
+           ═══════════════════════════════════════════════════════════════════ */
+
+        /* Helper: compone serie CTL/ATL/TSB últimas N semanas hasta weekEndYmd */
+        function _wrBuildPMCSeriesLastNWeeks(weekEndYmd, nWeeks) {
+            try {
+                var _acts = (typeof activities !== 'undefined' && Array.isArray(activities)) ? activities : [];
+                if (!_acts.length || !weekEndYmd) return null;
+                var series = [];  /* [{ weekLabel, weekEnd, ctl, atl, tsb }] */
+                var kCTL = 2/43, kATL = 2/8;
+
+                /* Agregar TRIMP por día */
+                var byDate = {};
+                for (var i = 0; i < _acts.length; i++) {
+                    var a = _acts[i];
+                    if (!a || !a.dateStr) continue;
+                    var tr = (a.trimp != null) ? Number(a.trimp) : 0;
+                    if (!isFinite(tr)) tr = 0;
+                    if (!byDate[a.dateStr]) byDate[a.dateStr] = 0;
+                    byDate[a.dateStr] += tr;
+                }
+
+                var endD = new Date(weekEndYmd + 'T12:00:00');
+                var dates = Object.keys(byDate).sort();
+                if (!dates.length) return null;
+                var startD = new Date(dates[0] + 'T12:00:00');
+
+                var ctl = 0, atl = 0, isFirst = true;
+                var cur = new Date(startD);
+                /* Iterar día a día calculando EMAs y guardar snapshot al fin de cada semana target */
+                var weekEnds = [];
+                for (var wi = nWeeks - 1; wi >= 0; wi--) {
+                    var we = new Date(endD);
+                    we.setDate(endD.getDate() - 7 * wi);
+                    weekEnds.push(_wrDateToYmd(we));
+                }
+                var snapshots = {};
+
+                var guard = 0;
+                while (cur.getTime() <= endD.getTime() && guard < 1830) {
+                    var ymd = _wrDateToYmd(cur);
+                    var tr2 = byDate[ymd] || 0;
+                    if (isFirst) { ctl = tr2; atl = tr2; isFirst = false; }
+                    else         { ctl = tr2 * kCTL + ctl * (1 - kCTL);
+                                   atl = tr2 * kATL + atl * (1 - kATL); }
+                    if (weekEnds.indexOf(ymd) >= 0) {
+                        snapshots[ymd] = { ctl: ctl, atl: atl, tsb: ctl - atl };
+                    }
+                    cur.setDate(cur.getDate() + 1);
+                    guard++;
+                }
+
+                for (var wj = 0; wj < weekEnds.length; wj++) {
+                    var wYmd = weekEnds[wj];
+                    var snap = snapshots[wYmd] || { ctl:0, atl:0, tsb:0 };
+                    var wD = new Date(wYmd + 'T12:00:00');
+                    series.push({
+                        weekEnd: wYmd,
+                        weekLabel: wD.getDate() + '/' + String(wD.getMonth()+1).padStart(2,'0'),
+                        ctl: Math.round(snap.ctl * 10) / 10,
+                        atl: Math.round(snap.atl * 10) / 10,
+                        tsb: Math.round(snap.tsb * 10) / 10
+                    });
+                }
+                return series;
+            } catch (_e) { return null; }
+        }
+
+        /* Sparkline genérico SVG: array de {label, value} → SVG string */
+        function _wrBuildSparklineSvg(series, opts) {
+            opts = opts || {};
+            var w = opts.w || 300, h = opts.h || 60;
+            var pad = 6;
+            var accessor = opts.accessor || function(d){ return d.value; };
+            var strokeColor = opts.stroke || '#f4c96a';
+            var fillColor   = opts.fill   || 'rgba(244,201,106,.15)';
+            var showDots    = opts.showDots !== false;
+            var showLast    = opts.showLast !== false;
+            if (!Array.isArray(series) || series.length < 2) {
+                return '<svg class="mr-wr-chart-svg" viewBox="0 0 ' + w + ' ' + h + '"><text x="' + (w/2) + '" y="' + (h/2) + '" text-anchor="middle" fill="#666" font-size="11">Datos insuficientes</text></svg>';
+            }
+            var values = series.map(accessor);
+            var minV = Math.min.apply(null, values);
+            var maxV = Math.max.apply(null, values);
+            if (opts.centerZero) {
+                var maxAbs = Math.max(Math.abs(minV), Math.abs(maxV));
+                minV = -maxAbs; maxV = maxAbs;
+            }
+            if (minV === maxV) { maxV = minV + 1; }
+            var range = maxV - minV;
+            var stepX = (w - pad * 2) / (series.length - 1);
+            var toY = function(v) { return h - pad - ((v - minV) / range) * (h - pad * 2); };
+            var points = series.map(function(d, i){
+                return (pad + i * stepX) + ',' + toY(accessor(d));
+            });
+            var pathD = 'M' + points.join(' L');
+            var areaD = pathD + ' L' + (pad + (series.length - 1) * stepX) + ',' + (h - pad) +
+                        ' L' + pad + ',' + (h - pad) + ' Z';
+
+            var svg = '<svg class="mr-wr-chart-svg" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg">';
+            /* Línea cero si centerZero (para TSB) */
+            if (opts.centerZero) {
+                var zeroY = toY(0);
+                svg += '<line x1="' + pad + '" y1="' + zeroY + '" x2="' + (w - pad) + '" y2="' + zeroY + '" stroke="rgba(255,255,255,.15)" stroke-dasharray="2 3"/>';
+            }
+            svg += '<path d="' + areaD + '" fill="' + fillColor + '"/>';
+            svg += '<path d="' + pathD + '" fill="none" stroke="' + strokeColor + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+            if (showDots) {
+                for (var pi = 0; pi < series.length; pi++) {
+                    var cx = pad + pi * stepX;
+                    var cy = toY(accessor(series[pi]));
+                    var isLast = (pi === series.length - 1);
+                    svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + (isLast ? 3 : 1.8) + '" fill="' + strokeColor + '"/>';
+                }
+            }
+            if (showLast) {
+                var lastVal = accessor(series[series.length - 1]);
+                var lastX   = pad + (series.length - 1) * stepX;
+                var lastY   = toY(lastVal);
+                svg += '<text x="' + (lastX - 6) + '" y="' + (lastY - 6) + '" text-anchor="end" fill="' + strokeColor + '" font-size="9" font-weight="700">' + lastVal.toFixed(0) + '</text>';
+            }
+            svg += '</svg>';
+            return svg;
+        }
+
+        /* Sparkline TSB mini para la card Home (embedded) */
+        function _wrBuildTSBMiniSparkline(weekEndYmd, nWeeks, w, h) {
+            try {
+                var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, nWeeks);
+                if (!series || series.length < 2) return '';
+                return '<div style="margin-top:10px;">' + _wrBuildSparklineSvg(series, {
+                    w: w, h: h,
+                    accessor: function(d){ return d.tsb; },
+                    stroke: '#f4c96a',
+                    fill: 'rgba(244,201,106,.12)',
+                    centerZero: true,
+                    showDots: false,
+                    showLast: false
+                }) + '</div>';
+            } catch (_e) { return ''; }
+        }
+
+        /* Gráfico 1: Sparkline CTL 12 semanas */
+        function _wrRenderChartCTL(container, weekEndYmd) {
+            var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, 12);
+            var lastVal = series && series.length ? series[series.length - 1].ctl : 0;
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">CTL · Fitness (12 sem)</div>'
+              + '<div class="mr-wr-chart-value">' + lastVal.toFixed(1) + '</div>'
+              + _wrBuildSparklineSvg(series || [], {
+                    w: 320, h: 60,
+                    accessor: function(d){ return d.ctl; },
+                    stroke: '#4CAF50', fill: 'rgba(76,175,80,.15)'
+                });
+        }
+
+        /* Gráfico 2: Sparkline TSB 12 semanas */
+        function _wrRenderChartTSB(container, weekEndYmd) {
+            var series = _wrBuildPMCSeriesLastNWeeks(weekEndYmd, 12);
+            var lastVal = series && series.length ? series[series.length - 1].tsb : 0;
+            var color = lastVal >= 0 ? '#4CAF50' : (lastVal <= -20 ? '#F44336' : '#f4c96a');
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">TSB · Forma (12 sem)</div>'
+              + '<div class="mr-wr-chart-value" style="color:' + color + ';">' + (lastVal >= 0 ? '+' : '') + lastVal.toFixed(1) + '</div>'
+              + _wrBuildSparklineSvg(series || [], {
+                    w: 320, h: 60,
+                    accessor: function(d){ return d.tsb; },
+                    stroke: color, fill: 'rgba(244,201,106,.10)',
+                    centerZero: true
+                });
+        }
+
+        /* Gráfico 3: Barra compliance km */
+        function _wrRenderChartComplianceKm(container, metrics) {
+            if (!metrics) { container.innerHTML = '<div class="mr-wr-chart-title">Km · sin datos</div>'; return; }
+            var planned = metrics.km_planned;
+            var done    = metrics.km_done || 0;
+            var pct     = metrics.compliance_pct;
+            var w = 320, h = 40, pad = 4;
+            var maxV = Math.max(planned || done, done, 1);
+            var doneW    = ((done    / maxV) * (w - pad * 2));
+            var plannedW = planned ? ((planned / maxV) * (w - pad * 2)) : 0;
+            var color = '#4CAF50';
+            if (pct != null) {
+                if (pct < 60) color = '#F44336';
+                else if (pct < 85) color = '#f4c96a';
+            }
+            var svg = '<svg class="mr-wr-chart-svg" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg">';
+            svg += '<rect x="' + pad + '" y="' + (h/2 - 8) + '" width="' + (w - pad * 2) + '" height="16" fill="rgba(255,255,255,.08)" rx="8"/>';
+            if (planned) {
+                svg += '<rect x="' + pad + '" y="' + (h/2 - 8) + '" width="' + plannedW + '" height="16" fill="rgba(244,201,106,.20)" rx="8"/>';
+            }
+            svg += '<rect x="' + pad + '" y="' + (h/2 - 8) + '" width="' + doneW + '" height="16" fill="' + color + '" rx="8"/>';
+            svg += '</svg>';
+            var valTxt = done + ' km' + (planned != null ? ' / ' + planned + ' plan' : '') + (pct != null ? ' (' + pct + '%)' : '');
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">Kilómetros</div>'
+              + '<div class="mr-wr-chart-value">' + valTxt + '</div>'
+              + svg;
+        }
+
+        /* Gráfico 4: Dots compliance sesiones */
+        function _wrRenderChartComplianceSessions(container, metrics) {
+            if (!metrics) { container.innerHTML = '<div class="mr-wr-chart-title">Sesiones · sin datos</div>'; return; }
+            var done    = metrics.sessions_done    || 0;
+            var planned = metrics.sessions_planned;
+            var total   = Math.max(done, planned || 0, 1);
+            var dotsHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">';
+            for (var i = 0; i < total; i++) {
+                var color;
+                if (i < done) color = '#4CAF50';
+                else if (planned && i < planned) color = 'rgba(255,255,255,.15)';
+                else color = 'transparent';
+                dotsHtml += '<div style="width:22px;height:22px;border-radius:50%;background:' + color + ';flex-shrink:0;box-shadow:' + (i < done ? '0 2px 6px rgba(76,175,80,.30)' : 'none') + ';"></div>';
+            }
+            dotsHtml += '</div>';
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">Sesiones</div>'
+              + '<div class="mr-wr-chart-value">' + done + (planned != null ? ' / ' + planned : '') + '</div>'
+              + dotsHtml;
+        }
+
+        /* Gráfico 5: Heatmap 7 días (L→D) intensidad por TRIMP */
+        function _wrRenderChartHeatmap(container, metrics) {
+            if (!metrics || !Array.isArray(metrics.sessions_by_day)) {
+                container.innerHTML = '<div class="mr-wr-chart-title">Heatmap · sin datos</div>'; return;
+            }
+            var days = metrics.sessions_by_day;
+            var maxT = Math.max.apply(null, days.map(function(d){ return d.trimp || 0; }));
+            if (maxT === 0) maxT = 1;
+            var dayLabels = ['L','M','X','J','V','S','D'];
+            var cellsHtml = '<div style="display:flex;gap:6px;justify-content:space-between;margin-top:4px;">';
+            for (var di = 0; di < days.length; di++) {
+                var d = days[di];
+                var intensity = (d.trimp || 0) / maxT;
+                var bg = intensity === 0
+                    ? 'rgba(255,255,255,.05)'
+                    : 'rgba(244,201,106,' + (0.15 + intensity * 0.75) + ')';
+                var titleAttr = d.date + ': ' + (d.km || 0) + 'km · TRIMP ' + (d.trimp || 0) + (d.type ? ' · ' + d.type : '');
+                cellsHtml += '<div style="flex:1;text-align:center;" title="' + _wrEscapeHtml(titleAttr) + '">'
+                          +   '<div style="height:42px;border-radius:8px;background:' + bg + ';display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+                          +     '<div style="font-size:9px;font-weight:700;color:' + (intensity > 0.5 ? '#3d2a05' : 'var(--tw,#888)') + ';">' + dayLabels[di] + '</div>'
+                          +     (d.km ? '<div style="font-size:10px;font-weight:800;color:' + (intensity > 0.5 ? '#3d2a05' : 'var(--tw,#fff)') + ';">' + Math.round(d.km) + '</div>' : '')
+                          +   '</div>'
+                          + '</div>';
+            }
+            cellsHtml += '</div>';
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">Semana L→D</div>'
+              + '<div class="mr-wr-chart-value">' + (metrics.km_done || 0) + ' km</div>'
+              + cellsHtml;
+        }
+
+        /* Gráfico 6: Donut zonas HR */
+        function _wrRenderChartDonutZones(container, metrics) {
+            if (!metrics || !metrics.zones_pct || metrics.zones_source === 'unavailable') {
+                container.innerHTML = '<div class="mr-wr-chart-title">Zonas HR · sin datos</div>'; return;
+            }
+            var z = metrics.zones_pct;
+            var colors = { z1:'#4CAF50', z2:'#2196F3', z3:'#f4c96a', z4:'#FF9800', z5:'#F44336' };
+            var labels = ['Z1','Z2','Z3','Z4','Z5'];
+            var vals = [z.z1||0, z.z2||0, z.z3||0, z.z4||0, z.z5||0];
+            var total = vals.reduce(function(a,b){return a+b;}, 0);
+            if (total === 0) { container.innerHTML = '<div class="mr-wr-chart-title">Zonas HR · sin datos</div>'; return; }
+            /* SVG donut */
+            var size = 120, cx = size/2, cy = size/2, radius = 48, strokeW = 18;
+            var circumference = 2 * Math.PI * radius;
+            var acc = 0;
+            var svg = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto;">';
+            svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + radius + '" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="' + strokeW + '"/>';
+            for (var zi = 0; zi < 5; zi++) {
+                if (vals[zi] === 0) continue;
+                var frac = vals[zi] / total;
+                var dashLen = frac * circumference;
+                var gapLen  = circumference - dashLen;
+                var offset  = -acc * circumference;
+                var key = 'z' + (zi + 1);
+                svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + radius + '" fill="none" '
+                     + 'stroke="' + colors[key] + '" stroke-width="' + strokeW + '" '
+                     + 'stroke-dasharray="' + dashLen + ' ' + gapLen + '" '
+                     + 'stroke-dashoffset="' + offset + '" '
+                     + 'transform="rotate(-90 ' + cx + ' ' + cy + ')"/>';
+                acc += frac;
+            }
+            /* Etiqueta central: zona dominante */
+            var maxIdx = 0;
+            for (var mi = 1; mi < 5; mi++) if (vals[mi] > vals[maxIdx]) maxIdx = mi;
+            svg += '<text x="' + cx + '" y="' + (cy - 3) + '" text-anchor="middle" fill="var(--tw,#fff)" font-size="16" font-weight="800">' + labels[maxIdx] + '</text>';
+            svg += '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" fill="var(--ts,#888)" font-size="10" font-weight="600">' + vals[maxIdx] + '%</text>';
+            svg += '</svg>';
+            /* Leyenda */
+            var legendHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:11px;margin-top:8px;">';
+            for (var li = 0; li < 5; li++) {
+                var lk = 'z' + (li + 1);
+                legendHtml += '<div style="display:flex;align-items:center;gap:5px;">'
+                           +   '<div style="width:9px;height:9px;border-radius:2px;background:' + colors[lk] + ';flex-shrink:0;"></div>'
+                           +   '<span style="color:var(--ts,#888);">' + labels[li] + '</span>'
+                           +   '<span style="color:var(--tw,#fff);font-weight:700;margin-left:auto;">' + vals[li] + '%</span>'
+                           + '</div>';
+            }
+            legendHtml += '</div>';
+            container.innerHTML =
+                '<div class="mr-wr-chart-title">Zonas HR</div>'
+              + svg + legendHtml;
+        }
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           2.5 · Bootstrap: arrancar poller al inicializar la app
+           ═══════════════════════════════════════════════════════════════════ */
+        (function _wrBootstrap() {
+            try {
+                /* Esperar a que _sbClient + user esté disponible */
+                var attempts = 0;
+                var tryStart = function() {
+                    if (!window._sbClient) {
+                        if (attempts++ < 60) setTimeout(tryStart, 500);
+                        return;
+                    }
+                    /* Primer poll a los 2s del boot (dar tiempo a que hydrate) */
+                    setTimeout(function(){
+                        try { window._wrPollForReadyReport(); } catch(_){}
+                    }, 2000);
+                    /* Interval cada 30 min */
+                    if (_wrPollerInterval) clearInterval(_wrPollerInterval);
+                    _wrPollerInterval = setInterval(function(){
+                        try { window._wrPollForReadyReport(); } catch(_){}
+                    }, _WR_POLL_MS);
+                };
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', tryStart);
+                } else {
+                    tryStart();
+                }
+            } catch (_e) {}
+        })();
+
+
         try { console.log('%c[MR] Weekly Report · 1.2C.1 ready · await _wrBuildWeeklyContext(weekStart, weekEnd) · compositor prompt IA + fallback top PRs desde bestEfforts', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { console.log('%c[MR] Weekly Report · 2.1 ready · await _wrGenerateReportIfPending([{force?, weekStart?, weekEnd?}]) · llamada API Anthropic + persist Supabase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
+        try { console.log('%c[MR] Weekly Report · 2.2+2.3+2.4 ready · poller + card Home + modal informe visual + 6 gráficos SVG', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
     </script>
 
+
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         WEEKLY REPORT · Fase 2 UI · HTML modal
+         Portalizado al final del body para escapar de stacking contexts.
+         Se abre/cierra vía window._wrOpenReportModal / _wrCloseReportModal.
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div id="mr-wr-modal-backdrop" class="mr-wr-modal-backdrop"
+         onclick="if(event.target===this) window._wrCloseReportModal && window._wrCloseReportModal(false)">
+        <div class="mr-wr-modal-sheet" id="mr-wr-modal-sheet">
+            <div class="mr-wr-modal-hdr">
+                <div class="mr-wr-grabber"></div>
+                <div class="mr-wr-hdr-row">
+                    <button class="mr-wr-hdr-close" type="button"
+                            onclick="window._wrCloseReportModal && window._wrCloseReportModal(false)"
+                            aria-label="Cerrar">✕</button>
+                    <div class="mr-wr-hdr-title">
+                        <div class="mr-wr-hdr-eyebrow">Reporte semanal</div>
+                        <div class="mr-wr-hdr-week" id="mr-wr-hdr-week">—</div>
+                    </div>
+                    <button class="mr-wr-hdr-read" id="mr-wr-hdr-read" type="button"
+                            onclick="window._wrCloseReportModal && window._wrCloseReportModal(true)">
+                        Marcar leído
+                    </button>
+                </div>
+            </div>
+            <div class="mr-wr-modal-body" id="mr-wr-modal-body">
+                <!-- populated dynamically by _wrOpenReportModal -->
+            </div>
+        </div>
+    </div>
 
 
     <!-- ═══ p100-fix2 · Modal Nutrición movido literal al final del body
