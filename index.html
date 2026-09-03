@@ -490,7 +490,18 @@
     }
     /* v2.30.1-p1 · Ocultada. Álvaro no quiere ninguna barra top gradient en widgets Home — solo elevación premium halo + border sutil. Se conserva el ::before por si se quiere reactivar. */
     .mr-rdn .rw::before{display:none;}
-    .mr-rdn .rw:active,.mr-rdn .rw.mr-rdn-pressing{transform:scale(.97);transition:transform .09s ease-out;}
+    /* [v2.30.1-p165] Press feedback con color de la zona actual: el helper
+       _paintReadiness setea --rdn-tint (rgba .10) y --rdn-bd (rgba .35) del
+       topA de la zona (naranja fatiga, amarillo regular, azul bien, verde
+       óptimo, gris muerto). Mismo lenguaje que training-load (cyan) y estado
+       de forma (dorado) pero DINÁMICO según la zona actual. */
+    .mr-rdn .rw{transition:transform .09s ease-out, background-color .09s ease-out, border-color .09s ease-out;}
+    .mr-rdn .rw:active,.mr-rdn .rw.mr-rdn-pressing{
+        transform:scale(.97);
+        background-color: var(--rdn-tint, rgba(0,0,0,.06)) !important;
+        border-color: var(--rdn-bd, rgba(0,0,0,.28)) !important;
+        transition: transform .09s ease-out, background-color .09s ease-out, border-color .09s ease-out;
+    }
     .mr-rdn .head{display:flex;align-items:center;gap:8px;}
     .mr-rdn .pctb{flex-shrink:0;display:flex;flex-direction:column;align-items:flex-start;}
     .mr-rdn .pct{font-size:40px;font-weight:850;line-height:.82;letter-spacing:-2px;color:var(--tw);font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:1px;}
@@ -23387,7 +23398,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Header (fijo)
         content += '<div style="padding:18px 20px 12px;border-bottom:1px solid rgba(59,188,224,.15);flex-shrink:0;">';
         content += '<div style="font-size:15px;font-weight:800;color:#eaf7fd;letter-spacing:.3px;">📊 AUDITORÍA — Detalle</div>';
-        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p164</span></div>';
+        content += '<div style="font-size:11px;color:rgba(234,247,253,.6);margin-top:4px;">' + data.total + ' actividades · ' + data.withStreamsInBucket + ' OK (' + data.pct + '%) · <span style="opacity:.5;">v2.30.1-p165</span></div>';
         content += '</div>';
         // Body scrolleable
         content += '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 20px;">';
@@ -73978,6 +73989,19 @@ window.addEventListener('DOMContentLoaded', function() {
             var pillTx = zmeta ? zmeta.pillTx : '#fff';
             var topA = zmeta ? zmeta.topA : '#334155';
             var topB = zmeta ? zmeta.topB : '#64748b';
+            // [v2.30.1-p165] Derivar rgba(topA, α) para tint (0.10) y border
+            // (0.35) del press feedback. Se aplican vía CSS vars --rdn-tint /
+            // --rdn-bd al pulsar la card. Fallback silencioso al gris neutro
+            // si topA no es hex parseable.
+            var _rdnHexRgba = function(hex, a){
+                try {
+                    var h = String(hex).replace('#','');
+                    var r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+                    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+                } catch(_){ return 'rgba(148,163,184,' + a + ')'; }
+            };
+            var topATint = _rdnHexRgba(topA, .10);
+            var topABd   = _rdnHexRgba(topA, .35);
 
             var mk = (score == null) ? null : Math.max(2, Math.min(98, score));
             var mkHtml = (mk == null) ? '' : '<div class="mk" style="left:' + mk + '%;"></div>';
@@ -73987,7 +74011,7 @@ window.addEventListener('DOMContentLoaded', function() {
             card.classList.remove('has-recovery');
 
             card.innerHTML =
-                '<div class="rw" style="--rdn-accent:' + topA + ';--rdn-accent-hi:' + topB + ';">' +
+                '<div class="rw" style="--rdn-accent:' + topA + ';--rdn-accent-hi:' + topB + ';--rdn-tint:' + topATint + ';--rdn-bd:' + topABd + ';">' +
                   '<div class="rdn-left">' +
                     '<div class="rdn-title">' + rlabel + '</div>' +
                     '<div class="head">' +
@@ -74170,10 +74194,12 @@ window.addEventListener('DOMContentLoaded', function() {
             // v2.30.1-p27 · Wrapper con clase mr-tsb-block-alt para el mismo
             // override cromático que el bloque TSB de Home (CTL azul, ATL
             // amarilla/blanca según modo).
+            // [v2.30.1-p165] Álvaro: sheet más plano. Eliminado banner interior
+            // "ESTADO / EQUILIBRIO" (fondo bsoft + border) que iba arriba del
+            // grid CTL/ATL/TSB. Ahora la sección arranca directa con las 3 stats.
+            // headerTitle sigue como parámetro para compat aunque ya no se usa;
+            // el título "Carga · Fatiga · Forma" lo pinta el propio rdn-sec-h.
             return '<div class="mr-tsb-block-alt" style="padding:14px 15px 13px;">'+
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;background:var(--bsoft);border:1px solid var(--border);border-radius:11px;padding:9px 13px;">'+
-                '<div style="display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:1.2px;"><span style="width:8px;height:8px;border-radius:50%;background:'+d.formColor+';flex-shrink:0;"></span>'+headerTitle+'</div>'+
-                '<div style="display:inline-flex;align-items:center;border:1px solid '+d.formColor+';background:'+d.formColorLt+';border-radius:9px;padding:3px 11px;font-size:10px;font-weight:800;color:'+d.formColor+';text-transform:uppercase;letter-spacing:.7px;">'+d.formLabel+'</div></div>'+
             '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px;">'+
                 '<div class="home-pmc-stat" style="color:var(--pmc-ctl);background:var(--pmc-ctl-lt);"><div style="font-size:20px;font-weight:800;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;color:var(--pmc-ctl);margin-bottom:4px;">'+d.curCtl+'</div><div style="font-size:8.5px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.9px;">CTL Forma</div></div>'+
                 '<div class="home-pmc-stat" style="color:var(--pmc-atl);background:var(--pmc-atl-lt);"><div style="font-size:20px;font-weight:800;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;color:var(--pmc-atl);margin-bottom:4px;">'+d.curAtl+'</div><div style="font-size:8.5px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.9px;">ATL Fatiga</div></div>'+
@@ -74245,8 +74271,13 @@ window.addEventListener('DOMContentLoaded', function() {
             var pmcSec;
             var pmcHtml=(typeof window._mrBuildPmcHtml==='function')?window._mrBuildPmcHtml(window.__mrPMCData,'Estado'):'';
             if(pmcHtml){
+                // [v2.30.1-p165] Álvaro: sheet más plano. Eliminado wrapper
+                // <div class="home-pmc-card"> (card anidada dentro de rdn-sec
+                // con background/border/shadow propios) para que Carga·Fatiga·Forma
+                // quede al mismo nivel visual que las secciones HRV y FC de arriba
+                // (ambas van directas dentro de rdn-sec sin sub-card intermedia).
                 pmcSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--pmc-atl)"></span><span class="rdn-sec-t">Carga · Fatiga · Forma</span><span class="rdn-tsb-tag">TSB</span></div>'+
-                    '<div class="home-pmc-card">'+pmcHtml+'</div></div>';
+                    pmcHtml+'</div>';
             } else {
                 pmcSec='';
             }
