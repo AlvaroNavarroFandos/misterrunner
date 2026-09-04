@@ -39209,7 +39209,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const chartsStack = document.createElement('div');
         chartsStack.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;min-height:0;';
 
-        function buildDynChart(title, color, valStr, vals) {
+        function buildDynChart(title, color, valStr, vals, yFixed) {
             const row = document.createElement('div');
             // [FASE 5.7.4-e] Fondo negro opaco + borde dorado tenue (era #0d1726 + borde blanco)
             row.style.cssText = 'flex:1;background:var(--det-bg);border-radius:8px;padding:5px 9px 4px;border:1px solid var(--det-lbl-accent-bd);display:flex;flex-direction:column;min-height:0;';
@@ -39224,6 +39224,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             canvas.dataset.vals  = JSON.stringify(vals);
             canvas.dataset.color = color;
             canvas.dataset.dyn   = '1'; // marker for new dynamics renderer
+            // [v2.30.1-p181] Rango Y fijo opcional (matchea look-and-feel COROS
+            // oficial que usa ejes estables 0-180 para zancada, 0-16 para osc.
+            // vertical). Sin esto, un outlier residual del acelerómetro
+            // (aunque el mapper ya filtra 40-200) estira toda la escala.
+            if (yFixed && typeof yFixed.min === 'number' && typeof yFixed.max === 'number') {
+                canvas.dataset.ymin = String(yFixed.min);
+                canvas.dataset.ymax = String(yFixed.max);
+            }
             canvasWrap.appendChild(canvas);
             row.appendChild(head);
             row.appendChild(canvasWrap);
@@ -39232,10 +39240,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         chartsStack.appendChild(buildDynChart('Cadencia',       '#FF9500',
             'Media '+(avgCad>0?Math.round(avgCad):'—')+(maxCad>0?' · Máx '+maxCad:'')+' spm', cadVals));
+        // v2.30.1-p181 · Ejes Y fijos para zancada (40-180 cm) y osc. vertical
+        // (4-20 cm), rangos típicos running adulto. Alinea con COROS oficial y
+        // absorbe outliers residuales.
         chartsStack.appendChild(buildDynChart('Zancada',        '#AF52DE',
-            'Media '+(avgStride>0?Math.round(avgStride):'—')+' cm', strideVals));
+            'Media '+(avgStride>0?Math.round(avgStride):'—')+' cm', strideVals,
+            { min: 40, max: 180 }));
         chartsStack.appendChild(buildDynChart('Osc. vertical',  '#3BBCE0',
-            'Media '+(avgVert>0?avgVert.toFixed(1):'—')+' cm', vertVals));
+            'Media '+(avgVert>0?avgVert.toFixed(1):'—')+' cm', vertVals,
+            { min: 4, max: 20 }));
 
         bottomHalf.appendChild(chartsStack);
 
@@ -39776,8 +39789,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Filtrar valores válidos (>0) y submuestrear si hay muchos
         const filt = vals.filter(v => v > 0);
         if (filt.length < 2) return;
-        const minV = Math.min(...filt);
-        const maxV = Math.max(...filt);
+        // [v2.30.1-p181] Rango Y opcional forzado (data-ymin/data-ymax en canvas).
+        // Cuando existe: la gráfica muestra escala fija (matchea look-and-feel de
+        // COROS oficial que fija ejes Y estables). Cuando no existe: rango auto
+        // desde min/max de los datos (comportamiento pre-p181, dinámico).
+        // Usado en Card 3 zancada (40-180 cm) y osc. vertical (4-20 cm) para
+        // que la banda de datos se vea homogénea en el tiempo sin que un
+        // outlier residual estire toda la escala.
+        const forcedYmin = canvas.dataset.ymin ? +canvas.dataset.ymin : null;
+        const forcedYmax = canvas.dataset.ymax ? +canvas.dataset.ymax : null;
+        const minV = (forcedYmin !== null && !Number.isNaN(forcedYmin))
+            ? forcedYmin
+            : Math.min(...filt);
+        const maxV = (forcedYmax !== null && !Number.isNaN(forcedYmax))
+            ? forcedYmax
+            : Math.max(...filt);
         const range = (maxV - minV) || 1;
         const pad = {t:3, b:3, l:1, r:1};
         const n = vals.length;
