@@ -38989,7 +38989,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // OJO: paceVals ahora tiene 4 puntos sintéticos AL INICIO
                     // (prepend v2.30.1-p190). El índice en ds está desplazado -4.
                     {
-                        const _PAUSE_SPD_THRESHOLD = 0.5;   // m/s
+                        // [v2.30.1-p191] Threshold pausa subido 0.5 → 2.0 m/s.
+                        // Motivo: al terminar de correr, el runner suele andar
+                        // 20-30s antes de parar el reloj. Esos puntos tienen
+                        // spd ~1.5 m/s (pace 11'/km) — no son pausa técnica
+                        // (spd>0.5) pero tampoco son running válido. Sin este
+                        // fix, el smoothing win=60 los promediaba con los pace
+                        // reales anteriores → la línea "caía" en el final del
+                        // gráfico mostrando pace lento cuando en realidad el
+                        // corredor ACELERÓ en el último km. COROS oficial corta
+                        // el gráfico al inicio del cool-down (línea vertical).
+                        // 2.0 m/s = 8'20"/km sostenido → todo lo que sea menor
+                        // que trote lento se considera "no running" y se corta.
+                        // Series cortas: sin efecto (siempre spd>3 m/s).
+                        const _PAUSE_SPD_THRESHOLD = 2.0;   // m/s
                         const _PAUSE_MIN_RUN       = 3;     // puntos consecutivos ≈ 3s
                         const _PAUSE_TAIL_BLEED    = 2;     // puntos post-pausa a filtrar tb
                         const _PREPEND_OFFSET      = (!_hasShortLaps && paceVals.length > 20 + 4) ? 4 : 0;
