@@ -39040,16 +39040,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // feel de la app COROS oficial que usa ejes Y anchos).
                 // Con series cortas: mantener 150-800 (dinámico) para no cortar
                 // picos de series a 3:40/km cuando el avg es 5:30/km.
+                // [v2.30.1-p188] respectRange flag → forzar rango sin auto-fit.
                 var _rangeMin = 150, _rangeMax = 800;
+                var _respectRange = false;
                 if (!_hasShortLaps) {
                     var _avgPaceS = (act.durationSec > 0 && act.distKm > 0)
                         ? Math.round(act.durationSec / act.distKm) : 0;
                     if (_avgPaceS > 0) {
                         _rangeMin = Math.max(150, _avgPaceS - 90);
                         _rangeMax = Math.min(800, _avgPaceS + 180);
+                        _respectRange = true;
                     }
                 }
-                drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle);
+                drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle, _respectRange);
             }
             // Card 3: auto-size and render dynamics charts
             c3.querySelectorAll('canvas[data-vals]').forEach(canvas => {
@@ -39724,7 +39727,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         return out;
     }
 
-    function drawSparkline(canvas, vals, baseColor, minV, maxV, zoneBounds, zoneColors, invertY, eleVals) {
+    function drawSparkline(canvas, vals, baseColor, minV, maxV, zoneBounds, zoneColors, invertY, eleVals, respectRange) {
         if (!vals || vals.length < 2) return;
         const ctx = canvas.getContext('2d');
         const W = canvas.width, H = canvas.height;
@@ -39742,8 +39745,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (valid.length < 2) return;
         const dataMin = Math.min(...valid) * 0.97;
         const dataMax = Math.max(...valid) * 1.03;
-        const clampMin = Math.max(minV, dataMin);
-        const clampMax = Math.min(maxV, dataMax);
+        // [v2.30.1-p188] Si respectRange=true, usar minV/maxV tal cual (rango
+        // custom forzado por el caller para look-and-feel específico: pace easy
+        // con eje Y ancho estilo COROS oficial). Si false o undefined (default),
+        // auto-fit clásico clampeando con dataMin/dataMax. Usado en:
+        //   · HR chart: respectRange undefined → auto-fit (rango 30-220 se
+        //     colapsa a 130-180 típico running · línea llena canvas)
+        //   · Pace chart series cortas: respectRange undefined → auto-fit
+        //     (picos de series se ven claros)
+        //   · Pace chart easy/tempo/long: respectRange=true → respeta
+        //     [avgPace-90, avgPace+180] (banda comprimida, picos residuales
+        //     minúsculos, matchea COROS oficial)
+        const clampMin = respectRange ? minV : Math.max(minV, dataMin);
+        const clampMax = respectRange ? maxV : Math.min(maxV, dataMax);
         const pad = {t:6, b:16, l:2, r:2};
 
         function toX(i) { return pad.l + (i / (vals.length-1)) * (W - pad.l - pad.r); }
