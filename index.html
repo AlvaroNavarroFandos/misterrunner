@@ -38952,6 +38952,51 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
                         paceVals.push(pv);
                     }
+                    // [v2.30.1-p189 · fix pausas del gráfico] Detectar pausas del
+                    // reloj (spd < 0.5 m/s durante ≥3 puntos consecutivos = ~3s
+                    // parado) y marcarlas como 0 para que drawSparkline las salte
+                    // del trazado (COROS oficial hace igual: sin valles profundos
+                    // a 8'/km por semáforos/hidratación/parada).
+                    // ─────────────────────────────────────────────────────────
+                    // Preserva el pico inicial de arranque: el warm-up del mapper
+                    // (v1.9.2-p2) ya filtró los primeros ~6s con spd bogus del GPS
+                    // encendiendo. Los puntos que quedan post-warmup son running
+                    // válido, así que spd bajo aquí = pausa real, no aceleración.
+                    // ─────────────────────────────────────────────────────────
+                    // El filtro trabaja sobre ds[i].spd (m/s) directamente porque
+                    // paceVals[i] podría ser 0 por otro motivo (dt<=0). Marca
+                    // paceVals[i]=0 para todos los puntos dentro de la pausa,
+                    // incluyendo los 1-2 puntos posteriores donde el spd retoma
+                    // (transición: pace calculado desde arranque = alto artificial).
+                    {
+                        const _PAUSE_SPD_THRESHOLD = 0.5;   // m/s
+                        const _PAUSE_MIN_RUN       = 3;     // puntos consecutivos ≈ 3s
+                        const _PAUSE_TAIL_BLEED    = 2;     // puntos post-pausa a filtrar tb
+                        // Marcar puntos de pausa: run consecutivo de spd < threshold
+                        const _pauseMask = new Array(paceVals.length).fill(false);
+                        let _runStart = -1;
+                        for (let i = 0; i < paceVals.length; i++) {
+                            const _spd = (ds[i+1] && typeof ds[i+1].spd === 'number') ? ds[i+1].spd : 0;
+                            if (_spd < _PAUSE_SPD_THRESHOLD) {
+                                if (_runStart < 0) _runStart = i;
+                            } else {
+                                if (_runStart >= 0 && (i - _runStart) >= _PAUSE_MIN_RUN) {
+                                    // Cerrar pausa: marcar todo el run + tail bleed
+                                    const _tailEnd = Math.min(paceVals.length - 1, i + _PAUSE_TAIL_BLEED - 1);
+                                    for (let _k = _runStart; _k <= _tailEnd; _k++) _pauseMask[_k] = true;
+                                }
+                                _runStart = -1;
+                            }
+                        }
+                        // Última pausa al final del stream
+                        if (_runStart >= 0 && (paceVals.length - _runStart) >= _PAUSE_MIN_RUN) {
+                            for (let _k = _runStart; _k < paceVals.length; _k++) _pauseMask[_k] = true;
+                        }
+                        // Aplicar máscara: pausas → 0 (drawSparkline las salta)
+                        for (let i = 0; i < paceVals.length; i++) {
+                            if (_pauseMask[i]) paceVals[i] = 0;
+                        }
+                    }
                     // [v2.30.1-p183 · fix coherencia visual línea vs zonas] Moving
                     // average window sobre paceVals antes de drawSparkline.
                     // ─────────────────────────────────────────────────────────
