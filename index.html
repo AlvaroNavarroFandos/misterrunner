@@ -24843,6 +24843,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             try {
                 if (typeof renderActivities === 'function') renderActivities();
             } catch(_){}
+            // [v2.30.1-p135] Repintar widgets Home tras guardar RPE.
+            // Bug: al añadir RPE post-import (sheet quick-RPE), la mini-card
+            // "Último entreno HOY" quedaba desactualizada hasta próximo repaint
+            // global → el badge RPE tardaba en aparecer. Fix: helper canónico
+            // (mismo patrón que _saveEdit y otros save flows).
+            try { if (typeof window._mrRepaintHomeAfterActivityChange === 'function') window._mrRepaintHomeAfterActivityChange(); } catch(_){}
             return true;
         } catch(e) {
             console.warn('[MR][GAP4] _saveRpeToActivity exception:', e);
@@ -31647,8 +31653,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     //   150-250· Muy duro    naranja (long large, series duras, HM)
     //   > 250  · Extremo     rojo    (maratón, ultra)
     //
-    // pct: ancho de la barra fina (0-100), capada al 100% en TRIMP>=300
-    // para que el gradiente verde→rojo sea legible incluso en maratones.
+    // pct: ancho de la barra fina (0-100).
+    // [v2.30.1-p135] Escala ZONIFICADA en 5 tramos de 20% cada uno, alineada
+    // con RPE (que ya es rpe*10 = 10-100%). Interpolación lineal dentro de la
+    // zona para que TRIMP y RPE indiquen esfuerzo visualmente comparable:
+    //   Z1 <30   → 0-20%    (RPE 1-2 Muy fácil)
+    //   Z2 30-80 → 20-40%   (RPE 3-4 Fácil)
+    //   Z3 80-150→ 40-60%   (RPE 5-6 Moderado)
+    //   Z4 150-250→60-80%   (RPE 7-8 Duro)
+    //   Z5 ≥250  → 80-100%  (RPE 9-10 Máximo) — cap suave a 350
+    // Petición Álvaro: "el TRIMP y el RPE tienen que ir de la mano, si son
+    // valores parecidos que las barras sean iguales".
     // ─────────────────────────────────────────────────────────────────
     function _trimpLevel(t) {
         if (t == null || !isFinite(t)) return null;
@@ -31659,8 +31674,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         else if (v < 150) { tag = 'FUERTE';   color = '#5b8fd9'; }
         else if (v < 250) { tag = 'MUY DURO'; color = '#FF9500'; }
         else              { tag = 'EXTREMO';  color = '#F44336'; }
-        // pct para la barra: lineal hasta 300, capado
-        var pct = Math.min(100, Math.max(2, Math.round(v / 3)));
+        // pct zonificado — 5 zonas de 20% cada una, lineal dentro
+        var pct;
+        if      (v <  30) pct = Math.max(2, Math.round((v / 30) * 20));
+        else if (v <  80) pct = Math.round(20 + ((v - 30) / 50) * 20);
+        else if (v < 150) pct = Math.round(40 + ((v - 80) / 70) * 20);
+        else if (v < 250) pct = Math.round(60 + ((v - 150) / 100) * 20);
+        else              pct = Math.min(100, Math.round(80 + ((v - 250) / 100) * 20));
         return { tag: tag, color: color, pct: pct };
     }
 
@@ -36010,10 +36030,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                         <!-- Fila 4: FECHA texto plano al final (9.5px uppercase) — [v5.8 lib pegar+] margin-top:-4px final -->
                         <div class="mr-lib-date-inline" style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;font-family:var(--f);line-height:1;margin-top:-1px;">${df}</div>
-                        <!-- Fila 5: RPE badge + NOTA badge redondo (movido desde fila 2)
-                             [v5.8 lib pegar+] margin-top:3px final -->
-                        ${(act.rpe != null && act.rpe !== '') || act.nota != null ? '<div style="display:flex;align-items:center;gap:6px;line-height:1;margin-top:4px;">'
-                            + ((act.rpe != null && act.rpe !== '' && typeof buildRpeBadge === 'function') ? buildRpeBadge(parseInt(act.rpe, 10)) : '')
+                        <!-- Fila 5: NOTA badge (v2.30.1-p135 · RPE eliminado de minicard
+                             por petición Álvaro: "queda más limpia, ya está en Card 1 y sobra"). -->
+                        ${act.nota != null ? '<div style="display:flex;align-items:center;gap:6px;line-height:1;margin-top:4px;">'
                             + ((act.nota != null) ? (function() {
                                 var _n = act.nota;
                                 var _cn = _notaVisual(_n).color; // v2.4.0-p9 · fuente unificada _notaVisual (D1:B · badge biblioteca)
@@ -37465,6 +37484,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         } catch(e) { console.warn('[MR][F5·5a] testHistory hook (edit):', e); }
         document.getElementById('act-edit-overlay').remove();
         _editPhotoB64 = undefined;
+        // [v2.30.1-p135] Repintar la mini-card "Último entreno HOY" INMEDIATAMENTE
+        // antes que renderActivities (biblio completa). renderActivities recorre
+        // 300+ actividades y bloquea el main thread → el badge foto/RPE tardaba
+        // en aparecer en la mini-card Home. Con la pintada previa, el usuario ve
+        // el badge al momento de cerrar el editor, y la biblioteca actualiza
+        // detrás en el mismo tick.
+        try { if (typeof window._mrRepaintLastActivityCard === 'function') window._mrRepaintLastActivityCard(); } catch(_){}
         renderActivities();
         saveAppState();
         // [FIX widgets Home post-edit · v2.30.1-p84]
@@ -38258,7 +38284,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">EFIC.</span>'
                 +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
                 +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
-                +'<div style="height:100%;width:'+_efPct+'%;border-radius:2px;background:linear-gradient(90deg,#f87171 0%,#facc15 33%,#4ade80 66%,#60a5fa 100%);"></div>'
+                +'<div style="height:100%;width:'+_efPct+'%;border-radius:2px;background:'+_efColor+';"></div>'
                 +'</div>'
                 +'<span style="font-size:14px;font-weight:800;color:'+_efColor+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+efDisplay+'</span>'
                 +(_efTag?'<span style="font-size:11px;color:'+_efColor+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+_efTag+'</span>':'')
@@ -38289,7 +38315,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">RPE</span>'
                     +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
                     +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
-                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:2px;background:linear-gradient(90deg,#4CAF50 0%,#FFC107 35%,#FF9500 65%,#F44336 100%);"></div>'
+                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:2px;background:'+rd.color+';"></div>'
                     +'</div>'
                     +'<span style="font-size:14px;font-weight:800;color:'+rd.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+rd.n+'</span>'
                     +'<span style="font-size:11px;color:'+rd.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+rpeTag+'</span>'
@@ -38320,7 +38346,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">TRIMP</span>'
                 +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
                 +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
-                +'<div style="height:100%;width:'+lvl.pct+'%;border-radius:2px;background:linear-gradient(90deg,#4CAF50 0%,#7aaff5 35%,#FF9500 70%,#F44336 100%);"></div>'
+                +'<div style="height:100%;width:'+lvl.pct+'%;border-radius:2px;background:'+lvl.color+';"></div>'
                 +'</div>'
                 +'<span style="font-size:14px;font-weight:800;color:'+lvl.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+trimpValue+'<span style="font-size:9px;color:var(--det-tt);font-weight:600;margin-left:1px;"> AU</span></span>'
                 +'<span style="font-size:11px;color:'+lvl.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+lvl.tag+'</span>'
@@ -57514,15 +57540,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var df = isNaN(d) ? act.dateStr : d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
 
         // HTML idéntico al de biblioteca (_mrLibRenderOne) para consistencia total
+        // v2.30.1-p135 · RPE eliminado de la minicard (petición Álvaro: "queda
+        // más limpia, ya está en Card 1 y sobra"). Se conserva la variable
+        // _rpeNotaRow por compat de referencias abajo — ahora solo pinta nota.
         var _rpeNotaRow = '';
-        if ((act.rpe != null && act.rpe !== '') || act.nota != null) {
+        if (act.nota != null) {
             _rpeNotaRow = '<div style="display:flex;align-items:center;gap:6px;line-height:1;margin-top:4px;">'
-                + ((act.rpe != null && act.rpe !== '' && typeof buildRpeBadge === 'function') ? buildRpeBadge(parseInt(act.rpe, 10)) : '')
-                + ((act.nota != null) ? (function() {
+                + (function() {
                     var _n = act.nota;
                     var _cn = _notaVisual(_n).color;
                     return '<span style="display:inline-flex;align-items:center;gap:3px;background:'+_cn+'22;border:1px solid '+_cn+'55;border-radius:6px;padding:2px 6px;flex-shrink:0;"><span style="font-size:9px;font-weight:700;color:'+_cn+';font-family:var(--f);">'+_n+'</span></span>';
-                })() : '')
+                })()
                 + '</div>';
         }
 
