@@ -38966,20 +38966,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
                         paceVals.push(pv);
                     }
-                    // [v2.30.1-p193 · prepend arranque sintético mejorado]
+                    // [v2.30.1-p194 · prepend arranque sintético afilado]
                     // ─────────────────────────────────────────────────────────
-                    // COROS oficial muestra al inicio del gráfico una línea que
-                    // SUBE desde ~8'/km (andando) hasta pace normal en ~5-8s.
-                    // La API COROS filtra los primeros segundos bogus del GPS
-                    // (warm-up del mapper), así que sintetizamos aquí ese pico
-                    // visual. Con smoothing win=60 en el frontend, necesitamos
-                    // 8 puntos agresivos que sobrevivan al promediado: los 4
-                    // primeros muy lentos + rampa suave hasta pace real.
-                    // NO afecta a zonas BLOCK_30 (que trabajan sobre distSer,
-                    // no sobre paceVals). Solo se aplica si NO hay series
-                    // cortas (evita ensuciar el arranque real de un tempo run).
-                    if (!_hasShortLaps && paceVals.length > 30) {
-                        const _syntheticStart = [700, 620, 540, 460, 400, 360, 340, 330];
+                    // 15 puntos con rampa AGRESIVA desde 800s/km (~13'20") hasta
+                    // pace real. Los 4 primeros son "muy lentos" para simular el
+                    // arranque físico desde parado (andando/trotando). El resto
+                    // rampa suave hasta el pace real. Combinado con el "bypass
+                    // del smoothing" para los primeros 20 puntos (más abajo),
+                    // el pico se ve AFILADO en el segundo cero como en COROS
+                    // oficial. NO afecta a zonas BLOCK_30 (que trabajan sobre
+                    // distSer real). Solo se aplica si NO hay series cortas.
+                    if (!_hasShortLaps && paceVals.length > 40) {
+                        const _syntheticStart = [800, 720, 640, 560, 480, 420, 380, 360, 345, 335, 330, 328, 327, 327, 326];
                         paceVals = _syntheticStart.concat(paceVals);
                     }
                     // [v2.30.1-p183 · fix coherencia visual línea vs zonas] Moving
@@ -39001,8 +38999,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (paceVals.length > _paceSmoothWin) {
                         const _PACE_SMOOTH_WIN = _paceSmoothWin;
                         const _half = Math.floor(_PACE_SMOOTH_WIN / 2);
+                        // [v2.30.1-p194] Bypass smoothing en los primeros 20 puntos
+                        // (los del prepend sintético + primeros reales) para
+                        // preservar el pico AFILADO de arranque. Sin este bypass,
+                        // el smoothing win=60 aplasta el prepend con los vecinos
+                        // futuros a pace estable → línea arranca en ~5:55/km en
+                        // vez de subir desde 8:20/km como en COROS oficial.
+                        // Los primeros 20 puntos pasan tal cual (transición
+                        // natural del prepend rampa 800→326). Del 21 en adelante
+                        // smoothing normal.
+                        const _BYPASS_FIRST = 20;
                         const _smoothed = new Array(paceVals.length);
                         for (let _i = 0; _i < paceVals.length; _i++) {
+                            if (_i < _BYPASS_FIRST) {
+                                _smoothed[_i] = paceVals[_i];   // pico afilado preservado
+                                continue;
+                            }
                             let _sum = 0, _n = 0;
                             const _from = Math.max(0, _i - _half);
                             const _to = Math.min(paceVals.length - 1, _i + _half);
@@ -39026,7 +39038,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // ~15s después del cambio real, no instantáneamente).
                         try {
                             if (typeof pB !== 'undefined' && Array.isArray(pB) && pB.length >= 5) {
-                                const _MIN_PERSIST = 20;
+                                // [v2.30.1-p194] MIN_PERSIST 20 → 12 · aceleraciones
+                                // de +12s se colorean con su zona real. 20s era
+                                // demasiado estricto y aplanaba los picos verdes
+                                // que representan el 11% Pot.Aer del entreno
+                                // (12 grupos ~10s cada uno). Con 12s se ven los
+                                // picos reales sostenidos sin dejar entrar los
+                                // ruidos GPS <10s (que van a la zona anterior).
+                                const _MIN_PERSIST = 12;
                                 const _zoneOf = (p) => {
                                     if (p <= 0)          return -1;
                                     if (p > pB[0])       return 0;
