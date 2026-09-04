@@ -38689,18 +38689,73 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const pB = ZDEFS_PC.slice(0, -1).map(z => Math.round(pv / z.pctMax));
         const pcZS = [0,0,0,0,0,0];
         const ds = act.distSer || [];
-        for (let i=1;i<ds.length;i++) {
-            const dt=ds[i].t-ds[i-1].t;
-            if (dt<=0||dt>5) continue;
-            let paceSec;
-            if (ds[i].spd && ds[i].spd>0.3) { paceSec=1000/ds[i].spd; }
-            else { const dd=ds[i].d-ds[i-1].d; if (dd<=0) continue; paceSec=dt/(dd/100000); }
-            if      (paceSec>pB[0]) pcZS[0]+=dt;
-            else if (paceSec>pB[1]) pcZS[1]+=dt;
-            else if (paceSec>pB[2]) pcZS[2]+=dt;
-            else if (paceSec>pB[3]) pcZS[3]+=dt;
-            else if (paceSec>pB[4]) pcZS[4]+=dt;
-            else                    pcZS[5]+=dt;
+
+        // [v2.30.1-p182 · fix Bug 1 zonas ritmo] BLOCK_30 algorithm
+        // ─────────────────────────────────────────────────────────────
+        // Antes: bucket per-point (cada segundo se clasificaba a zona por
+        // pace instantáneo). Con jitter GPS típico ±0.3-0.5 m/s en la
+        // frontera de zona, un easy run a 5'26"/km salía 54% ResAer / 45%
+        // PotAer cuando COROS oficial mostraba 87/12.
+        //
+        // Ahora: bloques de 30s no solapados. Para cada bloque calculamos
+        // pace medio = tiempoDelBloque / distanciaDelBloque, y sumamos la
+        // duración del bloque completo a la zona correspondiente. Absorbe
+        // las fluctuaciones sub-30s (que son ruido, no señal).
+        //
+        // Verificado empíricamente en Fase 4 v1.9.3-diag1 vs COROS oficial:
+        //   MR con BLOCK_30 : Recup 3% · ResAer 86% · PotAer 11% (delta 1%)
+        //   COROS oficial   : Recup 0% · ResAer 87% · PotAer 12% · Umbral 1%
+        //   ~perfect match. Ver logs Supabase Edge Function 2026-09-04.
+        //
+        // Aplica a TODAS las fuentes (COROS, Strava, FIT, GPX manual) porque
+        // trabaja sobre distSer que es shape común. Strava también mejora
+        // (mismo bug latente antes de este patch).
+        //
+        // Manejo pausas: solo suma dt entre puntos consecutivos donde
+        // dt <= 5s (mismo patrón que reconstrucción de laps en el mapper
+        // v1.9.1-p1 · L-1.9-13). Así una pausa de semáforo no infla el
+        // pace del bloque.
+        //
+        // Fallback: si distSer inválido (empty o distancia final = 0), no
+        // rellena pcZS (el chart Card 2 muestra sin barras de zonas).
+        const BLOCK_SECS = 30;
+        const canBlock = ds.length >= 2
+            && typeof ds[0].d === 'number'
+            && typeof ds[ds.length-1].d === 'number'
+            && (ds[ds.length-1].d - ds[0].d) > 0;
+
+        function _closeBlock(startIdx, endIdx) {
+            // Suma dt sin pausas (>5s salta)
+            let dtNoPause = 0;
+            for (let j = startIdx + 1; j <= endIdx; j++) {
+                const dtStep = ds[j].t - ds[j-1].t;
+                if (dtStep > 0 && dtStep <= 5) dtNoPause += dtStep;
+            }
+            const ddBlock = ds[endIdx].d - ds[startIdx].d;  // cm
+            if (dtNoPause <= 0 || ddBlock <= 0) return;
+            const paceSec = dtNoPause / (ddBlock / 100000);  // seg/km
+            if      (paceSec>pB[0]) pcZS[0]+=dtNoPause;
+            else if (paceSec>pB[1]) pcZS[1]+=dtNoPause;
+            else if (paceSec>pB[2]) pcZS[2]+=dtNoPause;
+            else if (paceSec>pB[3]) pcZS[3]+=dtNoPause;
+            else if (paceSec>pB[4]) pcZS[4]+=dtNoPause;
+            else                    pcZS[5]+=dtNoPause;
+        }
+
+        if (canBlock) {
+            let blockStartIdx = 0;
+            let blockDeadline = ds[0].t + BLOCK_SECS;
+            for (let i = 1; i < ds.length; i++) {
+                if (ds[i].t >= blockDeadline) {
+                    _closeBlock(blockStartIdx, i - 1);
+                    blockStartIdx = i;
+                    blockDeadline = ds[i].t + BLOCK_SECS;
+                }
+            }
+            // Cerrar bloque final (parcial si no llegó al deadline)
+            if (blockStartIdx < ds.length - 1) {
+                _closeBlock(blockStartIdx, ds.length - 1);
+            }
         }
         const pcTotal = pcZS.reduce((a,b)=>a+b,0)||1;
         const pcLabels = [
