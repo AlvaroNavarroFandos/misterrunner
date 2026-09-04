@@ -24396,16 +24396,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var uid = sessRes && sessRes.data && sessRes.data.session
                   && sessRes.data.session.user && sessRes.data.session.user.id;
         if (!uid) throw new Error('No hay sesión activa');
-        // Query solo activities Strava con streams_path
+        // Query activities candidatas con streams_path.
+        // [v2.30.1-p136 fix2] Álvaro confirma que sus Strava webhook aparecen con
+        // source='manual' en BD (todo el pipeline _mapManualActToDbRow marca así,
+        // sean Strava webhook, .fit local o COROS). El distintivo real es
+        // filesLoaded en memoria — no persiste en BD. Fix: procesar TODAS las
+        // manual + strava* + null. El saneador es idempotente: si no detecta
+        // corrupción específica (splits fantasma o bloques auto-lap easy/recovery)
+        // NO modifica el stream → activities .fit locales y COROS sin bug pasan
+        // intactas. Solo las Strava con corrupción real se re-suben.
         var qRes = await sb
             .from('activities')
             .select('id, name, source, dist_km, workout_type, streams_path')
             .eq('user_id', uid)
-            .in('source', ['strava_auto', 'strava'])
+            .or('source.in.(manual,strava_auto,strava,strava_bulk),source.is.null')
             .not('streams_path', 'is', null);
         if (qRes && qRes.error) throw new Error('Query activities: ' + qRes.error.message);
         var rows = (qRes && qRes.data) ? qRes.data : [];
-        console.log('[MR][p136 sanea] activities Strava candidatas:', rows.length);
+        console.log('[MR][p136 sanea] activities candidatas:', rows.length);
 
         // Heurística infer type (mismo criterio que _mapDbRowToAct)
         function _inferType(distKm) {
