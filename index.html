@@ -38947,89 +38947,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } else {
                     paceVals = [];
                     for (let i=1;i<ds.length;i++){
+                        // [v2.30.1-p193] Detectar pausas del reloj por gaps de
+                        // tiempo entre puntos consecutivos. Cuando el reloj
+                        // pausa (semáforo, hidratación, botón pausa), NO genera
+                        // puntos durante ese tiempo → aparece un salto de dt.
+                        // Umbral 6s: menos que eso puede ser un frenazo mínimo
+                        // (curva cerrada, cruce peatones) y se considera continuo.
+                        // 6+ es una pausa real (semáforo típico, botón pausa).
+                        // Estas pausas son las que MR ya filtra para el cálculo
+                        // de "ritmo en movimiento" en zonas BLOCK_30.
+                        const _gapS = ds[i].t - ds[i-1].t;
+                        if (_gapS > 6) {
+                            paceVals.push(0);   // corte de pausa (drawSparkline pinta línea vertical)
+                            continue;
+                        }
                         let pv = 0;
                         if (ds[i].spd && ds[i].spd > 0.3) { pv = Math.min(800, 1000/ds[i].spd); }
                         else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
                         paceVals.push(pv);
                     }
-                    // [v2.30.1-p190 · prepend arranque sintético]
+                    // [v2.30.1-p193 · prepend arranque sintético mejorado]
                     // ─────────────────────────────────────────────────────────
                     // COROS oficial muestra al inicio del gráfico una línea que
-                    // SUBE desde ~8'/km (andando/arrancando) hasta pace normal
-                    // en ~4-6 segundos. Esto es el runner físicamente arrancando
-                    // desde parado. El API COROS NO nos devuelve esos primeros
-                    // segundos (el warm-up del mapper los filtra por bogus GPS
-                    // ~2:06/km) → tenemos que sintetizarlo aquí para replicar
-                    // el look-and-feel de COROS oficial.
-                    // ─────────────────────────────────────────────────────────
-                    // Prependemos 4 puntos con paces decrecientes que simulan:
-                    //   pt 0: 550s/km (9:10, arrancando andando)
-                    //   pt 1: 450s/km (7:30, trotando)
-                    //   pt 2: 380s/km (6:20, easy suave)
-                    //   pt 3: 340s/km (5:40, casi ya al pace real)
-                    // Efecto visual: línea sube desde el fondo del canvas hasta
-                    // el pace estable en ~4 puntos. NO afecta a zonas BLOCK_30
-                    // (que trabajan sobre distSer real, no sobre paceVals).
-                    // Solo se aplica si NO hay series cortas (para no ensuciar
-                    // el arranque real de un entreno de series).
-                    if (!_hasShortLaps && paceVals.length > 20) {
-                        const _syntheticStart = [550, 450, 380, 340];
+                    // SUBE desde ~8'/km (andando) hasta pace normal en ~5-8s.
+                    // La API COROS filtra los primeros segundos bogus del GPS
+                    // (warm-up del mapper), así que sintetizamos aquí ese pico
+                    // visual. Con smoothing win=60 en el frontend, necesitamos
+                    // 8 puntos agresivos que sobrevivan al promediado: los 4
+                    // primeros muy lentos + rampa suave hasta pace real.
+                    // NO afecta a zonas BLOCK_30 (que trabajan sobre distSer,
+                    // no sobre paceVals). Solo se aplica si NO hay series
+                    // cortas (evita ensuciar el arranque real de un tempo run).
+                    if (!_hasShortLaps && paceVals.length > 30) {
+                        const _syntheticStart = [700, 620, 540, 460, 400, 360, 340, 330];
                         paceVals = _syntheticStart.concat(paceVals);
-                    }
-                    // [v2.30.1-p189 · fix pausas del gráfico] Detectar pausas del
-                    // reloj (spd < 0.5 m/s durante ≥3 puntos consecutivos = ~3s
-                    // parado) y marcarlas como 0 para que drawSparkline las salte
-                    // del trazado + dibujar corte vertical (v2.30.1-p190).
-                    // ─────────────────────────────────────────────────────────
-                    // El filtro trabaja sobre ds[i].spd (m/s) directamente porque
-                    // paceVals[i] podría ser 0 por otro motivo (dt<=0). Marca
-                    // paceVals[i]=0 para todos los puntos dentro de la pausa,
-                    // incluyendo los 1-2 puntos posteriores donde el spd retoma
-                    // (transición: pace calculado desde arranque = alto artificial).
-                    // OJO: paceVals ahora tiene 4 puntos sintéticos AL INICIO
-                    // (prepend v2.30.1-p190). El índice en ds está desplazado -4.
-                    {
-                        // [v2.30.1-p191] Threshold pausa subido 0.5 → 2.0 m/s.
-                        // Motivo: al terminar de correr, el runner suele andar
-                        // 20-30s antes de parar el reloj. Esos puntos tienen
-                        // spd ~1.5 m/s (pace 11'/km) — no son pausa técnica
-                        // (spd>0.5) pero tampoco son running válido. Sin este
-                        // fix, el smoothing win=60 los promediaba con los pace
-                        // reales anteriores → la línea "caía" en el final del
-                        // gráfico mostrando pace lento cuando en realidad el
-                        // corredor ACELERÓ en el último km. COROS oficial corta
-                        // el gráfico al inicio del cool-down (línea vertical).
-                        // 2.0 m/s = 8'20"/km sostenido → todo lo que sea menor
-                        // que trote lento se considera "no running" y se corta.
-                        // Series cortas: sin efecto (siempre spd>3 m/s).
-                        const _PAUSE_SPD_THRESHOLD = 2.0;   // m/s
-                        const _PAUSE_MIN_RUN       = 3;     // puntos consecutivos ≈ 3s
-                        const _PAUSE_TAIL_BLEED    = 2;     // puntos post-pausa a filtrar tb
-                        const _PREPEND_OFFSET      = (!_hasShortLaps && paceVals.length > 20 + 4) ? 4 : 0;
-                        // Marcar puntos de pausa: run consecutivo de spd < threshold
-                        const _pauseMask = new Array(paceVals.length).fill(false);
-                        let _runStart = -1;
-                        for (let i = _PREPEND_OFFSET; i < paceVals.length; i++) {
-                            const _dsIdx = i - _PREPEND_OFFSET + 1;
-                            const _spd = (ds[_dsIdx] && typeof ds[_dsIdx].spd === 'number') ? ds[_dsIdx].spd : 0;
-                            if (_spd < _PAUSE_SPD_THRESHOLD) {
-                                if (_runStart < 0) _runStart = i;
-                            } else {
-                                if (_runStart >= 0 && (i - _runStart) >= _PAUSE_MIN_RUN) {
-                                    const _tailEnd = Math.min(paceVals.length - 1, i + _PAUSE_TAIL_BLEED - 1);
-                                    for (let _k = _runStart; _k <= _tailEnd; _k++) _pauseMask[_k] = true;
-                                }
-                                _runStart = -1;
-                            }
-                        }
-                        // Última pausa al final del stream
-                        if (_runStart >= 0 && (paceVals.length - _runStart) >= _PAUSE_MIN_RUN) {
-                            for (let _k = _runStart; _k < paceVals.length; _k++) _pauseMask[_k] = true;
-                        }
-                        // Aplicar máscara: pausas → 0 (drawSparkline las salta + pinta corte)
-                        for (let i = 0; i < paceVals.length; i++) {
-                            if (_pauseMask[i]) paceVals[i] = 0;
-                        }
                     }
                     // [v2.30.1-p183 · fix coherencia visual línea vs zonas] Moving
                     // average window sobre paceVals antes de drawSparkline.
@@ -39132,46 +39083,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 }
                 drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle, _respectRange);
-
-                // ═════════════════════════════════════════════════════════
-                // DIAG v2.30.1-p192b TEMPORAL (2026-09-04)
-                // Dump del distSer para debuggear final gráfica pace.
-                // Se ejecuta 1 vez por sesión en la PRIMERA activity que abras.
-                // QUITAR TRAS DIAGNÓSTICO.
-                // ═════════════════════════════════════════════════════════
-                try {
-                    if (!window.__mrDiagP192Shown && ds && ds.length > 10) {
-                        window.__mrDiagP192Shown = true;
-                        const _fmt = (p) => p ? `t=${p.t} d=${p.d} spd=${(p.spd||0).toFixed(2)}` : 'null';
-                        const _last15 = [];
-                        for (let _z = Math.max(0, ds.length - 15); _z < ds.length; _z++) {
-                            _last15.push(`[${_z}] ${_fmt(ds[_z])}`);
-                        }
-                        const _first5 = [];
-                        for (let _z = 0; _z < Math.min(5, ds.length); _z++) {
-                            _first5.push(`[${_z}] ${_fmt(ds[_z])}`);
-                        }
-                        const _paceLast15 = [];
-                        for (let _z = Math.max(0, paceVals.length - 15); _z < paceVals.length; _z++) {
-                            _paceLast15.push(`[${_z}] ${Math.round(paceVals[_z])}`);
-                        }
-                        const _msg =
-                            'DIAG p192b\n'
-                            + `activity: ${act.name || '?'} ${act.activity_date || act.start_date || '?'}\n`
-                            + `dist=${act.distKm || act.dist_km} dur=${act.durationSec || act.duration_sec}s\n\n`
-                            + `distSer.length = ${ds.length}\n`
-                            + `paceVals.length = ${paceVals.length}\n\n`
-                            + `PRIMEROS 5 distSer:\n${_first5.join('\n')}\n\n`
-                            + `ÚLTIMOS 15 distSer:\n${_last15.join('\n')}\n\n`
-                            + `ÚLTIMOS 15 paceVals:\n${_paceLast15.join('\n')}`;
-                        setTimeout(function(){ alert(_msg); }, 800);
-                    }
-                } catch(_e) {
-                    setTimeout(function(){ alert('DIAG p192b ERROR: ' + _e.message); }, 800);
-                }
-                // ═════════════════════════════════════════════════════════
-                // FIN DIAG v2.30.1-p192b
-                // ═════════════════════════════════════════════════════════
             }
             // Card 3: auto-size and render dynamics charts
             c3.querySelectorAll('canvas[data-vals]').forEach(canvas => {
@@ -39976,9 +39887,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function _drawPauseCut(xPos) {
             ctx.save();
             ctx.shadowBlur = 0;
-            ctx.strokeStyle = _spIsDark ? 'rgba(255,255,255,.35)' : 'rgba(24,24,27,.30)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([3, 3]);
+            // [v2.30.1-p193] Más visibles: 1→1.6px, opacity .35→.55 / .30→.50,
+            // dash 3-3 → 4-4 (matchea densidad visual de COROS oficial)
+            ctx.strokeStyle = _spIsDark ? 'rgba(255,255,255,.55)' : 'rgba(24,24,27,.50)';
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([4, 4]);
             ctx.beginPath();
             ctx.moveTo(xPos, pad.t);
             ctx.lineTo(xPos, H - pad.b);
