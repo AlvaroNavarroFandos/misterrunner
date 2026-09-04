@@ -39925,12 +39925,54 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             phTrack.style.cssText = 'position:relative;flex:1;width:100%;overflow:hidden;';
             const phInner = document.createElement('div');
             phInner.style.cssText = 'height:100%;white-space:nowrap;font-size:0;transition:transform .3s cubic-bezier(.25,.46,.45,.94);transform:translateX(0);';
-            _photoSources.forEach(function(src){
+            _photoSources.forEach(function(src, idx){
                 var slide = document.createElement('div');
                 slide.style.cssText = 'display:inline-block;vertical-align:top;width:100%;height:100%;background:var(--det-bg);font-size:initial;';
                 var img = document.createElement('img');
                 img.src = src;
                 img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+                // [v2.30.1-p136] Fallback onerror: si la URL firmada caducó (URLs
+                // generadas con TTL viejo de 3600s que ya expiraron), pedir una
+                // nueva URL al momento y reemplazar src. Solo aplica a URLs de
+                // Storage (photoB64 base64 no puede caducar).
+                var _isSignedUrl = typeof src === 'string'
+                    && src.indexOf('data:') !== 0
+                    && (src.indexOf('supabase') > 0 || src.indexOf('/activity-photos/') > 0);
+                if (_isSignedUrl) {
+                    img.onerror = function() {
+                        // Evita loops si la refirma también falla
+                        if (this.dataset.mrRetry === '1') {
+                            this.style.opacity = '.35';
+                            // Placeholder legible en lugar del icono ? roto
+                            var _ph = document.createElement('div');
+                            _ph.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--det-tm);font-size:12px;font-family:var(--f);gap:6px;pointer-events:none;';
+                            _ph.innerHTML = '<div style="font-size:22px;opacity:.5;">📷</div><div>Foto no disponible</div>';
+                            if (slide && !slide.querySelector('.mr-photo-placeholder')) {
+                                _ph.className = 'mr-photo-placeholder';
+                                slide.appendChild(_ph);
+                            }
+                            return;
+                        }
+                        this.dataset.mrRetry = '1';
+                        var _imgEl = this;
+                        (async function() {
+                            try {
+                                if (typeof window._reSignPhotoUrl === 'function' && act && act._dbActivityId) {
+                                    var newUrl = await window._reSignPhotoUrl(act._dbActivityId, idx);
+                                    if (newUrl) {
+                                        _imgEl.src = newUrl;
+                                        // Actualizar también act._photoUrls para consistencia
+                                        if (Array.isArray(act._photoUrls) && act._photoUrls[idx]) {
+                                            act._photoUrls[idx] = newUrl;
+                                        }
+                                    }
+                                }
+                            } catch(e) {
+                                console.warn('[MR][p136 photo re-sign]', e);
+                            }
+                        })();
+                    };
+                }
                 slide.appendChild(img);
                 phInner.appendChild(slide);
             });
@@ -52846,6 +52888,68 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return [];
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // [v2.30.1-p136] Re-firmar una URL específica bajo demanda.
+    // ═══════════════════════════════════════════════════════════════════════
+    // Se llama desde el onerror de <img> del visor cuando una URL cacheada
+    // caducó (URLs generadas con TTL viejo de 3600s que ya expiraron, o
+    // caducación mid-sesión en sesiones muy largas). Flujo:
+    //   1) Consulta el path físico en tabla activity_photos (source de verdad)
+    //   2) Invalida cache local para esa activity
+    //   3) Genera URL nueva con TTL actual (7 días)
+    //   4) Actualiza cache y devuelve la URL
+    // Robusta: si algo falla devuelve null y el visor mostrará placeholder.
+    // Idempotente: llamar 2 veces devuelve URLs frescas cada vez.
+    // ═══════════════════════════════════════════════════════════════════════
+    async function _reSignPhotoUrl(activityId, photoIdx) {
+        try {
+            if (!activityId) return null;
+            var idx = (photoIdx != null) ? Number(photoIdx) : 0;
+            if (isNaN(idx) || idx < 0) idx = 0;
+            var sb = window._sbClient;
+            if (!sb) return null;
+            var sessRes = await sb.auth.getSession();
+            var uid = sessRes && sessRes.data && sessRes.data.session
+                      && sessRes.data.session.user && sessRes.data.session.user.id;
+            if (!uid) return null;
+            // Consultar path desde BD (fuente de verdad)
+            var qRes = await sb
+                .from('activity_photos')
+                .select('storage_path, position')
+                .eq('user_id', uid)
+                .eq('activity_id', activityId)
+                .order('position', { ascending: true });
+            if (qRes && qRes.error) {
+                console.warn('[MR][p136 re-sign] query activity_photos error:', qRes.error);
+                return null;
+            }
+            var rows = (qRes && qRes.data) ? qRes.data : [];
+            if (!rows.length || !rows[idx] || !rows[idx].storage_path) {
+                console.warn('[MR][p136 re-sign] no path para activityId=' + activityId + ' idx=' + idx);
+                return null;
+            }
+            var path = rows[idx].storage_path;
+            // Invalidar cache local completa para esta activity (todas las URLs
+            // podrían estar igualmente caducadas si vinieron del mismo batch)
+            try { if (_photoUrlsCache && _photoUrlsCache[activityId]) delete _photoUrlsCache[activityId]; } catch(_){}
+            // Re-firmar con TTL actual (7 días tras Patch A)
+            var sigRes = await sb.storage
+                .from('activity-photos')
+                .createSignedUrl(path, _PHOTO_SIGNED_URL_TTL);
+            if (sigRes && sigRes.error) {
+                console.warn('[MR][p136 re-sign] createSignedUrl error:', sigRes.error);
+                return null;
+            }
+            var newUrl = sigRes && sigRes.data && sigRes.data.signedUrl;
+            console.log('[MR][p136 re-sign] URL refrescada para activityId=' + String(activityId).slice(0,8) + '… idx=' + idx);
+            return newUrl || null;
+        } catch(e) {
+            console.warn('[MR][p136 re-sign] exception:', e);
+            return null;
+        }
+    }
+    window._reSignPhotoUrl = _reSignPhotoUrl;
 
     async function deleteActivityFromIDB(id) {
         try {
