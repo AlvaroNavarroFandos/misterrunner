@@ -38952,36 +38952,57 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         else { const dd=ds[i].d-ds[i-1].d,dt=ds[i].t-ds[i-1].t; pv=(dt>0&&dd>0)?Math.min(800,dt/(dd/100000)):0; }
                         paceVals.push(pv);
                     }
+                    // [v2.30.1-p190 · prepend arranque sintético]
+                    // ─────────────────────────────────────────────────────────
+                    // COROS oficial muestra al inicio del gráfico una línea que
+                    // SUBE desde ~8'/km (andando/arrancando) hasta pace normal
+                    // en ~4-6 segundos. Esto es el runner físicamente arrancando
+                    // desde parado. El API COROS NO nos devuelve esos primeros
+                    // segundos (el warm-up del mapper los filtra por bogus GPS
+                    // ~2:06/km) → tenemos que sintetizarlo aquí para replicar
+                    // el look-and-feel de COROS oficial.
+                    // ─────────────────────────────────────────────────────────
+                    // Prependemos 4 puntos con paces decrecientes que simulan:
+                    //   pt 0: 550s/km (9:10, arrancando andando)
+                    //   pt 1: 450s/km (7:30, trotando)
+                    //   pt 2: 380s/km (6:20, easy suave)
+                    //   pt 3: 340s/km (5:40, casi ya al pace real)
+                    // Efecto visual: línea sube desde el fondo del canvas hasta
+                    // el pace estable en ~4 puntos. NO afecta a zonas BLOCK_30
+                    // (que trabajan sobre distSer real, no sobre paceVals).
+                    // Solo se aplica si NO hay series cortas (para no ensuciar
+                    // el arranque real de un entreno de series).
+                    if (!_hasShortLaps && paceVals.length > 20) {
+                        const _syntheticStart = [550, 450, 380, 340];
+                        paceVals = _syntheticStart.concat(paceVals);
+                    }
                     // [v2.30.1-p189 · fix pausas del gráfico] Detectar pausas del
                     // reloj (spd < 0.5 m/s durante ≥3 puntos consecutivos = ~3s
                     // parado) y marcarlas como 0 para que drawSparkline las salte
-                    // del trazado (COROS oficial hace igual: sin valles profundos
-                    // a 8'/km por semáforos/hidratación/parada).
-                    // ─────────────────────────────────────────────────────────
-                    // Preserva el pico inicial de arranque: el warm-up del mapper
-                    // (v1.9.2-p2) ya filtró los primeros ~6s con spd bogus del GPS
-                    // encendiendo. Los puntos que quedan post-warmup son running
-                    // válido, así que spd bajo aquí = pausa real, no aceleración.
+                    // del trazado + dibujar corte vertical (v2.30.1-p190).
                     // ─────────────────────────────────────────────────────────
                     // El filtro trabaja sobre ds[i].spd (m/s) directamente porque
                     // paceVals[i] podría ser 0 por otro motivo (dt<=0). Marca
                     // paceVals[i]=0 para todos los puntos dentro de la pausa,
                     // incluyendo los 1-2 puntos posteriores donde el spd retoma
                     // (transición: pace calculado desde arranque = alto artificial).
+                    // OJO: paceVals ahora tiene 4 puntos sintéticos AL INICIO
+                    // (prepend v2.30.1-p190). El índice en ds está desplazado -4.
                     {
                         const _PAUSE_SPD_THRESHOLD = 0.5;   // m/s
                         const _PAUSE_MIN_RUN       = 3;     // puntos consecutivos ≈ 3s
                         const _PAUSE_TAIL_BLEED    = 2;     // puntos post-pausa a filtrar tb
+                        const _PREPEND_OFFSET      = (!_hasShortLaps && paceVals.length > 20 + 4) ? 4 : 0;
                         // Marcar puntos de pausa: run consecutivo de spd < threshold
                         const _pauseMask = new Array(paceVals.length).fill(false);
                         let _runStart = -1;
-                        for (let i = 0; i < paceVals.length; i++) {
-                            const _spd = (ds[i+1] && typeof ds[i+1].spd === 'number') ? ds[i+1].spd : 0;
+                        for (let i = _PREPEND_OFFSET; i < paceVals.length; i++) {
+                            const _dsIdx = i - _PREPEND_OFFSET + 1;
+                            const _spd = (ds[_dsIdx] && typeof ds[_dsIdx].spd === 'number') ? ds[_dsIdx].spd : 0;
                             if (_spd < _PAUSE_SPD_THRESHOLD) {
                                 if (_runStart < 0) _runStart = i;
                             } else {
                                 if (_runStart >= 0 && (i - _runStart) >= _PAUSE_MIN_RUN) {
-                                    // Cerrar pausa: marcar todo el run + tail bleed
                                     const _tailEnd = Math.min(paceVals.length - 1, i + _PAUSE_TAIL_BLEED - 1);
                                     for (let _k = _runStart; _k <= _tailEnd; _k++) _pauseMask[_k] = true;
                                 }
@@ -38992,7 +39013,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (_runStart >= 0 && (paceVals.length - _runStart) >= _PAUSE_MIN_RUN) {
                             for (let _k = _runStart; _k < paceVals.length; _k++) _pauseMask[_k] = true;
                         }
-                        // Aplicar máscara: pausas → 0 (drawSparkline las salta)
+                        // Aplicar máscara: pausas → 0 (drawSparkline las salta + pinta corte)
                         for (let i = 0; i < paceVals.length; i++) {
                             if (_pauseMask[i]) paceVals[i] = 0;
                         }
@@ -39041,7 +39062,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         // ~15s después del cambio real, no instantáneamente).
                         try {
                             if (typeof pB !== 'undefined' && Array.isArray(pB) && pB.length >= 5) {
-                                const _MIN_PERSIST = 15;
+                                const _MIN_PERSIST = 20;
                                 const _zoneOf = (p) => {
                                     if (p <= 0)          return -1;
                                     if (p > pB[0])       return 0;
@@ -39830,8 +39851,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const eY = v => (H - 2) - ((v - eMin) / (eMax - eMin)) * ((H - 2) - eTop);
                 const eX = i => pad.l + (i / (eleVals.length - 1)) * (W - pad.l - pad.r);
                 const grad = ctx.createLinearGradient(0, eTop, 0, H);
-                grad.addColorStop(0, _spIsDark ? 'rgba(150,155,170,.32)' : 'rgba(120,120,130,.28)');
-                grad.addColorStop(1, _spIsDark ? 'rgba(150,155,170,.02)' : 'rgba(120,120,130,.02)');
+                // [v2.30.1-p190] Silueta elevación atenuada del 100% al 30%.
+                // Motivo: en la comparación con COROS oficial, MR mostraba la
+                // silueta demasiado prominente, robando protagonismo a la
+                // línea de datos. Al 30% queda como fondo sutil informativo
+                // (matchea look-and-feel de COROS/Strava). Aplica a AMBAS
+                // sparklines (pace Card 2 y FC Card 2) sin tocar líneas ni
+                // zonas de datos.
+                grad.addColorStop(0, _spIsDark ? 'rgba(150,155,170,.10)' : 'rgba(120,120,130,.09)');
+                grad.addColorStop(1, _spIsDark ? 'rgba(150,155,170,.01)' : 'rgba(120,120,130,.01)');
                 ctx.beginPath();
                 ctx.moveTo(pad.l, H);
                 ctx.lineTo(eX(0), eY(eleVals[0]));
@@ -39842,13 +39870,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ctx.beginPath();
                 ctx.moveTo(eX(0), eY(eleVals[0]));
                 for (let i = 1; i < eleVals.length; i++) ctx.lineTo(eX(i), eY(eleVals[i]));
-                ctx.strokeStyle = _spIsDark ? 'rgba(160,165,180,.36)' : 'rgba(120,120,130,.32)';
+                ctx.strokeStyle = _spIsDark ? 'rgba(160,165,180,.12)' : 'rgba(120,120,130,.10)';
                 ctx.lineWidth = 1; ctx.stroke();
             }
         }
 
         // Smooth line using 15-point rolling average
+        // [v2.30.1-p190] Preservar valores 0 (pausas). Antes: 0 se sustituía
+        // por la media de vecinos, difuminando las pausas. Ahora 0 se mantiene
+        // como 0 → el renderer detecta el corte y dibuja línea vertical gris.
         const smooth = vals.map((v,i) => {
+            if (v <= 0) return 0;   // pausa preservada
             const w = 15;
             const sl = Math.max(0,i-w), sr = Math.min(vals.length-1,i+w);
             const seg = vals.slice(sl,sr+1).filter(x=>x>0&&x<maxV);
@@ -39858,6 +39890,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── [D2] Línea coloreada por zona con glow (premium) ──
         // Se dibuja por tramos contiguos de misma zona (pocos strokes con
         // shadowBlur → barato aunque la serie tenga miles de puntos).
+        // [v2.30.1-p190] Cortes verticales en pausas: cada vez que smooth[i]
+        // es 0 (pausa detectada), se cierra el segmento anterior, se dibuja
+        // una línea vertical gris discontinua en esa posición X, y se reinicia
+        // el segmento tras la pausa (matchea COROS oficial que muestra cortes
+        // verticales en cada pausa del reloj: semáforo, hidratación, parada).
         function _ziOf(v) {
             if (v <= 0) return -1;
             if (invertY) {
@@ -39877,15 +39914,51 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.lineWidth   = 2.6;
             ctx.beginPath();
             ctx.moveTo(toX(a), toY(smooth[a]));
-            for (let i = a + 1; i <= b; i++) ctx.lineTo(toX(i), toY(smooth[i]));
+            for (let i = a + 1; i <= b; i++) {
+                if (smooth[i] > 0) ctx.lineTo(toX(i), toY(smooth[i]));
+            }
             ctx.stroke();
         }
-        let _rs = 0, _rz = _ziOf(smooth[0]);
-        for (let i = 1; i < smooth.length; i++) {
-            const z = _ziOf(smooth[i]);
-            if (z !== _rz) { _flushSeg(_rs, i, _rz); _rs = i; _rz = z; }
+        // Función para pintar corte vertical (línea gris discontinua) en pausa
+        function _drawPauseCut(xPos) {
+            ctx.save();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = _spIsDark ? 'rgba(255,255,255,.35)' : 'rgba(24,24,27,.30)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(xPos, pad.t);
+            ctx.lineTo(xPos, H - pad.b);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
         }
-        _flushSeg(_rs, smooth.length - 1, _rz);
+        // Iterar detectando cambios de zona Y cortes de pausa
+        let _rs = 0;
+        let _rz = _ziOf(smooth[0]);
+        let _inPause = smooth[0] <= 0;
+        let _pauseCutDrawn = false;
+        for (let i = 1; i < smooth.length; i++) {
+            const _isPauseHere = smooth[i] <= 0;
+            if (_isPauseHere && !_inPause) {
+                // Entrada a pausa: cerrar segmento actual, pintar corte
+                _flushSeg(_rs, i - 1, _rz);
+                _drawPauseCut(toX(i));
+                _inPause = true;
+                _pauseCutDrawn = true;
+            } else if (!_isPauseHere && _inPause) {
+                // Salida de pausa: iniciar nuevo segmento
+                _rs = i;
+                _rz = _ziOf(smooth[i]);
+                _inPause = false;
+                _pauseCutDrawn = false;
+            } else if (!_isPauseHere) {
+                // Zona cambia dentro de segmento válido
+                const z = _ziOf(smooth[i]);
+                if (z !== _rz) { _flushSeg(_rs, i, _rz); _rs = i; _rz = z; }
+            }
+        }
+        if (!_inPause) _flushSeg(_rs, smooth.length - 1, _rz);
         ctx.restore();
 
         // Avg reference line (dashed red)
