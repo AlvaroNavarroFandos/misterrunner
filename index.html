@@ -38943,14 +38943,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function calcVert(spd) { return spd > 0.3 ? Math.round(VERT_K / Math.sqrt(spd) * 10) / 10 : 0; }
         function calcRatio(vCm, sCm) { return sCm > 0 && vCm > 0 ? Math.round(vCm / sCm * 1000) / 10 : 0; }
 
+        // [v2.30.1-p180 · fix Bug 2+3] Cuando la activity viene con series
+        // biomecánicas reales del acelerómetro COROS (act.strideSer per-point
+        // en cm, act.vertSer per-point en cm oscilación vertical), preferirlas
+        // sobre los cálculos derivados spd*60/spm y VERT_K/sqrt(spd).
+        //   · strideSer proviene de pt.cadenceLength (edge fn coros-sync
+        //     v1.9.2-p1) — datos reales del reloj, no derivados. Arregla la
+        //     gráfica de zancada que aparecía TOTALMENTE PLANA.
+        //   · vertSer proviene de pt.verticalVibration/10 — datos reales del
+        //     acelerómetro (más precisos que el modelo empírico VERT_K=18.16
+        //     calibrado a mano).
+        // Fallback preservado (arrays vacíos → cálculo original) para Strava,
+        // activities COROS pre-v1.9.2-p1, y otros dispositivos.
+        const strideByT = {};
+        const vertByT   = {};
+        if (Array.isArray(act.strideSer)) act.strideSer.forEach(s => { if (s && s.v > 0) strideByT[s.t] = s.v; });
+        if (Array.isArray(act.vertSer))   act.vertSer.forEach(s   => { if (s && s.v > 0) vertByT[s.t]   = s.v; });
+
         if (cadSrc.length > 0) {
             cadSrc.forEach(c => {
                 const spm = c.v * 2;
                 cadVals.push(spm);
                 const di  = dsMap[c.t];
                 const spd = (di !== undefined && ds3[di] && ds3[di].spd > 0.3) ? ds3[di].spd : 0;
-                const sCm = spd > 0 && spm > 0 ? Math.round(spd * 60 / spm * 100) : 0;
-                const vCm = calcVert(spd);
+                // Preferir series reales del acelerómetro cuando existen
+                const realStride = strideByT[c.t];
+                const realVert   = vertByT[c.t];
+                const sCm = (typeof realStride === 'number' && realStride > 0)
+                    ? realStride
+                    : (spd > 0 && spm > 0 ? Math.round(spd * 60 / spm * 100) : 0);
+                const vCm = (typeof realVert === 'number' && realVert > 0)
+                    ? realVert
+                    : calcVert(spd);
                 strideVals.push(sCm);
                 vertVals.push(vCm);
                 ratioVals.push(calcRatio(vCm, sCm));
@@ -38975,10 +38999,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // (spd*60/spm*100) difiere ligeramente del strideLen oficial de COROS
         // (Card 1 muestra 106 · Card 3 mostraba 113). Preferimos el oficial
         // cuando existe → coherencia total entre Card 1 y Card 3 en la MEDIA.
-        // NOTA · pendiente: la GRÁFICA per-point sigue calculada desde streams
-        // y aparece plana. Requiere investigación del parser de cadencia/spd
-        // en coros-sync/coros-poll — mismo bug que afecta al pace de zonas
-        // (Potencia Aeróbica 45% vs 12% oficial). Sesión aparte.
+        // [v2.30.1-p180] Fix bug gráfica plana aplicado (ver bloque strideSer
+        // arriba). La MEDIA sigue viniendo del strideLen oficial de summary
+        // (más preciso que promediar per-point) — la gráfica ya no es plana
+        // porque strideVals ahora contiene los valores reales del reloj.
         const avgStride = (act.strideLen && act.strideLen > 0)
             ? act.strideLen
             : strideVals.filter(v=>v>50).reduce((a,b)=>a+b,0) / (strideVals.filter(v=>v>50).length||1);
