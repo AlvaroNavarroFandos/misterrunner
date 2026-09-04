@@ -13590,6 +13590,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         </div>
                         <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                     </div>
+                    <!-- [v2.30.1-p136] Sanear streams Strava (splits/csvBlocks corruptos) -->
+                    <div id="dev-sanea-streams-btn" onclick="runSaneaStreamsSheet()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;border-top:1px solid var(--border);">
+                        <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--acc-red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Sanear streams Strava</div>
+                            <div style="font-size:10.5px;color:var(--tm);margin-top:2px;letter-spacing:.2px;">Elimina splits/bloques fantasma en imports antiguos</div>
+                        </div>
+                        <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
+                    </div>
                 </div>
 
                 <!-- FASE 5 Push 5c-bis · Sheet debug simulador recalibración COROS -->
@@ -24236,6 +24247,267 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     window.runStorageAudit = runStorageAudit;
     window._closeStorageAuditSheet = _closeStorageAuditSheet;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // [v2.30.1-p136] SANEAR STREAMS STRAVA — corrección retroactiva del bucket
+    // ═══════════════════════════════════════════════════════════════════════
+    // Bug histórico: imports Strava webhook guardaban en `activity-streams` los
+    // splits sin filtrar (último split_metric con distancia residual mapeado
+    // como si fuera un km completo → paceS proyectado a 1000/speed) y los
+    // csvBlocks fantasma (auto-laps del reloj detectados como "markers reales"
+    // en easy/recovery). El visor ya sanea al pintar (Patch B y C), pero los
+    // datos siguen corruptos en el bucket.
+    //
+    // Este saneador one-shot:
+    //   1) Lista activities con source strava_auto/strava y streams_path
+    //   2) Para cada una: descarga el .json.gz, aplica las mismas heurísticas
+    //      del visor, y si detecta cambios re-sube el stream saneado.
+    //   3) Idempotente: correr 2 veces no re-modifica nada saneado.
+    //
+    // Métricas devueltas: {scanned, corrupt, fixed, errors, elapsedMs}
+    // ═══════════════════════════════════════════════════════════════════════
+    function _closeSaneaStreamsSheet() {
+        if (typeof window.closeSheet === 'function') {
+            window.closeSheet('sanea-streams-sheet');
+        }
+        setTimeout(function(){
+            var s = document.getElementById('sanea-streams-sheet');
+            if (s) s.remove();
+        }, 600);
+    }
+    window._closeSaneaStreamsSheet = _closeSaneaStreamsSheet;
+
+    async function runSaneaStreamsSheet() {
+        // Idempotente: si hay sheet previo, lo eliminamos
+        var prev = document.getElementById('sanea-streams-sheet');
+        if (prev) prev.remove();
+
+        var sheetEl = document.createElement('div');
+        sheetEl.id = 'sanea-streams-sheet';
+        sheetEl.className = 'sheet-backdrop';
+        sheetEl.setAttribute('onclick', "if(event.target===this)_closeSaneaStreamsSheet()");
+        sheetEl.innerHTML = '<div class="sheet">' +
+            '<div class="sheet-handle-wrap" style="position:relative;z-index:1;">' +
+                '<div class="sheet-handle"></div>' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 4px 0;">' +
+                    '<div style="display:flex;align-items:center;gap:10px;min-width:0;">' +
+                        '<span style="font-size:20px;line-height:1;">🧹</span>' +
+                        '<div style="font-size:17px;font-weight:700;color:var(--tw);">Sanear streams Strava</div>' +
+                    '</div>' +
+                    '<button onclick="_closeSaneaStreamsSheet()" aria-label="Cerrar" style="width:32px;height:32px;border-radius:50%;border:none;background:var(--bsoft);color:var(--tm);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="sheet-body" style="padding:8px 14px 18px;">' +
+                '<div id="sanea-streams-intro" style="padding:12px 14px;background:var(--card);border-radius:12px;border:1px solid var(--border);margin-bottom:14px;">' +
+                    '<div style="font-size:13px;color:var(--tw);line-height:1.45;margin-bottom:8px;">' +
+                        'Revisa todas tus activities importadas de Strava y corrige los streams del bucket que tienen:' +
+                    '</div>' +
+                    '<ul style="font-size:12px;color:var(--ts);line-height:1.5;margin:0 0 8px;padding-left:18px;">' +
+                        '<li>Último parcial fantasma (ej: 9.77 km con "km 10 · 4\'40""" imposible)</li>' +
+                        '<li>Bloques auto-lap del reloj en entrenos easy/recovery</li>' +
+                    '</ul>' +
+                    '<div style="font-size:11px;color:var(--tm);opacity:.85;line-height:1.4;">Idempotente: correr 2 veces no re-modifica nada.</div>' +
+                '</div>' +
+                '<button id="sanea-streams-start-btn" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--acc-red);color:#fff;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.3px;">▶︎  Empezar saneado</button>' +
+                '<div id="sanea-streams-progress" style="display:none;padding:14px;background:var(--card);border-radius:12px;border:1px solid var(--border);margin-top:14px;">' +
+                    '<div style="font-size:13px;color:var(--tw);margin-bottom:10px;" id="sanea-streams-status">Preparando…</div>' +
+                    '<div style="height:8px;background:var(--bsoft);border-radius:4px;overflow:hidden;">' +
+                        '<div id="sanea-streams-bar" style="height:100%;width:0%;background:var(--acc-red);transition:width .25s;"></div>' +
+                    '</div>' +
+                    '<div id="sanea-streams-stats" style="font-size:11px;color:var(--tm);margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"></div>' +
+                '</div>' +
+                '<div id="sanea-streams-result" style="display:none;margin-top:14px;"></div>' +
+            '</div>' +
+        '</div>';
+
+        var host = document.getElementById('app') || document.body;
+        host.appendChild(sheetEl);
+        if (typeof window.openSheet === 'function') {
+            window.openSheet('sanea-streams-sheet');
+        } else {
+            sheetEl.classList.add('show');
+        }
+
+        // Wire botón "Empezar"
+        var startBtn = document.getElementById('sanea-streams-start-btn');
+        if (startBtn) {
+            startBtn.addEventListener('click', async function() {
+                startBtn.disabled = true;
+                startBtn.style.opacity = '.5';
+                startBtn.textContent = 'Ejecutando…';
+                document.getElementById('sanea-streams-progress').style.display = '';
+                try {
+                    var stats = await _saneaStreamsBatch(function(current, total, act) {
+                        var pct = total > 0 ? Math.round(current / total * 100) : 0;
+                        var barEl = document.getElementById('sanea-streams-bar');
+                        var statusEl = document.getElementById('sanea-streams-status');
+                        var statsEl = document.getElementById('sanea-streams-stats');
+                        if (barEl) barEl.style.width = pct + '%';
+                        if (statusEl) statusEl.textContent = current + ' / ' + total + '  ·  ' + (act && act.name ? act.name : '—');
+                        if (statsEl) statsEl.textContent = 'corregidas: ' + (act && act._saneaFixed ? act._saneaFixed : 0);
+                    });
+                    var resEl = document.getElementById('sanea-streams-result');
+                    if (resEl) {
+                        var okBg = stats.fixed > 0 ? '#16a34a' : 'var(--card)';
+                        var okCol = stats.fixed > 0 ? '#fff' : 'var(--tw)';
+                        resEl.style.display = '';
+                        resEl.innerHTML =
+                            '<div style="padding:14px;border-radius:12px;background:' + okBg + ';color:' + okCol + ';text-align:center;font-weight:700;">' +
+                                (stats.fixed > 0 ? '✓ ' + stats.fixed + ' activities saneadas' : '✓ Sin correcciones necesarias') +
+                            '</div>' +
+                            '<div style="padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-top:10px;font-size:12px;color:var(--ts);line-height:1.6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">' +
+                                'Escaneadas: ' + stats.scanned + '<br>' +
+                                'Con corrupción detectada: ' + stats.corrupt + '<br>' +
+                                'Corregidas y re-subidas: ' + stats.fixed + '<br>' +
+                                'Errores: ' + stats.errors + '<br>' +
+                                'Duración: ' + (stats.elapsedMs / 1000).toFixed(1) + 's' +
+                            '</div>';
+                    }
+                    startBtn.style.display = 'none';
+                    // Invalidar cache para que el próximo abrir del visor vea los streams nuevos
+                    try { if (typeof _streamsCache === 'object') { for (var k in _streamsCache) delete _streamsCache[k]; } } catch(_){}
+                } catch(e) {
+                    console.warn('[MR][p136 sanea] batch exception:', e);
+                    var resEl2 = document.getElementById('sanea-streams-result');
+                    if (resEl2) {
+                        resEl2.style.display = '';
+                        resEl2.innerHTML = '<div style="padding:14px;border-radius:12px;background:#dc2626;color:#fff;text-align:center;font-weight:700;">✗ Error: ' + (e.message || e) + '</div>';
+                    }
+                    startBtn.disabled = false;
+                    startBtn.style.opacity = '';
+                    startBtn.textContent = '▶︎  Reintentar';
+                }
+            });
+        }
+    }
+    window.runSaneaStreamsSheet = runSaneaStreamsSheet;
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Batch principal: lee activities Strava, sanea y re-sube.
+    // Aplica las mismas heurísticas del Patch B (splits) y Patch C (csvBlocks).
+    // ───────────────────────────────────────────────────────────────────────
+    async function _saneaStreamsBatch(onProgress) {
+        var t0 = Date.now();
+        var stats = { scanned: 0, corrupt: 0, fixed: 0, errors: 0, elapsedMs: 0 };
+        var sb = window._sbClient;
+        if (!sb) throw new Error('Supabase no inicializado');
+        var sessRes = await sb.auth.getSession();
+        var uid = sessRes && sessRes.data && sessRes.data.session
+                  && sessRes.data.session.user && sessRes.data.session.user.id;
+        if (!uid) throw new Error('No hay sesión activa');
+        // Query solo activities Strava con streams_path
+        var qRes = await sb
+            .from('activities')
+            .select('id, name, source, dist_km, workout_type, streams_path')
+            .eq('user_id', uid)
+            .in('source', ['strava_auto', 'strava'])
+            .not('streams_path', 'is', null);
+        if (qRes && qRes.error) throw new Error('Query activities: ' + qRes.error.message);
+        var rows = (qRes && qRes.data) ? qRes.data : [];
+        console.log('[MR][p136 sanea] activities Strava candidatas:', rows.length);
+
+        // Heurística infer type (mismo criterio que _mapDbRowToAct)
+        function _inferType(distKm) {
+            if (distKm >= 21) return 'long';
+            if (distKm >= 5)  return 'easy';
+            return 'recovery';
+        }
+        // Heurística csvBlocks fantasma (mismo del Patch C)
+        function _isPhantomBlocks(csvBlocks, type) {
+            if (!Array.isArray(csvBlocks) || csvBlocks.length === 0) return false;
+            if (type !== 'easy' && type !== 'recovery') return false;
+            var last = csvBlocks.length - 1;
+            for (var i = 0; i < csvBlocks.length; i++) {
+                var b = csvBlocks[i];
+                var dKm = Number(b && b.dist) || 0;
+                var dM = dKm * 1000;
+                var isRound = Math.abs(dM - Math.round(dM / 1000) * 1000) < 50;
+                var isResidualLast = (i === last) && dM > 0 && dM < 950;
+                if (!isRound && !isResidualLast) return false;
+            }
+            return true;
+        }
+
+        for (var idx = 0; idx < rows.length; idx++) {
+            var row = rows[idx];
+            stats.scanned++;
+            try {
+                if (typeof onProgress === 'function') onProgress(idx + 1, rows.length, { name: row.name || '(sin nombre)' });
+                // Descargar stream
+                var streamsPath = row.streams_path || (uid + '/' + row.id + '.json.gz');
+                var dlRes = await sb.storage.from('activity-streams').download(streamsPath);
+                if (dlRes && dlRes.error) {
+                    console.warn('[MR][p136 sanea] download error ' + row.id + ':', dlRes.error);
+                    stats.errors++;
+                    continue;
+                }
+                if (!dlRes || !dlRes.data) { stats.errors++; continue; }
+                var arrBuf = await dlRes.data.arrayBuffer();
+                var u8 = new Uint8Array(arrBuf);
+                if (typeof window.pako !== 'object' || typeof window.pako.ungzip !== 'function') {
+                    throw new Error('pako no disponible');
+                }
+                var jsonStr = window.pako.ungzip(u8, { to: 'string' });
+                var streamsObj = JSON.parse(jsonStr);
+                var changed = false;
+
+                // ── Fix 1: splits fantasma ─────────────────────────────
+                // Si splits.length > floor(distKm), el último es el residual
+                // mal proyectado. También descartar si último tiene paceS<60
+                // (velocidad imposible).
+                var distKm = Number(row.dist_km) || 0;
+                var distKmInt = Math.floor(distKm);
+                if (Array.isArray(streamsObj.splits) && streamsObj.splits.length > 0) {
+                    var origLen = streamsObj.splits.length;
+                    if (distKmInt > 0 && streamsObj.splits.length > distKmInt) {
+                        streamsObj.splits = streamsObj.splits.slice(0, distKmInt);
+                    }
+                    if (streamsObj.splits.length > 0) {
+                        var lastSp = streamsObj.splits[streamsObj.splits.length - 1];
+                        var lastPace = (lastSp && lastSp.durationSec) ? Number(lastSp.durationSec) : 0;
+                        if (lastPace > 0 && lastPace < 60) {
+                            streamsObj.splits = streamsObj.splits.slice(0, -1);
+                        }
+                    }
+                    if (streamsObj.splits.length !== origLen) changed = true;
+                }
+
+                // ── Fix 2: csvBlocks fantasma ──────────────────────────
+                var effectiveType = row.workout_type || _inferType(distKm);
+                if (streamsObj.summary && Array.isArray(streamsObj.summary.csvBlocks)
+                    && streamsObj.summary.csvBlocks.length > 0) {
+                    if (_isPhantomBlocks(streamsObj.summary.csvBlocks, effectiveType)) {
+                        streamsObj.summary.csvBlocks = [];
+                        changed = true;
+                    }
+                }
+
+                if (changed) {
+                    stats.corrupt++;
+                    // Re-upload
+                    var newJson = JSON.stringify(streamsObj);
+                    var gz = window.pako.gzip(newJson);
+                    var blob = new Blob([gz], { type: 'application/gzip' });
+                    var upRes = await sb.storage.from('activity-streams')
+                        .upload(streamsPath, blob, { cacheControl: '3600', upsert: true, contentType: 'application/gzip' });
+                    if (upRes && upRes.error) {
+                        console.warn('[MR][p136 sanea] upload error ' + row.id + ':', upRes.error);
+                        stats.errors++;
+                    } else {
+                        stats.fixed++;
+                        console.log('[MR][p136 sanea] fixed: ' + row.id.slice(0, 8) + '… (' + (row.name || '?') + ')');
+                    }
+                }
+            } catch(e) {
+                console.warn('[MR][p136 sanea] activity ' + (row.id ? row.id.slice(0,8) : '?') + ' error:', e);
+                stats.errors++;
+            }
+        }
+        stats.elapsedMs = Date.now() - t0;
+        console.log('[MR][p136 sanea] batch completo:', stats);
+        return stats;
+    }
+    window._saneaStreamsBatch = _saneaStreamsBatch;
 
     /* ── NAV ── */
     // [Pieza 2 · helper] Monta el overlay de cards fantasma (skeleton) sobre la
@@ -38410,7 +38682,34 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Content scrolls inside c1
         // Shoe name shown in outfit panel - not duplicated here
         // CSV training blocks (for interval workouts)
-        if (act.csvBlocks && act.csvBlocks.length > 0) {
+        // [v2.30.1-p136] Heurística para ocultar bloques fantasma en imports Strava.
+        // Bug: entrenos easy con auto-laps del reloj (ej: 9.77 km → 5 laps
+        // 6+1+1+1+0.77) pintan sección "Análisis por bloques" que no debería
+        // existir porque no son bloques reales del entreno. Filtro: si type es
+        // easy/recovery Y todos los csvBlocks son ~1km enteros (±50m) o el
+        // último es residual (<950m), es un artefacto Strava → ocultar.
+        // Se preserva 'long' (los long con MP final SÍ tienen bloque real) y
+        // series/test/race (siempre visibles, bloques son lo importante ahí).
+        var _showBlocks = act.csvBlocks && act.csvBlocks.length > 0;
+        if (_showBlocks) {
+            var _tHide = (act.type === 'easy' || act.type === 'recovery');
+            if (_tHide) {
+                var _allAutoLap = true;
+                var _last = act.csvBlocks.length - 1;
+                for (var _bi = 0; _bi < act.csvBlocks.length; _bi++) {
+                    var _b = act.csvBlocks[_bi];
+                    var _dKm = Number(_b && _b.dist) || 0;
+                    var _dM = _dKm * 1000;
+                    // Es "auto-lap normal" si es múltiplo exacto de 1km ±50m,
+                    // o si es el último y es residual <950m (metros sobrantes).
+                    var _isRound = Math.abs(_dM - Math.round(_dM / 1000) * 1000) < 50;
+                    var _isResidualLast = (_bi === _last) && _dM > 0 && _dM < 950;
+                    if (!_isRound && !_isResidualLast) { _allAutoLap = false; break; }
+                }
+                if (_allAutoLap) _showBlocks = false;
+            }
+        }
+        if (_showBlocks) {
             c1.insertAdjacentHTML('beforeend','<div style="padding:10px 14px 4px;font-size:9px;color:var(--det-lbl-accent);opacity:.75;text-transform:uppercase;letter-spacing:1px;font-family:var(--f);">Análisis por bloques</div>');
             const bTbl = document.createElement('table'); bTbl.className = 'laps-table';
             bTbl.innerHTML = '<thead><tr><th>Bloque</th><th>Dist</th><th>Tiempo</th><th>Ritmo</th><th>FC</th></tr></thead>';
@@ -38474,7 +38773,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 function _fmtPace(s) { if (!s || s <= 0) return '—'; var m = Math.floor(s / 60), ss = Math.round(s % 60); return m + "'" + String(ss).padStart(2, '0') + '"'; }
 
                 var nets = null; try { nets = _kmNets(); } catch (e) { nets = null; }
-                var rows = act.laps.map(function (lap, k) {
+                // [v2.30.1-p136] Saneado retroactivo de act.laps para imports Strava
+                // webhook con último split residual proyectado a 1 km. Ej: distKm=9.77
+                // → activity.splits_metric[10] tiene distance=770m pero average_speed
+                // se aplica como si fuera 1 km → paceS=280s='4'40"' (mentira). El
+                // visor luego añade encima el residual real vía _partialSplit() ("0,8
+                // · 6'04""). Filtro: si hay más laps que km enteros del entreno, el
+                // último lap es el residual fantasma → descartar. Cubre datos ya en
+                // BD sin migración. También detecta paceS<60 (velocidad imposible)
+                // como fallback si el pattern length no aplica.
+                var lapsSafe = act.laps.slice();
+                var _totalKmInt = Math.floor(Number(act.distKm) || 0);
+                if (_totalKmInt > 0 && lapsSafe.length > _totalKmInt) {
+                    lapsSafe = lapsSafe.slice(0, _totalKmInt);
+                }
+                // Extra guard: si el último lap tiene paceS <60s/km (>60km/h imposible)
+                // también es residual mal proyectado → descartar.
+                if (lapsSafe.length > 0) {
+                    var _lastLap = lapsSafe[lapsSafe.length - 1];
+                    if (_lastLap && _lastLap.paceS > 0 && _lastLap.paceS < 60) {
+                        lapsSafe = lapsSafe.slice(0, -1);
+                    }
+                }
+                var rows = lapsSafe.map(function (lap, k) {
                     return { label: String(lap.n), paceS: lap.paceS || 0, net: (nets && nets[k] != null) ? nets[k] : null, avgHr: lap.avgHr || null, partial: false };
                 });
                 var part = null; try { part = _partialSplit(); } catch (e) { part = null; }
@@ -52190,11 +52511,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // al pre-generar URLs en batch durante la hidratación inicial.)
     //   - Cache `_photoUrlsCache[activityId] = [url1, url2, ...]`
     //   - Vida: la sesión actual. Se limpia en SIGNED_OUT.
-    //   - TTL signed URL: 3600s (1h). Decisión Álvaro (DEC-5.6-2).
-    //     Cubre cualquier sesión normal; al cerrar y reabrir el detalle
-    //     se regeneran URLs frescas.
+    //   - TTL signed URL: 604800s (7 días). [v2.30.1-p136] Subido desde 3600 (1h).
+    //     Bug: URLs caducaban durante la sesión y las cards foto del visor
+    //     mostraban icono roto. 7 días cubre cualquier ventana de uso normal
+    //     (si abres la app ≥1 vez cada 7 días, siempre hay URLs frescas).
+    //     Límite Supabase Storage: ~1 año, así que 7 días es seguro.
     var _photoUrlsCache = {};
-    var _PHOTO_SIGNED_URL_TTL = 3600;
+    var _PHOTO_SIGNED_URL_TTL = 604800;
 
     // ══════════════════════════════════════════════════════════════
     // FASE 5.6 — Hidratación de metadatos de fotos (activity_photos)
