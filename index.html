@@ -38932,6 +38932,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 drawSparkline(hrCanvas, hrVals, '#22C55E', 30, 220, fcB, ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], false, _hrEle);
             }
             if (pcCanvas && ds.length > 1) {
+                // [v2.30.1-p187 · adaptive smoothing]
+                // Detectar activities con series cortas (csvBlocks con laps <120s).
+                // Para esas mantenemos win=30 y rango Y dinámico (no cortar picos
+                // de series a 3:40/km cuando avg es 5:30). Para easy/tempo/long
+                // run usamos win=60 y rango Y centrado en avg pace (matchea COROS
+                // oficial: banda comprimida donde los picos residuales no destacan).
+                const _hasShortLaps = Array.isArray(act.csvBlocks)
+                    && act.csvBlocks.some(function(b){ return b && b.movingSecs > 0 && b.movingSecs < 120; });
+                const _paceSmoothWin = _hasShortLaps ? 30 : 60;
                 var paceVals;
                 if (_sparkCacheEntry && _sparkCacheEntry.pc) {
                     paceVals = _sparkCacheEntry.pc;
@@ -38944,21 +38953,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         paceVals.push(pv);
                     }
                     // [v2.30.1-p183 · fix coherencia visual línea vs zonas] Moving
-                    // average win=30 puntos sobre paceVals antes de drawSparkline.
+                    // average window sobre paceVals antes de drawSparkline.
                     // ─────────────────────────────────────────────────────────
                     // Motivo: las zonas de ritmo (leyenda %) ya se calculan bien
                     // con BLOCK_30 (v2.30.1-p182 L~38683), pero la LÍNEA colorida
                     // se dibujaba per-point → los picos GPS de 1-2s se pintaban
                     // como Pot.Aer/Umbral aunque BLOCK_30 los absorba en el %.
                     // Resultado: línea "quemada" con toques verdes/amarillos
-                    // subjetivos cuando la leyenda decía 11% real. Fix: suavizar
-                    // los ~2600 puntos con moving average window=30s (equivalente
-                    // temporal al BLOCK_30 de zonas · coherencia matemática total).
-                    // [v2.30.1-p185] Win subido 15 → 30 para matchear COROS
-                    // oficial (línea más limpia). Ceros (pausas) se ignoran en
-                    // la media para no arrastrar hacia abajo el resto de ventana.
-                    if (paceVals.length > 30) {
-                        const _PACE_SMOOTH_WIN = 30;
+                    // subjetivos cuando la leyenda decía 11% real.
+                    // [v2.30.1-p185] Win 15 → 30 para matchear COROS oficial.
+                    // [v2.30.1-p187] Win adaptativo: 60 default (easy/tempo/long),
+                    // 30 si hay series cortas (csvBlocks lap <120s). Serie de 2min
+                    // con win=60 sigue mostrando meseta 60s a pace real (30s rampa
+                    // entrada + 60s meseta + 30s rampa salida = "trapecio", igual
+                    // que en COROS oficial). Ceros (pausas) se ignoran en la
+                    // media para no arrastrar hacia abajo el resto de la ventana.
+                    if (paceVals.length > _paceSmoothWin) {
+                        const _PACE_SMOOTH_WIN = _paceSmoothWin;
                         const _half = Math.floor(_PACE_SMOOTH_WIN / 2);
                         const _smoothed = new Array(paceVals.length);
                         for (let _i = 0; _i < paceVals.length; _i++) {
@@ -38971,6 +38982,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             _smoothed[_i] = _n > 0 ? _sum / _n : paceVals[_i];
                         }
                         paceVals = _smoothed;
+
+                        // [v2.30.1-p186 · zone stabilization pass]
+                        // ─────────────────────────────────────────────────
+                        // Tras el smoothing, aún quedan picos verticales cortos
+                        // que visualmente se pintan como zona superior aunque el
+                        // BLOCK_30 los clasifique en ResAer. Este pass asegura
+                        // que un cambio de zona solo se pinta si dura al menos
+                        // MIN_PERSIST puntos consecutivos. Los cambios más cortos
+                        // se aplanan al valor de la zona estable anterior.
+                        // [v2.30.1-p187] MIN_PERSIST 8 → 15 (matchea la "latencia"
+                        // visual de COROS oficial: el color de zona nueva aparece
+                        // ~15s después del cambio real, no instantáneamente).
+                        try {
+                            if (typeof pB !== 'undefined' && Array.isArray(pB) && pB.length >= 5) {
+                                const _MIN_PERSIST = 15;
+                                const _zoneOf = (p) => {
+                                    if (p <= 0)          return -1;
+                                    if (p > pB[0])       return 0;
+                                    if (p > pB[1])       return 1;
+                                    if (p > pB[2])       return 2;
+                                    if (p > pB[3])       return 3;
+                                    if (p > pB[4])       return 4;
+                                    return 5;
+                                };
+                                const _stab = paceVals.slice();
+                                let _runStart = 0;
+                                let _runZone = _zoneOf(_stab[0]);
+                                for (let _j = 1; _j <= _stab.length; _j++) {
+                                    const _z = _j < _stab.length ? _zoneOf(_stab[_j]) : -999;
+                                    if (_z !== _runZone) {
+                                        const _runLen = _j - _runStart;
+                                        if (_runLen < _MIN_PERSIST && _runStart > 0 && _runZone !== -1) {
+                                            const _prevVal = _stab[_runStart - 1];
+                                            if (_prevVal > 0) {
+                                                for (let _k = _runStart; _k < _j; _k++) _stab[_k] = _prevVal;
+                                            }
+                                        }
+                                        _runStart = _j;
+                                        _runZone = _z;
+                                    }
+                                }
+                                paceVals = _stab;
+                            }
+                        } catch (_e) { /* silent fallback */ }
                     }
                     if (_sparkCacheEntry) _sparkCacheEntry.pc = paceVals;
                 }
@@ -38978,7 +39033,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 pcCanvas.height = chartH;
                 pcCanvas.style.height = chartH + 'px';
                 var _pcEle = _mrResampleEle(act.eleSeries, paceVals.length);
-                drawSparkline(pcCanvas, paceVals, '#22C55E', 150, 800, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle);
+                // [v2.30.1-p187 · rango Y COROS-style]
+                // Sin series cortas: forzar rango [avgPace-90, avgPace+180] para
+                // que la banda de datos ocupe una porción similar del canvas y los
+                // picos residuales se vean menos exagerados (matchea el look-and-
+                // feel de la app COROS oficial que usa ejes Y anchos).
+                // Con series cortas: mantener 150-800 (dinámico) para no cortar
+                // picos de series a 3:40/km cuando el avg es 5:30/km.
+                var _rangeMin = 150, _rangeMax = 800;
+                if (!_hasShortLaps) {
+                    var _avgPaceS = (act.durationSec > 0 && act.distKm > 0)
+                        ? Math.round(act.durationSec / act.distKm) : 0;
+                    if (_avgPaceS > 0) {
+                        _rangeMin = Math.max(150, _avgPaceS - 90);
+                        _rangeMax = Math.min(800, _avgPaceS + 180);
+                    }
+                }
+                drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle);
             }
             // Card 3: auto-size and render dynamics charts
             c3.querySelectorAll('canvas[data-vals]').forEach(canvas => {
@@ -81018,8 +81089,11 @@ window.addEventListener('DOMContentLoaded', function() {
                 container.innerHTML = '<div class="mr-wr-chart-title">Zonas HR · sin datos</div>'; return;
             }
             var z = metrics.zones_pct;
-            /* Álvaro: Z1 azul, Z2 verde (swap del default) */
-            var colors = { z1:'#2196F3', z2:'#4CAF50', z3:'#f4c96a', z4:'#FF9800', z5:'#F44336' };
+            /* [v2.30.1-p186] Paleta A Garmin classic unificada (5 zonas HR).
+               Coincide con FC_ZONES/PACE_ZONES canónicas L26891/L26943:
+                 Z1 recup cyan · Z2 aer base azul · Z3 aer power verde ·
+                 Z4 umbral amarillo · Z5 max rojo (skip naranja Z5 de 6-zonas). */
+            var colors = { z1:'#3BBCE0', z2:'#0EA5E9', z3:'#22C55E', z4:'#FBBF24', z5:'#EF4444' };
             var labels = ['Z1','Z2','Z3','Z4','Z5'];
             var vals = [z.z1||0, z.z2||0, z.z3||0, z.z4||0, z.z5||0];
             var total = vals.reduce(function(a,b){return a+b;}, 0);
