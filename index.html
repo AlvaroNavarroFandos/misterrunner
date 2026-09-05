@@ -13547,7 +13547,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 <!-- DEV TOOLS · visible solo whitelist o ?debug=1, gestionado por applyDebugVisibility() -->
                 <!-- Contenedor extensible: si en el futuro añadimos más herramientas dev, viven aquí dentro -->
-                <div id="dev-tools-block" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:8px;">
+                <!-- [v2.30.1-p139] Álvaro 5 sep 2026: wrap externo con chip label
+                     "Developer" (mismo pattern que "Zona de peligro" líneas ~13017)
+                     para dar identidad visual al bloque y diferenciarlo del resto
+                     de secciones. Wrap controla la visibilidad completa (label +
+                     card interior) desde applyDebugVisibility(). -->
+                <div id="dev-tools-wrap" style="display:none;margin-bottom:8px;">
+                    <div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:6px;padding:0 2px;">Developer</div>
+                <div id="dev-tools-block" style="background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden;">
                     <div id="dev-storage-audit-btn" onclick="runStorageAudit()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;">
                         <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--acc-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
@@ -13580,6 +13587,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                     </div>
                 </div>
+                </div><!-- /dev-tools-wrap [v2.30.1-p139] -->
 
                 <!-- FASE 5 Push 5c-bis · Sheet debug simulador recalibración COROS -->
                 <div id="coros-recalib-debug-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('coros-recalib-debug-sheet')">
@@ -23956,8 +23964,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [Auditoría #2 · Storage Audit] Bloque contenedor de herramientas dev.
             // Extensible: si añadimos más botones debug en el futuro viven dentro
             // y se muestran/ocultan a la vez con una sola línea.
-            const devToolsBlock = document.getElementById('dev-tools-block');
-            if (devToolsBlock) devToolsBlock.style.display = show ? 'block' : 'none';
+            // [v2.30.1-p139] Álvaro: wrap externo #dev-tools-wrap agrega chip
+            // label "Developer". Controlamos el wrap (label + card interior).
+            // Fallback defensivo a #dev-tools-block por si el wrap no existiera.
+            const devToolsWrap = document.getElementById('dev-tools-wrap')
+                              || document.getElementById('dev-tools-block');
+            if (devToolsWrap) devToolsWrap.style.display = show ? 'block' : 'none';
             // [FASE 6 · UI cleanup] El bloque "Modo desarrollador" del
             // importador Strava (FASE 2.7) ha sido eliminado de la UI:
             // ya no hace falta el testeo single-file, el pipeline bulk
@@ -36056,6 +36068,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         try { drawTrackForLibrary(canv, data.records, data.shoeColor); } catch(_) {}
                         _mrLibPending.delete(canv);
                     }
+                    // [v2.30.1-p139] Fix C · Tighten pills del wrap ancestro
+                    // al entrar en viewport. Cubre las cards con
+                    // content-visibility:auto que no fueron medibles en el
+                    // primer append (rects=0 fuera de viewport). Escala el
+                    // DOM subiendo hasta .act-swipe-wrap y tighten dentro.
+                    try {
+                        var _swipeWrap = canv.closest ? canv.closest('.act-swipe-wrap') : null;
+                        if (_swipeWrap && typeof window._mrTightenPillsSoon === 'function') {
+                            window._mrTightenPillsSoon(_swipeWrap);
+                        }
+                    } catch(_) {}
                     _mrLibIO.unobserve(canv);
                 });
             }, { root: _ioRoot, rootMargin: '300px 0px', threshold: 0.01 });
@@ -36401,6 +36424,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             wrap.appendChild(sliding);
             _mrLibGetOrCreateMonthGroup(act).appendChild(wrap);
+
+            // [v2.30.1-p139] Fix B · Bug pills tipo entreno biblioteca.
+            // Tighten explícito al insertar la card. Con content-visibility:auto
+            // fuera de viewport, getClientRects() puede dar 0 — el observer
+            // IO más abajo cubre ese caso midiendo cuando entra en viewport.
+            // Aquí el doble rAF asegura layout listo para las cards que YA
+            // están en viewport al primer chunk render (las primeras 6-10
+            // cards según viewport height). Sin este fix, esas cards
+            // iniciales tenían pills al ancho auto hasta cambiar tipo.
+            try { if (typeof window._mrTightenPillsSoon === 'function') window._mrTightenPillsSoon(wrap); } catch(_){}
 
             // [FASE 6 · Fix tracks vacíos] Diferir el draw al observer.
             // Antes: rAF inmediato → si la card está fuera de viewport con
@@ -46230,6 +46263,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 lt: lt,
                 weeks: weeks,
                 totalWeeks: totalWeeks,
+                // [v2.30.1-p139] Persistir trainingDays (misma razón que el
+                // generador principal en línea ~46721): permitir que
+                // editActivePlan() restaure los checkboxes al modificar.
+                trainingDays: checkedDays,
                 createdAt: new Date().toISOString(),
             };
         }
@@ -46721,6 +46758,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         generatedPlanData={name,vdot:Math.round(vdot),goalSecs,goalHMS,paces,weeks,raceDate:raceDateStr,
             planDist, intermediateRaceWeekIdx, raceDist,
             imFrom:imFromStored, imTo:imToStored, imExact:imExactStored,
+            // [v2.30.1-p139] Álvaro 5 sep 2026: persistir trainingDays en el
+            // plan (antes solo vivían en profileData). Al editar el plan desde
+            // "Modificar plan", editActivePlan() los restaura pre-marcados en
+            // los checkboxes sin obligar al user a re-marcar sus días.
+            trainingDays: checkedDays,
             createdAt:new Date().toISOString()};
 
         // v2.4.0-p7 · Post-proceso Maratón XL: prepender fase base pura al plan marathon generado
@@ -48156,9 +48198,38 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (raceEl) raceEl.value = plan.raceDate || '';
 
         // Pre-fill training days checkboxes
+        // [v2.30.1-p139] Álvaro 5 sep 2026: fix bug de días no marcados al
+        // modificar plan. Tres fuentes en orden de prioridad:
+        //   1) plan.trainingDays (persistido desde p139) — números 0-6
+        //   2) profileData.trainingDays — letras L/M/X/J/V/S/D (planes legacy)
+        //   3) sin fallback → checkboxes intactos (defaults del HTML)
+        // Mapeador letras→números (Date.getDay(): Sunday=0, Monday=1, ...)
+        var _letterToNum = { L: 1, M: 2, X: 3, J: 4, V: 5, S: 6, D: 0 };
+        var _daysAsNums = null;
         if (plan.trainingDays && plan.trainingDays.length) {
+            // Puede llegar como números (nuevo) o como letras (legacy raro).
+            // Normalizamos a array de números.
+            _daysAsNums = plan.trainingDays.map(function(d) {
+                if (typeof d === 'number') return d;
+                if (typeof d === 'string') {
+                    if (_letterToNum.hasOwnProperty(d)) return _letterToNum[d];
+                    var n = parseInt(d, 10);
+                    return isNaN(n) ? null : n;
+                }
+                return null;
+            }).filter(function(n) { return n !== null; });
+        } else if (profileData && Array.isArray(profileData.trainingDays)
+                && profileData.trainingDays.length) {
+            // Fallback: perfil global. profileData usa letras.
+            _daysAsNums = profileData.trainingDays.map(function(d) {
+                if (typeof d === 'number') return d;
+                if (typeof d === 'string' && _letterToNum.hasOwnProperty(d)) return _letterToNum[d];
+                return null;
+            }).filter(function(n) { return n !== null; });
+        }
+        if (_daysAsNums && _daysAsNums.length) {
             document.querySelectorAll('#plan-days-row input[type="checkbox"]').forEach(function(cb) {
-                cb.checked = plan.trainingDays.indexOf(parseInt(cb.value)) !== -1;
+                cb.checked = _daysAsNums.indexOf(parseInt(cb.value, 10)) !== -1;
             });
         }
 
@@ -58072,6 +58143,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (!c) return;
             try { drawTrackForLibrary(c, act.records, act.shoeColor || null); } catch(_) {}
         });
+
+        // [v2.30.1-p139] Fix A · Bug pills tipo entreno: al repintarse la
+        // mini-card "Último entreno HOY" en Home tras cualquier cambio
+        // (import, edit tipo, save), las .mr-type-pill.compact quedaban
+        // con width auto (por defecto ocupan el ancho disponible del padre)
+        // hasta que el MutationObserver global las capturara — pero éste
+        // fallaba porque content-visibility:auto de la biblioteca hace
+        // getClientRects()=0 fuera de viewport. Aquí llamamos SIEMPRE al
+        // tighten explícito post-render con doble rAF para forzar el
+        // shrink-to-fit al mostrarse en Home.
+        try { if (typeof window._mrTightenPillsSoon === 'function') window._mrTightenPillsSoon(wrap); } catch(_){}
     }
     try { window._mrRenderLastActivityCard = _mrRenderLastActivityCard; window._mrRepaintLastActivityCard = _mrRepaintLastActivityCard; } catch(_){}
 
