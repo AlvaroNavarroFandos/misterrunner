@@ -6303,7 +6303,12 @@
            algoritmo de layout inline-block/flex). Se resuelve con JS via
            window._mrTightenCompactPills(container) que se llama tras cada
            render de mini-cards: mide con Range.getClientRects las líneas
-           reales y aplica width explícito al ancho de la línea más ancha. */
+           reales y aplica width explícito al ancho de la línea más ancha.
+           [p137] El helper ahora considera SOLO las líneas visibles (calcula
+           maxLines = floor(max-height / line-height)) para evitar que un
+           nombre con 3+ líneas de wrap real infle el pill al ancho de una
+           línea cortada por overflow:hidden. max-height:27px = 2 líneas
+           visibles. */
         .mr-type-pill.compact {
             display: inline-block;
             padding: 2px 7px;
@@ -35754,7 +35759,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // v2.30.1-p85 · Añadidos shirtSleeve, bottomsType, sockType
                     // (Álvaro 22 ago 2026) — sin esto, editar solo estos toggles
                     // dejaba la firma invariable → minicards no reflejaban el cambio.
-                    var outStr = String(a.shoeColor || '') + '|' + String(a.shoeId || '');
+                    // v2.30.1-p137 · [BUG FIX repaint tras edit tipo/nombre] Añadidos
+                    // name, type, raceName (Álvaro 5 sep 2026). Sin esto, cambiar
+                    // solo el tipo desde el editor NO invalidaba la firma → biblioteca
+                    // seguía mostrando el pill con el color anterior hasta próximo
+                    // trigger. Mismo patrón que outfit/shoeColor de p15/p85.
+                    var outStr = String(a.shoeColor || '') + '|' + String(a.shoeId || '')
+                               + '|' + String(a.name || '') + '|' + String(a.type || '')
+                               + '|' + String(a.raceName || '');
                     if (a.outfit) {
                         outStr += '|' + (a.outfit.shirtColor1 || '') + (a.outfit.shirtColor2 || '')
                                 + (a.outfit.shortsColor || '') + (a.outfit.socksColor || '')
@@ -70050,22 +70062,37 @@ window._handleStravaReturn = _handleStravaReturn;
                 var pill = pills[i];
                 // Reset width previo para medir sin restricciones (idempotencia)
                 pill.style.width = '';
-                // Forzar reflow implícito al leer offsetHeight abajo
-                var oneLineThreshold = 20; // 1 línea con padding ≈ 15-18px
-                if (pill.offsetHeight <= oneLineThreshold) {
-                    // Cabe en 1 línea → inline-block ya shrink-to-fit natural
-                    continue;
-                }
-                // Multi-línea: medir cada line box del texto interno
+                // Medir line boxes reales del texto tras wrap
                 var range = document.createRange();
                 range.selectNodeContents(pill);
                 var rects = range.getClientRects();
+                if (!rects || rects.length === 0) continue;
+                // v2.30.1-p137 · [FIX pill wider than needed] Calcular cuántas
+                // líneas caben visualmente (max-height / line-height) y considerar
+                // SOLO esos primeros rects para el shrink. Antes se usaba el max
+                // de TODAS las líneas incluyendo las cortadas por overflow:hidden,
+                // haciendo que un nombre largo (3+ líneas de wrap real) inflara
+                // el pill al ancho de una línea invisible más ancha que las 2
+                // visibles. Ejemplo: "MORNING RUN ACTIVACIÓN Y RODAJE" wrapea a
+                // 3 líneas; sin este fix, el pill se ajustaba al ancho de línea 3.
+                var cs = getComputedStyle(pill);
+                var lineH = parseFloat(cs.lineHeight);
+                if (!isFinite(lineH) || lineH <= 0) {
+                    lineH = parseFloat(cs.fontSize || 10) * 1.15;
+                }
+                var maxH = parseFloat(cs.maxHeight);
+                var padV = parseFloat(cs.paddingTop || 0) + parseFloat(cs.paddingBottom || 0);
+                var visibleLines = rects.length;
+                if (isFinite(maxH) && maxH > 0 && lineH > 0) {
+                    // +0.5 tolerancia por redondeo sub-pixel de line boxes
+                    visibleLines = Math.max(1, Math.floor((maxH - padV + 0.5) / lineH));
+                    if (visibleLines > rects.length) visibleLines = rects.length;
+                }
                 var maxLineWidth = 0;
-                for (var j = 0; j < rects.length; j++) {
+                for (var j = 0; j < visibleLines; j++) {
                     if (rects[j].width > maxLineWidth) maxLineWidth = rects[j].width;
                 }
                 if (maxLineWidth > 0) {
-                    var cs = getComputedStyle(pill);
                     var padH = parseFloat(cs.paddingLeft || 0) + parseFloat(cs.paddingRight || 0);
                     // +1px de holgura por redondeo sub-pixel
                     pill.style.width = Math.ceil(maxLineWidth + padH + 1) + 'px';
