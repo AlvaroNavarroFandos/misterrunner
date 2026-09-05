@@ -4967,21 +4967,11 @@
             line-height: 1;
             font-variant-numeric: tabular-nums;
             letter-spacing: -.5px;
-            /* [v2.30.1-p180] Álvaro: negro DENTRO (interior) + blanco FUERA
-               (envolviendo el negro). Estructura:
-               - Negro offset 2px declarado PRIMERO → va encima
-               - Blanco offset 4px declarado DESPUÉS → va debajo (envuelve)
-               Resultado: capa negra 2px pegada al texto + capa blanca 2px
-               por fuera del negro = doble stroke tipo Easy Run. */
-            text-shadow:
-                /* Negro interior 2px (declarado primero → va encima) */
-                -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000,
-                -2px  0    0 #000,                 2px  0    0 #000,
-                -2px  2px 0 #000, 0  2px 0 #000, 2px  2px 0 #000,
-                /* Blanco exterior 4px (declarado después → va debajo, envuelve) */
-                -4px -4px 0 #fff, 0 -4px 0 #fff, 4px -4px 0 #fff,
-                -4px  0    0 #fff,                 4px  0    0 #fff,
-                -4px  4px 0 #fff, 0  4px 0 #fff, 4px  4px 0 #fff;
+            /* [v2.30.1-p138] Álvaro 5 sep 2026: eliminado doble contorno
+               negro+blanco (era defensa contra fondos temáticos por ciudad
+               tipo Sevilla mustard, Berlín amarillo, Valencia naranja, etc.).
+               Al volver al fondo navy siempre, el gradient dorado se lee
+               limpio sin necesidad del stroke. */
         }
         .mr-pc-days-pill {
             display: inline-flex; align-items: center; gap: 3px;
@@ -5280,31 +5270,14 @@
         .mr-pc-dc-arrow { font-size: 16px; color: var(--tm); line-height: 1; }
         .mr-pc-daycard.today .mr-pc-dc-arrow { color: var(--warm); }
         .mr-pc-dc-hint { position: absolute; bottom: 9px; right: 12px; font-size: 9.5px; font-weight: 700; color: var(--tm); }
-        /* [v2.30.1-p160] Contorno del nombre del entrenamiento en carrusel Home.
-           Sin contorno, sobre fondos temáticos por ciudad (mustard Sevilla,
-           azul Zúrich, naranja Valencia, etc.) el color propio del tipo
-           (verde easy, lila long, dorado strength…) perdía contraste.
-           [v2.30.1-p164] P-A · doble contorno con 8 DIRECCIONES cada uno para
-           borde blanco CONTINUO (sin huequitos en las diagonales que la P3 de
-           4 esquinas dejaba). Negro 1px en 8-way (esquinas + medios) rodea la
-           letra pegado; blanco 2px en 8-way rodea al negro. El negro protege
-           sobre fondos claros/medios (Sevilla mustard, Berlín amarillo) y el
-           blanco protege sobre fondos oscuros (Valencia, Madrid, Zúrich).
-           Aplica en TODOS los modos (light + dark) porque el fondo real es el
-           tema local de la ciudad, independiente del tema global de la app.
-           [v2.30.1-p161] !important necesario para vencer la regla genérica
-           `.mr-pc-card.mr-plan-themed-home .mr-pc-daycard span { text-shadow:
-           var(--pcard-h-text-shadow) }` (especificidad 0,3,1) que aplica una
-           sombra sutil derivada de la paleta cuando hay tema por ciudad activo. */
-        .mr-workout-name {
-            text-shadow:
-                -1px -1px 0 #000, 0 -1px 0 #000, 1px -1px 0 #000,
-                -1px  0    0 #000,                1px  0    0 #000,
-                -1px  1px 0 #000, 0  1px 0 #000, 1px  1px 0 #000,
-                -2px -2px 0 #fff, 0 -2px 0 #fff, 2px -2px 0 #fff,
-                -2px  0    0 #fff,                2px  0    0 #fff,
-                -2px  2px 0 #fff, 0  2px 0 #fff, 2px  2px 0 #fff !important;
-        }
+        /* [v2.30.1-p138] Álvaro 5 sep 2026: eliminado doble contorno
+           negro+blanco del nombre del entrenamiento en carrusel Home.
+           Era defensa contra fondos temáticos por ciudad (mustard Sevilla,
+           azul Zúrich, naranja Valencia, etc.). Al eliminar el sistema de
+           temas por ciudad y volver al fondo navy constante, el color del
+           tipo (verde easy, lila long, dorado strength…) se lee sin stroke.
+           Clase .mr-workout-name conservada en el HTML como hook semántico
+           pero sin propiedades (queda plana). */
         /* ═══ [Fase 4 · v2.30.0-p5] Badge TEST · pill sólido cyan ═════════════════════
            3 tamaños: XS (roll strip), M (cards HOY/Plan), L (detail sheet).
            Modo light: texto negro. Modo dark: texto blanco. */
@@ -47612,31 +47585,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window._mrApplyPlanCardPalette = function(card, palette) {
         try {
             if (!card) return;
-            // Reset TODAS las CSS vars previas
+            // [v2.30.1-p138] Álvaro 5 sep 2026: eliminado sistema de colores por
+            // ciudad de maratón. La card Míster de plan activo siempre navy.
+            // Función mantenida como NO-OP defensivo: sigue limpiando cualquier
+            // CSS var/clase legacy si estuviera aplicada de una sesión previa,
+            // pero ya NO aplica ninguna paleta temática. El argumento `palette`
+            // se ignora.
             var vars = ['--pcard-bg','--pcard-border','--pcard-shadow','--pcard-label',
                         '--pcard-dot','--pcard-name','--pcard-name-shadow','--pcard-hero',
                         '--pcard-alt','--pcard-bar','--pcard-stat-bg','--pcard-stat-c',
                         '--pcard-stat-l','--pcard-btn-bg','--pcard-btn-bd','--pcard-btn-c'];
             vars.forEach(function(v){ card.style.removeProperty(v); });
             card.classList.remove('mr-plan-themed');
-            if (!palette) return;
-            card.style.setProperty('--pcard-bg',          palette.bg);
-            card.style.setProperty('--pcard-border',      palette.border);
-            card.style.setProperty('--pcard-shadow',      palette.shadow);
-            card.style.setProperty('--pcard-label',       palette.label);
-            card.style.setProperty('--pcard-dot',         palette.dot);
-            card.style.setProperty('--pcard-name',        palette.name);
-            card.style.setProperty('--pcard-name-shadow', palette.nameShadow);
-            card.style.setProperty('--pcard-hero',        palette.hero);
-            card.style.setProperty('--pcard-alt',         palette.alt);
-            card.style.setProperty('--pcard-bar',         palette.bar);
-            card.style.setProperty('--pcard-stat-bg',     palette.statBg);
-            card.style.setProperty('--pcard-stat-c',      palette.statColor);
-            card.style.setProperty('--pcard-stat-l',      palette.statLabel);
-            card.style.setProperty('--pcard-btn-bg',      palette.btnBg);
-            card.style.setProperty('--pcard-btn-bd',      palette.btnBorder);
-            card.style.setProperty('--pcard-btn-c',       palette.btnColor);
-            card.classList.add('mr-plan-themed');
         } catch(_) {}
     };
 
@@ -47647,6 +47607,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     window._mrApplyPlanCardPaletteHome = function(card, home) {
         try {
             if (!card) return;
+            // [v2.30.1-p138] Álvaro 5 sep 2026: eliminado sistema de colores por
+            // ciudad de maratón en widget Plan Activo Home. Siempre navy.
+            // NO-OP defensivo: limpia vars y clase legacy si aplicasen, pero
+            // ya NO aplica ninguna paleta. Argumento `home` ignorado.
             var vars = ['--pcard-h-bg','--pcard-h-border','--pcard-h-shadow',
                         '--pcard-h-primary','--pcard-h-secondary','--pcard-h-accent',
                         '--pcard-h-progress','--pcard-h-label','--pcard-h-name',
@@ -47656,28 +47620,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         '--pcard-h-text-shadow','--pcard-h-daycard-bg','--pcard-h-daycard-bd'];
             vars.forEach(function(v){ card.style.removeProperty(v); });
             card.classList.remove('mr-plan-themed-home');
-            if (!home) return;
-            card.style.setProperty('--pcard-h-bg',        home.bg);
-            card.style.setProperty('--pcard-h-border',    home.border);
-            card.style.setProperty('--pcard-h-shadow',    home.shadow);
-            card.style.setProperty('--pcard-h-primary',   home.primary);
-            card.style.setProperty('--pcard-h-secondary', home.secondary);
-            card.style.setProperty('--pcard-h-accent',    home.accent);
-            card.style.setProperty('--pcard-h-progress',  home.progress);
-            card.style.setProperty('--pcard-h-label',     home.label);
-            card.style.setProperty('--pcard-h-name',      home.name);
-            card.style.setProperty('--pcard-h-sub',       home.sub);
-            card.style.setProperty('--pcard-h-track-bg',  home.trackBg);
-            card.style.setProperty('--pcard-h-track-bd',  home.trackBd);
-            card.style.setProperty('--pcard-h-pill-bg',   home.pillBg);
-            card.style.setProperty('--pcard-h-pill-c',    home.pillC);
-            card.style.setProperty('--pcard-h-pill-bd',   home.pillBd);
-            card.style.setProperty('--pcard-h-cell-bg',   home.cellBg);
-            card.style.setProperty('--pcard-h-cell-bd',   home.cellBd);
-            card.style.setProperty('--pcard-h-text-shadow', home.textShadow);
-            card.style.setProperty('--pcard-h-daycard-bg',  home.daycardBg);
-            card.style.setProperty('--pcard-h-daycard-bd',  home.daycardBd);
-            card.classList.add('mr-plan-themed-home');
         } catch(_) {}
     };
 
