@@ -45062,6 +45062,87 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             });
         });
 
+        // [v2.30.1-p146] Álvaro 6 sep 2026: extensión del migrador para
+        // arreglar también series threshold en fase base. Detecta sesiones
+        // 'Series 8×400m' (antigua threshold p145- de baja calidad) y las
+        // reemplaza por 'Cruise 2×2km' (nueva threshold p145 de bloque
+        // continuo). Preserva WU/CD del plan original (no los reconstruye
+        // desde cero), solo sustituye el bloque intermedio de trabajo.
+        // Solo aplica a semanas FUTURAS y con fase base real (no descarga).
+        var thresholdPaceStr = fmtPace(paces.threshold);
+        var thresholdRangeStr = fmtRange(paces.threshold, 8);
+
+        activePlan.weeks.forEach(function(w) {
+            (w.sessions || []).forEach(function(s) {
+                if (s.type !== 'series') return;
+                if (!s.blocks || !s.blocks.length) return;
+                if (s.dateStr && s.dateStr < todayStr) return;
+                // En semanas descarga, series ya se degradó a easy → no tocar
+                if (w.isDeload) return;
+
+                // Detectar bloque 'Series 8×400m' en algún índice
+                var oldWorkIdx = -1;
+                s.blocks.forEach(function(b, i) {
+                    if (b && b.label === 'Series 8×400m') oldWorkIdx = i;
+                });
+                if (oldWorkIdx < 0) return;
+
+                var oldBlockCount = s.blocks.length;
+                var newWorkBlock = {
+                    label: 'Cruise 2×2km',
+                    detail: 'Umbral de lactato · bloque continuo',
+                    color: '#f87171',
+                    km: 0,
+                    repeat: 2,
+                    reps: [
+                        { label: '2km @ Umbral', detail: thresholdRangeStr + '/km', color: '#f87171', km: 2 },
+                        { label: 'Recuperación 90"', detail: 'trote easy · ≈ 300m', color: '#60a5fa', km: 0.3 }
+                    ]
+                };
+
+                // Nuevo array de bloques preservando WU (antes) y CD (después)
+                var newBlocks = s.blocks.slice();
+                newBlocks[oldWorkIdx] = newWorkBlock;
+
+                // Recalcular dist total (WU + trabajo real + CD).
+                // Trabajo real: 2×(2+0.3) = 4.6 km. Redondeamos a 5 km para simetría.
+                var wuCdKm = 0;
+                newBlocks.forEach(function(b, i) {
+                    if (i !== oldWorkIdx && b && typeof b.km === 'number') wuCdKm += b.km;
+                });
+                var newDist = Math.round(wuCdKm + 4.6);  // 2 + 4.6 + 2 ≈ 9km
+
+                var newDesc = 'Cruise 2×2km a ' + thresholdPaceStr + '/km · rec 90"';
+
+                changes.push({
+                    weekN: w.n,
+                    dayName: s.dayName || '',
+                    dateStr: s.dateStr || '',
+                    isDeload: false,
+                    seriesFix: true,  // marker para distinguir del fix de longs
+                    before: {
+                        variant: 'Series 8×400m',
+                        ratio: null,
+                        mpKm: 5,  // km "threshold fragmentado"
+                        dist: s.dist
+                    },
+                    after: {
+                        variant: 'Cruise 2×2km',
+                        ratio: null,
+                        mpKm: 4,  // km "threshold continuo"
+                        dist: newDist
+                    }
+                });
+
+                if (applyChanges) {
+                    s.blocks = newBlocks;
+                    s.dist = newDist;
+                    s.desc = newDesc;
+                    // s.pace y s.fc se mantienen (ya eran threshold)
+                }
+            });
+        });
+
         if (applyChanges && changes.length > 0) {
             activePlan._p142Migrated = new Date().toISOString();
             try { if (typeof saveAppState === 'function') saveAppState(); } catch(_) {}
@@ -45099,26 +45180,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return;
         }
 
+        // Contar tipos: longs vs series
+        var longCount = 0, seriesCount = 0;
+        preview.changes.forEach(function(c) {
+            if (c.seriesFix) seriesCount++;
+            else longCount++;
+        });
+        var summaryParts = [];
+        if (longCount > 0)   summaryParts.push('<b style="color:var(--tw);">' + longCount + '</b> long' + (longCount === 1 ? '' : 's'));
+        if (seriesCount > 0) summaryParts.push('<b style="color:var(--tw);">' + seriesCount + '</b> serie' + (seriesCount === 1 ? '' : 's') + ' threshold');
         var html = '<div style="font-size:11px;color:var(--tm);margin-bottom:10px;padding:0 4px;">'
-                 + 'Se van a actualizar <b style="color:var(--tw);">' + preview.changes.length + '</b> long' + (preview.changes.length === 1 ? '' : 's') + ' futuros. '
-                 + 'Sesiones pasadas y otros tipos de entreno no se tocan.'
+                 + 'Se van a actualizar ' + summaryParts.join(' + ') + ' en semanas futuras. '
+                 + 'Sesiones pasadas, easy runs y descargas no se tocan.'
                  + '</div>';
 
         html += '<div style="display:flex;flex-direction:column;gap:8px;">';
         preview.changes.forEach(function(c) {
             var deloadTag = c.isDeload ? ' <span style="background:rgba(138,143,151,.16);color:var(--tm);font-size:8.5px;font-weight:800;letter-spacing:1px;padding:2px 6px;border-radius:99px;text-transform:uppercase;">DESCARGA</span>' : '';
+            var typeTag = c.seriesFix
+                ? ' <span style="background:rgba(248,113,113,.16);color:#f87171;font-size:8.5px;font-weight:800;letter-spacing:1px;padding:2px 6px;border-radius:99px;text-transform:uppercase;">SERIES</span>'
+                : ' <span style="background:rgba(124,58,237,.16);color:#a78bfa;font-size:8.5px;font-weight:800;letter-spacing:1px;padding:2px 6px;border-radius:99px;text-transform:uppercase;">LONG</span>';
             var ratioTxt = function(r) { return (r === null || r === undefined) ? '—' : (r * 100).toFixed(0) + '%'; };
-            var beforeTxt = c.before.variant === 'mpFinish' ? ('MP ' + ratioTxt(c.before.ratio)) : c.before.variant;
-            var afterTxt = c.after.variant === 'mpFinish' ? ('MP ' + ratioTxt(c.after.ratio)) : c.after.variant;
+            var beforeTxt, afterTxt, mpLabelBefore, mpLabelAfter;
+            if (c.seriesFix) {
+                // p146 · fix series threshold base: mostrar nombre completo del bloque
+                beforeTxt = c.before.variant;  // 'Series 8×400m'
+                afterTxt  = c.after.variant;   // 'Cruise 2×2km'
+                mpLabelBefore = 'km umbral';
+                mpLabelAfter  = 'km umbral';
+            } else {
+                // fix longs: mostrar variant + ratio
+                beforeTxt = c.before.variant === 'mpFinish' ? ('MP ' + ratioTxt(c.before.ratio)) : c.before.variant;
+                afterTxt  = c.after.variant  === 'mpFinish' ? ('MP ' + ratioTxt(c.after.ratio))  : c.after.variant;
+                mpLabelBefore = 'km MP';
+                mpLabelAfter  = 'km MP';
+            }
             html += '<div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;">';
             html +=   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
-            html +=     '<div style="font-size:12px;font-weight:800;color:var(--tw);">Sem ' + c.weekN + ' · ' + c.dayName + '</div>';
+            html +=     '<div style="font-size:12px;font-weight:800;color:var(--tw);">Sem ' + c.weekN + ' · ' + c.dayName + typeTag + '</div>';
             html +=     '<div style="font-size:10px;color:var(--tm);">' + (c.dateStr || '') + deloadTag + '</div>';
             html +=   '</div>';
             html +=   '<div style="display:flex;gap:6px;font-size:11px;color:var(--ts);align-items:center;">';
-            html +=     '<span style="opacity:.7;">' + c.before.dist + 'km · ' + beforeTxt + ' · <b style="color:#ef4444;">' + c.before.mpKm + 'km MP</b></span>';
+            html +=     '<span style="opacity:.7;">' + c.before.dist + 'km · ' + beforeTxt + ' · <b style="color:#ef4444;">' + c.before.mpKm + ' ' + mpLabelBefore + '</b></span>';
             html +=     '<span style="color:var(--tm);">→</span>';
-            html +=     '<span><b style="color:var(--tw);">' + c.after.dist + 'km</b> · ' + afterTxt + ' · <b style="color:#22c55e;">' + c.after.mpKm + 'km MP</b></span>';
+            html +=     '<span><b style="color:var(--tw);">' + c.after.dist + 'km</b> · ' + afterTxt + ' · <b style="color:#22c55e;">' + c.after.mpKm + ' ' + mpLabelAfter + '</b></span>';
             html +=   '</div>';
             html += '</div>';
         });
@@ -79993,17 +80098,14 @@ window.addEventListener('DOMContentLoaded', function() {
     }
     .mr-wr-hc-txt { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
     .mr-wr-hc-eyebrow {
-        font-size:10.5px; font-weight:800; letter-spacing:1.2px;
+        /* [v2.30.1-p146] Álvaro 6 sep 2026: título eyebrow completo sin
+           truncar. En p145 forcé nowrap pero el texto se cortaba con
+           ellipsis "MÍSTER · REPORTE SEMA…". Ahora bajo font-size 10.5→9.5
+           y letter-spacing 1.2→0.4 para que quepa entero. Legibilidad ok
+           porque el título grande abajo (19px) lleva el peso visual. */
+        font-size:9.5px; font-weight:800; letter-spacing:0.4px;
         text-transform:uppercase; color:#f4c96a; opacity:.90; margin-bottom:4px;
-        /* [v2.30.1-p145] Álvaro 6 sep 2026: forzar una sola línea. Antes wrap
-           partía "MÍSTER · REPORTE / SEMANAL" en 2 líneas por letter-spacing
-           1.5px + padding del contenedor. Bajado letter-spacing 1.5→1.2 (menor
-           anchura visual) + white-space:nowrap para garantizar single line
-           incluso en pantallas estrechas. text-overflow:ellipsis defensivo
-           por si aún desborda en algún viewport muy pequeño. */
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
     }
     .mr-wr-hc-title {
         font-size:19px; font-weight:800; color:#fff8e0;
