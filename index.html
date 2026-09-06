@@ -44948,9 +44948,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (typeof activePlan === 'undefined' || !activePlan || !activePlan.weeks) {
             return { error: 'No hay plan activo', changes: [] };
         }
-        if (activePlan._p142Migrated && !applyChanges) {
-            return { error: 'Plan ya migrado', migratedAt: activePlan._p142Migrated, changes: [] };
-        }
+        // [v2.30.1-p143] Álvaro 6 sep 2026: eliminado early-return por flag
+        // _p142Migrated. Ahora el migrador SIEMPRE audita y detecta cambios
+        // (via comparación numérica ratio actual vs ratio computado). Esto
+        // permite re-migrar planes que ya fueron migrados a p142v1 cuando la
+        // lógica se ajusta (p143 rebaja rango build 0.20-0.36 → 0.15-0.28).
+        // Si no hay diff → cero cambios → sheet muestra "no hay longs afectados".
         var paces = activePlan.paces;
         if (!paces || !paces.easy || !paces.marathon) {
             return { error: 'Plan sin paces válidos', changes: [] };
@@ -44966,7 +44969,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             if (wPh && phaseCounts[wPh] !== undefined) phaseCounts[wPh]++;
         });
 
-        // Fórmula idéntica a la del generador p142 (longSession → _computeMpRatio)
+        // Fórmula idéntica a la del generador p143 (longSession → _computeMpRatio)
+        // Rango build: 0.15-0.28 · rango peak: 0.42-0.52
         function _computeMpRatio(ph, wn, phLen) {
             var totalMpWeeks = Math.floor(phLen / 2);
             var currentMpIdx = Math.floor((wn - 1) / 2);
@@ -44974,7 +44978,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ? Math.min(1, currentMpIdx / (totalMpWeeks - 1))
                 : 0.5;
             if (ph === 'peak') return 0.42 + progress * 0.10;
-            return 0.20 + progress * 0.16;
+            return 0.15 + progress * 0.13;
         }
 
         function _sumMpKm(blocks) {
@@ -45106,9 +45110,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         if (preview.error) {
             body.innerHTML = '<div style="padding:16px;text-align:center;color:var(--tm);font-size:13px;">'
-                + (preview.error === 'Plan ya migrado'
-                    ? '✓ Este plan ya fue migrado el ' + new Date(preview.migratedAt).toLocaleString('es-ES')
-                    : preview.error)
+                + preview.error
                 + '</div>';
             var applyBtn = document.getElementById('migrate-p142-apply');
             if (applyBtn) applyBtn.style.display = 'none';
@@ -45117,8 +45119,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         if (!preview.changes || preview.changes.length === 0) {
-            body.innerHTML = '<div style="padding:16px;text-align:center;color:var(--tm);font-size:13px;">'
-                + '✓ No hay longs afectados por el fix p142. Tu plan ya está en línea con la nueva lógica.'
+            var alreadyTxt = activePlan && activePlan._p142Migrated
+                ? '✓ Tu plan está actualizado a la última lógica (p143). Última migración: ' + new Date(activePlan._p142Migrated).toLocaleString('es-ES')
+                : '✓ No hay longs afectados. Tu plan ya está en línea con la lógica actual.';
+            body.innerHTML = '<div style="padding:16px;text-align:center;color:var(--tm);font-size:13px;line-height:1.5;">'
+                + alreadyTxt
                 + '</div>';
             var applyBtn2 = document.getElementById('migrate-p142-apply');
             if (applyBtn2) applyBtn2.style.display = 'none';
@@ -45759,10 +45764,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // [v2.30.1-p142] Fix A · Ratio MP progresivo por posición dentro de fase.
+        // [v2.30.1-p143] Fix A · Ratio MP progresivo por posición dentro de fase.
+        // Álvaro 6 sep 2026: rango build ajustado de 0.20-0.36 → 0.15-0.28.
+        // Con la lógica p142v1 (0.20-0.36) sesiones de build llegaban a 15km MP
+        // en fase de construcción, aún demasiado agresivo. Nuevo benchmark:
+        // MÁX 10-12 km MP en cualquier long de build (paces 5:51/4:40):
+        //   Build wn max con long 175': 10 km MP
+        //   Build wn max con long 190': 11 km MP
+        //   Build wn max con long 200': 12 km MP
+        // Peak se mantiene 0.42-0.52 → 16-20 km MP (esas semanas SÍ ameritan
+        // MP largo por ser específicas de carrera).
         // ph:    'build' | 'peak' (para las otras fases no aplica, no se llama)
         // wn:    posición 0-indexed dentro de la fase (semana impar → mpFinish)
         // phLen: longitud de la fase (buildW o peakW respectivo)
-        // Return: ratio 0.20-0.36 (build) o 0.42-0.52 (peak)
+        // Return: ratio 0.15-0.28 (build) o 0.42-0.52 (peak)
         function _computeMpRatio(ph, wn, phLen) {
             // Nº total de sesiones mpFinish en esta fase (wn impares dentro de 0..phLen-1)
             const totalMpWeeks = Math.floor(phLen / 2);
@@ -45774,7 +45789,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ? Math.min(1, currentMpIdx / (totalMpWeeks - 1))
                 : 0.5;
             if (ph === 'peak') return 0.42 + progress * 0.10;  // 0.42 → 0.52
-            return 0.20 + progress * 0.16;                     // 0.20 → 0.36 (build)
+            return 0.15 + progress * 0.13;                     // 0.15 → 0.28 (build)
         }
 
         // ── EASY / RECOVERY sizes ───────────────────────────────────
