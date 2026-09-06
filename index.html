@@ -45036,7 +45036,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     }
     try { window._mrRampPace = _mrRampPace; window._mrPlanT = _mrPlanT; window._mrApplyMpRamp = _mrApplyMpRamp; } catch(e){}
 
-    function buildWeekSessions(phase, weekNum, dayList, paces, lt, phaseLen, isRaceWeek, vdot) {
+    // [v2.30.1-p142] Álvaro 6 sep 2026: añadido isDeloadWeek al signature.
+    // longSession() lo lee para degradar variant mpFinish/progressive a
+    // 'base' (solo easy) en semanas descarga. La descarga es asimilación,
+    // no estímulo específico. Sin este arg, el multiplicador 0.70 posterior
+    // solo reducía la distancia manteniendo la proporción MP intacta.
+    // Compat: parámetro con default false → llamadores antiguos siguen
+    // funcionando sin cambio.
+    function buildWeekSessions(phase, weekNum, dayList, paces, lt, phaseLen, isRaceWeek, vdot, isDeloadWeek) {
         const n = dayList.length;
         const fcE = `${Math.round(lt*0.80)}-${Math.round(lt*0.91)}`;
         const fcM = `${Math.round(lt*0.91)}-${Math.round(lt*0.96)}`;
@@ -45418,6 +45425,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // El target es tiempo (min). Los km se derivan de los ritmos de cada
         // bloque para que el atleta esté aproximadamente el tiempo prescrito
         // en pie. Los caps por distancia protegen contra riesgo de lesión.
+        //
+        // [v2.30.1-p142] Álvaro 6 sep 2026: 2 fixes coordinados
+        //   Fix A · mpRatio PROGRESIVO en vez de fijo. El anterior 0.4 build /
+        //   0.5 peak generaba saltos brutales (0 km MP en base → 16 km MP de
+        //   golpe en primer mpFinish de build). Ahora crece linealmente
+        //   dentro de cada fase según la posición del wn impar:
+        //     Build: 0.20 → 0.36 (más suave al inicio, agresivo al final)
+        //     Peak:  0.42 → 0.52 (fase específica de carrera)
+        //   Con phase de 1 sola sesión mpFinish, usa progress=0.5 (medio).
+        //   Progresión típica en un plan marathon 20 sem (paces 5:00/4:16):
+        //     Build wn=1 (175'): 34km · 9 km MP     (antes: 16 km MP)
+        //     Build wn=3 (190'): 38km · 12 km MP    (antes: 18 km MP)
+        //     Build wn=5 (200'): 41km · 17 km MP    (antes: 19 km MP)
+        //     Peak  wn=1 (155'): 28km · 17 km MP    (antes: 18 km MP)
+        //     Peak  wn=3 (165'): 26km · 20 km MP    (antes: 19 km MP)
+        //
+        //   Fix B · Semanas descarga sin MP finish. La descarga es asimilación,
+        //   no estímulo específico. Antes, el multiplicador 0.70 se aplicaba
+        //   pero mantenía la proporción MP → un 33km/15km MP se convertía en
+        //   23km/11km MP: sigue siendo estímulo específico. Ahora, si
+        //   isDeloadWeek==true, variant se degrada a 'base' (solo easy).
         function longSession(ph, wn) {
             const _distKey = (typeof planDist!=='undefined') ? planDist : 'marathon';
             const targetMin = resolveLongTargetMin(_distKey, ph, wn, isRaceWeek);
@@ -45427,10 +45455,33 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             let variant, mpRatio = null;
             if(ph==='taper')      variant = 'taper';
             else if(ph==='base')  variant = 'base';
-            else if(wn % 2 === 1) { variant = 'mpFinish'; mpRatio = ph==='peak' ? 0.5 : 0.4; }
+            else if(isDeloadWeek) variant = 'base';   // [Fix B] descarga sin MP
+            else if(wn % 2 === 1) {
+                variant = 'mpFinish';
+                mpRatio = _computeMpRatio(ph, wn, phaseLen);
+            }
             else                  variant = 'progressive';
             const meta = { variant, targetSec, ph, wn, mpRatio, fcE, fcM };
             return _buildLongSession(meta, paces);
+        }
+
+        // [v2.30.1-p142] Fix A · Ratio MP progresivo por posición dentro de fase.
+        // ph:    'build' | 'peak' (para las otras fases no aplica, no se llama)
+        // wn:    posición 0-indexed dentro de la fase (semana impar → mpFinish)
+        // phLen: longitud de la fase (buildW o peakW respectivo)
+        // Return: ratio 0.20-0.36 (build) o 0.42-0.52 (peak)
+        function _computeMpRatio(ph, wn, phLen) {
+            // Nº total de sesiones mpFinish en esta fase (wn impares dentro de 0..phLen-1)
+            const totalMpWeeks = Math.floor(phLen / 2);
+            // Índice 0-based de esta sesión mpFinish (wn=1 → 0, wn=3 → 1, ...)
+            const currentMpIdx = Math.floor((wn - 1) / 2);
+            // Progreso lineal 0..1 dentro de las sesiones mpFinish de la fase.
+            // Si solo hay 1 sesión mpFinish (phLen 2-3), usar 0.5 (medio del rango).
+            const progress = totalMpWeeks > 1
+                ? Math.min(1, currentMpIdx / (totalMpWeeks - 1))
+                : 0.5;
+            if (ph === 'peak') return 0.42 + progress * 0.10;  // 0.42 → 0.52
+            return 0.20 + progress * 0.16;                     // 0.20 → 0.36 (build)
         }
 
         // ── EASY / RECOVERY sizes ───────────────────────────────────
@@ -46773,7 +46824,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _rampBaseOff = (_xlContext && _xlContext.baseWeeks) ? _xlContext.baseWeeks : 0;
             paces._t = _mrPlanT(_rampBaseOff + w, _rampBaseOff + totalWeeks, _MR_RAMP_COLCHON);
             const sessionDefs=buildWeekSessions(phase,phaseWeekNum,effectiveDays,paces,lt,
-                phase==='base'?baseW:phase==='build'?buildW:phase==='peak'?peakW:taperW,isRaceWeek,vdot);
+                phase==='base'?baseW:phase==='build'?buildW:phase==='peak'?peakW:taperW,isRaceWeek,vdot,
+                isDeloadWeek);
 
             // Estructura intervalos/progresiones/pirámides planos → repeat/reps o
             // bloques secuenciales (fiel en la app y en el reloj COROS).
