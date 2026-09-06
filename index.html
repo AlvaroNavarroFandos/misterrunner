@@ -13825,7 +13825,49 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     </div>
                                     <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
                                 </div>
+                                <!-- [v2.30.1-p142] Álvaro 6 sep 2026: migrador one-shot de longs
+                                     del plan activo a la nueva lógica p142 (ratio MP progresivo
+                                     + descarga sin MP). Solo tiene sentido para planes generados
+                                     antes de p142. Idempotente vía flag _p142Migrated. -->
+                                <div id="dev-migrate-p142-btn" onclick="_mrOpenMigrateP142Sheet()" style="display:flex;align-items:center;gap:14px;padding:12px 14px;cursor:pointer;border-top:1px solid var(--border);">
+                                    <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--acc-green,#22c55e)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                                    </div>
+                                    <div style="flex:1;">
+                                        <div style="font-size:15.5px;font-weight:700;color:var(--tw);letter-spacing:-.3px;">Migrar plan a p142</div>
+                                        <div style="font-size:10.5px;color:var(--tm);margin-top:2px;letter-spacing:.2px;">Ajusta longs futuros con ratio MP progresivo</div>
+                                    </div>
+                                    <div style="font-size:18px;color:var(--tm);opacity:.5;line-height:1;">›</div>
+                                </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- [v2.30.1-p142] Sheet migrar plan a p142 -->
+                <div id="migrate-p142-sheet" class="sheet-backdrop" onclick="if(event.target===this)closeSheet('migrate-p142-sheet')">
+                    <div class="sheet">
+                        <div class="sheet-handle-wrap">
+                            <div class="sheet-handle"></div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div class="sheet-title" style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:15px;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                                    Migrar plan a p142
+                                </div>
+                                <button onclick="closeSheet('migrate-p142-sheet')" aria-label="Cerrar" style="width:36px;height:36px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;line-height:1;padding:0;">✕</button>
+                            </div>
+                            <div style="font-size:11px;color:var(--ts);margin-top:6px;line-height:1.4;">
+                                Fix p142 · ratio MP progresivo + descarga sin MP finish. Solo se tocan longs FUTUROS. Idempotente.
+                            </div>
+                        </div>
+                        <div class="sheet-body" style="padding-bottom:12px;">
+                            <div id="migrate-p142-body"></div>
+                        </div>
+                        <div style="padding:0 16px 20px;">
+                            <button id="migrate-p142-apply" onclick="_mrApplyMigrateP142()" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(180deg,#22c55e 0%,#15803d 100%);color:#fff;border:none;border-radius:14px;padding:14px 16px;font-size:14px;font-weight:800;letter-spacing:.3px;cursor:pointer;box-shadow:0 4px 12px rgba(34,197,94,.35);">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                                Aplicar migración
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -44880,6 +44922,257 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         };
     }
     window._buildLongSession = _buildLongSession;
+
+    // ═════════════════════════════════════════════════════════════════════
+    // [v2.30.1-p142] Migrador one-shot de longs de plan existente a la
+    // nueva lógica p142 (ratio MP progresivo + descarga sin MP).
+    // ─────────────────────────────────────────────────────────────────────
+    // Álvaro 6 sep 2026: los planes generados ANTES de p142 tienen longs
+    // con mpRatio fijo (0.4 build, 0.5 peak) y con MP finish en semanas
+    // descarga. Este helper permite migrar el plan activo sin regenerarlo:
+    // recorre las weeks, identifica longs afectados, recompone con la
+    // lógica p142 usando _buildLongSession + newMeta y persiste.
+    //
+    // Idempotente: usa flag activePlan._p142Migrated. Solo toca sesiones
+    // FUTURAS (dateStr > today) para respetar histórico ya completado.
+    //
+    // Args:
+    //   applyChanges: false → preview (retorna array con diff sin tocar)
+    //                 true  → aplica cambios + saveAppState + marca flag
+    //
+    // Return: { changes: [{weekN, dayName, dateStr, before, after}], 
+    //           phaseCounts: {base, build, peak, taper},
+    //           applied: bool, error?: string }
+    // ═════════════════════════════════════════════════════════════════════
+    window._mrMigratePlanLongsP142 = function(applyChanges) {
+        if (typeof activePlan === 'undefined' || !activePlan || !activePlan.weeks) {
+            return { error: 'No hay plan activo', changes: [] };
+        }
+        if (activePlan._p142Migrated && !applyChanges) {
+            return { error: 'Plan ya migrado', migratedAt: activePlan._p142Migrated, changes: [] };
+        }
+        var paces = activePlan.paces;
+        if (!paces || !paces.easy || !paces.marathon) {
+            return { error: 'Plan sin paces válidos', changes: [] };
+        }
+
+        // Contar semanas por fase real (via s.long.ph, ignorando 'descarga' display)
+        var phaseCounts = { base: 0, build: 0, peak: 0, taper: 0 };
+        activePlan.weeks.forEach(function(w) {
+            var wPh = null;
+            (w.sessions || []).forEach(function(s) {
+                if (s.long && s.long.ph && !wPh) wPh = s.long.ph;
+            });
+            if (wPh && phaseCounts[wPh] !== undefined) phaseCounts[wPh]++;
+        });
+
+        // Fórmula idéntica a la del generador p142 (longSession → _computeMpRatio)
+        function _computeMpRatio(ph, wn, phLen) {
+            var totalMpWeeks = Math.floor(phLen / 2);
+            var currentMpIdx = Math.floor((wn - 1) / 2);
+            var progress = totalMpWeeks > 1
+                ? Math.min(1, currentMpIdx / (totalMpWeeks - 1))
+                : 0.5;
+            if (ph === 'peak') return 0.42 + progress * 0.10;
+            return 0.20 + progress * 0.16;
+        }
+
+        function _sumMpKm(blocks) {
+            var total = 0;
+            (blocks || []).forEach(function(b) {
+                if (b._rampMP) total += (b.km || 0);
+            });
+            return total;
+        }
+
+        var changes = [];
+        var todayStr = (typeof localDateStr === 'function') ? localDateStr(new Date()) : new Date().toISOString().slice(0, 10);
+
+        activePlan.weeks.forEach(function(w) {
+            (w.sessions || []).forEach(function(s) {
+                if (s.type !== 'long' || !s.long) return;
+                // Solo migrar sesiones FUTURAS (respeta lo ya completado/programado)
+                if (s.dateStr && s.dateStr < todayStr) return;
+
+                var meta = s.long;
+                var oldVariant = meta.variant;
+                var oldRatio = meta.mpRatio;
+                var oldMpKm = _sumMpKm(s.blocks);
+                var oldDist = s.dist;
+
+                var newVariant = oldVariant;
+                var newRatio = oldRatio;
+                var needsRebuild = false;
+
+                // Fix B: descarga con mpFinish/progressive → degradar a base
+                if (w.isDeload && (oldVariant === 'mpFinish' || oldVariant === 'progressive')) {
+                    newVariant = 'base';
+                    newRatio = null;
+                    needsRebuild = true;
+                }
+                // Fix A: mpFinish con ratio antiguo → progresivo
+                else if (oldVariant === 'mpFinish' && meta.ph && typeof meta.wn === 'number') {
+                    var phLen = phaseCounts[meta.ph] || 0;
+                    if (phLen > 0) {
+                        var computed = _computeMpRatio(meta.ph, meta.wn, phLen);
+                        if (Math.abs((oldRatio || 0.4) - computed) > 0.01) {
+                            newRatio = computed;
+                            needsRebuild = true;
+                        }
+                    }
+                }
+
+                if (!needsRebuild) return;
+
+                var newMeta = Object.assign({}, meta, {
+                    variant: newVariant,
+                    mpRatio: newRatio
+                });
+
+                try {
+                    var rebuilt = window._buildLongSession(newMeta, paces);
+                    if (!rebuilt) return;
+
+                    // Si la semana original era deload, replicar el multiplicador
+                    // 0.70 que aplicaría el generador (línea 46786) tras reconstruir.
+                    // Deja los mismos campos: dist, blocks (km), desc.
+                    if (w.isDeload) {
+                        var _deloadDist = Math.max(4, Math.round(rebuilt.dist * 0.70));
+                        rebuilt.blocks = (rebuilt.blocks || []).map(function(b) {
+                            return Object.assign({}, b, {
+                                km: b.km ? Math.max(2, Math.round(b.km * 0.70)) : b.km
+                            });
+                        });
+                        rebuilt.dist = _deloadDist;
+                        rebuilt.desc = 'Long suave ' + _deloadDist + 'km a ' + fmtPace(paces.easy) + '/km · descarga';
+                    }
+
+                    var newMpKm = _sumMpKm(rebuilt.blocks);
+                    var newDist = rebuilt.dist;
+
+                    changes.push({
+                        weekN: w.n,
+                        dayName: s.dayName || '',
+                        dateStr: s.dateStr || '',
+                        isDeload: !!w.isDeload,
+                        before: {
+                            variant: oldVariant,
+                            ratio: oldRatio,
+                            mpKm: Math.round(oldMpKm),
+                            dist: oldDist
+                        },
+                        after: {
+                            variant: newVariant,
+                            ratio: newRatio,
+                            mpKm: Math.round(newMpKm),
+                            dist: newDist
+                        }
+                    });
+
+                    if (applyChanges) {
+                        s.dist = rebuilt.dist;
+                        s.pace = rebuilt.pace;
+                        s.fc = rebuilt.fc;
+                        s.blocks = rebuilt.blocks;
+                        s.desc = rebuilt.desc;
+                        s.longSec = rebuilt.longSec;
+                        s.durStr = rebuilt.durStr;
+                        s.long = rebuilt.long;
+                    }
+                } catch(e) {
+                    console.warn('[MR][p142-migrate] rebuild fail sem ' + w.n + ':', e);
+                }
+            });
+        });
+
+        if (applyChanges && changes.length > 0) {
+            activePlan._p142Migrated = new Date().toISOString();
+            try { if (typeof saveAppState === 'function') saveAppState(); } catch(_) {}
+        }
+
+        return {
+            changes: changes,
+            phaseCounts: phaseCounts,
+            applied: !!applyChanges,
+            migrated: activePlan._p142Migrated || null
+        };
+    };
+
+    // Handler UI: abre sheet con preview y botón aplicar
+    window._mrOpenMigrateP142Sheet = function() {
+        var preview = window._mrMigratePlanLongsP142(false);
+        var body = document.getElementById('migrate-p142-body');
+        if (!body) return;
+
+        if (preview.error) {
+            body.innerHTML = '<div style="padding:16px;text-align:center;color:var(--tm);font-size:13px;">'
+                + (preview.error === 'Plan ya migrado'
+                    ? '✓ Este plan ya fue migrado el ' + new Date(preview.migratedAt).toLocaleString('es-ES')
+                    : preview.error)
+                + '</div>';
+            var applyBtn = document.getElementById('migrate-p142-apply');
+            if (applyBtn) applyBtn.style.display = 'none';
+            if (typeof openSheet === 'function') openSheet('migrate-p142-sheet');
+            return;
+        }
+
+        if (!preview.changes || preview.changes.length === 0) {
+            body.innerHTML = '<div style="padding:16px;text-align:center;color:var(--tm);font-size:13px;">'
+                + '✓ No hay longs afectados por el fix p142. Tu plan ya está en línea con la nueva lógica.'
+                + '</div>';
+            var applyBtn2 = document.getElementById('migrate-p142-apply');
+            if (applyBtn2) applyBtn2.style.display = 'none';
+            if (typeof openSheet === 'function') openSheet('migrate-p142-sheet');
+            return;
+        }
+
+        // Renderizar tabla de cambios
+        var html = '<div style="font-size:11px;color:var(--tm);margin-bottom:10px;padding:0 4px;">'
+                 + 'Se van a actualizar <b style="color:var(--tw);">' + preview.changes.length + '</b> long' + (preview.changes.length === 1 ? '' : 's') + ' futuros. '
+                 + 'Sesiones pasadas y otros tipos de entreno no se tocan.'
+                 + '</div>';
+
+        html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+        preview.changes.forEach(function(c) {
+            var deloadTag = c.isDeload ? ' <span style="background:rgba(138,143,151,.16);color:var(--tm);font-size:8.5px;font-weight:800;letter-spacing:1px;padding:2px 6px;border-radius:99px;text-transform:uppercase;">DESCARGA</span>' : '';
+            var ratioTxt = function(r) { return (r === null || r === undefined) ? '—' : (r * 100).toFixed(0) + '%'; };
+            var beforeTxt = c.before.variant === 'mpFinish' ? ('MP ' + ratioTxt(c.before.ratio)) : c.before.variant;
+            var afterTxt = c.after.variant === 'mpFinish' ? ('MP ' + ratioTxt(c.after.ratio)) : c.after.variant;
+            html += '<div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;">';
+            html +=   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
+            html +=     '<div style="font-size:12px;font-weight:800;color:var(--tw);">Sem ' + c.weekN + ' · ' + c.dayName + '</div>';
+            html +=     '<div style="font-size:10px;color:var(--tm);">' + (c.dateStr || '') + deloadTag + '</div>';
+            html +=   '</div>';
+            html +=   '<div style="display:flex;gap:6px;font-size:11px;color:var(--ts);align-items:center;">';
+            html +=     '<span style="opacity:.7;">' + c.before.dist + 'km · ' + beforeTxt + ' · <b style="color:#ef4444;">' + c.before.mpKm + 'km MP</b></span>';
+            html +=     '<span style="color:var(--tm);">→</span>';
+            html +=     '<span><b style="color:var(--tw);">' + c.after.dist + 'km</b> · ' + afterTxt + ' · <b style="color:#22c55e;">' + c.after.mpKm + 'km MP</b></span>';
+            html +=   '</div>';
+            html += '</div>';
+        });
+        html += '</div>';
+
+        body.innerHTML = html;
+        var applyBtn3 = document.getElementById('migrate-p142-apply');
+        if (applyBtn3) applyBtn3.style.display = 'flex';
+        if (typeof openSheet === 'function') openSheet('migrate-p142-sheet');
+    };
+
+    // Handler UI: aplica la migración con feedback
+    window._mrApplyMigrateP142 = function() {
+        var result = window._mrMigratePlanLongsP142(true);
+        try { if (typeof closeSheet === 'function') closeSheet('migrate-p142-sheet'); } catch(_){}
+        if (result.error) {
+            if (typeof showToast === 'function') showToast('⚠️ ' + result.error, 4500);
+            return;
+        }
+        var n = result.changes ? result.changes.length : 0;
+        try { if (typeof renderHome === 'function') renderHome(); } catch(_){}
+        try { if (typeof renderPlanView === 'function') renderPlanView(); } catch(_){}
+        if (typeof showToast === 'function') {
+            showToast('✅ Plan migrado a p142 · ' + n + ' long' + (n === 1 ? '' : 's') + ' ajustado' + (n === 1 ? '' : 's'), 5000);
+        }
+    };
 
     // Resuelve tiempo target (min) para un long, aplicando caps fisiológicos.
     // El llamador deriva km según su patrón de bloques (easy/MP/progresivo).
