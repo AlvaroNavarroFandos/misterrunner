@@ -9952,19 +9952,27 @@
 
     /* v2.30.1-p27 · Override cromático del bloque TSB (Home cuando no hay
        COROS + Readiness sheet). Álvaro pidió:
-         · Light: CTL FORMA azul, ATL FATIGA amarilla
+         · Light: CTL FORMA azul, ATL FATIGA amarilla → [p148] CRIMSON
+                  TSB active naranja → [p148] gris oscuro
          · Dark:  CTL FORMA azul, ATL FATIGA blanca
-       Se aplica sobrescribiendo las CSS vars --pmc-ctl y --pmc-atl dentro
-       del ámbito del contenedor, así todos los consumidores (stat cards,
-       gradientes de barras del mini-gráfico 8 semanas, cuadraditos de
-       leyenda) heredan el nuevo color sin tocar el JS que los pinta. */
+       Se aplica sobrescribiendo las CSS vars --pmc-ctl, --pmc-atl y
+       --pmc-tsb-active dentro del ámbito del contenedor, así todos los
+       consumidores (stat cards, gradientes de barras del mini-gráfico
+       8 semanas, cuadraditos de leyenda) heredan el nuevo color sin
+       tocar el JS que los pinta.
+       [v2.30.1-p148] Álvaro 6 sep 2026: sustituido naranja por crimson en
+       ATL (fondo card + barras del chart 8 sem). TSB active pasa a gris
+       slate en light — los otros estados TSB (good verde, eq amarillo,
+       fatigue rojo) mantienen su color semántico. */
     .mr-tsb-block-alt {
         --pmc-ctl: #2563eb;
         --pmc-ctl-deep: #1d4ed8;
         --pmc-ctl-lt: rgba(37,99,235,.10);
-        --pmc-atl: #d97706;
-        --pmc-atl-deep: #b45309;
-        --pmc-atl-lt: rgba(217,119,6,.14);
+        --pmc-atl: #dc2626;
+        --pmc-atl-deep: #991b1b;
+        --pmc-atl-lt: rgba(220,38,38,.10);
+        --pmc-tsb-active: #4b5563;
+        --pmc-tsb-active-lt: rgba(75,85,99,.10);
     }
     body.dark-mode .mr-tsb-block-alt {
         --pmc-ctl: #60a5fa;
@@ -10332,7 +10340,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 </div>
                             </div>
                         </button>
-                        <div id="home-club-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:50%;background:#ef4444;border:2px solid #f0ebe0;box-shadow:0 1px 3px rgba(239,68,68,.5);pointer-events:none;"></div>
+                        <!-- [v2.30.1-p148] Álvaro 6 sep 2026: dot más visible.
+                             Antes: 11×11px con border 2px #f0ebe0 (crema) en top:-3/right:-3.
+                             El crema se perdía contra el fondo dorado del botón. Ahora:
+                             14×14px, border 2.5px dorado #d4af37 (contrasta bien contra
+                             el rojo y el negro del botón), top/right -5 para separarlo
+                             más de la esquina, box-shadow con glow rojo + ring negro
+                             para elevación real, z-index:5 sobre el shine layer. -->
+                        <div id="home-club-dot" style="display:none;position:absolute;top:-5px;right:-5px;width:14px;height:14px;border-radius:50%;background:#ef4444;border:2.5px solid #d4af37;box-shadow:0 2px 8px rgba(239,68,68,.65),0 0 0 1px rgba(0,0,0,.55);pointer-events:none;z-index:5;"></div>
                     </div>
                 </div>
 
@@ -80166,55 +80181,115 @@ window.addEventListener('DOMContentLoaded', function() {
         font-family:var(--f, -apple-system, sans-serif);
     }
 
-    /* ─── [v2.30.1-p147] Bloques narrative estructurados (LA SEMANA / VIGILAR / SIGUIENTE SEMANA)
-       Cada bloque como card individual con acento vertical de color. Reemplaza el
-       texto plano corrido por cards diferenciadas que separan visualmente las 3
-       secciones canónicas del prompt Míster. Fallback a texto plano si el parser
-       no encuentra las 3 secciones (reportes antiguos). ─────────────────────── */
+    /* ─── [v2.30.1-p148] Bloques narrative como CARDS de verdad. Álvaro pidió
+       diferenciación más marcada. Antes p147 eran cards muy sutiles (bg 2.5%,
+       border 5%) que se confundían con el fondo del narrative wrapper. Ahora:
+       - Background más marcado y con tinte del color acento
+       - Padding generoso (16/18/16/22)
+       - Border-radius más grande (14 → sensación premium)
+       - Sombra ligera para elevación
+       - Header con separador tenue del texto
+       - Barra acento más ancha (3 → 4px) y con glow del color
+       Colores se mantienen: dorado / ámbar / verde. ─────────────────────── */
+    .mr-wr-narrative--structured {
+        /* Cuando hay bloques estructurados, el wrapper narrative pierde su
+           border/bg (los bloques son cards por sí solos, no queremos "card
+           dentro de card"). El eyebrow "Análisis Míster" queda libre arriba. */
+        background: transparent;
+        border: none;
+        padding: 0;
+        margin-bottom: 20px;
+    }
+    .mr-wr-narrative--structured .mr-wr-narrative-eyebrow {
+        padding: 0 4px;
+        margin-bottom: 12px;
+    }
     .mr-wr-narrative--structured .mr-wr-narrative-body {
-        white-space: normal;  /* dentro de bloques, cada uno gestiona su whitespace */
-        padding-top: 4px;
+        white-space: normal;
+        padding-top: 0;
     }
     .mr-wr-block {
         position: relative;
-        padding: 12px 14px 14px 18px;
+        padding: 16px 18px 18px 22px;
         margin-bottom: 12px;
-        border-radius: 10px;
-        background: rgba(255,255,255,0.025);
-        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 14px;
+        background: var(--card, #1a1a1a);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 2px 8px rgba(0,0,0,.20);
         overflow: hidden;
     }
     .mr-wr-block:last-child { margin-bottom: 0; }
     .mr-wr-block::before {
         content: '';
         position: absolute;
-        top: 10px; bottom: 10px; left: 0;
-        width: 3px;
-        border-radius: 0 3px 3px 0;
-        opacity: .9;
+        top: 12px; bottom: 12px; left: 0;
+        width: 4px;
+        border-radius: 0 4px 4px 0;
+        opacity: 1;
     }
-    .mr-wr-block[data-kind="semana"]::before    { background: linear-gradient(180deg, #f4c96a 0%, #d19a30 100%); }
-    .mr-wr-block[data-kind="vigilar"]::before   { background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%); }
-    .mr-wr-block[data-kind="siguiente"]::before { background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%); }
+    .mr-wr-block[data-kind="semana"] {
+        background: linear-gradient(180deg, rgba(244,201,106,.08) 0%, rgba(244,201,106,.02) 100%), var(--card, #1a1a1a);
+        border-color: rgba(244,201,106,.20);
+    }
+    .mr-wr-block[data-kind="semana"]::before {
+        background: linear-gradient(180deg, #f4c96a 0%, #d19a30 100%);
+        box-shadow: 0 0 8px rgba(244,201,106,.4);
+    }
+    .mr-wr-block[data-kind="vigilar"] {
+        background: linear-gradient(180deg, rgba(251,191,36,.08) 0%, rgba(251,191,36,.02) 100%), var(--card, #1a1a1a);
+        border-color: rgba(251,191,36,.20);
+    }
+    .mr-wr-block[data-kind="vigilar"]::before {
+        background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
+        box-shadow: 0 0 8px rgba(251,191,36,.4);
+    }
+    .mr-wr-block[data-kind="siguiente"] {
+        background: linear-gradient(180deg, rgba(74,222,128,.08) 0%, rgba(74,222,128,.02) 100%), var(--card, #1a1a1a);
+        border-color: rgba(74,222,128,.20);
+    }
+    .mr-wr-block[data-kind="siguiente"]::before {
+        background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
+        box-shadow: 0 0 8px rgba(74,222,128,.4);
+    }
     body:not(.dark-mode) .mr-wr-block {
-        background: rgba(0,0,0,0.02);
-        border-color: rgba(0,0,0,0.06);
+        background: #fff;
+        box-shadow: 0 2px 10px rgba(0,0,0,.06);
+    }
+    body:not(.dark-mode) .mr-wr-block[data-kind="semana"] {
+        background: linear-gradient(180deg, rgba(209,154,48,.06) 0%, rgba(209,154,48,.01) 100%), #fff;
+        border-color: rgba(209,154,48,.28);
+    }
+    body:not(.dark-mode) .mr-wr-block[data-kind="vigilar"] {
+        background: linear-gradient(180deg, rgba(217,119,6,.06) 0%, rgba(217,119,6,.01) 100%), #fff;
+        border-color: rgba(217,119,6,.28);
+    }
+    body:not(.dark-mode) .mr-wr-block[data-kind="siguiente"] {
+        background: linear-gradient(180deg, rgba(22,163,74,.06) 0%, rgba(22,163,74,.01) 100%), #fff;
+        border-color: rgba(22,163,74,.28);
     }
     .mr-wr-block-hdr {
-        display: flex; align-items: center; gap: 8px;
-        margin-bottom: 8px;
+        display: flex; align-items: center; gap: 9px;
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    body:not(.dark-mode) .mr-wr-block-hdr {
+        border-bottom-color: rgba(0,0,0,0.06);
     }
     .mr-wr-block-icon {
-        font-size: 15px; line-height: 1;
+        font-size: 16px; line-height: 1;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
     }
     .mr-wr-block-title {
-        font-size: 10.5px; font-weight: 800;
-        letter-spacing: 1.4px; text-transform: uppercase;
+        font-size: 11px; font-weight: 800;
+        letter-spacing: 1.5px; text-transform: uppercase;
     }
     .mr-wr-block[data-kind="semana"]    .mr-wr-block-title { color: #f4c96a; }
     .mr-wr-block[data-kind="vigilar"]   .mr-wr-block-title { color: #fbbf24; }
     .mr-wr-block[data-kind="siguiente"] .mr-wr-block-title { color: #4ade80; }
+    body:not(.dark-mode) .mr-wr-block[data-kind="semana"]    .mr-wr-block-title { color: #b47f1c; }
+    body:not(.dark-mode) .mr-wr-block[data-kind="vigilar"]   .mr-wr-block-title { color: #b45309; }
+    body:not(.dark-mode) .mr-wr-block[data-kind="siguiente"] .mr-wr-block-title { color: #15803d; }
     .mr-wr-block-text {
         font-size: 14px; line-height: 1.6;
         color: var(--tw, #e8e8e8);
