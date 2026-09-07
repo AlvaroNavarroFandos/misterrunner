@@ -9950,18 +9950,17 @@
     .mr-blk-pace { color: var(--pl); }
     body.dark-mode .mr-blk-pace { color: var(--pd); }
 
-    /* [v2.30.1-p150] Pulse animation para el badge iOS del botón Club.
-       Escala 1→1.06→1 con intensificación coordinada del glow rojo + halo dorado.
-       Coincide con el shadow inline del badge (22px, border blanco 3px + ring
-       dorado thin 1.5px). Sin animation si prefers-reduced-motion. */
+    /* [v2.30.1-p152] Pulse animation para el badge del botón Club.
+       Escala 1→1.06→1 con intensificación coordinada del glow. Sin overflow
+       negativo, el dot vive completamente dentro del botón. */
     @keyframes mr-club-dot-pulse {
         0%, 100% {
             transform: scale(1);
-            box-shadow: 0 0 0 1.5px #d4af37, 0 4px 14px rgba(220,38,38,.75), 0 0 20px rgba(212,175,55,.30);
+            box-shadow: 0 0 0 1.5px #d4af37, 0 3px 10px rgba(220,38,38,.70), 0 0 14px rgba(212,175,55,.35);
         }
         50% {
             transform: scale(1.06);
-            box-shadow: 0 0 0 1.5px #d4af37, 0 5px 18px rgba(220,38,38,.90), 0 0 26px rgba(212,175,55,.55);
+            box-shadow: 0 0 0 1.5px #d4af37, 0 4px 14px rgba(220,38,38,.90), 0 0 20px rgba(212,175,55,.60);
         }
     }
     .mr-club-dot {
@@ -10361,14 +10360,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 </div>
                             </div>
                         </button>
-                        <!-- [v2.30.1-p151] Álvaro 6 sep 2026: dot metido más dentro
-                             del botón. En p150 (top:-8/right:-8) sobresalía tanto
-                             que quedaba cortado por algún ancestro con overflow.
-                             Ahora top:-3/right:-3 → el badge queda 3px por fuera
-                             del botón (mostrando ~19 de 22px visibles) + 3px
-                             pegado al borde interior. Completo y visible. Manteje
-                             color/contraste/tamaño de p150 y pulse animation. -->
-                        <div id="home-club-dot" class="mr-club-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:22px;height:22px;border-radius:50%;background:#dc2626;border:3px solid #ffffff;box-shadow:0 0 0 1.5px #d4af37, 0 4px 14px rgba(220,38,38,.75), 0 0 20px rgba(212,175,55,.30);pointer-events:none;z-index:10;"></div>
+                        <!-- [v2.30.1-p152] Álvaro 6 sep 2026: dot COMPLETAMENTE
+                             DENTRO del botón. p149-p151 usaba top/right negativos
+                             (-3 a -8) para que sobresaliera de la esquina, pero
+                             algún ancestro con overflow lo recortaba. Ahora
+                             top:8/right:8 (positivos) → el badge queda a 8px
+                             del borde superior e izquierdo, integrado dentro
+                             del área del botón (60px alto), sin depender de
+                             ningún overflow. Se ve completo siempre. -->
+                        <div id="home-club-dot" class="mr-club-dot" style="display:none;position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;background:#dc2626;border:2.5px solid #ffffff;box-shadow:0 0 0 1.5px #d4af37, 0 3px 10px rgba(220,38,38,.7), 0 0 14px rgba(212,175,55,.35);pointer-events:none;z-index:10;"></div>
                     </div>
                 </div>
 
@@ -56241,19 +56241,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var sheet = document.createElement('div');
         sheet.className = 'sheet';
 
-        // [v2.30.1-p151] Álvaro 6 sep 2026: 2 fixes coordinados:
-        //   1. sheet-body sin styles inline conflictivos. Antes tenía
-        //      overflow-y:auto inline que no bastaba porque faltaban
-        //      flex:1 1 auto + min-height:0 del CSS estándar → contenido
-        //      largo no scrolleaba. Ahora hereda todo el CSS estándar
-        //      .sheet-body (flex 1, min-height 0, overflow-y:scroll, padding
-        //      4/20/16, -webkit-overflow-scrolling:touch, overscroll-behavior).
-        //   2. Botón X con position:absolute movido al wrapper del sheet
-        //      (no del body) para que no scrollee con el contenido.
+        // [v2.30.1-p152] Álvaro 6 sep 2026: scroll a lo bruto con inline
+        // styles explícitos. La clase .mr-sess-sheet-body no bastaba porque
+        // Safari iOS PWA no aplicaba bien flex:1+overflow-y del CSS externo.
+        // Ahora forzamos inline flex:1 1 auto + min-height:0 +
+        // overflow-y:scroll + -webkit-overflow-scrolling:touch → el navegador
+        // no puede ignorarlo. Padding lateral 0 para que las cards
+        // .mr-sess-section con margin lateral 16 queden correctamente
+        // posicionadas sin doble padding. height:100% ayuda a algunos
+        // engines a resolver el flex correctamente.
         sheet.innerHTML =
             '<div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>'
           + '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\')" aria-label="Cerrar" style="position:absolute;top:10px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">\u00d7</button>'
-          + '<div class="sheet-body mr-sess-sheet-body">'
+          + '<div class="sheet-body mr-sess-sheet-body" style="flex:1 1 auto !important;min-height:0 !important;overflow-y:scroll !important;-webkit-overflow-scrolling:touch !important;overscroll-behavior:contain !important;padding:0 0 24px !important;gap:0 !important;display:flex !important;flex-direction:column !important;">'
           +     _buildSessionSheetContent(runSess, strSess, isToday, wkIdx)
           + '</div>';
 
