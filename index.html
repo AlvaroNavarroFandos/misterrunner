@@ -19,8 +19,8 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p163"/>
-    <meta name="mr-build" content="2026-09-07T15:30:00Z"/>
+    <meta name="mr-version" content="v2.30.1-p164"/>
+    <meta name="mr-build" content="2026-09-07T16:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
     <link id="pwa-manifest" rel="manifest"/>
@@ -102,8 +102,8 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p163';
-            window.__MR_BUILD_AT = '2026-09-07T15:30:00Z';
+            window.__MR_VERSION = 'v2.30.1-p164';
+            window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
         const iconEl = document.getElementById('mr-icon-b64');
@@ -33082,7 +33082,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (typeof window._mrComputeInjuryRisk === 'function' && typeof window._mrBuildInjuryRiskHtml === 'function') {
                     var riskData = window._mrComputeInjuryRisk();
                     var riskHtml = window._mrBuildInjuryRiskHtml(riskData);
-                    if (riskHtml) sheetBody.innerHTML += riskHtml;
+                    if (riskHtml) body.innerHTML += riskHtml;
                 }
             } catch(e) { console.warn('[MR][p163] injury risk append fail:', e); }
         } catch(e) {
@@ -57490,11 +57490,102 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             html += '</div>';
             html += '</div>';
 
-            // ── [v2.30.1-p163] BLOQUES PRIMERO ──
-            // El acumulador htmlBloques se llena más abajo (running/strength/fallback).
-            // Aquí lo inyectamos ANTES del weather slot, siguiendo el orden pedido
-            // por Álvaro: Bloques → Clima → Nutrición → Zapatillas.
-            html += htmlBloques;
+            // ── [v2.30.1-p163] BLOQUES PRIMERO (Álvaro reorden) ──
+            // Nuevo orden: Type-head → BLOQUES → Weather → Nutrición → Zapatillas.
+            // Los 3 sub-bloques (running / strength / fallback desc) se han movido
+            // aquí físicamente, antes del weather slot.
+
+            // ── BLOQUES DEL ENTRENAMIENTO (running) ── [v2.30.1-p163 reorden Álvaro]
+            if (!isStr && sess.blocks && sess.blocks.length > 0) {
+                html += '<div class="mr-sess-section">';
+                html +=   '<div class="mr-sess-section-lbl">';
+                html +=     '<span class="mr-sess-section-dot"></span>';
+                html +=     '<span>Bloques del entrenamiento</span>';
+                html +=   '</div>';
+                html +=   '<div class="mr-sess-section-body">';
+                sess.blocks.forEach(function(b) {
+                    var bKm = b.km || 0;
+                    var bKmStr = Number.isInteger(bKm) ? String(bKm) : bKm.toFixed(1);
+                    var bColor = b.color || '#94a3b8';
+                    var bLabel = b.label || 'Bloque';
+                    var bDur = b.durStr || '';
+                    var bDetail = b.detail || '';
+
+                    html += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px 10px 14px;margin-bottom:5px;position:relative;overflow:hidden;">';
+                    html += '<div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:' + bColor + ';border-radius:0 2px 2px 0;"></div>';
+                    html += '<div style="display:flex;align-items:center;gap:8px;">';
+                    html += '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:var(--tw);letter-spacing:-.15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</div>';
+                    if (bKm) html += '<div style="font-size:12px;font-weight:900;color:' + bColor + ';font-variant-numeric:tabular-nums;letter-spacing:-.2px;flex-shrink:0;">' + bKmStr + ' km</div>';
+                    html += '</div>';
+                    if (bDur || bDetail) {
+                        html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:var(--ts);font-variant-numeric:tabular-nums;line-height:1.4;">';
+                        if (bDur) html += '<span style="font-weight:700;color:var(--tw);">' + bDur + '</span>';
+                        if (bDur && bDetail) html += '<span style="color:var(--tm);">\u00b7</span>';
+                        if (bDetail) html += '<span>' + bDetail + '</span>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                });
+                html +=   '</div>';  // /section-body
+                html += '</div>';    // /mr-sess-section
+            }
+
+            // ── STRENGTH BLOQUES COMPACTOS + BOTÓN "Ver ejercicios" (D2=B) ──
+            // [v2.30.1-p163] Álvaro 7 sep 2026: strength bloques también en html
+            if (isStr && sess.blocks && sess.blocks.length > 0) {
+                var _strUid = 'strex-' + (isFirst ? 'a' : 'b') + '-' + Date.now();
+                // [v2.30.1-p150] Envuelto en .mr-sess-section unificado
+                html += '<div class="mr-sess-section">';
+                html +=   '<div class="mr-sess-section-lbl">';
+                html +=     '<span class="mr-sess-section-dot"></span>';
+                html +=     '<span>Bloques</span>';
+                html +=   '</div>';
+                html +=   '<div class="mr-sess-section-body">';
+                sess.blocks.forEach(function(b) {
+                    var bColor = b.color || '#94a3b8';
+                    var bLabel = b.label || 'Bloque';
+                    var bDur = b.durStr || '';
+                    var bTag = (b.tag || bLabel.charAt(0)).toUpperCase().slice(0,1);
+                    html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px 8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;position:relative;overflow:hidden;">';
+                    html += '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + bColor + ';"></div>';
+                    html += '<span style="font-size:8px;font-weight:900;background:' + bColor + '26;color:' + bColor + ';padding:2px 6px;border-radius:4px;letter-spacing:.5px;flex-shrink:0;">' + bTag + '</span>';
+                    html += '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</span>';
+                    if (bDur) html += '<span style="font-size:10.5px;color:var(--tm);font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;">' + bDur + '</span>';
+                    html += '</div>';
+                });
+                // Botón "Ver ejercicios" — expande sección con detailHtml (GIFs + play).
+                html += '<button onclick="var d=document.getElementById(\'' + _strUid + '\');var b=this;if(d.style.display===\'none\'){d.style.display=\'block\';b.querySelector(\'.txt\').textContent=\'Ocultar ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(180deg)\';}else{d.style.display=\'none\';b.querySelector(\'.txt\').textContent=\'Ver ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(0)\';}" style="width:100%;margin-top:6px;padding:10px;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--tw);font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><span class="txt">Ver ejercicios</span><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg></button>';
+                html += '<div id="' + _strUid + '" style="display:none;margin-top:10px;display:none;">';
+                sess.blocks.forEach(function(b) {
+                    var bColor = b.color || '#94a3b8';
+                    var bDetailHtml = b.detailHtml || b.detail || '';
+                    // [Fix 2] Sin título redundante: el bloque compacto de arriba ya lo
+                    // muestra + barra lateral del color mantiene el reference. Solo
+                    // detailHtml con los ejercicios y GIFs.
+                    // [v2.30.1-p141] Álvaro 6 sep 2026: ELIMINADA la barra larga
+                    // izquierda + tint de fondo del wrapper (era 'background:
+                    // bColor14; border-left:3px solid bColor; border-radius:
+                    // 0 8px 8px 0; padding:6px 8px'). Cada ejercicio individual
+                    // dentro del detailHtml YA lleva su propia barrita corta
+                    // (.mr-ex-line::before, línea 63607) → la barra larga
+                    // duplicaba el indicador visual. Ahora solo margin-bottom
+                    // para separar bloques. Mismo look que la pestaña Plan. */
+                    html += '<div style="margin-bottom:8px;">';
+                    html += bDetailHtml;
+                    html += '</div>';
+                });
+                html +=   '</div>';  // /toggle inner container
+                html +=   '</div>';  // /mr-sess-section-body
+                html += '</div>';    // /mr-sess-section
+
+            } else if (!isStr && (!sess.blocks || sess.blocks.length === 0) && sess.desc) {
+                // Fallback running sin blocks: desc en sección dorada
+                html += '<div class="mr-sess-section">';
+                html +=   '<div class="mr-sess-section-body">';
+                html +=     '<div style="font-size:12px;color:var(--ts);line-height:1.5;padding:2px;">' + sess.desc + '</div>';
+                html +=   '</div>';
+                html += '</div>';
+            }
 
             // ── WEATHER + OUTFIT (solo isToday) ──
             // Placeholder que se rellena async con _mrFetchTodayWeather.
@@ -57595,100 +57686,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
 
-            // ── BLOQUES DEL ENTRENAMIENTO (running) ──
-            // [v2.30.1-p163] Álvaro 7 sep 2026: reorden — bloques se acumulan en
-            // htmlBloques y se inyectan ANTES del weather slot al final del _sec.
-            // Nuevo orden: Type-head → BLOQUES → Weather → Nutrición → Zapatillas.
-            var htmlBloques = '';
-            if (!isStr && sess.blocks && sess.blocks.length > 0) {
-                htmlBloques += '<div class="mr-sess-section">';
-                htmlBloques +=   '<div class="mr-sess-section-lbl">';
-                htmlBloques +=     '<span class="mr-sess-section-dot"></span>';
-                htmlBloques +=     '<span>Bloques del entrenamiento</span>';
-                htmlBloques +=   '</div>';
-                htmlBloques +=   '<div class="mr-sess-section-body">';
-                sess.blocks.forEach(function(b) {
-                    var bKm = b.km || 0;
-                    var bKmStr = Number.isInteger(bKm) ? String(bKm) : bKm.toFixed(1);
-                    var bColor = b.color || '#94a3b8';
-                    var bLabel = b.label || 'Bloque';
-                    var bDur = b.durStr || '';
-                    var bDetail = b.detail || '';
 
-                    htmlBloques += '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px 10px 14px;margin-bottom:5px;position:relative;overflow:hidden;">';
-                    htmlBloques += '<div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:' + bColor + ';border-radius:0 2px 2px 0;"></div>';
-                    htmlBloques += '<div style="display:flex;align-items:center;gap:8px;">';
-                    htmlBloques += '<div style="flex:1;min-width:0;font-size:12.5px;font-weight:800;color:var(--tw);letter-spacing:-.15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</div>';
-                    if (bKm) htmlBloques += '<div style="font-size:12px;font-weight:900;color:' + bColor + ';font-variant-numeric:tabular-nums;letter-spacing:-.2px;flex-shrink:0;">' + bKmStr + ' km</div>';
-                    htmlBloques += '</div>';
-                    if (bDur || bDetail) {
-                        htmlBloques += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:var(--ts);font-variant-numeric:tabular-nums;line-height:1.4;">';
-                        if (bDur) htmlBloques += '<span style="font-weight:700;color:var(--tw);">' + bDur + '</span>';
-                        if (bDur && bDetail) htmlBloques += '<span style="color:var(--tm);">\u00b7</span>';
-                        if (bDetail) htmlBloques += '<span>' + bDetail + '</span>';
-                        htmlBloques += '</div>';
-                    }
-                    htmlBloques += '</div>';
-                });
-                htmlBloques +=   '</div>';  // /section-body
-                htmlBloques += '</div>';    // /mr-sess-section
-            }
 
-            // ── STRENGTH BLOQUES COMPACTOS + BOTÓN "Ver ejercicios" (D2=B) ──
-            // [v2.30.1-p163] Álvaro 7 sep 2026: strength bloques también en htmlBloques
-            if (isStr && sess.blocks && sess.blocks.length > 0) {
-                var _strUid = 'strex-' + (isFirst ? 'a' : 'b') + '-' + Date.now();
-                // [v2.30.1-p150] Envuelto en .mr-sess-section unificado
-                htmlBloques += '<div class="mr-sess-section">';
-                htmlBloques +=   '<div class="mr-sess-section-lbl">';
-                htmlBloques +=     '<span class="mr-sess-section-dot"></span>';
-                htmlBloques +=     '<span>Bloques</span>';
-                htmlBloques +=   '</div>';
-                htmlBloques +=   '<div class="mr-sess-section-body">';
-                sess.blocks.forEach(function(b) {
-                    var bColor = b.color || '#94a3b8';
-                    var bLabel = b.label || 'Bloque';
-                    var bDur = b.durStr || '';
-                    var bTag = (b.tag || bLabel.charAt(0)).toUpperCase().slice(0,1);
-                    htmlBloques += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px 8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;position:relative;overflow:hidden;">';
-                    htmlBloques += '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + bColor + ';"></div>';
-                    htmlBloques += '<span style="font-size:8px;font-weight:900;background:' + bColor + '26;color:' + bColor + ';padding:2px 6px;border-radius:4px;letter-spacing:.5px;flex-shrink:0;">' + bTag + '</span>';
-                    htmlBloques += '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</span>';
-                    if (bDur) htmlBloques += '<span style="font-size:10.5px;color:var(--tm);font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;">' + bDur + '</span>';
-                    htmlBloques += '</div>';
-                });
-                // Botón "Ver ejercicios" — expande sección con detailHtml (GIFs + play).
-                htmlBloques += '<button onclick="var d=document.getElementById(\'' + _strUid + '\');var b=this;if(d.style.display===\'none\'){d.style.display=\'block\';b.querySelector(\'.txt\').textContent=\'Ocultar ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(180deg)\';}else{d.style.display=\'none\';b.querySelector(\'.txt\').textContent=\'Ver ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(0)\';}" style="width:100%;margin-top:6px;padding:10px;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--tw);font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><span class="txt">Ver ejercicios</span><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg></button>';
-                htmlBloques += '<div id="' + _strUid + '" style="display:none;margin-top:10px;display:none;">';
-                sess.blocks.forEach(function(b) {
-                    var bColor = b.color || '#94a3b8';
-                    var bDetailHtml = b.detailHtml || b.detail || '';
-                    // [Fix 2] Sin título redundante: el bloque compacto de arriba ya lo
-                    // muestra + barra lateral del color mantiene el reference. Solo
-                    // detailHtml con los ejercicios y GIFs.
-                    // [v2.30.1-p141] Álvaro 6 sep 2026: ELIMINADA la barra larga
-                    // izquierda + tint de fondo del wrapper (era 'background:
-                    // bColor14; border-left:3px solid bColor; border-radius:
-                    // 0 8px 8px 0; padding:6px 8px'). Cada ejercicio individual
-                    // dentro del detailHtml YA lleva su propia barrita corta
-                    // (.mr-ex-line::before, línea 63607) → la barra larga
-                    // duplicaba el indicador visual. Ahora solo margin-bottom
-                    // para separar bloques. Mismo look que la pestaña Plan. */
-                    htmlBloques += '<div style="margin-bottom:8px;">';
-                    htmlBloques += bDetailHtml;
-                    htmlBloques += '</div>';
-                });
-                htmlBloques +=   '</div>';  // /toggle inner container
-                htmlBloques +=   '</div>';  // /mr-sess-section-body
-                htmlBloques += '</div>';    // /mr-sess-section
-            } else if (!isStr && (!sess.blocks || sess.blocks.length === 0) && sess.desc) {
-                // Fallback running sin blocks: desc en sección dorada
-                htmlBloques += '<div class="mr-sess-section">';
-                htmlBloques +=   '<div class="mr-sess-section-body">';
-                htmlBloques +=     '<div style="font-size:12px;color:var(--ts);line-height:1.5;padding:2px;">' + sess.desc + '</div>';
-                htmlBloques +=   '</div>';
-                htmlBloques += '</div>';
-            }
+
 
             html += '</div>';
             return html;
