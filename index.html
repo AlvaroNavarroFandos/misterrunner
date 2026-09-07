@@ -19,8 +19,8 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p156"/>
-    <meta name="mr-build" content="2026-09-07T12:15:00Z"/>
+    <meta name="mr-version" content="v2.30.1-p157"/>
+    <meta name="mr-build" content="2026-09-07T12:35:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
     <link id="pwa-manifest" rel="manifest"/>
@@ -101,8 +101,8 @@
         // en Chrome/Safari, verás inmediatamente qué versión tiene cargada
         // el navegador. window.__MR_VERSION es inspectable desde la consola.
         try {
-            window.__MR_VERSION = 'v2.30.1-p156';
-            window.__MR_BUILD_AT = '2026-09-07T12:15:00Z';
+            window.__MR_VERSION = 'v2.30.1-p157';
+            window.__MR_BUILD_AT = '2026-09-07T12:35:00Z';
             var ver = window.__MR_VERSION;
             var bg = 'background:linear-gradient(90deg,#d4af37 0%,#8a6b1a 100%);color:#fff;font-weight:900;padding:6px 14px;border-radius:6px;font-size:13px;';
             console.log('%c🏃 MisterRunner ' + ver + ' cargado', bg);
@@ -9991,15 +9991,17 @@
     .mr-blk-pace { color: var(--pl); }
     body.dark-mode .mr-blk-pace { color: var(--pd); }
 
-    /* [v2.30.1-p156] Álvaro 7 sep 2026: dot final como BADGE iOS con
-       NÚMERO de notificaciones dentro. Más esquinado (top:3/right:3).
-       Min-width 16 + padding lateral 4 → auto-fit para 1 o 2 dígitos.
-       Height fijo 16px. Border blanco 2 + ring dorado thin exterior.
-       Font 9px 900 con tabular-nums para números legibles.
-       display:none por default → _checkHomeCrewDot (patched abajo) muestra
-       con .style.display='flex' cuando hay notifs, oculta cuando count==0. */
+    /* [v2.30.1-p157] Álvaro 7 sep 2026: badge SIEMPRE visible en dos modos.
+       Antes en p156, el badge desaparecía si count==0 (comportamiento iOS
+       clásico) pero Álvaro quiere que SIEMPRE se vea el indicador del Club
+       para atraer atención hacia esa sección. Ahora:
+         · Con notifs (count > 0): pill 16px con número dentro (padding, min-width)
+         · Sin notifs (count == 0, class mr-club-dot--empty): dot circular
+           pequeño de 10×10px, sin texto, position ajustada para centrar
+       Ambos usan display:flex (siempre visible). Transición entre estados
+       suave con CSS transition. */
     #home-club-dot.mr-club-dot {
-        display: none;
+        display: flex;
         align-items: center;
         justify-content: center;
         position: absolute;
@@ -10022,6 +10024,17 @@
         line-height: 1;
         z-index: 10;
         pointer-events: none;
+        transition: min-width .2s ease, width .2s ease, height .2s ease, top .2s ease, right .2s ease, padding .2s ease;
+    }
+    /* Modo empty: dot circular pequeño cuando no hay notifs. Sin texto. */
+    #home-club-dot.mr-club-dot--empty {
+        min-width: 10px;
+        width: 10px;
+        height: 10px;
+        padding: 0;
+        top: 6px;
+        right: 6px;
+        border-width: 1.5px;
     }
 
     /* [v2.30.1-p156] Pulse animation ajustada al badge 16px pill-shape */
@@ -10431,14 +10444,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     <div style="font-family:var(--f);font-size:6.5px;font-weight:700;letter-spacing:2.4px;color:rgba(212,175,55,.72);text-transform:uppercase;line-height:1;">MEMBERS</div>
                                 </div>
                             </div>
-                            <!-- [v2.30.1-p156] Álvaro 7 sep 2026: dot como badge
-                                 iOS con número de notificaciones dentro. Todos los
-                                 estilos vienen del CSS #home-club-dot.mr-club-dot.
-                                 textContent lo llena _checkHomeCrewDot patched
-                                 abajo con el conteo real (invitaciones + retos
-                                 nuevos). Display gestionado por la misma función:
-                                 flex si count>0, none si count==0. -->
-                            <div id="home-club-dot" class="mr-club-dot" aria-label="Notificaciones del Club"></div>
+                            <!-- [v2.30.1-p157] Álvaro 7 sep 2026: badge siempre
+                                 visible. Class inicial 'mr-club-dot--empty' → se
+                                 muestra como dot pequeño 10px hasta que _checkHomeCrewDot
+                                 detecta notifs reales, entonces se transforma en pill
+                                 con número (quita la class empty). -->
+                            <div id="home-club-dot" class="mr-club-dot mr-club-dot--empty" aria-label="Notificaciones del Club"></div>
                         </button>
                     </div>
                 </div>
@@ -72891,14 +72902,11 @@ function _loadClubChunk() {
         window._clubLoading = false;
         console.log('%c[MR][TODO-12] club.js loaded', 'color:#C9A84C;font-weight:600;');
 
-        // [v2.30.1-p156] Álvaro 7 sep 2026: sobrescribir _checkHomeCrewDot
-        // de club.js con versión que muestra el NÚMERO de notificaciones
-        // dentro del badge. La original solo hacía display:'block'/'none'
-        // (booleano). Ahora suma invitaciones + retos nuevos y renderiza
-        // el count (1, 2, ... 9+). Si count==0, oculta. Preserva la lógica
-        // subyacente (mismas queries a Supabase) pero enriquece la UI.
-        // Se ejecuta AQUÍ, después de que club.js haya definido la versión
-        // original, para pisarla en window.
+        // [v2.30.1-p157] Álvaro 7 sep 2026: sobrescribir _checkHomeCrewDot
+        // de club.js con versión que gestiona el badge en 2 modos:
+        //   · count > 0 → pill 16px con NÚMERO dentro (mr-club-dot--empty removed)
+        //   · count == 0 → dot circular 10px vacío (mr-club-dot--empty added)
+        // Siempre visible (display:flex), transición suave entre estados via CSS.
         try {
             window._checkHomeCrewDot = async function() {
                 var homeDot = document.getElementById('home-club-dot');
@@ -72927,18 +72935,20 @@ function _loadClubChunk() {
                             }
                         } catch (e) { /* tabla aún no existe → silencioso */ }
                     }
-                    // Renderizar
+                    // Renderizar según count
                     if (count > 0) {
                         homeDot.textContent = count > 9 ? '9+' : String(count);
-                        homeDot.style.display = 'flex';
+                        homeDot.classList.remove('mr-club-dot--empty');
                     } else {
                         homeDot.textContent = '';
-                        homeDot.style.display = 'none';
+                        homeDot.classList.add('mr-club-dot--empty');
                     }
+                    homeDot.style.display = 'flex';  // Siempre visible
                 } catch (e) {
-                    // En cualquier fallo, ocultar el dot — preferimos falso negativo a falso positivo
-                    homeDot.style.display = 'none';
+                    // En cualquier fallo, quedarse en modo empty (visible pero sin número)
                     homeDot.textContent = '';
+                    homeDot.classList.add('mr-club-dot--empty');
+                    homeDot.style.display = 'flex';
                 }
             };
         } catch(_){}
