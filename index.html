@@ -19,8 +19,8 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p157"/>
-    <meta name="mr-build" content="2026-09-07T12:35:00Z"/>
+    <meta name="mr-version" content="v2.30.1-p158"/>
+    <meta name="mr-build" content="2026-09-07T13:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
     <link id="pwa-manifest" rel="manifest"/>
@@ -101,8 +101,8 @@
         // en Chrome/Safari, verás inmediatamente qué versión tiene cargada
         // el navegador. window.__MR_VERSION es inspectable desde la consola.
         try {
-            window.__MR_VERSION = 'v2.30.1-p157';
-            window.__MR_BUILD_AT = '2026-09-07T12:35:00Z';
+            window.__MR_VERSION = 'v2.30.1-p158';
+            window.__MR_BUILD_AT = '2026-09-07T13:00:00Z';
             var ver = window.__MR_VERSION;
             var bg = 'background:linear-gradient(90deg,#d4af37 0%,#8a6b1a 100%);color:#fff;font-weight:900;padding:6px 14px;border-radius:6px;font-size:13px;';
             console.log('%c🏃 MisterRunner ' + ver + ' cargado', bg);
@@ -10005,8 +10005,8 @@
         align-items: center;
         justify-content: center;
         position: absolute;
-        top: 3px;
-        right: 3px;
+        top: 2px;
+        right: 2px;
         min-width: 16px;
         height: 16px;
         padding: 0 4px;
@@ -10032,8 +10032,8 @@
         width: 10px;
         height: 10px;
         padding: 0;
-        top: 6px;
-        right: 6px;
+        top: 4px;
+        right: 4px;
         border-width: 1.5px;
     }
 
@@ -72902,40 +72902,76 @@ function _loadClubChunk() {
         window._clubLoading = false;
         console.log('%c[MR][TODO-12] club.js loaded', 'color:#C9A84C;font-weight:600;');
 
-        // [v2.30.1-p157] Álvaro 7 sep 2026: sobrescribir _checkHomeCrewDot
-        // de club.js con versión que gestiona el badge en 2 modos:
-        //   · count > 0 → pill 16px con NÚMERO dentro (mr-club-dot--empty removed)
-        //   · count == 0 → dot circular 10px vacío (mr-club-dot--empty added)
-        // Siempre visible (display:flex), transición suave entre estados via CSS.
+        // [v2.30.1-p158] Álvaro 7 sep 2026: BADGE UNIFICADO. Antes había DOS
+        // elementos separados mostrando notifs:
+        //   1. #home-club-dot (nuestro, para invitaciones + retos crews) — p156/p157
+        //   2. .club-unread-badge (creado dinámicamente por _refreshUnreadBadge
+        //      de club.js, para mensajes DM no leídos + conversaciones forzadas)
+        // Álvaro veía el "2" del legacy .club-unread-badge y nuestro dot vacío
+        // al lado. Solución: función unificada _mrUpdateClubBadge que suma los
+        // 4 conteos (a+b+c+d) y actualiza SOLO el nuestro. Elimina el legacy
+        // .club-unread-badge en cada tick. Se sobrescriben AMBAS funciones
+        // originales (_checkHomeCrewDot y _refreshUnreadBadge) para apuntar
+        // a la unificada → todos los triggers pre-existentes (SIGNED_IN, DMs
+        // realtime, reactions realtime, forcedUnread toggle, etc.) actualizan
+        // el badge unificado sin cambio en sus hooks.
         try {
-            window._checkHomeCrewDot = async function() {
+            window._mrUpdateClubBadge = async function() {
                 var homeDot = document.getElementById('home-club-dot');
                 if (!homeDot) return;
+                // Limpiar legacy badge si existe (por si otro tick lo creó)
+                try {
+                    var legacyBadges = document.querySelectorAll('.club-unread-badge');
+                    legacyBadges.forEach(function(b){ b.remove(); });
+                } catch(_){}
                 try {
                     var count = 0;
-                    // (a) Invitaciones a crew pendientes
-                    if (typeof getMyCrewInvites === 'function') {
-                        var invs = getMyCrewInvites();
-                        if (Array.isArray(invs)) count += invs.length;
-                    }
-                    // (b) Retos activos creados tras la última visita al Club
-                    var myCrewIds = (window._myCrewIds && window._myCrewIds.size > 0)
-                        ? Array.from(window._myCrewIds) : [];
-                    if (myCrewIds.length && window._sbClient && typeof _uk === 'function') {
-                        var lastCheck = localStorage.getItem(_uk('mr_last_crew_check')) || '2020-01-01';
-                        try {
-                            var res = await window._sbClient
+                    // (a) Mensajes DM no leídos
+                    try {
+                        if (window._sbClient) {
+                            var sess = await window._sbClient.auth.getSession();
+                            if (sess && sess.data && sess.data.session) {
+                                var uid = sess.data.session.user.id;
+                                var msgRes = await window._sbClient.from('messages')
+                                    .select('id', { count: 'exact', head: true })
+                                    .eq('to_id', uid).is('read_at', null);
+                                if (msgRes && typeof msgRes.count === 'number' && msgRes.count > 0) {
+                                    count += msgRes.count;
+                                }
+                            }
+                        }
+                    } catch(_){}
+                    // (b) Conversaciones forzadas a no leído (localStorage)
+                    try {
+                        if (typeof _getForcedUnreadCount === 'function') {
+                            count += (_getForcedUnreadCount() || 0);
+                        }
+                    } catch(_){}
+                    // (c) Invitaciones a crew pendientes
+                    try {
+                        if (typeof getMyCrewInvites === 'function') {
+                            var invs = getMyCrewInvites();
+                            if (Array.isArray(invs)) count += invs.length;
+                        }
+                    } catch(_){}
+                    // (d) Retos activos nuevos
+                    try {
+                        var myCrewIds = (window._myCrewIds && window._myCrewIds.size > 0)
+                            ? Array.from(window._myCrewIds) : [];
+                        if (myCrewIds.length && window._sbClient && typeof _uk === 'function') {
+                            var lastCheck = localStorage.getItem(_uk('mr_last_crew_check')) || '2020-01-01';
+                            var chRes = await window._sbClient
                                 .from('crew_challenges')
                                 .select('id', { count: 'exact', head: true })
                                 .in('crew_id', myCrewIds)
                                 .eq('status', 'active')
                                 .gt('created_at', lastCheck);
-                            if (res && typeof res.count === 'number' && res.count > 0) {
-                                count += res.count;
+                            if (chRes && typeof chRes.count === 'number' && chRes.count > 0) {
+                                count += chRes.count;
                             }
-                        } catch (e) { /* tabla aún no existe → silencioso */ }
-                    }
-                    // Renderizar según count
+                        }
+                    } catch(_){}
+                    // Renderizar
                     if (count > 0) {
                         homeDot.textContent = count > 9 ? '9+' : String(count);
                         homeDot.classList.remove('mr-club-dot--empty');
@@ -72943,14 +72979,17 @@ function _loadClubChunk() {
                         homeDot.textContent = '';
                         homeDot.classList.add('mr-club-dot--empty');
                     }
-                    homeDot.style.display = 'flex';  // Siempre visible
-                } catch (e) {
-                    // En cualquier fallo, quedarse en modo empty (visible pero sin número)
+                    homeDot.style.display = 'flex';
+                } catch(_) {
                     homeDot.textContent = '';
                     homeDot.classList.add('mr-club-dot--empty');
                     homeDot.style.display = 'flex';
                 }
             };
+            // Pisar AMBAS funciones originales de club.js para que ambos hooks
+            // (crews y mensajes) actualicen el mismo badge unificado.
+            window._checkHomeCrewDot = window._mrUpdateClubBadge;
+            window._refreshUnreadBadge = window._mrUpdateClubBadge;
         } catch(_){}
 
         // Replay del queue de invocaciones pendientes
