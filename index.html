@@ -80166,6 +80166,61 @@ window.addEventListener('DOMContentLoaded', function() {
         font-family:var(--f, -apple-system, sans-serif);
     }
 
+    /* ─── [v2.30.1-p147] Bloques narrative estructurados (LA SEMANA / VIGILAR / SIGUIENTE SEMANA)
+       Cada bloque como card individual con acento vertical de color. Reemplaza el
+       texto plano corrido por cards diferenciadas que separan visualmente las 3
+       secciones canónicas del prompt Míster. Fallback a texto plano si el parser
+       no encuentra las 3 secciones (reportes antiguos). ─────────────────────── */
+    .mr-wr-narrative--structured .mr-wr-narrative-body {
+        white-space: normal;  /* dentro de bloques, cada uno gestiona su whitespace */
+        padding-top: 4px;
+    }
+    .mr-wr-block {
+        position: relative;
+        padding: 12px 14px 14px 18px;
+        margin-bottom: 12px;
+        border-radius: 10px;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.05);
+        overflow: hidden;
+    }
+    .mr-wr-block:last-child { margin-bottom: 0; }
+    .mr-wr-block::before {
+        content: '';
+        position: absolute;
+        top: 10px; bottom: 10px; left: 0;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        opacity: .9;
+    }
+    .mr-wr-block[data-kind="semana"]::before    { background: linear-gradient(180deg, #f4c96a 0%, #d19a30 100%); }
+    .mr-wr-block[data-kind="vigilar"]::before   { background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%); }
+    .mr-wr-block[data-kind="siguiente"]::before { background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%); }
+    body:not(.dark-mode) .mr-wr-block {
+        background: rgba(0,0,0,0.02);
+        border-color: rgba(0,0,0,0.06);
+    }
+    .mr-wr-block-hdr {
+        display: flex; align-items: center; gap: 8px;
+        margin-bottom: 8px;
+    }
+    .mr-wr-block-icon {
+        font-size: 15px; line-height: 1;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
+    }
+    .mr-wr-block-title {
+        font-size: 10.5px; font-weight: 800;
+        letter-spacing: 1.4px; text-transform: uppercase;
+    }
+    .mr-wr-block[data-kind="semana"]    .mr-wr-block-title { color: #f4c96a; }
+    .mr-wr-block[data-kind="vigilar"]   .mr-wr-block-title { color: #fbbf24; }
+    .mr-wr-block[data-kind="siguiente"] .mr-wr-block-title { color: #4ade80; }
+    .mr-wr-block-text {
+        font-size: 14px; line-height: 1.6;
+        color: var(--tw, #e8e8e8);
+        white-space: pre-wrap; word-wrap: break-word;
+    }
+
     /* ─── Grid de gráficos ───────────────────────────────────────────── */
     .mr-wr-charts-hdr {
         font-size:10px; font-weight:800; letter-spacing:1.2px;
@@ -81852,10 +81907,12 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!body) return;
 
                 var html = '';
-                /* Narrativa */
-                html += '<div class="mr-wr-narrative">'
+                /* Narrativa · [v2.30.1-p147] Álvaro 6 sep 2026: parser estructurado
+                   que renderiza las 3 secciones (LA SEMANA / VIGILAR / SIGUIENTE)
+                   como cards individuales con acento vertical dorado/ámbar/verde. */
+                html += '<div class="mr-wr-narrative mr-wr-narrative--structured">'
                      +   '<div class="mr-wr-narrative-eyebrow">Análisis Míster</div>'
-                     +   '<div class="mr-wr-narrative-body">' + _wrRenderMisterNarrative(narrative) + '</div>'
+                     +   '<div class="mr-wr-narrative-body">' + _wrRenderMisterNarrativeStructured(narrative) + '</div>'
                      + '</div>';
 
                 /* Gráficos header */
@@ -81986,6 +82043,62 @@ window.addEventListener('DOMContentLoaded', function() {
             /* **bold** → <strong> (opcional, por si el modelo escribe pese a instrucciones) */
             escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             return escaped;
+        }
+
+        // [v2.30.1-p147] Álvaro 6 sep 2026: parser estructurado premium.
+        // Detecta las 3 secciones canónicas del prompt Míster ("LA SEMANA",
+        // "VIGILAR", "SIGUIENTE SEMANA") por sus emojis + keywords, y las
+        // renderiza como cards individuales con acento vertical de color.
+        // Fallback a _wrRenderMisterNarrative (texto plano) si el parser no
+        // encuentra las 3 secciones — backward compat con reportes antiguos
+        // o modelos que ignoren la estructura.
+        function _wrRenderMisterNarrativeStructured(text) {
+            if (!text) return '';
+            try {
+                // Regex que captura: emoji opcional + keyword + resto hasta la siguiente sección
+                // Keywords: "LA SEMANA" | "VIGILAR" | "SIGUIENTE SEMANA" (case-insensitive)
+                var sectionDefs = [
+                    { key: 'semana',    icon: '📊', label: 'La semana',       keyRegex: /^(?:📊\s*)?LA\s+SEMANA\s*$/im },
+                    { key: 'vigilar',   icon: '⚠️', label: 'Vigilar',          keyRegex: /^(?:⚠️\s*)?VIGILAR\s*$/im },
+                    { key: 'siguiente', icon: '🎯', label: 'Siguiente semana', keyRegex: /^(?:🎯\s*)?SIGUIENTE\s+SEMANA\s*$/im }
+                ];
+
+                // Localizar índices de inicio de cada sección
+                var matches = [];
+                sectionDefs.forEach(function(def) {
+                    var m = def.keyRegex.exec(text);
+                    if (m) matches.push({ key: def.key, icon: def.icon, label: def.label, start: m.index, headerLen: m[0].length });
+                });
+
+                // Requerir al menos las 3 secciones para activar el render premium
+                if (matches.length < 3) return _wrRenderMisterNarrative(text);
+
+                // Ordenar por posición en el texto
+                matches.sort(function(a, b) { return a.start - b.start; });
+
+                // Extraer contenido de cada sección (desde fin de header hasta inicio de la siguiente)
+                var html = '';
+                for (var i = 0; i < matches.length; i++) {
+                    var cur = matches[i];
+                    var next = matches[i + 1];
+                    var contentStart = cur.start + cur.headerLen;
+                    var contentEnd = next ? next.start : text.length;
+                    var content = text.substring(contentStart, contentEnd).trim();
+                    var contentHtml = _wrEscapeHtml(content).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                    html += ''
+                      + '<div class="mr-wr-block" data-kind="' + cur.key + '">'
+                      +   '<div class="mr-wr-block-hdr">'
+                      +     '<span class="mr-wr-block-icon">' + cur.icon + '</span>'
+                      +     '<span class="mr-wr-block-title">' + cur.label + '</span>'
+                      +   '</div>'
+                      +   '<div class="mr-wr-block-text">' + contentHtml + '</div>'
+                      + '</div>';
+                }
+                return html;
+            } catch (e) {
+                try { console.warn('[MR][wr] narrative parser error:', e); } catch (_) {}
+                return _wrRenderMisterNarrative(text);
+            }
         }
 
         function _wrFmtDateTimeShort(iso) {
@@ -82386,7 +82499,13 @@ window.addEventListener('DOMContentLoaded', function() {
             } catch (_e) {}
 
             var strengthBlock = '';
-            if (strengthDone > 0 || strengthPlanned > 0) {
+            // [v2.30.1-p147] Álvaro 6 sep 2026: solo mostrar bloque fuerza si
+            // hay AL MENOS 1 sesión completada. Antes se mostraba con
+            // strengthDone > 0 || strengthPlanned > 0, provocando que en
+            // semanas con fuerza planeada pero mal contabilizada (sync
+            // pendiente Supabase, marca antigua) apareciera "FUERZA 0/2"
+            // vacío sin utilidad y con aspecto poco premium. Simplifica UX.
+            if (strengthDone > 0) {
                 var stTotal = Math.max(strengthDone, strengthPlanned, 1);
                 var stDots = '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
                 for (var si = 0; si < stTotal; si++) {
@@ -82413,14 +82532,26 @@ window.addEventListener('DOMContentLoaded', function() {
                 + '</div>'
                 : runDots;
 
-            var totalDone    = runDone + strengthDone;
-            var totalPlanned = (runPlanned || 0) + (strengthPlanned || 0);
-            var hint;
-            if (totalPlanned) {
-                if (totalDone >= totalPlanned) hint = 'Todas completadas. Consistencia clave.';
-                else hint = 'Faltaron ' + (totalPlanned - totalDone) + ' del plan (running + fuerza).';
+            // [v2.30.1-p147] Totales y hint: si no hay bloque fuerza, contar solo running
+            var totalDone, totalPlanned, hint;
+            if (strengthBlock) {
+                totalDone    = runDone + strengthDone;
+                totalPlanned = (runPlanned || 0) + (strengthPlanned || 0);
+                if (totalPlanned) {
+                    if (totalDone >= totalPlanned) hint = 'Todas completadas. Consistencia clave.';
+                    else hint = 'Faltaron ' + (totalPlanned - totalDone) + ' del plan (running + fuerza).';
+                } else {
+                    hint = 'Sesiones completadas esta semana.';
+                }
             } else {
-                hint = 'Sesiones completadas esta semana.';
+                totalDone    = runDone;
+                totalPlanned = runPlanned || 0;
+                if (totalPlanned) {
+                    if (totalDone >= totalPlanned) hint = 'Todas completadas. Consistencia clave.';
+                    else hint = 'Faltaron ' + (totalPlanned - totalDone) + ' del plan.';
+                } else {
+                    hint = 'Sesiones completadas esta semana.';
+                }
             }
 
             container.innerHTML =
