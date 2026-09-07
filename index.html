@@ -10361,16 +10361,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                 </div>
                             </div>
                         </button>
-                        <!-- [v2.30.1-p150] Álvaro 6 sep 2026: dot como BADGE iOS
-                             clásico. En p149 (18px doble ring dorado+blanco+pulse)
-                             seguía viéndose diminuto en su iPhone. Ahora 22×22px,
-                             top:-8/right:-8 (fuera de la esquina del botón), red
-                             viv #dc2626 (más saturado), border 3px blanco puro,
-                             ring dorado THIN 1.5px exterior. z-index:10 sobre TODO.
-                             Pulse animation p149 conservada (mr-club-dot class).
-                             Con este tamaño es imposible perderlo aunque el
-                             viewport sea estrecho. -->
-                        <div id="home-club-dot" class="mr-club-dot" style="display:none;position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#dc2626;border:3px solid #ffffff;box-shadow:0 0 0 1.5px #d4af37, 0 4px 14px rgba(220,38,38,.75), 0 0 20px rgba(212,175,55,.30);pointer-events:none;z-index:10;"></div>
+                        <!-- [v2.30.1-p151] Álvaro 6 sep 2026: dot metido más dentro
+                             del botón. En p150 (top:-8/right:-8) sobresalía tanto
+                             que quedaba cortado por algún ancestro con overflow.
+                             Ahora top:-3/right:-3 → el badge queda 3px por fuera
+                             del botón (mostrando ~19 de 22px visibles) + 3px
+                             pegado al borde interior. Completo y visible. Manteje
+                             color/contraste/tamaño de p150 y pulse animation. -->
+                        <div id="home-club-dot" class="mr-club-dot" style="display:none;position:absolute;top:-3px;right:-3px;width:22px;height:22px;border-radius:50%;background:#dc2626;border:3px solid #ffffff;box-shadow:0 0 0 1.5px #d4af37, 0 4px 14px rgba(220,38,38,.75), 0 0 20px rgba(212,175,55,.30);pointer-events:none;z-index:10;"></div>
                     </div>
                 </div>
 
@@ -56243,15 +56241,35 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         var sheet = document.createElement('div');
         sheet.className = 'sheet';
 
+        // [v2.30.1-p151] Álvaro 6 sep 2026: 2 fixes coordinados:
+        //   1. sheet-body sin styles inline conflictivos. Antes tenía
+        //      overflow-y:auto inline que no bastaba porque faltaban
+        //      flex:1 1 auto + min-height:0 del CSS estándar → contenido
+        //      largo no scrolleaba. Ahora hereda todo el CSS estándar
+        //      .sheet-body (flex 1, min-height 0, overflow-y:scroll, padding
+        //      4/20/16, -webkit-overflow-scrolling:touch, overscroll-behavior).
+        //   2. Botón X con position:absolute movido al wrapper del sheet
+        //      (no del body) para que no scrollee con el contenido.
         sheet.innerHTML =
             '<div class="sheet-handle-wrap"><div class="sheet-handle"></div></div>'
           + '<button onclick="closeSheet(\'' + _MR_SESSION_SHEET_ID + '\')" aria-label="Cerrar" style="position:absolute;top:10px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--bsoft);border:none;color:var(--ts);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;z-index:3;padding:0;">\u00d7</button>'
-          + '<div class="sheet-body" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:env(safe-area-inset-bottom, 0);">'
+          + '<div class="sheet-body mr-sess-sheet-body">'
           +     _buildSessionSheetContent(runSess, strSess, isToday, wkIdx)
           + '</div>';
 
         backdrop.appendChild(sheet);
-        document.body.appendChild(backdrop);
+        // [v2.30.1-p151] Álvaro: forzar animación estándar. Insertar como
+        // primer hijo del body (no último) para que openSheet() detecte
+        // "no es lastChild" → aplica doble RAF antes del .show → transición
+        // completa desde translateY(100%) igual que readiness/training-load.
+        // Antes usaba appendChild → el sheet ya era último hijo → openSheet
+        // saltaba el doble RAF y el .show se aplicaba inmediatamente,
+        // colapsando la animación de entrada (aparecía "de golpe").
+        if (document.body.firstChild) {
+            document.body.insertBefore(backdrop, document.body.firstChild);
+        } else {
+            document.body.appendChild(backdrop);
+        }
         openSheet(_MR_SESSION_SHEET_ID);
 
         // Fetch weather async (solo HOY con running) y actualizar el placeholder.
@@ -75969,6 +75987,16 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
         // Builder de la card PMC (reutilizable): Home (fallback) y sheet. headerTitle parametrizable.
+        // [v2.30.1-p151] Helper para renderizar solo la pill del estado
+        // (Forma/Equilibrio/Carga activa/Fatiga) — la usan los headers
+        // externos (rdn-sec-h en Readiness) para mostrar el estado junto
+        // al título "Carga · Fatiga · Forma", en vez del banner interno
+        // duplicado que se eliminó en p151.
+        window._mrBuildPmcFormPill = function(d){
+            if(!d) return '';
+            return '<div style="display:inline-flex;align-items:center;border:1px solid '+d.formColor+';background:'+d.formColorLt+';border-radius:9px;padding:3px 11px;font-size:10px;font-weight:800;color:'+d.formColor+';text-transform:uppercase;letter-spacing:.7px;margin-left:auto;">'+d.formLabel+'</div>';
+        };
+
         window._mrBuildPmcHtml = function(d, headerTitle){
             if(!d) return '';
             headerTitle = headerTitle || 'Carga · Fatiga · Forma';
@@ -75979,19 +76007,14 @@ window.addEventListener('DOMContentLoaded', function() {
                     '<div style="width:45%;background:linear-gradient(180deg,var(--pmc-ctl) 0%,var(--pmc-ctl-deep) 100%);height:'+hCtl+'px;border-radius:2px 2px 0 0;" title="CTL: '+w.ctl+'"></div>'+
                     '<div style="width:45%;background:linear-gradient(180deg,var(--pmc-atl) 0%,var(--pmc-atl-deep) 100%);height:'+hAtl+'px;border-radius:2px 2px 0 0;" title="ATL: '+w.atl+'"></div></div>';
             });
-            // v2.30.1-p25 · Gradient superior ELIMINADO por coherencia con Home.
-            // v2.30.1-p27 · Wrapper con clase mr-tsb-block-alt para el mismo
-            // override cromático que el bloque TSB de Home (CTL azul, ATL
-            // amarilla/blanca según modo).
-            // [v2.30.1-p166] Álvaro: mantener el texto del banner (dot ·
-            // headerTitle · pill formLabel) para saber el estado con el número,
-            // pero SIN la card contenedora (background:bsoft + border + radius
-            // + padding). Queda como una fila plana de texto arriba del grid
-            // CTL/ATL/TSB, en el mismo flow que las secciones HRV y FC.
+            // [v2.30.1-p151] Álvaro 6 sep 2026: eliminado el banner interno
+            // "● ESTADO [pill formLabel]" que estaba DUPLICADO con el header
+            // de arriba (rdn-sec-h en Readiness). La pill del estado ahora
+            // va en el rdn-sec-h junto al título "Carga · Fatiga · Forma".
+            // El widget Home suelto (fatCard en renderHome) tiene su propio
+            // banner con título + pill en misma fila desde p25, no necesita
+            // cambio. Este helper ahora empieza directamente por el grid.
             return '<div class="mr-tsb-block-alt" style="padding:14px 15px 13px;">'+
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'+
-                '<div style="display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:800;color:var(--ts);text-transform:uppercase;letter-spacing:1.2px;"><span style="width:8px;height:8px;border-radius:50%;background:'+d.formColor+';flex-shrink:0;"></span>'+headerTitle+'</div>'+
-                '<div style="display:inline-flex;align-items:center;border:1px solid '+d.formColor+';background:'+d.formColorLt+';border-radius:9px;padding:3px 11px;font-size:10px;font-weight:800;color:'+d.formColor+';text-transform:uppercase;letter-spacing:.7px;">'+d.formLabel+'</div></div>'+
             '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px;">'+
                 '<div class="home-pmc-stat" style="color:var(--pmc-ctl);background:var(--pmc-ctl-lt);"><div style="font-size:20px;font-weight:800;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;color:var(--pmc-ctl);margin-bottom:4px;">'+d.curCtl+'</div><div style="font-size:8.5px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.9px;">CTL Forma</div></div>'+
                 '<div class="home-pmc-stat" style="color:var(--pmc-atl);background:var(--pmc-atl-lt);"><div style="font-size:20px;font-weight:800;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;color:var(--pmc-atl);margin-bottom:4px;">'+d.curAtl+'</div><div style="font-size:8.5px;color:var(--ts);font-weight:700;text-transform:uppercase;letter-spacing:.9px;">ATL Fatiga</div></div>'+
@@ -76068,7 +76091,14 @@ window.addEventListener('DOMContentLoaded', function() {
                 // con background/border/shadow propios) para que Carga·Fatiga·Forma
                 // quede al mismo nivel visual que las secciones HRV y FC de arriba
                 // (ambas van directas dentro de rdn-sec sin sub-card intermedia).
-                pmcSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--pmc-atl)"></span><span class="rdn-sec-t">Carga · Fatiga · Forma</span><span class="rdn-tsb-tag">TSB</span></div>'+
+                // [v2.30.1-p151] Álvaro 6 sep 2026: quitada pill decorativa "TSB"
+                // de arriba a la derecha. En su lugar, la pill del ESTADO REAL
+                // (CARGA ACTIVA / EQUILIBRIO / FATIGA / FORMA ↑) que antes vivía
+                // en el banner interno duplicado del _mrBuildPmcHtml. Ahora esa
+                // información está una sola vez y en la línea del título.
+                var pmcPillHtml = (typeof window._mrBuildPmcFormPill === 'function')
+                    ? window._mrBuildPmcFormPill(window.__mrPMCData) : '';
+                pmcSec='<div class="rdn-sec"><div class="rdn-sec-h"><span class="rdn-sec-ico" style="background:var(--pmc-atl)"></span><span class="rdn-sec-t">Carga · Fatiga · Forma</span>'+pmcPillHtml+'</div>'+
                     pmcHtml+'</div>';
             } else {
                 pmcSec='';
@@ -80317,6 +80347,22 @@ window.addEventListener('DOMContentLoaded', function() {
        su propia card con estilos distintos. Ahora un wrapper unificado
        con marco dorado sutil + gradient tenue + border-radius grande para
        que se sientan como "cards integradas" premium. ─────────────────── */
+
+    /* [v2.30.1-p151] Álvaro 6 sep 2026: reset padding lateral y gap del
+       .sheet-body cuando se usa como contenedor del sheet entreno. El
+       .sheet-body estándar tiene padding:4px 20px 16px + gap:6px. Las
+       .mr-sess-section tienen su propio margin 0 16px 12px + separación,
+       por lo que sumaba y quedaba todo muy metido/separado. Con esta
+       clase el body queda como pass-through vertical y las secciones se
+       encargan de su propio spacing. */
+    .mr-sess-sheet-body {
+        padding: 0 0 16px !important;
+        gap: 0 !important;
+    }
+    .mr-sess-sheet-body > *:first-child {
+        padding-top: 4px;
+    }
+
     .mr-sess-section {
         margin: 0 16px 12px;
         padding: 12px 12px 10px;
