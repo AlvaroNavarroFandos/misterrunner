@@ -19,8 +19,8 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p161"/>
-    <meta name="mr-build" content="2026-09-07T14:15:00Z"/>
+    <meta name="mr-version" content="v2.30.1-p162"/>
+    <meta name="mr-build" content="2026-09-07T14:40:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
     <link id="pwa-manifest" rel="manifest"/>
@@ -102,8 +102,8 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p161';
-            window.__MR_BUILD_AT = '2026-09-07T14:15:00Z';
+            window.__MR_VERSION = 'v2.30.1-p162';
+            window.__MR_BUILD_AT = '2026-09-07T14:40:00Z';
         } catch(_){}
 
         const iconEl = document.getElementById('mr-icon-b64');
@@ -10627,12 +10627,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     <div style="font-family:var(--f);font-size:6.5px;font-weight:700;letter-spacing:2.4px;color:rgba(212,175,55,.72);text-transform:uppercase;line-height:1;">MEMBERS</div>
                                 </div>
                             </div>
-                            <!-- [v2.30.1-p157] Álvaro 7 sep 2026: badge siempre
-                                 visible. Class inicial 'mr-club-dot--empty' → se
-                                 muestra como dot pequeño 10px hasta que _checkHomeCrewDot
-                                 detecta notifs reales, entonces se transforma en pill
-                                 con número (quita la class empty). -->
-                            <div id="home-club-dot" class="mr-club-dot mr-club-dot--empty" aria-label="Notificaciones del Club"></div>
+                            <!-- [v2.30.1-p162] Álvaro 7 sep 2026: dot oculto por
+                                 defecto (display:none via CSS). Solo se muestra
+                                 con display:flex cuando _mrUpdateClubBadge detecta
+                                 count > 0. Sin modo empty pill. -->
+                            <div id="home-club-dot" class="mr-club-dot" aria-label="Notificaciones del Club"></div>
                         </button>
                     </div>
                 </div>
@@ -41314,6 +41313,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const unevaluated = activities.filter(a => a.nota == null && _isEvaluable(a));
         const noActsDiv = document.getElementById('eval-no-acts');
         const formDiv   = document.getElementById('eval-form');
+        // [v2.30.1-p162] Álvaro 7 sep 2026: guard null. Al arrancar la app,
+        // esta función se puede llamar antes de que el sheet Míster IA se
+        // haya renderizado y sus elementos existan → getElementById devuelve
+        // null y .style.display crashea. Salida silenciosa si el DOM no
+        // está listo — se re-llamará cuando el sheet se abra.
+        if (!formDiv || !noActsDiv) return;
         if (unevaluated.length === 0) {
             formDiv.style.display = 'none';
             // [Retoque Míster] Mensaje contextual: si hay actividades sin nota
@@ -58587,7 +58592,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // ── STORAGE MONITOR ──────────────────────────────────────────
     function renderStorageInfo() {
         const el = document.getElementById('storage-info');
-        if(!el) { console.warn('storage-info element not found'); return; }
+        if(!el) { return; /* [p162] silenciado warn: elemento aún no listo, es benigno */ }
 
         // Use in-memory activities count (already loaded)
         const actCount = (typeof activities !== 'undefined' && activities) ? activities.length : 0;
@@ -73506,19 +73511,20 @@ function _loadClubChunk() {
                             }
                         }
                     } catch(_){}
-                    // Renderizar
+                    // [v2.30.1-p162] Álvaro 7 sep 2026: dot oculto cuando count=0.
+                    // Antes p157 forzaba mode 'empty' visible siempre. Ahora vuelve
+                    // al comportamiento iOS estándar: sin notifs → no se muestra.
                     if (count > 0) {
                         homeDot.textContent = count > 9 ? '9+' : String(count);
                         homeDot.classList.remove('mr-club-dot--empty');
+                        homeDot.style.display = 'flex';
                     } else {
                         homeDot.textContent = '';
-                        homeDot.classList.add('mr-club-dot--empty');
+                        homeDot.style.display = 'none';
                     }
-                    homeDot.style.display = 'flex';
                 } catch(_) {
+                    homeDot.style.display = 'none';
                     homeDot.textContent = '';
-                    homeDot.classList.add('mr-club-dot--empty');
-                    homeDot.style.display = 'flex';
                 }
             };
             // Pisar AMBAS funciones originales de club.js para que ambos hooks
