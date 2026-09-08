@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p207"/>
+    <meta name="mr-version" content="v2.30.1-p208"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p207';
+            window.__MR_VERSION = 'v2.30.1-p208';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -4372,23 +4372,12 @@
         touch-action: pan-y;
         will-change: transform;
     }
-    /* [p204 · Fase 4] Ocultar cabecera flotante en Card 4 IA (para que no
-       tape el header aurora del análisis). Se aplica clase 'det-hdr-hidden'
-       al .det-overlay desde goToCard() cuando curCard === Card 4 IA. */
-    .det-overlay.det-hdr-hidden .det-header {
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(-8px);
-        transition: opacity .22s ease, transform .22s ease;
-    }
+    /* [p208] REVERT p204 #4 · Ya NO ocultamos la cabecera flotante en Card 4 IA.
+       Solución más simple: dejar cabecera visible (back+share+pill) y dar padding-top
+       de 100px al .mr-ia-c4-hdr para que el header aurora quede POR DEBAJO. Así la
+       burbuja está garantizado bien posicionada en cualquier dispositivo. */
     .det-overlay .det-header {
         transition: opacity .22s ease, transform .22s ease;
-    }
-    /* El botón CTA Míster IA (si visible) también se oculta con la cabecera */
-    .det-overlay.det-hdr-hidden .mr-ia-cta {
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity .22s ease;
     }
     /* Filter pills */
     .filt-type, .filt-date {
@@ -9028,11 +9017,14 @@
            Encabezado Aurora A + Hero score + Veredicto + 3 Insights + Reco */
         .mr-ia-c4-hdr {
             position: relative;
-            /* [p207] padding-top MÍNIMO 60px + safe-area si existe (iOS con notch).
-               El problema histórico p203→p206: la burbuja aparecía cortada arriba
-               porque env(safe-area-inset-top) puede ser 0 en Chrome iOS PWA.
-               60px mínimos garantizan aire suficiente en TODOS los dispositivos. */
-            padding: max(60px, calc(env(safe-area-inset-top, 0px) + 34px)) 20px 24px;
+            /* [p208] SOLUCIÓN DEFINITIVA · padding-top 100px para acomodar la cabecera
+               flotante del visor (back+pill+share) que ocupa ~92px con safe-area.
+               La cabecera queda arriba visible como en Cards 1/2/3 (coherente),
+               y el header aurora empieza a 100px del top, con la burbuja visible
+               entera. Ya no dependemos de env(safe-area-inset-top) → funciona
+               garantizado en TODOS los dispositivos (iOS Safari, Chrome iOS PWA,
+               Android Chrome, desktop). */
+            padding: 100px 20px 24px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -42603,12 +42595,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
             track.style.transform  = 'translateX('+(-curCard*100)+'%)';
             dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
-            /* [p204] Ocultar cabecera flotante si estamos en Card 4 IA
-               (idx=3 con _hasIaReport true). En otras cards, cabecera visible. */
-            try {
-                var isCard4Ia = _hasIaReport && curCard === 3;
-                ov.classList.toggle('det-hdr-hidden', isCard4Ia);
-            } catch(_){}
+            /* [p208] REVERT · ya no toggle det-hdr-hidden. Cabecera SIEMPRE visible. */
             // Only allow scroll on active card, lock others.
             // IMPORTANT: must be 'auto' (not '') on active card — clearing the inline
             // style falls back to the .det-card class rule which is overflow:hidden,
@@ -42634,11 +42621,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             track.style.transform  = 'translateX('+(-curCard*100)+'%)';
             dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
             allCards.forEach((c,i)=>{ c.style.overflowY = i===curCard ? 'auto' : 'hidden'; });
-            /* [p204] Mismo toggle cabecera para arranque directo en Card 4 IA */
-            try {
-                var isCard4IaStart = _hasIaReport && curCard === 3;
-                ov.classList.toggle('det-hdr-hidden', isCard4IaStart);
-            } catch(_){}
+            /* [p208] REVERT · no toggle det-hdr-hidden. */
             // Restaurar transición para los swipes posteriores del usuario.
             requestAnimationFrame(function(){ track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)'; });
         } else {
@@ -77785,7 +77768,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p207';
+        window.__mrCorosVersion = 'v2.30.1-p208';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
