@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p218"/>
+    <meta name="mr-version" content="v2.30.1-p219"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p218';
+            window.__MR_VERSION = 'v2.30.1-p219';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -77869,7 +77869,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p218';
+        window.__mrCorosVersion = 'v2.30.1-p219';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86305,32 +86305,92 @@ window.addEventListener('DOMContentLoaded', function() {
             }
 
             /* ═══════════════════════════════════════════════════════════════
-               5 · paceConsistency(act) — CV del ritmo km a km
-               ═══════════════════════════════════════════════════════════════ */
-            function paceConsistency(act){
+               5 · paceConsistency(act, opts) — CV del ritmo
+               ═══════════════════════════════════════════════════════════════
+               [p219] Añade modo work-blocks para series/fartlek/threshold/tempo.
+               opts = { sessionType, targetPaceSec }
+               - Sin opts o easy/long/recovery/race/progressive/test:
+                   modo LAPS · CV sobre act.laps (km-a-km) · comportamiento clásico
+               - series/fartlek/threshold/tempo con targetPaceSec y csvBlocks:
+                   modo WORK-BLOCKS · CV solo sobre csvBlocks que caen cerca
+                   del target (±90s/km) → mide consistencia ENTRE REPES,
+                   ignorando WU/CD/recuperaciones. */
+            function paceConsistency(act, opts){
                 if (!act) return null;
+                opts = opts || {};
+                var sessionType = opts.sessionType || null;
+                var targetPaceSec = _num(opts.targetPaceSec);
+                var wantWorkMode = (
+                    sessionType === 'series' || sessionType === 'fartlek' ||
+                    sessionType === 'threshold' || sessionType === 'tempo'
+                ) && targetPaceSec && _arr(act.csvBlocks).length > 0;
+
+                if (wantWorkMode) {
+                    var csv = _arr(act.csvBlocks);
+                    var workPaces = [];
+                    var WORK_WINDOW = 90; /* s/km · mismo criterio que blockCompliance */
+                    for (var i=0;i<csv.length;i++){
+                        var b = csv[i];
+                        if (!b) continue;
+                        var bp = b.avgPaceS || b.paceS || b.pace_sec_per_km || null;
+                        if (!bp || bp < 60 || bp > 900) continue;
+                        if (Math.abs(bp - targetPaceSec) <= WORK_WINDOW) workPaces.push(bp);
+                    }
+                    if (workPaces.length >= 2) {
+                        var mW = _mean(workPaces);
+                        var sdW = _std(workPaces, mW);
+                        if (mW && sdW != null) {
+                            var cvW = _round(sdW/mW * 100, 1);
+                            var labelW;
+                            if (cvW < THR.CONSISTENCY_ELITE_CV) labelW = 'metronómico';
+                            else if (cvW < THR.CONSISTENCY_GOOD_CV) labelW = 'consistente';
+                            else if (cvW < THR.CONSISTENCY_VAR_CV) labelW = 'variable';
+                            else labelW = 'caótico';
+                            return {
+                                cvPct: cvW,
+                                label: labelW,
+                                lapsUsed: workPaces.length,
+                                meanPaceSecPerKm: _round(mW, 0),
+                                stdPaceSecPerKm: _round(sdW, 1),
+                                mode: 'work_blocks',
+                                targetPaceSec: targetPaceSec,
+                                note: 'CV entre repes de trabajo (recuperaciones excluidas)'
+                            };
+                        }
+                    }
+                    /* Fallback si no hay suficientes work-blocks: caer a laps
+                       pero marcado como 'unreliable_for_series' para que el
+                       prompt lo pueda ignorar. */
+                }
+
+                /* Modo clásico · CV sobre laps km-a-km */
                 var laps = _arr(act.laps);
                 var paces = [];
-                for (var i=0;i<laps.length;i++){
-                    var p = laps[i] && (laps[i].paceS || laps[i].pace_sec_per_km);
+                for (var j=0;j<laps.length;j++){
+                    var p = laps[j] && (laps[j].paceS || laps[j].pace_sec_per_km);
                     if (p && isFinite(p) && p > 60 && p < 900) paces.push(p);
                 }
-                if (paces.length < 3) return { cvPct: null, label: 'no_data' };
+                if (paces.length < 3) return { cvPct: null, label: 'no_data', mode: 'laps' };
                 var m = _mean(paces);
                 var sd = _std(paces, m);
-                if (!m || sd == null) return { cvPct: null, label: 'no_data' };
+                if (!m || sd == null) return { cvPct: null, label: 'no_data', mode: 'laps' };
                 var cv = _round(sd/m * 100, 1);
                 var label;
                 if (cv < THR.CONSISTENCY_ELITE_CV) label = 'metronómico';
                 else if (cv < THR.CONSISTENCY_GOOD_CV) label = 'consistente';
                 else if (cv < THR.CONSISTENCY_VAR_CV) label = 'variable';
                 else label = 'caótico';
+                var isSeriesLike = (sessionType === 'series' || sessionType === 'fartlek' ||
+                                    sessionType === 'threshold' || sessionType === 'tempo');
                 return {
                     cvPct: cv,
                     label: label,
                     lapsUsed: paces.length,
                     meanPaceSecPerKm: _round(m, 0),
-                    stdPaceSecPerKm: _round(sd, 1)
+                    stdPaceSecPerKm: _round(sd, 1),
+                    mode: 'laps',
+                    unreliableForSeries: isSeriesLike || undefined,
+                    note: isSeriesLike ? 'CV km-a-km NO fiable en series (mezcla work+rec)' : undefined
                 };
             }
 
@@ -86477,53 +86537,128 @@ window.addEventListener('DOMContentLoaded', function() {
             /* ═══════════════════════════════════════════════════════════════
                8 · blockCompliance(act, plannedSess) — cumplimiento bloques
                ═══════════════════════════════════════════════════════════════
-               Compara act.csvBlocks (detectados por autolap COROS) o
-               act.laps con sess.blocks del plan. Métrica: % bloques dentro
-               de tolerancia ± THR.BLOCK_PACE_TOLERANCE_SEC/km. */
+               [p219 REESCRITO · series-aware] Antes emparejaba planned[i] con
+               executed[i] secuencial → un fartlek con WU+6×(work+rec)+CD nunca
+               emparejaba bien. Ahora:
+                 1) Expande el plan (repeat × reps) y extrae solo los bloques
+                    de TRABAJO (con pace target explícito).
+                 2) Toma executed de act.csvBlocks (auto-lap COROS con work+rec
+                    reales por tiempo) con fallback a act.laps.
+                 3) Empareja cada work planificado con el csvBlock ejecutado
+                    más cercano al target por ritmo (dentro de ventana ±90s/km),
+                    consumiendo cada ejecutado solo una vez.
+                 4) Métrica: % bloques dentro de tolerancia
+                    ± THR.BLOCK_PACE_TOLERANCE_SEC/km. */
             function blockCompliance(act, plannedSess){
                 if (!plannedSess || !Array.isArray(plannedSess.blocks) || !plannedSess.blocks.length) return null;
+
+                /* 1 · Expandir plan · repeat×reps y aplanar */
                 var planned = [];
                 (function flatten(blocks){
                     for (var i=0;i<blocks.length;i++){
                         var b = blocks[i];
                         if (!b) continue;
                         if (Array.isArray(b.reps)) {
-                            for (var j=0;j<b.reps.length;j++) flatten([b.reps[j]]);
+                            var rep = (typeof b.repeat === 'number' && b.repeat > 0) ? b.repeat : 1;
+                            for (var r=0;r<rep;r++){
+                                for (var j=0;j<b.reps.length;j++) flatten([b.reps[j]]);
+                            }
                         } else if (b.pace || b._rampPaceSec) {
-                            planned.push({
+                            /* Parsear pace si viene como string "4:30" o "4'30\"" */
+                            var target = null;
+                            if (typeof b._rampPaceSec === 'number') target = b._rampPaceSec;
+                            else if (typeof b.pace === 'number') target = b.pace;
+                            else if (typeof b.pace === 'string') {
+                                var mm = b.pace.match(/(\d+)[:'](\d+)/);
+                                if (mm) target = parseInt(mm[1],10)*60 + parseInt(mm[2],10);
+                            }
+                            if (target) planned.push({
                                 label: b.label || '',
-                                targetPaceSec: b._rampPaceSec || b.pace || null,
+                                targetPaceSec: target,
                                 km: b.km || null
                             });
                         }
                     }
                 })(plannedSess.blocks);
-                if (!planned.length) return { totalPlanned: 0, executed: 0, avgDeviation: null };
+                if (!planned.length) return { totalPlanned: 0, executed: 0, avgDeviation: null, matchingMode: 'no_work_blocks' };
 
-                var executed = _arr(act.csvBlocks).length ? _arr(act.csvBlocks) : _arr(act.laps);
-                if (!executed.length) return { totalPlanned: planned.length, executed: 0, avgDeviation: null };
+                /* 2 · Executed: preferir csvBlocks (work+rec por tiempo real del reloj)
+                   con fallback a laps (1km-based, peor para series). */
+                var useCsvBlocks = _arr(act.csvBlocks).length > 0;
+                var executedRaw = useCsvBlocks ? _arr(act.csvBlocks) : _arr(act.laps);
+                if (!executedRaw.length) return { totalPlanned: planned.length, executed: 0, avgDeviation: null, matchingMode: 'no_executed' };
 
+                /* Normalizar cada executed a { paceS, hr } */
+                var executed = [];
+                for (var xi=0;xi<executedRaw.length;xi++){
+                    var e = executedRaw[xi];
+                    if (!e) continue;
+                    var eP = e.paceS || e.pace_sec_per_km || e.avgPaceS || e.avgPace || (e.avgSpeed ? (1000/e.avgSpeed) : null);
+                    if (!eP || eP < 60 || eP > 900) continue;
+                    executed.push({
+                        idx:   xi,
+                        paceS: eP,
+                        hr:    e.avgHr != null ? e.avgHr : null,
+                        used:  false
+                    });
+                }
+                if (!executed.length) return { totalPlanned: planned.length, executed: 0, avgDeviation: null, matchingMode: 'no_valid_paces' };
+
+                /* 3 · Emparejamiento por proximidad al target (ventana ±90s/km).
+                   Para cada planned busca el executed no usado con delta absoluto
+                   mínimo respecto al target. Esto salta WU/CD/recuperaciones
+                   automáticamente sin necesidad de saber sus índices. */
                 var deviations = [];
                 var met = 0;
-                var count = Math.min(planned.length, executed.length);
-                for (var i=0;i<count;i++){
-                    var p = planned[i];
-                    var e = executed[i];
-                    var eP = e && (e.paceS || e.pace_sec_per_km || e.avgPace || (e.avgSpeed ? (1000/e.avgSpeed) : null));
-                    if (!p.targetPaceSec || !eP) continue;
-                    var dev = eP - p.targetPaceSec;
-                    deviations.push(dev);
-                    if (Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC) met++;
+                var matches = [];
+                var MATCH_WINDOW = 90; /* s/km · más allá de esto no es la misma rep */
+                for (var pi=0;pi<planned.length;pi++){
+                    var p = planned[pi];
+                    var bestIdx = -1, bestAbsDev = Infinity;
+                    for (var ei=0;ei<executed.length;ei++){
+                        if (executed[ei].used) continue;
+                        var absDev = Math.abs(executed[ei].paceS - p.targetPaceSec);
+                        if (absDev < bestAbsDev && absDev <= MATCH_WINDOW) {
+                            bestAbsDev = absDev;
+                            bestIdx = ei;
+                        }
+                    }
+                    if (bestIdx >= 0) {
+                        var chosen = executed[bestIdx];
+                        chosen.used = true;
+                        var dev = chosen.paceS - p.targetPaceSec;
+                        deviations.push(dev);
+                        if (Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC) met++;
+                        matches.push({
+                            plannedLabel: p.label,
+                            targetPaceSec: p.targetPaceSec,
+                            executedPaceSec: chosen.paceS,
+                            executedHr: chosen.hr,
+                            deltaSec: dev,
+                            inTolerance: Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC
+                        });
+                    } else {
+                        matches.push({
+                            plannedLabel: p.label,
+                            targetPaceSec: p.targetPaceSec,
+                            executedPaceSec: null,
+                            deltaSec: null,
+                            inTolerance: false,
+                            unmatched: true
+                        });
+                    }
                 }
                 var avgDev = deviations.length ? _round(_mean(deviations), 0) : null;
                 var complianceRate = deviations.length ? _round(met/deviations.length*100, 0) : null;
                 return {
                     totalPlanned: planned.length,
-                    executed: executed.length,
+                    executed: executedRaw.length,
                     blocksAnalyzed: deviations.length,
                     metTolerance: met,
                     compliancePct: complianceRate,
-                    avgDeviationSecPerKm: avgDev
+                    avgDeviationSecPerKm: avgDev,
+                    matchingMode: useCsvBlocks ? 'csvBlocks_proximity' : 'laps_proximity',
+                    matches: matches
                 };
             }
 
@@ -86838,7 +86973,12 @@ window.addEventListener('DOMContentLoaded', function() {
                             pace: found.pace || null,
                             desc: found.desc || found.detail || null,
                             km: found.km || null,
-                            blocks: Array.isArray(found.blocks) ? found.blocks.length : 0
+                            /* [p219] Guardar el ARRAY de bloques (no solo .length).
+                               Bug crítico previo: guardábamos found.blocks.length →
+                               blockCompliance devolvía null SIEMPRE (fallo Array.isArray)
+                               y detectSessionType nunca podía detectar long_blocks. */
+                            blocks:      Array.isArray(found.blocks) ? found.blocks : [],
+                            blocksCount: Array.isArray(found.blocks) ? found.blocks.length : 0
                         };
                         out.phase = foundPhase;
                     }
@@ -86953,11 +87093,24 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 /* Métricas puras */
                 var _zoneDistLocal = hrZoneDist(act, hrMax, hrRest);
+                /* [p219] Extraer target pace del plan para paceConsistency series-mode.
+                   Soporta pace numérico o string tipo "4:30" / "4'30\"". */
+                var _targetPaceSec = null;
+                if (planCtx.plannedSession && planCtx.plannedSession.pace) {
+                    var _pp = planCtx.plannedSession.pace;
+                    if (typeof _pp === 'number') _targetPaceSec = _pp;
+                    else if (typeof _pp === 'string') {
+                        var _mm = _pp.match(/(\d+)[:'](\d+)/);
+                        if (_mm) _targetPaceSec = parseInt(_mm[1],10)*60 + parseInt(_mm[2],10);
+                    }
+                }
                 var m = {
                     split:            splitHalves(act),
                     thirds:           thirds(act),
                     fcDrift:          fcDrift(act),
-                    paceConsistency:  paceConsistency(act),
+                    /* [p219] paceConsistency ahora sessionType-aware: en series/fartlek/
+                       threshold/tempo usa CV sobre csvBlocks de trabajo, no laps 1km */
+                    paceConsistency:  paceConsistency(act, { sessionType: sessionType, targetPaceSec: _targetPaceSec }),
                     hrZoneDist:       _zoneDistLocal,
                     zoneAdherence:    planCtx.plannedSession && planCtx.plannedSession.type
                                         ? zoneAdherence(act, _sessionTypeToTargetZone(sessionType), hrMax, hrRest)
@@ -86981,6 +87134,25 @@ window.addEventListener('DOMContentLoaded', function() {
                     rawLapsCompact.push({
                         paceS: paceS,
                         avgHr: (lp.avgHr != null) ? lp.avgHr : null
+                    });
+                }
+
+                /* [p219] csvBlocks raw · bloques del reloj (auto-lap COROS con
+                   work + rec identificados por movingSecs y avgPaceS reales).
+                   FUENTE PRIMARIA para series/fartlek/threshold/tempo. */
+                var rawCsvBlocksCompact = [];
+                var csvSrc = _arr(act.csvBlocks);
+                for (var cbi=0;cbi<csvSrc.length;cbi++){
+                    var cb = csvSrc[cbi];
+                    if (!cb) continue;
+                    var cbPace = cb.avgPaceS || cb.paceS || null;
+                    if (!cbPace || cbPace < 60 || cbPace > 900) continue;
+                    rawCsvBlocksCompact.push({
+                        n:          cb.n != null ? cb.n : (cbi + 1),
+                        distKm:     _num(cb.dist),
+                        durSec:     _num(cb.movingSecs),
+                        paceS:      cbPace,
+                        avgHr:      (cb.avgHr != null && cb.avgHr > 0) ? cb.avgHr : null
                     });
                 }
 
@@ -87022,8 +87194,9 @@ window.addEventListener('DOMContentLoaded', function() {
                         }
                     },
                     rawLaps: rawLapsCompact,
+                    rawCsvBlocks: rawCsvBlocksCompact,
                     _meta: {
-                        payloadVersion: 'v2',
+                        payloadVersion: 'v3',
                         generatedAt: new Date().toISOString()
                     }
                 };
@@ -87230,6 +87403,23 @@ window.addEventListener('DOMContentLoaded', function() {
                         'en un insight y bajar el veredicto: "corriste bien FISIOLÓGICAMENTE pero saliste ' +
                         'de la ZONA planificada, esto no es rodaje". El propósito del easy es el estímulo ' +
                         'aeróbico controlado, no el kilometraje rápido.\n' +
+                    '- SESIONES POR BLOQUES (series, fartlek, threshold, tempo): la fuente de verdad para ' +
+                        'juzgar cumplimiento son LOS BLOQUES DEL RELOJ (sección "Bloques del reloj (auto-lap ' +
+                        'COROS)"), NO los parciales km-a-km. En estas sesiones cada km MEZCLA trabajo y ' +
+                        'recuperación, así que el ritmo medio del km es artificialmente lento aunque las ' +
+                        'repes de trabajo se hayan hecho perfectas. Antes de decir "no cumpliste el ritmo", ' +
+                        'REVISA los bloques cortos rápidos: son las repes de trabajo. Si la sección ' +
+                        '"Cumplimiento bloques del plan" muestra alta % en tolerancia con las repes bien ' +
+                        'emparejadas, la sesión SÍ cumplió aunque el ritmo medio global sea lento. ' +
+                        'NUNCA digas "series fantasma" o "no tocaste el objetivo" si el análisis de bloques ' +
+                        'demuestra lo contrario. Si la métrica de bloques falta o no encontró matches, ' +
+                        'admítelo ("no puedo confirmar cumplimiento por bloques") en vez de inventar un ' +
+                        'veredicto basado en los km-a-km.\n' +
+                    '- CV EN SESIONES POR BLOQUES: si "Consistencia ritmo" viene con modo "work_blocks", ' +
+                        'ese CV mide variabilidad ENTRE REPES DE TRABAJO (bueno para juzgar constancia ' +
+                        'de las series). Si viene modo "laps" con "⚠️ NO fiable", NO lo cites como si ' +
+                        'mostrara ejecución caótica — en series/fartlek un CV alto km-a-km es INEVITABLE ' +
+                        'y no significa nada.\n' +
                     '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
                 );
             }
@@ -87300,10 +87490,54 @@ window.addEventListener('DOMContentLoaded', function() {
                 /* ── MÉTRICAS COMPUTADAS ── */
                 out += '## MÉTRICAS COMPUTADAS\n\n';
 
-                /* [p206] Splits km-a-km ANTES que agregados (mitades/tercios). Así
-                   la IA ve el desglose real del reloj y no puede inventar. */
+                /* [p219] Detectar sesión "por bloques" (series/fartlek/threshold/tempo).
+                   En ellas los km-a-km son ENGAÑOSOS porque mezclan trabajo+recuperación.
+                   Los csvBlocks (auto-lap del reloj) son la fuente de verdad. */
+                var _isBlockLike = (a.detectedType === 'series' || a.detectedType === 'fartlek' ||
+                                    a.detectedType === 'threshold' || a.detectedType === 'tempo');
+                var _hasCsvBlocks = Array.isArray(p.rawCsvBlocks) && p.rawCsvBlocks.length >= 3;
+
+                /* [p219] BLOQUES DEL RELOJ · fuente PRIMARIA en sesiones por bloques.
+                   Contiene los auto-laps reales por tiempo/tecla del reloj (work + rec
+                   identificables por duración y ritmo), no los km fijos que mezclan. */
+                if (_hasCsvBlocks) {
+                    out += '### Bloques del reloj (auto-lap COROS · fuente PRIMARIA';
+                    if (_isBlockLike) out += ' para juzgar cumplimiento en esta sesión';
+                    out += ')\n';
+                    var blockLines = [];
+                    for (var cbi=0;cbi<p.rawCsvBlocks.length;cbi++){
+                        var cb = p.rawCsvBlocks[cbi];
+                        if (!cb) continue;
+                        var durStr = '';
+                        if (cb.durSec) {
+                            var dm = Math.floor(cb.durSec/60);
+                            var ds = cb.durSec % 60;
+                            durStr = dm + ':' + (ds<10?'0':'') + ds;
+                        }
+                        var bl = 'B' + cb.n + ': ';
+                        if (cb.distKm != null) bl += cb.distKm.toFixed(2) + 'km · ';
+                        if (durStr) bl += durStr + ' · ';
+                        bl += _paceStrLocal(cb.paceS) + '/km';
+                        if (cb.avgHr != null) bl += ' · FC ' + cb.avgHr;
+                        blockLines.push(bl);
+                    }
+                    out += blockLines.join('\n') + '\n';
+                    if (_isBlockLike) {
+                        out += '(Los bloques cortos rápidos son TRABAJO, los cortos lentos son RECUPERACIÓN. ' +
+                               'Los primeros/últimos ~2km suelen ser calentamiento/enfriamiento.)\n';
+                    }
+                    out += '\n';
+                }
+
+                /* [p206] Splits km-a-km · útiles en easy/long/race donde 1km ≈ 1km real.
+                   [p219] En sesiones por bloques van con AVISO explícito para que la IA
+                   no los use como veredicto de cumplimiento. */
                 if (Array.isArray(p.rawLaps) && p.rawLaps.length >= 3) {
-                    out += '### Parciales km-a-km (fuente reloj · sin pausas)\n';
+                    if (_isBlockLike && _hasCsvBlocks) {
+                        out += '### Parciales km-a-km (⚠️ NO usar como criterio de cumplimiento · mezclan work+rec)\n';
+                    } else {
+                        out += '### Parciales km-a-km (fuente reloj · sin pausas)\n';
+                    }
                     var lapLines = [];
                     for (var lki=0;lki<p.rawLaps.length;lki++){
                         var lp = p.rawLaps[lki];
@@ -87393,22 +87627,54 @@ window.addEventListener('DOMContentLoaded', function() {
                     out += pvp.interpretation + '\n\n';
                 }
 
-                /* Consistency */
+                /* Consistency · [p219] muestra modo y note explicativo */
                 if (m.paceConsistency && m.paceConsistency.label !== 'no_data') {
                     out += '### Consistencia ritmo\n';
                     out += 'CV: ' + m.paceConsistency.cvPct + '% (' + m.paceConsistency.label + ')\n';
-                    out += 'Basado en ' + m.paceConsistency.lapsUsed + ' km/laps\n';
+                    if (m.paceConsistency.mode === 'work_blocks') {
+                        out += 'Modo: CV entre REPES DE TRABAJO (recuperaciones excluidas)\n';
+                        out += 'Repes analizadas: ' + m.paceConsistency.lapsUsed + '\n';
+                        if (m.paceConsistency.meanPaceSecPerKm) {
+                            out += 'Ritmo medio repes: ' + _paceStrLocal(m.paceConsistency.meanPaceSecPerKm) + '/km\n';
+                        }
+                    } else {
+                        out += 'Basado en ' + m.paceConsistency.lapsUsed + ' km/laps\n';
+                        if (m.paceConsistency.unreliableForSeries) {
+                            out += '⚠️ NO fiable en sesiones por bloques (mezcla work+rec) — usa los bloques del reloj para juzgar\n';
+                        }
+                    }
                     out += '\n';
                 }
 
-                /* Block compliance */
+                /* Block compliance · [p219] muestra matches detallados de cada rep */
                 if (m.blockCompliance && m.blockCompliance.blocksAnalyzed > 0) {
                     out += '### Cumplimiento bloques del plan\n';
-                    out += 'Bloques planificados: ' + m.blockCompliance.totalPlanned + '\n';
-                    out += 'Bloques analizados: ' + m.blockCompliance.blocksAnalyzed + '\n';
+                    out += 'Bloques planificados (work): ' + m.blockCompliance.totalPlanned + '\n';
+                    out += 'Repes emparejadas: ' + m.blockCompliance.blocksAnalyzed + '\n';
                     out += 'Dentro tolerancia (±15s/km): ' + m.blockCompliance.metTolerance + ' de ' + m.blockCompliance.blocksAnalyzed + ' (' + m.blockCompliance.compliancePct + '%)\n';
                     if (m.blockCompliance.avgDeviationSecPerKm != null) {
                         out += 'Desviación media: ' + (m.blockCompliance.avgDeviationSecPerKm > 0 ? '+' : '') + m.blockCompliance.avgDeviationSecPerKm + 's/km\n';
+                    }
+                    if (m.blockCompliance.matchingMode) {
+                        out += 'Método: ' + m.blockCompliance.matchingMode + '\n';
+                    }
+                    if (Array.isArray(m.blockCompliance.matches) && m.blockCompliance.matches.length) {
+                        out += 'Detalle repes (target vs real):\n';
+                        for (var mi=0;mi<m.blockCompliance.matches.length;mi++){
+                            var mt = m.blockCompliance.matches[mi];
+                            if (!mt) continue;
+                            var mline = '  rep ' + (mi+1) + ' → target ' + _paceStrLocal(mt.targetPaceSec);
+                            if (mt.unmatched) {
+                                mline += ' · SIN EJECUTAR (no se encontró bloque del reloj a ese ritmo)';
+                            } else {
+                                mline += ' · real ' + _paceStrLocal(mt.executedPaceSec);
+                                if (mt.executedHr) mline += ' · FC ' + mt.executedHr;
+                                var deltaStr = (mt.deltaSec > 0 ? '+' : '') + mt.deltaSec + 's';
+                                mline += ' · Δ ' + deltaStr;
+                                mline += mt.inTolerance ? ' ✓' : ' ✗';
+                            }
+                            out += mline + '\n';
+                        }
                     }
                     out += '\n';
                 }
