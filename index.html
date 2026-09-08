@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p214"/>
+    <meta name="mr-version" content="v2.30.1-p215"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p214';
+            window.__MR_VERSION = 'v2.30.1-p215';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9024,7 +9024,7 @@
             position: relative;
             /* [p213] padding-bottom 58px (era 46px) · más aire debajo. Álvaro:
                posición burbuja/título/chips buena, solo un poco más de espacio. */
-            padding: 22px 20px 68px;
+            padding: 22px 20px 74px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -77780,7 +77780,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p214';
+        window.__mrCorosVersion = 'v2.30.1-p215';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86308,6 +86308,66 @@ window.addEventListener('DOMContentLoaded', function() {
             }
 
             /* ═══════════════════════════════════════════════════════════════
+               6b · paceVsPlanExcess(act, plannedSession, hrZoneDist, sessionType)
+                    — detecta si un easy/long/recovery se convirtió en tempo
+               ═══════════════════════════════════════════════════════════════
+               [p215] Álvaro: "penaliza si me he pasado de ritmo y por eso me he
+               salido de la zona de FC que tocaba en un easy/long/recovery".
+               Métrica: paceDelta (avg vs plan) + % tiempo en zonas SUPERIORES
+               a la objetivo. Verdicts:
+                 clean         → dentro del rango planificado
+                 overpaced_mild → 8-18% del tiempo en zonas superiores
+                 overpaced_severe → >18% del tiempo en zonas superiores */
+            function paceVsPlanExcess(act, plannedSession, zoneDist, sessionType){
+                /* Solo aplica a easy/long/recovery */
+                var applies = (sessionType === 'easy' || sessionType === 'long' || sessionType === 'recovery');
+                if (!applies) return { verdict: 'not_applicable', reason: 'sessionType_' + sessionType };
+                if (!zoneDist) return { verdict: 'no_data', reason: 'no_zone_dist' };
+
+                /* Zona objetivo por tipo */
+                var targetZone;
+                if (sessionType === 'recovery') targetZone = 1;
+                else targetZone = 2; /* easy/long → Z2 Resistencia Aeróbica */
+
+                /* % tiempo en zonas SUPERIORES a la objetivo */
+                var excessPct = 0;
+                if (targetZone === 1) {
+                    excessPct = (zoneDist.z2Pct||0) + (zoneDist.z3Pct||0) + (zoneDist.z4Pct||0) + (zoneDist.z5Pct||0);
+                } else if (targetZone === 2) {
+                    excessPct = (zoneDist.z3Pct||0) + (zoneDist.z4Pct||0) + (zoneDist.z5Pct||0);
+                }
+                excessPct = _round(excessPct, 1);
+
+                /* Pace delta vs plan (si hay plan con pace) */
+                var paceDeltaSec = null;
+                var actAvgPaceSec = _paceSecPerKm((act.distKm||0)*1000, act.durationSec);
+                if (plannedSession && plannedSession.pace && actAvgPaceSec) {
+                    /* Parse pace plan "5:51" → 351 s/km */
+                    var m = String(plannedSession.pace).match(/(\d+)[:'](\d+)/);
+                    if (m) {
+                        var planSec = parseInt(m[1],10)*60 + parseInt(m[2],10);
+                        paceDeltaSec = actAvgPaceSec - planSec; /* negativo = más rápido */
+                    }
+                }
+
+                var verdict;
+                if (excessPct < 8) verdict = 'clean';
+                else if (excessPct < 18) verdict = 'overpaced_mild';
+                else verdict = 'overpaced_severe';
+
+                return {
+                    verdict: verdict,
+                    excessPctInHigherZones: excessPct,
+                    targetZone: targetZone,
+                    paceDeltaSecPerKm: paceDeltaSec,
+                    interpretation: verdict === 'overpaced_severe' ? 'Te has pasado bastante del ritmo → salido de la zona objetivo'
+                                  : verdict === 'overpaced_mild' ? 'Ligero exceso de ritmo → algo fuera de zona'
+                                  : verdict === 'clean' ? 'Ritmo controlado, mayoría en zona objetivo'
+                                  : 'sin datos'
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
                7 · zoneAdherence(act, targetZone, hrMax, hrRest)
                     — cuánto tiempo en la zona objetivo del plan
                ═══════════════════════════════════════════════════════════════ */
@@ -86541,6 +86601,16 @@ window.addEventListener('DOMContentLoaded', function() {
                     var dv = v==='excellent' ? 15 : v==='good' ? 8 : v==='partial' ? -5 : -15;
                     var wv = (sessionType==='easy'||sessionType==='recovery') ? 2.0 : 1;
                     push('Zone adherence', v, wv, dv*wv);
+                }
+
+                /* [p215] Pace vs Plan · penalizar easy/long/recovery corridos demasiado
+                   rápido y por eso salidos de zona FC objetivo (Álvaro: "penaliza cuando
+                   me he pasado de ritmo en un easy o long"). */
+                if (metrics.paceVsPlan && (metrics.paceVsPlan.verdict === 'overpaced_mild' || metrics.paceVsPlan.verdict === 'overpaced_severe')) {
+                    var pv = metrics.paceVsPlan.verdict;
+                    var dpv = pv === 'overpaced_severe' ? -22 : -12;
+                    var wpv = 1.5;
+                    push('Pace vs Plan', pv + ' (' + metrics.paceVsPlan.excessPctInHigherZones + '% fuera Z' + metrics.paceVsPlan.targetZone + ')', wpv, dpv*wpv);
                 }
 
                 /* Block compliance */
@@ -86793,15 +86863,18 @@ window.addEventListener('DOMContentLoaded', function() {
                 var hrRest = _num(profile.hrRest) || 50;
 
                 /* Métricas puras */
+                var _zoneDistLocal = hrZoneDist(act, hrMax, hrRest);
                 var m = {
                     split:            splitHalves(act),
                     thirds:           thirds(act),
                     fcDrift:          fcDrift(act),
                     paceConsistency:  paceConsistency(act),
-                    hrZoneDist:       hrZoneDist(act, hrMax, hrRest),
+                    hrZoneDist:       _zoneDistLocal,
                     zoneAdherence:    planCtx.plannedSession && planCtx.plannedSession.type
                                         ? zoneAdherence(act, _sessionTypeToTargetZone(sessionType), hrMax, hrRest)
                                         : null,
+                    /* [p215] paceVsPlan · detecta easy/long/recovery corridos a ritmo tempo */
+                    paceVsPlan:       paceVsPlanExcess(act, planCtx.plannedSession, _zoneDistLocal, sessionType),
                     blockCompliance:  planCtx.plannedSession ? blockCompliance(act, planCtx.plannedSession) : null,
                     biomech:          biomechAnalysis(act),
                     fatigueSignals:   fatigueSignals(act)
@@ -87062,6 +87135,12 @@ window.addEventListener('DOMContentLoaded', function() {
                         'humedad alta con calor, viento fuerte), DEBES mencionarlo en veredicto o en un ' +
                         'insight porque explica FC elevada / ritmo perdido sin que sea déficit del runner. ' +
                         'Con temperaturas <30°C sin humedad alta NO es necesario mencionarlo.\n' +
+                    '- EXCESO DE RITMO EN EASY/LONG/RECOVERY: si el contexto marca "⚠️ EXCESO DE RITMO", ' +
+                        'ES UN ERROR DE EJECUCIÓN aunque el drift/FC sean buenos. Un easy corrido a ritmo ' +
+                        'tempo NO es un easy, es otra sesión. DEBES señalarlo como fallo (zone-y o zone-o) ' +
+                        'en un insight y bajar el veredicto: "corriste bien FISIOLÓGICAMENTE pero saliste ' +
+                        'de la ZONA planificada, esto no es rodaje". El propósito del easy es el estímulo ' +
+                        'aeróbico controlado, no el kilometraje rápido.\n' +
                     '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
                 );
             }
@@ -87204,6 +87283,25 @@ window.addEventListener('DOMContentLoaded', function() {
                     out += 'Zona target: Z' + m.zoneAdherence.targetZone + '\n';
                     out += 'Tiempo en target: ' + m.zoneAdherence.inTargetPct + '% (' + m.zoneAdherence.verdict + ')\n';
                     out += '\n';
+                }
+
+                /* [p215] Pace vs Plan · destaca si el runner se ha pasado de ritmo
+                   en easy/long/recovery y se ha salido de la zona objetivo */
+                if (m.paceVsPlan && m.paceVsPlan.verdict !== 'not_applicable' && m.paceVsPlan.verdict !== 'no_data') {
+                    var pvp = m.paceVsPlan;
+                    if (pvp.verdict === 'overpaced_severe' || pvp.verdict === 'overpaced_mild') {
+                        out += '### ⚠️ EXCESO DE RITMO (mencionar y penalizar como error de ejecución)\n';
+                    } else {
+                        out += '### Pace vs Plan\n';
+                    }
+                    out += 'Verdict: ' + pvp.verdict + '\n';
+                    out += '% tiempo en zonas SUPERIORES a la objetivo (Z' + pvp.targetZone + '): ' + pvp.excessPctInHigherZones + '%\n';
+                    if (pvp.paceDeltaSecPerKm != null) {
+                        out += 'Delta ritmo vs plan: ' + (pvp.paceDeltaSecPerKm > 0 ? '+' : '') + pvp.paceDeltaSecPerKm + 's/km (';
+                        out += pvp.paceDeltaSecPerKm < 0 ? 'MÁS RÁPIDO que el plan' : 'más lento que el plan';
+                        out += ')\n';
+                    }
+                    out += pvp.interpretation + '\n\n';
                 }
 
                 /* Consistency */
