@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p199"/>
+    <meta name="mr-version" content="v2.30.1-p201"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p199';
+            window.__MR_VERSION = 'v2.30.1-p201';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -76796,7 +76796,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p199';
+        window.__mrCorosVersion = 'v2.30.1-p201';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -84894,6 +84894,1671 @@ window.addEventListener('DOMContentLoaded', function() {
         try { void (0) && console.log('%c[MR] Weekly Report · 2.1 ready · await _wrGenerateReportIfPending([{force?, weekStart?, weekEnd?}]) · llamada API Anthropic + persist Supabase', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
         try { void (0) && console.log('%c[MR] Weekly Report · 2.2+2.3+2.4 ready · poller + card Home + modal informe visual + 6 gráficos SVG', 'color:#f59e0b;font-weight:bold;'); } catch (_) {}
     })();
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           [v2.30.1-p200] · Fase 2 · Post-Activity IA Evaluator
+           window._mrEval namespace · métricas puras + context enrichers
+           ──────────────────────────────────────────────────────────────────
+           Payload composer que se pasa al prompt de Míster IA en Fase 3.
+
+           Contiene:
+             - 12 computers puros (splitHalves, fcDrift, ...)
+             - 5 context enrichers (readiness, load, plan, weather, patterns)
+             - 1 composer principal (buildAnalysisPayload)
+
+           Uso desde consola:
+             _mrEval.buildAnalysisPayload(activities[activities.length-1])
+
+           Determinista, sin DOM, JSON-serializable. Fase 1 SQL ya deployada.
+           ═══════════════════════════════════════════════════════════════════ */
+        (function(){
+            if (window._mrEval) return;
+
+            /* ═════ UMBRALES CONFIGURABLES ═════ */
+            var THR = {
+                SPLIT_EVEN_SEC_PER_KM: 5,       /* |delta| < 5s → even */
+                DRIFT_EXCELLENT_PCT: 3.5,        /* Joe Friel */
+                DRIFT_GOOD_PCT: 5,
+                DRIFT_WARN_PCT: 8,
+                CONSISTENCY_ELITE_CV: 3,         /* % CV pace */
+                CONSISTENCY_GOOD_CV: 6,
+                CONSISTENCY_VAR_CV: 10,
+                BLOCK_PACE_TOLERANCE_SEC: 15,    /* ±s/km respecto target */
+                FATIGUE_HR_CREEP_PCT: 3,         /* HR último tercio vs primero */
+                FATIGUE_PACE_FADE_PCT: 4,        /* pace fade último tercio */
+                BAL_LR_GREEN: 1,                 /* ±1% óptimo */
+                BAL_LR_YELLOW: 3,                /* ±3% aceptable */
+                CADENCE_LOW: 165,                /* spm bajo */
+                CADENCE_GOOD: 175,
+                MIN_ACTIVITY_SEC: 1200,          /* <20min: no evaluar */
+                MIN_DATA_POINTS: 30,
+                RECENT_WINDOW_DAYS: 7
+            };
+
+            /* ═════ HELPERS ═════ */
+            function _num(x){ return (typeof x==='number' && isFinite(x)) ? x : null; }
+            function _round(x, d){ if (x==null || !isFinite(x)) return null; var f=Math.pow(10, d||0); return Math.round(x*f)/f; }
+            function _arr(x){ return Array.isArray(x) ? x : []; }
+            function _mean(arr){
+                if (!arr || !arr.length) return null;
+                var s=0, n=0;
+                for (var i=0;i<arr.length;i++){
+                    var v=arr[i];
+                    if (v!=null && isFinite(v)) { s+=v; n++; }
+                }
+                return n ? s/n : null;
+            }
+            function _std(arr, mean){
+                if (!arr || arr.length<2) return null;
+                if (mean==null) mean=_mean(arr);
+                if (mean==null) return null;
+                var s=0, n=0;
+                for (var i=0;i<arr.length;i++){
+                    var v=arr[i];
+                    if (v!=null && isFinite(v)) { var d=v-mean; s+=d*d; n++; }
+                }
+                return n ? Math.sqrt(s/n) : null;
+            }
+            function _seriesVals(series){
+                return _arr(series).map(function(p){ return p && p.v!=null ? p.v : null; })
+                    .filter(function(v){return v!=null && isFinite(v);});
+            }
+            function _paceSecPerKm(distMeters, durationSec){
+                if (!distMeters || !durationSec) return null;
+                return Math.round(durationSec / (distMeters/1000));
+            }
+            function _paceStr(secPerKm){
+                if (secPerKm==null || !isFinite(secPerKm)) return null;
+                var m = Math.floor(secPerKm/60), s = Math.round(secPerKm%60);
+                if (s===60) { m++; s=0; }
+                return m + ':' + (s<10?'0':'') + s;
+            }
+            function _daysBetween(dateStr1, dateStr2){
+                try {
+                    var d1 = new Date(dateStr1+'T00:00:00');
+                    var d2 = new Date(dateStr2+'T00:00:00');
+                    return Math.round((d2 - d1) / 86400000);
+                } catch(_){ return null; }
+            }
+            /* Busca índice en distSer donde acumulado >= targetMeters */
+            function _findIdxAtDist(distSer, targetMeters){
+                for (var i=0;i<distSer.length;i++){
+                    if (distSer[i] && distSer[i].v >= targetMeters) return i;
+                }
+                return distSer.length - 1;
+            }
+            /* Slice de valores hrSeries entre índices A y B (inclusive) */
+            function _valsInRange(series, idxA, idxB){
+                var out = [];
+                for (var i=Math.max(0,idxA); i<=Math.min(series.length-1, idxB); i++){
+                    if (series[i] && series[i].v!=null && isFinite(series[i].v)) out.push(series[i].v);
+                }
+                return out;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               1 · detectSessionType(act, plannedSess)
+               ═══════════════════════════════════════════════════════════════
+               Prioridad:
+                 1. plannedSess.type si viene del plan del día
+                 2. act.type (marca manual/import)
+                 3. Heurística (fallback): dist + duración + zonas
+               Retorna uno de los 12 tipos del CHECK SQL. */
+            function detectSessionType(act, plannedSess){
+                if (plannedSess && typeof plannedSess.type === 'string') {
+                    var pt = plannedSess.type.toLowerCase();
+                    if (['easy','long','recovery','series','test','race','tempo','threshold','fartlek','progressive'].indexOf(pt) >= 0) {
+                        /* Detectar variante long_blocks si el long tiene bloques MP dentro */
+                        if (pt === 'long' && plannedSess.blocks && plannedSess.blocks.length > 1) {
+                            var hasNonEasyBlock = plannedSess.blocks.some(function(b){
+                                return b && b.label && !/^(easy|calent|enfr|trote)/i.test(b.label);
+                            });
+                            if (hasNonEasyBlock) return 'long_blocks';
+                        }
+                        return pt;
+                    }
+                }
+                if (act && typeof act.type === 'string') {
+                    var t = act.type.toLowerCase();
+                    if (['easy','long','recovery','series','test','race','tempo','threshold','fartlek','progressive'].indexOf(t) >= 0) return t;
+                }
+                /* Heurística de último recurso */
+                var dist = _num(act && act.distKm) || 0;
+                var dur = _num(act && act.durationSec) || 0;
+                if (dur < 1200) return 'recovery';
+                if (dist >= 21) return 'long';
+                if (act && Array.isArray(act.csvBlocks) && act.csvBlocks.length > 3) return 'series';
+                return 'other';
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               2 · splitHalves(act) — 1ª / 2ª mitad por DISTANCIA
+               ═══════════════════════════════════════════════════════════════ */
+            function splitHalves(act){
+                if (!act) return null;
+                var distSer = _arr(act.distSer);
+                var hrSeries = _arr(act.hrSeries);
+                if (distSer.length < THR.MIN_DATA_POINTS) return null;
+                var totalMeters = distSer[distSer.length - 1].v;
+                if (!totalMeters) return null;
+                var halfMeters = totalMeters / 2;
+                var idxHalf = _findIdxAtDist(distSer, halfMeters);
+                if (idxHalf <= 0 || idxHalf >= distSer.length - 1) return null;
+
+                var t0 = distSer[0].t, tMid = distSer[idxHalf].t, tEnd = distSer[distSer.length-1].t;
+                var h1DurSec = tMid - t0;
+                var h2DurSec = tEnd - tMid;
+                var h1DistKm = halfMeters / 1000;
+                var h2DistKm = (totalMeters - halfMeters) / 1000;
+                var h1Pace = _paceSecPerKm(halfMeters, h1DurSec);
+                var h2Pace = _paceSecPerKm(totalMeters - halfMeters, h2DurSec);
+                var h1Hr = _round(_mean(_valsInRange(hrSeries, 0, idxHalf)), 0);
+                var h2Hr = _round(_mean(_valsInRange(hrSeries, idxHalf, hrSeries.length-1)), 0);
+                var deltaSec = (h1Pace && h2Pace) ? (h2Pace - h1Pace) : null;
+                var type = null;
+                if (deltaSec != null) {
+                    if (deltaSec <= -THR.SPLIT_EVEN_SEC_PER_KM) type = 'negative';
+                    else if (deltaSec >=  THR.SPLIT_EVEN_SEC_PER_KM) type = 'positive';
+                    else type = 'even';
+                }
+                return {
+                    firstHalf:  { distKm: _round(h1DistKm,2), durationSec: h1DurSec, paceSecPerKm: h1Pace, paceStr: _paceStr(h1Pace), avgHr: h1Hr },
+                    secondHalf: { distKm: _round(h2DistKm,2), durationSec: h2DurSec, paceSecPerKm: h2Pace, paceStr: _paceStr(h2Pace), avgHr: h2Hr },
+                    type: type,
+                    deltaSecPerKm: deltaSec,
+                    deltaPct: (deltaSec != null && h1Pace) ? _round(deltaSec / h1Pace * 100, 1) : null
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               3 · thirds(act) — tercios para pace fade + peor tramo
+               ═══════════════════════════════════════════════════════════════ */
+            function thirds(act){
+                if (!act) return null;
+                var distSer = _arr(act.distSer);
+                var hrSeries = _arr(act.hrSeries);
+                if (distSer.length < THR.MIN_DATA_POINTS) return null;
+                var totalMeters = distSer[distSer.length - 1].v;
+                if (!totalMeters) return null;
+
+                var boundaries = [totalMeters/3, 2*totalMeters/3];
+                var idxA = _findIdxAtDist(distSer, boundaries[0]);
+                var idxB = _findIdxAtDist(distSer, boundaries[1]);
+                if (idxA <= 0 || idxB <= idxA || idxB >= distSer.length-1) return null;
+
+                function buildThird(iStart, iEnd, distStart, distEnd){
+                    var durSec = distSer[iEnd].t - distSer[iStart].t;
+                    var meters = distEnd - distStart;
+                    return {
+                        distKm: _round(meters/1000, 2),
+                        durationSec: durSec,
+                        paceSecPerKm: _paceSecPerKm(meters, durSec),
+                        avgHr: _round(_mean(_valsInRange(hrSeries, iStart, iEnd)), 0)
+                    };
+                }
+                var t1 = buildThird(0, idxA, 0, boundaries[0]);
+                var t2 = buildThird(idxA, idxB, boundaries[0], boundaries[1]);
+                var t3 = buildThird(idxB, distSer.length-1, boundaries[1], totalMeters);
+                t1.paceStr = _paceStr(t1.paceSecPerKm);
+                t2.paceStr = _paceStr(t2.paceSecPerKm);
+                t3.paceStr = _paceStr(t3.paceSecPerKm);
+
+                var fadeSec = (t1.paceSecPerKm && t3.paceSecPerKm) ? (t3.paceSecPerKm - t1.paceSecPerKm) : null;
+                var fadePct = (fadeSec != null && t1.paceSecPerKm) ? _round(fadeSec/t1.paceSecPerKm*100, 1) : null;
+
+                /* Detectar peor tramo por km (paso más lento) */
+                var worstKmRange = null;
+                var laps = _arr(act.laps);
+                if (laps.length >= 3) {
+                    var slowest = null, slowestIdx = -1;
+                    for (var i=0;i<laps.length;i++){
+                        var p = laps[i] && (laps[i].paceS || laps[i].pace_sec_per_km);
+                        if (p && (slowest == null || p > slowest)) { slowest = p; slowestIdx = i; }
+                    }
+                    if (slowestIdx >= 0) {
+                        worstKmRange = 'km ' + slowestIdx + '-' + (slowestIdx+1);
+                    }
+                }
+                return {
+                    first:  t1,
+                    middle: t2,
+                    last:   t3,
+                    fadeSecPerKm: fadeSec,
+                    fadePct: fadePct,
+                    worstKmRange: worstKmRange
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               4 · fcDrift(act) — desacople cardiovascular (EF change)
+               ═══════════════════════════════════════════════════════════════
+               Formula: (pace_2 / hr_2) / (pace_1 / hr_1) - 1
+               Umbrales Joe Friel: <3.5% excellent · 3.5-5 good · 5-8 warn · >8 alarm */
+            function fcDrift(act){
+                var halves = splitHalves(act);
+                if (!halves || !halves.firstHalf.avgHr || !halves.secondHalf.avgHr) {
+                    return { pct: null, interpretation: 'no_data' };
+                }
+                var ef1 = halves.firstHalf.paceSecPerKm / halves.firstHalf.avgHr;
+                var ef2 = halves.secondHalf.paceSecPerKm / halves.secondHalf.avgHr;
+                if (!ef1) return { pct: null, interpretation: 'no_data' };
+                var driftPct = _round((ef2/ef1 - 1) * 100, 2);
+                var interp;
+                if (driftPct == null) interp = 'no_data';
+                else if (driftPct < THR.DRIFT_EXCELLENT_PCT) interp = 'excellent';
+                else if (driftPct < THR.DRIFT_GOOD_PCT) interp = 'good';
+                else if (driftPct < THR.DRIFT_WARN_PCT) interp = 'warn';
+                else interp = 'alarm';
+                return {
+                    pct: driftPct,
+                    interpretation: interp,
+                    hrDeltaBpm: _round(halves.secondHalf.avgHr - halves.firstHalf.avgHr, 0),
+                    paceDeltaSecPerKm: halves.secondHalf.paceSecPerKm - halves.firstHalf.paceSecPerKm
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               5 · paceConsistency(act) — CV del ritmo km a km
+               ═══════════════════════════════════════════════════════════════ */
+            function paceConsistency(act){
+                if (!act) return null;
+                var laps = _arr(act.laps);
+                var paces = [];
+                for (var i=0;i<laps.length;i++){
+                    var p = laps[i] && (laps[i].paceS || laps[i].pace_sec_per_km);
+                    if (p && isFinite(p) && p > 60 && p < 900) paces.push(p);
+                }
+                if (paces.length < 3) return { cvPct: null, label: 'no_data' };
+                var m = _mean(paces);
+                var sd = _std(paces, m);
+                if (!m || sd == null) return { cvPct: null, label: 'no_data' };
+                var cv = _round(sd/m * 100, 1);
+                var label;
+                if (cv < THR.CONSISTENCY_ELITE_CV) label = 'metronómico';
+                else if (cv < THR.CONSISTENCY_GOOD_CV) label = 'consistente';
+                else if (cv < THR.CONSISTENCY_VAR_CV) label = 'variable';
+                else label = 'caótico';
+                return {
+                    cvPct: cv,
+                    label: label,
+                    lapsUsed: paces.length,
+                    meanPaceSecPerKm: _round(m, 0),
+                    stdPaceSecPerKm: _round(sd, 1)
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               6 · hrZoneDist(act, hrMax, hrRest) — % tiempo en Z1-Z5
+               ═══════════════════════════════════════════════════════════════
+               Zonas Karvonen (HRR):
+                 Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100% */
+            function hrZoneDist(act, hrMax, hrRest){
+                if (!act || !hrMax) return null;
+                var hrSeries = _arr(act.hrSeries);
+                if (hrSeries.length < THR.MIN_DATA_POINTS) return null;
+                var hrr = hrMax - (hrRest || 50);
+                if (hrr <= 0) return null;
+                var buckets = [0, 0, 0, 0, 0];
+                var totalDt = 0;
+                for (var i=1;i<hrSeries.length;i++){
+                    var p0 = hrSeries[i-1], p1 = hrSeries[i];
+                    if (!p0 || !p1 || p1.v == null) continue;
+                    var dt = (p1.t - p0.t);
+                    if (dt <= 0 || dt > 30) continue; /* pausas o gaps */
+                    var pct = (p1.v - (hrRest||50)) / hrr * 100;
+                    var idx = pct < 60 ? 0 : pct < 70 ? 1 : pct < 80 ? 2 : pct < 90 ? 3 : 4;
+                    buckets[idx] += dt;
+                    totalDt += dt;
+                }
+                if (!totalDt) return null;
+                return {
+                    z1Pct: _round(buckets[0]/totalDt*100, 1),
+                    z2Pct: _round(buckets[1]/totalDt*100, 1),
+                    z3Pct: _round(buckets[2]/totalDt*100, 1),
+                    z4Pct: _round(buckets[3]/totalDt*100, 1),
+                    z5Pct: _round(buckets[4]/totalDt*100, 1),
+                    totalSec: Math.round(totalDt)
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               7 · zoneAdherence(act, targetZone, hrMax, hrRest)
+                    — cuánto tiempo en la zona objetivo del plan
+               ═══════════════════════════════════════════════════════════════ */
+            function zoneAdherence(act, targetZone, hrMax, hrRest){
+                var dist = hrZoneDist(act, hrMax, hrRest);
+                if (!dist) return null;
+                var key = 'z' + targetZone + 'Pct';
+                var inTarget = dist[key];
+                if (inTarget == null) return { targetZone: targetZone, inTargetPct: null, verdict: 'no_data' };
+                var verdict;
+                if (inTarget >= 70) verdict = 'excellent';
+                else if (inTarget >= 55) verdict = 'good';
+                else if (inTarget >= 40) verdict = 'partial';
+                else verdict = 'off_target';
+                return { targetZone: targetZone, inTargetPct: inTarget, verdict: verdict, allZones: dist };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               8 · blockCompliance(act, plannedSess) — cumplimiento bloques
+               ═══════════════════════════════════════════════════════════════
+               Compara act.csvBlocks (detectados por autolap COROS) o
+               act.laps con sess.blocks del plan. Métrica: % bloques dentro
+               de tolerancia ± THR.BLOCK_PACE_TOLERANCE_SEC/km. */
+            function blockCompliance(act, plannedSess){
+                if (!plannedSess || !Array.isArray(plannedSess.blocks) || !plannedSess.blocks.length) return null;
+                var planned = [];
+                (function flatten(blocks){
+                    for (var i=0;i<blocks.length;i++){
+                        var b = blocks[i];
+                        if (!b) continue;
+                        if (Array.isArray(b.reps)) {
+                            for (var j=0;j<b.reps.length;j++) flatten([b.reps[j]]);
+                        } else if (b.pace || b._rampPaceSec) {
+                            planned.push({
+                                label: b.label || '',
+                                targetPaceSec: b._rampPaceSec || b.pace || null,
+                                km: b.km || null
+                            });
+                        }
+                    }
+                })(plannedSess.blocks);
+                if (!planned.length) return { totalPlanned: 0, executed: 0, avgDeviation: null };
+
+                var executed = _arr(act.csvBlocks).length ? _arr(act.csvBlocks) : _arr(act.laps);
+                if (!executed.length) return { totalPlanned: planned.length, executed: 0, avgDeviation: null };
+
+                var deviations = [];
+                var met = 0;
+                var count = Math.min(planned.length, executed.length);
+                for (var i=0;i<count;i++){
+                    var p = planned[i];
+                    var e = executed[i];
+                    var eP = e && (e.paceS || e.pace_sec_per_km || e.avgPace || (e.avgSpeed ? (1000/e.avgSpeed) : null));
+                    if (!p.targetPaceSec || !eP) continue;
+                    var dev = eP - p.targetPaceSec;
+                    deviations.push(dev);
+                    if (Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC) met++;
+                }
+                var avgDev = deviations.length ? _round(_mean(deviations), 0) : null;
+                var complianceRate = deviations.length ? _round(met/deviations.length*100, 0) : null;
+                return {
+                    totalPlanned: planned.length,
+                    executed: executed.length,
+                    blocksAnalyzed: deviations.length,
+                    metTolerance: met,
+                    compliancePct: complianceRate,
+                    avgDeviationSecPerKm: avgDev
+                };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               9 · biomechAnalysis(act) — cadencia, I/D, zancada
+               ═══════════════════════════════════════════════════════════════ */
+            function biomechAnalysis(act){
+                if (!act) return null;
+                var out = { cadence: null, balance: null, stride: null, verticalOsc: null };
+
+                var cadAvg = _num(act.avgCadence) || _mean(_seriesVals(act.cadSeries));
+                if (cadAvg != null) {
+                    var cadStd = _std(_seriesVals(act.cadSeries), cadAvg);
+                    var cadZone;
+                    if (cadAvg >= THR.CADENCE_GOOD) cadZone = 'good';
+                    else if (cadAvg >= THR.CADENCE_LOW) cadZone = 'ok';
+                    else cadZone = 'low';
+                    out.cadence = {
+                        avgSpm: _round(cadAvg, 0),
+                        maxSpm: _num(act.maxCadence),
+                        stdSpm: cadStd != null ? _round(cadStd, 1) : null,
+                        zone: cadZone
+                    };
+                }
+
+                var bal = _num(act.balanceL);
+                if (bal != null && bal > 0 && bal < 100) {
+                    var dev = Math.abs(bal - 50);
+                    var balZone;
+                    if (dev <= THR.BAL_LR_GREEN) balZone = 'optimal';
+                    else if (dev <= THR.BAL_LR_YELLOW) balZone = 'acceptable';
+                    else balZone = 'asymmetric';
+                    out.balance = {
+                        leftPct: _round(bal, 1),
+                        rightPct: _round(100 - bal, 1),
+                        deviationPct: _round(dev, 1),
+                        zone: balZone,
+                        dominantSide: bal > 50.5 ? 'L' : (bal < 49.5 ? 'R' : 'even')
+                    };
+                }
+
+                var strideCm = _num(act.strideLen);
+                if (strideCm != null && strideCm > 0) {
+                    out.stride = {
+                        avgCm: _round(strideCm, 0),
+                        series: _seriesVals(act.strideSer).length > 0 ? {
+                            meanCm: _round(_mean(_seriesVals(act.strideSer)), 0),
+                            stdCm: _round(_std(_seriesVals(act.strideSer)), 1)
+                        } : null
+                    };
+                }
+
+                var vosc = _mean(_seriesVals(act.vertSer));
+                if (vosc != null) {
+                    out.verticalOsc = { avgCm: _round(vosc, 1) };
+                }
+
+                return out;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               10 · fatigueSignals(act) — desfallecimiento último tercio
+               ═══════════════════════════════════════════════════════════════ */
+            function fatigueSignals(act){
+                var t = thirds(act);
+                if (!t) return null;
+                var signals = [];
+
+                /* HR creep: subida FC último tercio vs primero */
+                if (t.first.avgHr && t.last.avgHr) {
+                    var hrCreepPct = _round((t.last.avgHr - t.first.avgHr) / t.first.avgHr * 100, 1);
+                    if (hrCreepPct >= THR.FATIGUE_HR_CREEP_PCT) {
+                        signals.push({ kind: 'hr_creep', pct: hrCreepPct, msg: 'FC sube ' + hrCreepPct + '% en último tercio' });
+                    }
+                }
+
+                /* Pace fade: pérdida de ritmo último tercio */
+                if (t.fadePct != null && t.fadePct >= THR.FATIGUE_PACE_FADE_PCT) {
+                    signals.push({ kind: 'pace_fade', pct: t.fadePct, msg: 'Ritmo cae ' + t.fadePct + '% en último tercio' });
+                }
+
+                /* Cadence drop en último tercio (si tenemos series) */
+                var cadSer = _arr(act.cadSeries);
+                if (cadSer.length >= 60) {
+                    var third = Math.floor(cadSer.length/3);
+                    var cFirst = _mean(_seriesVals(cadSer.slice(0, third)));
+                    var cLast = _mean(_seriesVals(cadSer.slice(-third)));
+                    if (cFirst && cLast) {
+                        var cadDropSpm = _round(cFirst - cLast, 1);
+                        if (cadDropSpm >= 3) {
+                            signals.push({ kind: 'cadence_drop', deltaSpm: cadDropSpm, msg: 'Cadencia baja ' + cadDropSpm + ' spm en último tercio' });
+                        }
+                    }
+                }
+
+                var severity;
+                if (signals.length === 0) severity = 'none';
+                else if (signals.length === 1) severity = 'mild';
+                else if (signals.length === 2) severity = 'moderate';
+                else severity = 'severe';
+
+                return { signals: signals, severity: severity, count: signals.length };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               11 · computeGrade(metrics, sessionType) — score 0-100 + A-F
+               ═══════════════════════════════════════════════════════════════
+               Pesos adaptativos según tipo. Devuelve orientación al scorer
+               de la IA — la IA puede ajustar el score final si detecta
+               matices que el algoritmo no ve. */
+            function computeGrade(metrics, sessionType){
+                var score = 50; /* base neutra */
+                var factors = [];
+
+                function push(label, value, weight, delta){
+                    factors.push({ label: label, value: value, weight: weight, delta: delta });
+                    score += delta;
+                }
+
+                /* Split type */
+                if (metrics.split && metrics.split.type) {
+                    var d = metrics.split.type === 'negative' ? 15
+                          : metrics.split.type === 'even'     ? 10
+                          : -5;
+                    var w = (sessionType==='race'||sessionType==='long'||sessionType==='test') ? 1.5 : 1;
+                    push('Split', metrics.split.type, w, d*w);
+                }
+
+                /* FC drift */
+                if (metrics.fcDrift && metrics.fcDrift.interpretation !== 'no_data') {
+                    var i = metrics.fcDrift.interpretation;
+                    var dd = i==='excellent' ? 12 : i==='good' ? 6 : i==='warn' ? -8 : -18;
+                    var ww = (sessionType==='easy'||sessionType==='long'||sessionType==='recovery') ? 1.5 : 1;
+                    push('FC drift', i, ww, dd*ww);
+                }
+
+                /* Zone adherence */
+                if (metrics.zoneAdherence && metrics.zoneAdherence.verdict !== 'no_data') {
+                    var v = metrics.zoneAdherence.verdict;
+                    var dv = v==='excellent' ? 15 : v==='good' ? 8 : v==='partial' ? -5 : -15;
+                    var wv = (sessionType==='easy'||sessionType==='recovery') ? 2.0 : 1;
+                    push('Zone adherence', v, wv, dv*wv);
+                }
+
+                /* Block compliance */
+                if (metrics.blockCompliance && metrics.blockCompliance.compliancePct != null) {
+                    var cp = metrics.blockCompliance.compliancePct;
+                    var dc = cp >= 90 ? 20 : cp >= 70 ? 10 : cp >= 50 ? 0 : -12;
+                    var wc = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek') ? 2.0 : 1;
+                    push('Block compliance', cp+'%', wc, dc*wc);
+                }
+
+                /* Consistency (metronómico bonus) */
+                if (metrics.paceConsistency && metrics.paceConsistency.label && metrics.paceConsistency.label !== 'no_data') {
+                    var lab = metrics.paceConsistency.label;
+                    var dl = lab==='metronómico' ? 8 : lab==='consistente' ? 4 : lab==='variable' ? -2 : -6;
+                    push('Consistency', lab, 1, dl);
+                }
+
+                /* Fatigue */
+                if (metrics.fatigueSignals) {
+                    var sev = metrics.fatigueSignals.severity;
+                    var ds = sev==='none' ? 6 : sev==='mild' ? -3 : sev==='moderate' ? -10 : -18;
+                    var ws = (sessionType==='long'||sessionType==='race'||sessionType==='test') ? 1.5 : 1;
+                    push('Fatigue', sev, ws, ds*ws);
+                }
+
+                /* Biomechanics — small bonus si todo verde */
+                if (metrics.biomech) {
+                    if (metrics.biomech.balance && metrics.biomech.balance.zone === 'optimal') push('Balance', 'optimal', 1, 3);
+                    if (metrics.biomech.cadence && metrics.biomech.cadence.zone === 'good') push('Cadence', 'good', 1, 3);
+                }
+
+                score = Math.max(0, Math.min(100, Math.round(score)));
+                var grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+                var label = grade==='A' ? 'Excelente' : grade==='B' ? 'Sólido' : grade==='C' ? 'Aceptable' : grade==='D' ? 'Mejorable' : 'Mal ejecutado';
+                return { score: score, grade: grade, label: label, factors: factors };
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               ENRICHERS · leen sistemas existentes
+               ═══════════════════════════════════════════════════════════════ */
+
+            /* getReadinessSnapshot(dateStr) — extract del cache COROS del día */
+            function getReadinessSnapshot(dateStr){
+                try {
+                    var raw = localStorage.getItem('mr_coros_readiness');
+                    if (!raw) return null;
+                    var cache = JSON.parse(raw);
+                    if (!cache || !Array.isArray(cache.days)) return null;
+                    /* buscar el día EXACTO o el más cercano previo */
+                    var day = null;
+                    for (var i=0;i<cache.days.length;i++){
+                        var d = cache.days[i];
+                        if (!d) continue;
+                        var ds = d.dateStr || d.date || null;
+                        if (ds === dateStr) { day = d; break; }
+                    }
+                    if (!day) return null;
+                    return {
+                        dateStr: day.dateStr || day.date || dateStr,
+                        readinessScore: _num(day.score || day.readinessScore),
+                        hrvNightMs: _num(day.hrv || day.hrvNight),
+                        rhr: _num(day.rhr || day.hrRest),
+                        staminaLevel: _num(day.staminaLevel || day.stamina),
+                        vo2max: _num(day.vo2max)
+                    };
+                } catch(_){ return null; }
+            }
+
+            /* getLoadSnapshot() — CTL/ATL/TSB + ACWR en el momento */
+            function getLoadSnapshot(){
+                var pmc = null;
+                try {
+                    if (window.__mrPMC) {
+                        pmc = {
+                            ctl: _round(window.__mrPMC.ctl, 1),
+                            atl: _round(window.__mrPMC.atl, 1),
+                            tsb: _round(window.__mrPMC.tsb, 1)
+                        };
+                    }
+                } catch(_){}
+                var acwr = null;
+                try {
+                    if (typeof window.computeACWR === 'function'
+                        && typeof window.activities !== 'undefined'
+                        && Array.isArray(window.activities)) {
+                        var r = window.computeACWR(window.activities, new Date());
+                        if (r && r.ratio != null) {
+                            acwr = { ratio: _round(r.ratio, 2), acute: _round(r.acute, 1), chronic: _round(r.chronic, 1), source: r.source || null };
+                        }
+                    }
+                } catch(_){}
+                return { pmc: pmc, acwr: acwr };
+            }
+
+            /* getPlanContext(act) — sesión planeada de ese día + próximas 3 + fase + días a carrera */
+            function getPlanContext(act){
+                var out = {
+                    plannedSession: null,
+                    next3Sessions: [],
+                    phase: null,
+                    raceInDays: null,
+                    raceName: null,
+                    planName: null
+                };
+                try {
+                    var plan = window.activePlan;
+                    if (!plan || !Array.isArray(plan.weeks)) return out;
+                    out.planName = plan.name || plan.planName || null;
+                    var actDate = act && act.dateStr;
+                    if (!actDate) return out;
+
+                    /* Buscar sesión planificada de esa fecha exacta */
+                    var found = null, foundPhase = null, foundWeekIdx = -1, foundSessIdx = -1;
+                    for (var wi=0;wi<plan.weeks.length;wi++){
+                        var wk = plan.weeks[wi];
+                        if (!wk || !Array.isArray(wk.sessions)) continue;
+                        for (var si=0;si<wk.sessions.length;si++){
+                            var s = wk.sessions[si];
+                            if (s && s.dateStr === actDate) {
+                                found = s; foundPhase = wk.phase || null;
+                                foundWeekIdx = wi; foundSessIdx = si;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                    if (found) {
+                        out.plannedSession = {
+                            type: found.type || null,
+                            pace: found.pace || null,
+                            desc: found.desc || found.detail || null,
+                            km: found.km || null,
+                            blocks: Array.isArray(found.blocks) ? found.blocks.length : 0
+                        };
+                        out.phase = foundPhase;
+                    }
+
+                    /* Próximas 3 sesiones tras esta */
+                    if (foundWeekIdx >= 0) {
+                        var collected = 0;
+                        outer: for (var wi2=foundWeekIdx;wi2<plan.weeks.length && collected<3;wi2++){
+                            var wk2 = plan.weeks[wi2];
+                            if (!wk2 || !Array.isArray(wk2.sessions)) continue;
+                            var startS = wi2 === foundWeekIdx ? foundSessIdx+1 : 0;
+                            for (var si2=startS;si2<wk2.sessions.length && collected<3;si2++){
+                                var s2 = wk2.sessions[si2];
+                                if (!s2) continue;
+                                out.next3Sessions.push({
+                                    dateStr: s2.dateStr || null,
+                                    type: s2.type || null,
+                                    km: s2.km || null,
+                                    desc: (s2.desc || s2.detail || '').substring(0, 80)
+                                });
+                                collected++;
+                            }
+                        }
+                    }
+
+                    /* Race day countdown */
+                    if (plan.raceDate || plan.race_date) {
+                        var rd = plan.raceDate || plan.race_date;
+                        out.raceInDays = _daysBetween(actDate, rd);
+                        out.raceName = plan.raceName || plan.race_name || null;
+                    }
+                } catch(_){}
+                return out;
+            }
+
+            /* getWeatherSnapshot(act) — act.weather con guards */
+            function getWeatherSnapshot(act){
+                if (!act || !act.weather || typeof act.weather !== 'object') return null;
+                var w = act.weather;
+                return {
+                    tempC: _num(w.tempC != null ? w.tempC : w.temp),
+                    condition: w.condition || w.summary || null,
+                    humidity: _num(w.humidity),
+                    windKmh: _num(w.wind || w.windKmh)
+                };
+            }
+
+            /* getRecentPatterns(activities, act) — últimas 7 activities antes de act */
+            function getRecentPatterns(activities, act){
+                var out = { last7: [], consecutiveHardDays: 0, avgHrTrend: null, notes: [] };
+                if (!Array.isArray(activities) || !act || !act.dateStr) return out;
+                try {
+                    var actDate = new Date(act.dateStr + 'T00:00:00');
+                    var filtered = [];
+                    for (var i=0;i<activities.length;i++){
+                        var a = activities[i];
+                        if (!a || !a.dateStr || a === act) continue;
+                        var d = new Date(a.dateStr + 'T00:00:00');
+                        var diffDays = (actDate - d) / 86400000;
+                        if (diffDays > 0 && diffDays <= THR.RECENT_WINDOW_DAYS) filtered.push(a);
+                    }
+                    filtered.sort(function(a,b){ return new Date(b.dateStr) - new Date(a.dateStr); });
+                    filtered = filtered.slice(0, 7);
+                    out.last7 = filtered.map(function(a){
+                        return {
+                            dateStr: a.dateStr,
+                            type: a.type || null,
+                            distKm: _round(a.distKm, 2),
+                            avgHr: _num(a.avgHr),
+                            trimp: _round(a.trimp, 0)
+                        };
+                    });
+
+                    /* Consecutive hard days (series/threshold/long/race con TRIMP alto) */
+                    var hardTypes = ['series','threshold','long','race','tempo','test'];
+                    var streak = 0, maxStreak = 0;
+                    for (var j=0;j<filtered.length;j++){
+                        var f = filtered[j];
+                        if (hardTypes.indexOf(f.type) >= 0) { streak++; if (streak>maxStreak) maxStreak=streak; }
+                        else streak = 0;
+                    }
+                    out.consecutiveHardDays = maxStreak;
+
+                    /* HR trend (subiendo en easies) */
+                    var easies = filtered.filter(function(a){ return a.type === 'easy' && a.avgHr; });
+                    if (easies.length >= 3) {
+                        var hrs = easies.map(function(a){ return a.avgHr; });
+                        var first = hrs[hrs.length-1], last = hrs[0]; /* recientes primero */
+                        var delta = last - first;
+                        if (delta >= 4) out.notes.push('FC media en easies subiendo (+' + delta + ' bpm en última semana)');
+                        else if (delta <= -4) out.notes.push('FC media en easies bajando (' + delta + ' bpm) — buena adaptación');
+                    }
+                    if (maxStreak >= 3) out.notes.push('3+ sesiones duras consecutivas');
+                } catch(_){}
+                return out;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════
+               COMPOSER · buildAnalysisPayload(act)
+               ═══════════════════════════════════════════════════════════════
+               Devuelve el objeto completo que se pasa al prompt de Míster IA.
+               Todo JSON-serializable. Fallback graceful si faltan datos. */
+            function buildAnalysisPayload(act){
+                if (!act) return null;
+                var profile = (typeof window.profileData === 'object' && window.profileData) ? window.profileData : {};
+                var acts = (typeof window.activities !== 'undefined' && Array.isArray(window.activities)) ? window.activities : [];
+
+                var planCtx = getPlanContext(act);
+                var sessionType = detectSessionType(act, planCtx.plannedSession);
+                var hrMax = _num(profile.hrMax) || 195;
+                var hrRest = _num(profile.hrRest) || 50;
+
+                /* Métricas puras */
+                var m = {
+                    split:            splitHalves(act),
+                    thirds:           thirds(act),
+                    fcDrift:          fcDrift(act),
+                    paceConsistency:  paceConsistency(act),
+                    hrZoneDist:       hrZoneDist(act, hrMax, hrRest),
+                    zoneAdherence:    planCtx.plannedSession && planCtx.plannedSession.type
+                                        ? zoneAdherence(act, _sessionTypeToTargetZone(sessionType), hrMax, hrRest)
+                                        : null,
+                    blockCompliance:  planCtx.plannedSession ? blockCompliance(act, planCtx.plannedSession) : null,
+                    biomech:          biomechAnalysis(act),
+                    fatigueSignals:   fatigueSignals(act)
+                };
+                var grade = computeGrade(m, sessionType);
+
+                return {
+                    activity: {
+                        type:          act.type || null,
+                        detectedType:  sessionType,
+                        dateStr:       act.dateStr || null,
+                        distKm:        _round(act.distKm, 2),
+                        durationSec:   _num(act.durationSec),
+                        paceAvgSec:    _paceSecPerKm((act.distKm||0)*1000, act.durationSec),
+                        paceAvgStr:    _paceStr(_paceSecPerKm((act.distKm||0)*1000, act.durationSec)),
+                        avgHr:         _num(act.avgHr),
+                        maxHr:         _num(act.maxHr),
+                        ascentM:       _num(act.ascentM),
+                        descentM:      _num(act.descentM),
+                        calories:      _num(act.calories),
+                        trimp:         _round(act.trimp, 0),
+                        rpe:           _num(act.rpe),
+                        name:          act.name || act.raceName || null,
+                        deviceBrand:   act.deviceBrand || null,
+                        shoeName:      act.shoeName || null,
+                        notes:         act.notes || null
+                    },
+                    metrics: m,
+                    grade: grade,
+                    context: {
+                        weather:    getWeatherSnapshot(act),
+                        readiness:  getReadinessSnapshot(act.dateStr),
+                        load:       getLoadSnapshot(),
+                        plan:       planCtx,
+                        recent:     getRecentPatterns(acts, act),
+                        profile: {
+                            hrMax: hrMax,
+                            hrRest: hrRest,
+                            weightKg: _num(profile.weight),
+                            vdot: _num(profile.vdot),
+                            city: profile.city || null
+                        }
+                    },
+                    _meta: {
+                        payloadVersion: 'v1',
+                        generatedAt: new Date().toISOString()
+                    }
+                };
+            }
+
+            /* Map sessionType → zona target primaria */
+            function _sessionTypeToTargetZone(sessionType){
+                var map = {
+                    recovery: 1, easy: 2, long: 2, tempo: 3, threshold: 4,
+                    fartlek: 3, progressive: 3, series: 4, test: 4, race: 4, long_blocks: 3
+                };
+                return map[sessionType] || 2;
+            }
+
+            /* ═════ EXPORT ═════ */
+            window._mrEval = {
+                /* computers */
+                detectSessionType:  detectSessionType,
+                splitHalves:        splitHalves,
+                thirds:             thirds,
+                fcDrift:            fcDrift,
+                paceConsistency:    paceConsistency,
+                hrZoneDist:         hrZoneDist,
+                zoneAdherence:      zoneAdherence,
+                blockCompliance:    blockCompliance,
+                biomechAnalysis:    biomechAnalysis,
+                fatigueSignals:     fatigueSignals,
+                computeGrade:       computeGrade,
+                /* enrichers */
+                getReadinessSnapshot: getReadinessSnapshot,
+                getLoadSnapshot:      getLoadSnapshot,
+                getPlanContext:       getPlanContext,
+                getWeatherSnapshot:   getWeatherSnapshot,
+                getRecentPatterns:    getRecentPatterns,
+                /* composer */
+                buildAnalysisPayload: buildAnalysisPayload,
+                /* metadata */
+                _version: 'v2.30.1-p200',
+                _thresholds: THR
+            };
+
+            try { void (0) && console.log('%c[MR] _mrEval ready · Fase 2 · window._mrEval.buildAnalysisPayload(act)', 'color:#c4881e;font-weight:bold;'); } catch(_){}
+        })();
+
+
+        /* ═══════════════════════════════════════════════════════════════════
+           [v2.30.1-p201] · Fase 3 · Post-Activity IA Evaluator
+           Prompt IA adaptativo + streaming SSE + persist Supabase
+           ──────────────────────────────────────────────────────────────────
+           API pública expuesta en window:
+             _mrGenerateActivityReport(act, callbacks) → Promise<{success, reportId, content, ...}>
+             _mrGetActivityReport(activityId)          → Promise<{success, report|null}>
+             _mrDeleteActivityReport(activityId)       → Promise<{success}>
+
+           callbacks (opcional):
+             {
+               onStatusChange: (status) => void,  // 'queued'|'generating'|'ready'|'error'
+               onProgress:     (charsReceived) => void,
+               onStreamText:   (fullTextSoFar) => void,
+               onFirstToken:   () => void
+             }
+
+           Fase 4 (sheet analizando) conectará estos callbacks al UI.
+           ═══════════════════════════════════════════════════════════════════ */
+        (function(){
+            if (window._mrGenerateActivityReport) return;
+
+            var API_ENDPOINT = 'https://api.anthropic.com/v1/messages';
+            var API_TIMEOUT_MS = 60000;
+            var MAX_TOKENS = 1400;
+
+            /* ═════ Helpers privados ═════ */
+
+            function _getFirstName(){
+                try {
+                    if (typeof window.profileData === 'object' && window.profileData && window.profileData.name) {
+                        return String(window.profileData.name).split(' ')[0] || 'Runner';
+                    }
+                } catch(_){}
+                return 'Runner';
+            }
+
+            function _getApiModel(){
+                var apiModel = 'claude-sonnet-5';
+                try {
+                    if (typeof window.MI_MODEL_API !== 'undefined' && window.MI_MODEL_API['sonnet-5']) {
+                        apiModel = window.MI_MODEL_API['sonnet-5'];
+                    }
+                } catch(_){}
+                return apiModel;
+            }
+
+            /* Session type → zonas / pesos que priorizar en el análisis */
+            var SESSION_TYPE_FOCUS = {
+                easy: {
+                    priority: 'zone_adherence + fc_drift + biomechanics',
+                    watch:    'no ir por encima de Z2 · desacople bajo · cadencia estable',
+                    grade:    'A = quedarse EXACTAMENTE en Z2 con drift <3.5%. Salirse de zona es fallar la tarea.'
+                },
+                long: {
+                    priority: 'no desfallecimiento + fc_drift + zone_adherence + biomech último tercio',
+                    watch:    'aguantar ritmo sin desplome · drift <5% · cadencia no cae >3 spm',
+                    grade:    'A = negative/even split + drift bajo + cadencia estable hasta el km final.'
+                },
+                recovery: {
+                    priority: 'zone_adherence estricta + trote lento total',
+                    watch:    'Z1-Z2 bajo obligatorio · el objetivo es RECUPERAR, no entrenar',
+                    grade:    'A = todo Z1-Z2 con calma. Cualquier bloque Z3+ es fallar el objetivo.'
+                },
+                series: {
+                    priority: 'block_compliance + consistencia entre repes',
+                    watch:    'cumplir el pace target de cada bloque ±5s/km · reps consistentes entre sí',
+                    grade:    'A = >90% bloques dentro tolerancia + reps con desviación <3s entre ellas.'
+                },
+                threshold: {
+                    priority: 'block_compliance + zone_adherence Z4',
+                    watch:    'cumplir ritmo umbral ±5s/km · sostener FC en Z4 sin subir a Z5',
+                    grade:    'A = ritmo objetivo cumplido + FC Z4 sostenida sin creep desmedido.'
+                },
+                tempo: {
+                    priority: 'block_compliance + fc_drift bajo en el bloque tempo',
+                    watch:    'ritmo tempo cumplido + FC no se dispara mid-tempo',
+                    grade:    'A = ritmo consistente + FC subida controlada.'
+                },
+                fartlek: {
+                    priority: 'block_compliance + recuperación entre bloques rápidos',
+                    watch:    'ejecutar los bloques rápidos y RECUPERAR entre ellos (no dejar la FC arriba)',
+                    grade:    'A = bloques fuertes + FC baja bien en recuperaciones.'
+                },
+                progressive: {
+                    priority: 'aceleración progresiva controlada + no descontrol final',
+                    watch:    'cada tercio más rápido que el anterior sin explotar',
+                    grade:    'A = negative split clarísimo + cadencia crece con velocidad.'
+                },
+                long_blocks: {
+                    priority: 'block_compliance (MP interior) + no desfallecimiento en cierre',
+                    watch:    'bloques a MP cumplidos + aguantar hasta el final',
+                    grade:    'A = bloques MP en tolerancia + cierre sin desplome.'
+                },
+                race: {
+                    priority: 'execution_grade + splits + fatigue signals',
+                    watch:    'ejecutar el plan de carrera · pacing consistente · aguantar hasta línea',
+                    grade:    'A = negative/even split + drift bajo + sin desplome final.'
+                },
+                test: {
+                    priority: 'esfuerzo máximo sostenido + no desplome mid-test',
+                    watch:    'dar todo pero llegar entero · no explotar mid-test',
+                    grade:    'A = ritmo mantenido hasta el final + FC muy alta consistente.'
+                },
+                other: {
+                    priority: 'valoración general',
+                    watch:    'coherencia interna de los datos',
+                    grade:    'Evalúa lo que veas.'
+                }
+            };
+
+            /* ═════ System prompt ═════ */
+            function _buildSystemPrompt(firstName){
+                return (
+                    'Eres Míster, el entrenador personal de ' + firstName + ' dentro de MisterRunner. ' +
+                    'Veterano runner old-school · castizo suave (mus puntual, sin abusar) · gen-Z ocasional como sabor. ' +
+                    'Honestidad brutal, cero cheerleading barato. Español de España. NUNCA "cuñado" o "cuñao" — usa "un colega mío". ' +
+                    'Tono cercano pero técnico cuando toca.\n\n' +
+
+                    'AHORA MISMO tu tarea es EVALUAR una actividad concreta de ' + firstName + '. ' +
+                    'Recibirás un bloque de datos con métricas ya computadas + contexto (readiness, carga, plan, clima). ' +
+                    'TU trabajo NO es calcular — es INTERPRETAR y CONECTAR puntos.\n\n' +
+
+                    'FORMATO DE SALIDA OBLIGATORIO — devuelve SOLO JSON válido, sin markdown, sin ```, sin preámbulo:\n' +
+                    '{\n' +
+                    '  "title": "Titular corto (max 12 palabras, capta la esencia de la ejecución)",\n' +
+                    '  "verdict": "Veredicto de 2-3 frases · qué salió bien y qué no · sin adornos",\n' +
+                    '  "insights": [\n' +
+                    '    { "metric": "nombre_corto", "text": "1-2 frases con timing preciso", "zone": "g|y|o|r" },\n' +
+                    '    { "metric": "...", "text": "...", "zone": "..." },\n' +
+                    '    { "metric": "...", "text": "...", "zone": "..." }\n' +
+                    '  ],\n' +
+                    '  "recommendation": "1 párrafo con 1 acción concreta para próximo entreno · práctico, no filosófico"\n' +
+                    '}\n\n' +
+
+                    'REGLAS ESTRICTAS:\n' +
+                    '- SIEMPRE 3 insights, ni más ni menos.\n' +
+                    '- "zone": g=verde-bien · y=ámbar-vigilar · o=naranja-atención · r=rojo-alarma.\n' +
+                    '- Timing preciso: "perdiste 45s entre km 25-35" > "perdiste tiempo al final".\n' +
+                    '- Cita métricas con números exactos: "FC drift 6.2% indica...".\n' +
+                    '- Si un dato falta o es "no_data", di "sin datos suficientes para X" — NO INVENTES.\n' +
+                    '- Cero disclaimers médicos, cero coach de Instagram, cero "sigue así".\n' +
+                    '- El "grade" numérico ya viene precomputado — puedes usarlo pero céntrate en explicar el porqué.\n' +
+                    '- Adapta el foco según sessionType: la sección FOCO te lo indica.\n' +
+                    '- Longitud total (title+verdict+3 insights+recommendation): 140-220 palabras.\n' +
+                    '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
+                );
+            }
+
+            /* ═════ User prompt builder ═════ */
+            function _buildUserPrompt(payload){
+                var p = payload;
+                var a = p.activity;
+                var m = p.metrics;
+                var c = p.context;
+                var focus = SESSION_TYPE_FOCUS[a.detectedType] || SESSION_TYPE_FOCUS.other;
+
+                function line(label, val){
+                    if (val == null || val === '' || val === undefined) return '';
+                    return label + ': ' + val + '\n';
+                }
+                function bool(v){ return v == null ? 'sin datos' : (v ? 'sí' : 'no'); }
+
+                var out = '';
+
+                /* ── FOCO SEGÚN TIPO ── */
+                out += '## FOCO PARA ESTE TIPO DE SESIÓN\n';
+                out += 'Tipo detectado: ' + a.detectedType + '\n';
+                out += 'Prioridad: ' + focus.priority + '\n';
+                out += 'Qué vigilar: ' + focus.watch + '\n';
+                out += 'Criterio A: ' + focus.grade + '\n\n';
+
+                /* ── ACTIVIDAD ── */
+                out += '## ACTIVIDAD\n';
+                out += line('Fecha', a.dateStr);
+                out += line('Tipo (usuario)', a.type);
+                out += line('Distancia', a.distKm + ' km');
+                out += line('Duración', a.durationSec ? Math.floor(a.durationSec/60) + ':' + (a.durationSec%60<10?'0':'') + (a.durationSec%60) : null);
+                out += line('Ritmo medio', a.paceAvgStr + '/km');
+                out += line('FC media', a.avgHr);
+                out += line('FC máx', a.maxHr);
+                out += line('Elevación', a.ascentM ? '+' + a.ascentM + 'm / -' + (a.descentM||0) + 'm' : null);
+                out += line('Calorías', a.calories);
+                out += line('TRIMP', a.trimp);
+                out += line('RPE (self)', a.rpe);
+                out += line('Reloj', a.deviceBrand);
+                out += line('Zapatillas', a.shoeName);
+                if (a.notes) out += 'Notas usuario: ' + a.notes + '\n';
+                out += '\n';
+
+                /* ── MÉTRICAS COMPUTADAS ── */
+                out += '## MÉTRICAS COMPUTADAS\n\n';
+
+                /* Split */
+                if (m.split) {
+                    out += '### Split (mitades por distancia)\n';
+                    out += 'Tipo: ' + (m.split.type || 'no_data') + '\n';
+                    if (m.split.firstHalf) {
+                        out += '1ª mitad: ' + m.split.firstHalf.distKm + 'km · ' + m.split.firstHalf.paceStr + '/km · FC ' + m.split.firstHalf.avgHr + '\n';
+                        out += '2ª mitad: ' + m.split.secondHalf.distKm + 'km · ' + m.split.secondHalf.paceStr + '/km · FC ' + m.split.secondHalf.avgHr + '\n';
+                        out += 'Delta: ' + (m.split.deltaSecPerKm > 0 ? '+' : '') + m.split.deltaSecPerKm + 's/km (' + m.split.deltaPct + '%)\n';
+                    }
+                    out += '\n';
+                } else {
+                    out += '### Split: sin datos suficientes\n\n';
+                }
+
+                /* Thirds + fade */
+                if (m.thirds) {
+                    out += '### Tercios (para pace fade)\n';
+                    out += 'T1: ' + m.thirds.first.paceStr + '/km · FC ' + m.thirds.first.avgHr + '\n';
+                    out += 'T2: ' + m.thirds.middle.paceStr + '/km · FC ' + m.thirds.middle.avgHr + '\n';
+                    out += 'T3: ' + m.thirds.last.paceStr + '/km · FC ' + m.thirds.last.avgHr + '\n';
+                    if (m.thirds.fadePct != null) {
+                        out += 'Fade T1→T3: ' + (m.thirds.fadeSecPerKm > 0 ? '+' : '') + m.thirds.fadeSecPerKm + 's/km (' + m.thirds.fadePct + '%)\n';
+                    }
+                    if (m.thirds.worstKmRange) out += 'Peor tramo: ' + m.thirds.worstKmRange + '\n';
+                    out += '\n';
+                }
+
+                /* FC drift */
+                if (m.fcDrift && m.fcDrift.interpretation !== 'no_data') {
+                    out += '### FC drift (desacople)\n';
+                    out += 'Drift: ' + m.fcDrift.pct + '% (' + m.fcDrift.interpretation + ')\n';
+                    if (m.fcDrift.hrDeltaBpm != null) out += 'FC subió: ' + m.fcDrift.hrDeltaBpm + ' bpm\n';
+                    out += '\n';
+                }
+
+                /* Zonas FC */
+                if (m.hrZoneDist) {
+                    var z = m.hrZoneDist;
+                    out += '### Zonas FC\n';
+                    out += 'Z1: ' + z.z1Pct + '% · Z2: ' + z.z2Pct + '% · Z3: ' + z.z3Pct + '% · Z4: ' + z.z4Pct + '% · Z5: ' + z.z5Pct + '%\n';
+                    out += '\n';
+                }
+
+                /* Zone adherence */
+                if (m.zoneAdherence && m.zoneAdherence.verdict !== 'no_data') {
+                    out += '### Cumplimiento zona objetivo\n';
+                    out += 'Zona target: Z' + m.zoneAdherence.targetZone + '\n';
+                    out += 'Tiempo en target: ' + m.zoneAdherence.inTargetPct + '% (' + m.zoneAdherence.verdict + ')\n';
+                    out += '\n';
+                }
+
+                /* Consistency */
+                if (m.paceConsistency && m.paceConsistency.label !== 'no_data') {
+                    out += '### Consistencia ritmo\n';
+                    out += 'CV: ' + m.paceConsistency.cvPct + '% (' + m.paceConsistency.label + ')\n';
+                    out += 'Basado en ' + m.paceConsistency.lapsUsed + ' km/laps\n';
+                    out += '\n';
+                }
+
+                /* Block compliance */
+                if (m.blockCompliance && m.blockCompliance.blocksAnalyzed > 0) {
+                    out += '### Cumplimiento bloques del plan\n';
+                    out += 'Bloques planificados: ' + m.blockCompliance.totalPlanned + '\n';
+                    out += 'Bloques analizados: ' + m.blockCompliance.blocksAnalyzed + '\n';
+                    out += 'Dentro tolerancia (±15s/km): ' + m.blockCompliance.metTolerance + ' de ' + m.blockCompliance.blocksAnalyzed + ' (' + m.blockCompliance.compliancePct + '%)\n';
+                    if (m.blockCompliance.avgDeviationSecPerKm != null) {
+                        out += 'Desviación media: ' + (m.blockCompliance.avgDeviationSecPerKm > 0 ? '+' : '') + m.blockCompliance.avgDeviationSecPerKm + 's/km\n';
+                    }
+                    out += '\n';
+                }
+
+                /* Biomecánica */
+                if (m.biomech) {
+                    out += '### Biomecánica\n';
+                    if (m.biomech.cadence) {
+                        out += 'Cadencia: ' + m.biomech.cadence.avgSpm + ' spm avg (' + m.biomech.cadence.zone + ')';
+                        if (m.biomech.cadence.stdSpm) out += ' · std ±' + m.biomech.cadence.stdSpm;
+                        out += '\n';
+                    }
+                    if (m.biomech.balance) {
+                        out += 'Balance I/D: ' + m.biomech.balance.leftPct + '/' + m.biomech.balance.rightPct + ' · desviación ' + m.biomech.balance.deviationPct + '% (' + m.biomech.balance.zone + ')';
+                        if (m.biomech.balance.zone !== 'optimal') out += ' · dominante: ' + m.biomech.balance.dominantSide;
+                        out += '\n';
+                    }
+                    if (m.biomech.stride) out += 'Zancada: ' + m.biomech.stride.avgCm + ' cm\n';
+                    if (m.biomech.verticalOsc) out += 'Oscilación vertical: ' + m.biomech.verticalOsc.avgCm + ' cm\n';
+                    out += '\n';
+                }
+
+                /* Fatigue signals */
+                if (m.fatigueSignals) {
+                    out += '### Señales de fatiga (último tercio)\n';
+                    out += 'Severidad: ' + m.fatigueSignals.severity + '\n';
+                    if (m.fatigueSignals.signals && m.fatigueSignals.signals.length) {
+                        m.fatigueSignals.signals.forEach(function(s){
+                            out += '- ' + s.msg + '\n';
+                        });
+                    } else {
+                        out += 'Sin señales negativas detectadas.\n';
+                    }
+                    out += '\n';
+                }
+
+                /* Grade precomputado */
+                if (p.grade) {
+                    out += '### Grade precomputado (orientativo)\n';
+                    out += 'Score: ' + p.grade.score + '/100 (' + p.grade.grade + ' · ' + p.grade.label + ')\n';
+                    out += 'Factores clave: ' + p.grade.factors.map(function(f){ return f.label + '=' + f.value; }).join(' · ') + '\n';
+                    out += '\n';
+                }
+
+                /* ── CONTEXTO ── */
+                out += '## CONTEXTO\n\n';
+
+                if (c.weather) {
+                    out += '### Clima\n';
+                    if (c.weather.tempC != null) out += 'Temperatura: ' + c.weather.tempC + '°C\n';
+                    if (c.weather.condition) out += 'Condición: ' + c.weather.condition + '\n';
+                    if (c.weather.humidity != null) out += 'Humedad: ' + c.weather.humidity + '%\n';
+                    if (c.weather.windKmh != null) out += 'Viento: ' + c.weather.windKmh + ' km/h\n';
+                    out += '\n';
+                }
+
+                if (c.readiness) {
+                    out += '### Readiness ex-ante (COROS)\n';
+                    if (c.readiness.readinessScore != null) out += 'Score readiness: ' + c.readiness.readinessScore + '/100\n';
+                    if (c.readiness.hrvNightMs != null) out += 'HRV nocturna previa: ' + c.readiness.hrvNightMs + ' ms\n';
+                    if (c.readiness.rhr != null) out += 'RHR: ' + c.readiness.rhr + ' bpm\n';
+                    if (c.readiness.staminaLevel != null) out += 'Stamina: ' + c.readiness.staminaLevel + '\n';
+                    out += '\n';
+                }
+
+                if (c.load) {
+                    if (c.load.pmc) {
+                        out += '### Carga (PMC)\n';
+                        out += 'CTL (fitness): ' + c.load.pmc.ctl + '\n';
+                        out += 'ATL (fatiga): ' + c.load.pmc.atl + '\n';
+                        out += 'TSB (forma): ' + c.load.pmc.tsb + '\n';
+                    }
+                    if (c.load.acwr && c.load.acwr.ratio != null) {
+                        out += 'ACWR 7:28: ' + c.load.acwr.ratio + '\n';
+                    }
+                    out += '\n';
+                }
+
+                if (c.plan && (c.plan.plannedSession || c.plan.raceInDays != null || c.plan.next3Sessions.length)) {
+                    out += '### Plan activo\n';
+                    if (c.plan.planName) out += 'Plan: ' + c.plan.planName + '\n';
+                    if (c.plan.phase) out += 'Fase: ' + c.plan.phase + '\n';
+                    if (c.plan.raceInDays != null) {
+                        out += 'Carrera objetivo: ' + (c.plan.raceName || '(sin nombre)') + ' en ' + c.plan.raceInDays + ' días\n';
+                    }
+                    if (c.plan.plannedSession) {
+                        out += 'Sesión PLANIFICADA para hoy: ' + c.plan.plannedSession.type;
+                        if (c.plan.plannedSession.km) out += ' · ' + c.plan.plannedSession.km + 'km';
+                        if (c.plan.plannedSession.pace) out += ' · pace target ' + c.plan.plannedSession.pace + '/km';
+                        out += '\n';
+                        if (c.plan.plannedSession.desc) out += 'Descripción plan: ' + c.plan.plannedSession.desc + '\n';
+                    } else {
+                        out += 'Sin sesión planificada para hoy (día libre o adhoc).\n';
+                    }
+                    if (c.plan.next3Sessions && c.plan.next3Sessions.length) {
+                        out += 'Próximas 3 sesiones:\n';
+                        c.plan.next3Sessions.forEach(function(s){
+                            out += '- ' + s.dateStr + ' · ' + s.type + (s.km ? ' · ' + s.km + 'km' : '') + '\n';
+                        });
+                    }
+                    out += '\n';
+                }
+
+                if (c.recent && (c.recent.consecutiveHardDays > 0 || (c.recent.notes && c.recent.notes.length))) {
+                    out += '### Patrones recientes (últimos 7 días)\n';
+                    if (c.recent.consecutiveHardDays > 0) {
+                        out += 'Días duros consecutivos: ' + c.recent.consecutiveHardDays + '\n';
+                    }
+                    if (c.recent.notes && c.recent.notes.length) {
+                        c.recent.notes.forEach(function(n){ out += '- ' + n + '\n'; });
+                    }
+                    out += '\n';
+                }
+
+                if (c.profile) {
+                    out += '### Perfil runner\n';
+                    if (c.profile.hrMax) out += 'FCmax: ' + c.profile.hrMax + '\n';
+                    if (c.profile.hrRest) out += 'FCrep: ' + c.profile.hrRest + '\n';
+                    if (c.profile.vdot) out += 'VDOT: ' + c.profile.vdot + '\n';
+                    if (c.profile.weightKg) out += 'Peso: ' + c.profile.weightKg + ' kg\n';
+                    out += '\n';
+                }
+
+                out += '## INSTRUCCIONES FINALES\n';
+                out += 'Genera la evaluación en JSON según el formato del system prompt. ' +
+                       'Prioriza el FOCO indicado para este tipo. ' +
+                       'Ningún dato inventado. Timing preciso. JSON puro sin markdown.';
+
+                return out;
+            }
+
+            /* ═════ JSON extractor tolerante ═════ */
+            function _extractJson(text){
+                if (!text) return null;
+                var t = text.trim();
+                /* strip ```json ... ``` si viene envuelto */
+                var fenceMatch = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+                if (fenceMatch) t = fenceMatch[1].trim();
+                /* localizar primer { y último } */
+                var first = t.indexOf('{');
+                var last  = t.lastIndexOf('}');
+                if (first < 0 || last < first) return null;
+                var candidate = t.substring(first, last + 1);
+                try { return JSON.parse(candidate); }
+                catch(e){ return null; }
+            }
+
+            /* ═════ SSE parser · procesa chunks de fetch stream ═════ */
+            async function _consumeSSEStream(response, cb){
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = '';
+                var fullText = '';
+                var firstTokenFired = false;
+                var usage = null;
+
+                while (true) {
+                    var readResult = await reader.read();
+                    if (readResult.done) break;
+                    buffer += decoder.decode(readResult.value, { stream: true });
+
+                    /* Los eventos SSE terminan con \n\n */
+                    var eventEnd;
+                    while ((eventEnd = buffer.indexOf('\n\n')) >= 0) {
+                        var raw = buffer.substring(0, eventEnd);
+                        buffer = buffer.substring(eventEnd + 2);
+                        var lines = raw.split('\n');
+                        var dataLine = null;
+                        for (var i=0;i<lines.length;i++){
+                            if (lines[i].indexOf('data: ') === 0) { dataLine = lines[i].substring(6); break; }
+                        }
+                        if (!dataLine) continue;
+                        var evt;
+                        try { evt = JSON.parse(dataLine); } catch(_){ continue; }
+
+                        if (evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta') {
+                            var chunk = evt.delta.text || '';
+                            fullText += chunk;
+                            if (!firstTokenFired) {
+                                firstTokenFired = true;
+                                if (cb && typeof cb.onFirstToken === 'function') try { cb.onFirstToken(); } catch(_){}
+                            }
+                            if (cb && typeof cb.onStreamText === 'function') try { cb.onStreamText(fullText); } catch(_){}
+                            if (cb && typeof cb.onProgress === 'function') try { cb.onProgress(fullText.length); } catch(_){}
+                        } else if (evt.type === 'message_delta' && evt.usage) {
+                            usage = evt.usage;
+                        } else if (evt.type === 'message_stop') {
+                            /* fin del stream */
+                        }
+                    }
+                }
+                return { fullText: fullText, usage: usage };
+            }
+
+            /* ═════ Función principal · _mrGenerateActivityReport ═════ */
+            window._mrGenerateActivityReport = async function(act, callbacks){
+                var cb = callbacks || {};
+                function status(s){ if (cb.onStatusChange) try { cb.onStatusChange(s); } catch(_){} }
+                var t0 = Date.now();
+
+                /* 1. Validar entrada */
+                if (!act || !act._dbActivityId) {
+                    return { success:false, error:'Actividad sin _dbActivityId — debe estar guardada en Supabase primero.' };
+                }
+                if (!act.dateStr) return { success:false, error:'Actividad sin dateStr.' };
+                if ((act.durationSec || 0) < 1200) {
+                    return { success:false, error:'Actividad demasiado corta (<20 min) para evaluar.' };
+                }
+
+                /* 2. Supabase client + auth */
+                var sb = window._sbClient;
+                if (!sb) return { success:false, error:'Supabase client no disponible' };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                          && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false, error:'Usuario no autenticado' };
+
+                /* 3. BYOK key */
+                var apiKey = (typeof window._miGetApiKey === 'function') ? window._miGetApiKey() : null;
+                if (!apiKey || typeof apiKey !== 'string' || apiKey.indexOf('sk-ant-') !== 0) {
+                    return { success:false, error:'API key Anthropic no configurada (BYOK). Configúrala en Míster IA primero.' };
+                }
+
+                /* 4. Comprobar si ya existe reporte ready */
+                var force = !!(callbacks && callbacks.force);
+                var existingResp = await sb
+                    .from('mister_activity_reports')
+                    .select('*')
+                    .eq('user_id', uid)
+                    .eq('activity_id', act._dbActivityId)
+                    .maybeSingle();
+                if (existingResp.error) return { success:false, error:'Query error: ' + existingResp.error.message };
+                var existing = existingResp.data;
+
+                if (existing && existing.status === 'ready' && !force) {
+                    /* Ya generado — devolver cached */
+                    status('ready');
+                    return {
+                        success: true,
+                        alreadyGenerated: true,
+                        reportId: existing.id,
+                        content: existing.content,
+                        grade: existing.grade,
+                        score: existing.score_total,
+                        metricsSnapshot: existing.metrics_snapshot
+                    };
+                }
+
+                /* 5. Build payload */
+                if (typeof window._mrEval !== 'object' || typeof window._mrEval.buildAnalysisPayload !== 'function') {
+                    return { success:false, error:'window._mrEval no disponible (Fase 2 no cargada?)' };
+                }
+                var payload = window._mrEval.buildAnalysisPayload(act);
+                if (!payload) return { success:false, error:'No se pudo construir el payload' };
+
+                var sessionType = payload.activity.detectedType;
+                var scorePre = payload.grade ? payload.grade.score : null;
+                var gradePre = payload.grade ? payload.grade.grade : null;
+
+                /* 6. Insert/update row → status queued+session_type (o pasar a generating si existe) */
+                var reportRow;
+                if (existing) {
+                    var updQResp = await sb
+                        .from('mister_activity_reports')
+                        .update({
+                            status: 'generating',
+                            error_message: null,
+                            metrics_snapshot: payload,
+                            score_total: scorePre,
+                            grade: gradePre,
+                            session_type: sessionType
+                        })
+                        .eq('id', existing.id)
+                        .eq('user_id', uid)
+                        .select()
+                        .single();
+                    if (updQResp.error) return { success:false, error:'Update generating error: ' + updQResp.error.message };
+                    reportRow = updQResp.data;
+                } else {
+                    var insQResp = await sb
+                        .from('mister_activity_reports')
+                        .insert({
+                            user_id: uid,
+                            activity_id: act._dbActivityId,
+                            status: 'generating',
+                            session_type: sessionType,
+                            metrics_snapshot: payload,
+                            score_total: scorePre,
+                            grade: gradePre
+                        })
+                        .select()
+                        .single();
+                    if (insQResp.error) return { success:false, error:'Insert error: ' + insQResp.error.message };
+                    reportRow = insQResp.data;
+                }
+                status('generating');
+
+                /* 7. Composer prompts */
+                var firstName = _getFirstName();
+                var systemPrompt = _buildSystemPrompt(firstName);
+                var userPrompt = _buildUserPrompt(payload);
+                var apiModel = _getApiModel();
+
+                /* 8. Fetch SSE streaming */
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function(){ controller.abort(); }, API_TIMEOUT_MS);
+                var resp = null;
+
+                try {
+                    resp = await fetch(API_ENDPOINT, {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': apiKey,
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-dangerous-direct-browser-access': 'true',
+                            'content-type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model:      apiModel,
+                            max_tokens: MAX_TOKENS,
+                            stream:     true,
+                            system:     systemPrompt,
+                            messages:   [{ role:'user', content: userPrompt }]
+                        }),
+                        signal: controller.signal
+                    });
+                } catch (fetchErr) {
+                    clearTimeout(timeoutId);
+                    var msg = (fetchErr && fetchErr.name === 'AbortError')
+                            ? 'Timeout (60s) — la API tardó demasiado'
+                            : ('Fetch error: ' + (fetchErr.message || String(fetchErr)));
+                    await _persistError(sb, reportRow.id, uid, msg);
+                    status('error');
+                    return { success:false, error:msg, reportId: reportRow.id };
+                }
+                clearTimeout(timeoutId);
+
+                if (!resp.ok) {
+                    var errText = '';
+                    try { errText = await resp.text(); } catch(_){}
+                    var errDetail = '';
+                    try {
+                        var errObj = JSON.parse(errText);
+                        if (errObj && errObj.error && errObj.error.message) {
+                            errDetail = String(errObj.error.type || 'error') + ': ' + errObj.error.message;
+                        }
+                    } catch(_){ errDetail = errText.slice(0, 300); }
+                    var errMsg = 'API HTTP ' + resp.status + ' — ' + errDetail;
+                    await _persistError(sb, reportRow.id, uid, errMsg);
+                    status('error');
+                    return { success:false, error:errMsg, reportId: reportRow.id };
+                }
+
+                /* 9. Procesar stream SSE */
+                var streamResult;
+                try {
+                    streamResult = await _consumeSSEStream(resp, cb);
+                } catch (streamErr) {
+                    var sErrMsg = 'Stream error: ' + (streamErr.message || String(streamErr));
+                    await _persistError(sb, reportRow.id, uid, sErrMsg);
+                    status('error');
+                    return { success:false, error:sErrMsg, reportId: reportRow.id };
+                }
+
+                var narrativeText = (streamResult.fullText || '').trim();
+                if (!narrativeText) {
+                    var eMsg = 'API respuesta vacía (sin texto)';
+                    await _persistError(sb, reportRow.id, uid, eMsg);
+                    status('error');
+                    return { success:false, error:eMsg, reportId: reportRow.id };
+                }
+
+                /* 10. Extraer JSON estructurado */
+                var contentJson = _extractJson(narrativeText);
+                if (!contentJson || !contentJson.title || !contentJson.verdict || !Array.isArray(contentJson.insights) || !contentJson.recommendation) {
+                    var pMsg = 'Respuesta IA no cumple formato JSON esperado. Raw (300 primeros chars): ' + narrativeText.slice(0, 300);
+                    await _persistError(sb, reportRow.id, uid, pMsg);
+                    status('error');
+                    return { success:false, error:pMsg, reportId: reportRow.id, rawText: narrativeText };
+                }
+
+                /* 11. Enriquecer con metadata + persistir */
+                var elapsedMs = Date.now() - t0;
+                var enrichedContent = {
+                    _v: 1,
+                    title:          String(contentJson.title || '').trim(),
+                    verdict:        String(contentJson.verdict || '').trim(),
+                    insights:       contentJson.insights.slice(0, 3).map(function(i){
+                        return {
+                            metric: String(i.metric || '').trim(),
+                            text:   String(i.text   || '').trim(),
+                            zone:   (['g','y','o','r'].indexOf(i.zone) >= 0 ? i.zone : 'y')
+                        };
+                    }),
+                    recommendation: String(contentJson.recommendation || '').trim(),
+                    session_type:   sessionType,
+                    grade:          gradePre,
+                    score:          scorePre,
+                    generated_by:   'client_byok',
+                    elapsed_ms:     elapsedMs,
+                    usage:          streamResult.usage || null,
+                    payload_chars:  userPrompt.length,
+                    narrative_chars: narrativeText.length
+                };
+
+                var finalUpd = await sb
+                    .from('mister_activity_reports')
+                    .update({
+                        status: 'ready',
+                        content: enrichedContent,
+                        model_used: apiModel,
+                        generated_at: new Date().toISOString(),
+                        error_message: null
+                    })
+                    .eq('id', reportRow.id)
+                    .eq('user_id', uid);
+
+                if (finalUpd.error) {
+                    status('error');
+                    return { success:false, error:'Update ready error: ' + finalUpd.error.message, reportId: reportRow.id };
+                }
+
+                status('ready');
+                try {
+                    console.log('%c[MR][activityReport] OK · ' + sessionType
+                        + ' · ' + narrativeText.length + ' chars · ' + elapsedMs + 'ms',
+                        'color:#c4881e;font-weight:bold;');
+                } catch(_){}
+
+                return {
+                    success: true,
+                    reportId: reportRow.id,
+                    content: enrichedContent,
+                    grade: gradePre,
+                    score: scorePre,
+                    metricsSnapshot: payload,
+                    elapsedMs: elapsedMs,
+                    usage: streamResult.usage || null
+                };
+            };
+
+            /* ═════ Helpers públicos ═════ */
+            async function _persistError(sb, reportId, uid, errMsg){
+                try {
+                    await sb
+                        .from('mister_activity_reports')
+                        .update({ status: 'error', error_message: String(errMsg).slice(0, 500) })
+                        .eq('id', reportId)
+                        .eq('user_id', uid);
+                } catch(_){}
+            }
+
+            /* Read cached */
+            window._mrGetActivityReport = async function(activityId){
+                if (!activityId) return { success:false, error:'activityId requerido' };
+                var sb = window._sbClient;
+                if (!sb) return { success:false, error:'Supabase no disponible' };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                          && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false, error:'No auth' };
+                var r = await sb
+                    .from('mister_activity_reports')
+                    .select('*')
+                    .eq('user_id', uid)
+                    .eq('activity_id', activityId)
+                    .maybeSingle();
+                if (r.error) return { success:false, error: r.error.message };
+                return { success:true, report: r.data || null };
+            };
+
+            /* Mark as read (setea read_at) */
+            window._mrMarkActivityReportRead = async function(reportId){
+                if (!reportId) return { success:false };
+                var sb = window._sbClient;
+                if (!sb) return { success:false };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                          && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false };
+                var r = await sb
+                    .from('mister_activity_reports')
+                    .update({ read_at: new Date().toISOString() })
+                    .eq('id', reportId)
+                    .eq('user_id', uid)
+                    .is('read_at', null);
+                return { success: !r.error };
+            };
+
+            /* Delete report (para regenerar limpio) */
+            window._mrDeleteActivityReport = async function(activityId){
+                if (!activityId) return { success:false };
+                var sb = window._sbClient;
+                if (!sb) return { success:false };
+                var sessResp = await sb.auth.getSession();
+                var uid = sessResp && sessResp.data && sessResp.data.session
+                          && sessResp.data.session.user && sessResp.data.session.user.id;
+                if (!uid) return { success:false };
+                var r = await sb
+                    .from('mister_activity_reports')
+                    .delete()
+                    .eq('user_id', uid)
+                    .eq('activity_id', activityId);
+                return { success: !r.error };
+            };
+
+            /* Exponer prompts para debugging desde consola */
+            window._mrDebugBuildActivityPrompts = function(act){
+                if (!act || !window._mrEval) return null;
+                var payload = window._mrEval.buildAnalysisPayload(act);
+                if (!payload) return null;
+                return {
+                    system: _buildSystemPrompt(_getFirstName()),
+                    user: _buildUserPrompt(payload),
+                    payload: payload
+                };
+            };
+
+            try { void (0) && console.log('%c[MR] _mrGenerateActivityReport ready · Fase 3 · SSE streaming + JSON extract', 'color:#c4881e;font-weight:bold;'); } catch(_){}
+        })();
+
+
     </script>
 
 
