@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p206"/>
+    <meta name="mr-version" content="v2.30.1-p207"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p206';
+            window.__MR_VERSION = 'v2.30.1-p207';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -8689,7 +8689,9 @@
            Estados: evaluate (aurora), generating (spinner), disabled, error */
         .mr-ia-cta {
             position: absolute;
-            top: 62px; right: 12px;
+            /* [p207] Bajar de top:62px → top:105px para no chocar con la cabecera
+               flotante (que ocupa ~92px altura entre pill + fila principal). */
+            top: 105px; right: 12px;
             z-index: 5;
             display: inline-flex; align-items: center; gap: 7px;
             padding: 8px 14px 8px 12px;
@@ -9026,9 +9028,11 @@
            Encabezado Aurora A + Hero score + Veredicto + 3 Insights + Reco */
         .mr-ia-c4-hdr {
             position: relative;
-            /* [p206] padding-top 44px + safe-area-inset para acomodar iOS notch
-               cuando la cabecera flotante se oculta. Antes: 34px insuficiente. */
-            padding: max(44px, calc(env(safe-area-inset-top, 0px) + 20px)) 20px 22px;
+            /* [p207] padding-top MÍNIMO 60px + safe-area si existe (iOS con notch).
+               El problema histórico p203→p206: la burbuja aparecía cortada arriba
+               porque env(safe-area-inset-top) puede ser 0 en Chrome iOS PWA.
+               60px mínimos garantizan aire suficiente en TODOS los dispositivos. */
+            padding: max(60px, calc(env(safe-area-inset-top, 0px) + 34px)) 20px 24px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -40582,7 +40586,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         dotsDiv.style.cssText = 'display:flex;justify-content:center;gap:7px;padding:10px 0 5px;flex-shrink:0;';
         /* [v2.30.1-p203 · Fase 4] Card 4 IA reemplaza act.evalScores como trigger */
         var _hasIaReport = !!(act._iaReport && act._iaReport.status === 'ready');
-        dotsDiv.innerHTML = '<div class="det-dot active" data-idx="0"></div><div class="det-dot" data-idx="1"></div><div class="det-dot" data-idx="2"></div>'+(_hasIaReport?'<div class="det-dot" data-idx="3"></div>':'')+(_hasPhotoCard?'<div class="det-dot" data-idx="'+(_hasIaReport?4:3)+'" style="background:rgba(196,136,30,.6);"></div>':'');
+        dotsDiv.innerHTML = '<div class="det-dot active" data-idx="0"></div><div class="det-dot" data-idx="1"></div><div class="det-dot" data-idx="2"></div>'+(_hasIaReport?'<div class="det-dot" data-idx="3" style="background:rgba(147,51,234,.7);"></div>':'')+(_hasPhotoCard?'<div class="det-dot" data-idx="'+(_hasIaReport?4:3)+'" style="background:rgba(196,136,30,.6);"></div>':'');
         ov.appendChild(dotsDiv);
 
         // ══ CARD 1: MAP + STATS + LAPS ═══════════════════════════
@@ -77781,7 +77785,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p206';
+        window.__mrCorosVersion = 'v2.30.1-p207';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -87059,6 +87063,10 @@ window.addEventListener('DOMContentLoaded', function() {
                     '- BIOMECÁNICA: los valores ya están FILTRADOS de outliers de sensor. Si ves "std ±X spm" ' +
                         'bajo (< 5 spm) es cadencia sólida, aunque "máx" muestre picos altos son artefactos ' +
                         'descartados, NO variabilidad real. No digas "cadencia rara" si el std es bajo.\n' +
+                    '- CLIMA EXTREMO: si el contexto marca "⚠️ CONDICIONES EXTREMAS" (temp ≥30°C, ' +
+                        'humedad alta con calor, viento fuerte), DEBES mencionarlo en veredicto o en un ' +
+                        'insight porque explica FC elevada / ritmo perdido sin que sea déficit del runner. ' +
+                        'Con temperaturas <30°C sin humedad alta NO es necesario mencionarlo.\n' +
                     '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
                 );
             }
@@ -87283,11 +87291,24 @@ window.addEventListener('DOMContentLoaded', function() {
                 out += '## CONTEXTO\n\n';
 
                 if (c.weather) {
-                    out += '### Clima\n';
-                    if (c.weather.tempC != null) out += 'Temperatura: ' + c.weather.tempC + '°C\n';
+                    /* [p207] Si temp >= 30°C, humedad alta + calor, o viento >25 km/h,
+                       elevar clima a "CONDICIONES EXTREMAS" para que IA lo mencione
+                       obligatoriamente. Con <30°C queda como contexto normal. */
+                    var tC = c.weather.tempC;
+                    var hum = c.weather.humidity;
+                    var wind = c.weather.windKmh;
+                    var isExtreme = (tC != null && tC >= 30)
+                                 || (tC != null && tC >= 26 && hum != null && hum >= 75)
+                                 || (wind != null && wind >= 25);
+                    if (isExtreme) {
+                        out += '### ⚠️ CONDICIONES EXTREMAS (mencionar en veredicto o insights)\n';
+                    } else {
+                        out += '### Clima\n';
+                    }
+                    if (tC != null) out += 'Temperatura: ' + tC + '°C' + (isExtreme && tC >= 30 ? ' ← CALOR EXTREMO' : '') + '\n';
                     if (c.weather.condition) out += 'Condición: ' + c.weather.condition + '\n';
-                    if (c.weather.humidity != null) out += 'Humedad: ' + c.weather.humidity + '%\n';
-                    if (c.weather.windKmh != null) out += 'Viento: ' + c.weather.windKmh + ' km/h\n';
+                    if (hum != null) out += 'Humedad: ' + hum + '%' + (isExtreme && hum >= 75 ? ' ← HUMEDAD ALTA' : '') + '\n';
+                    if (wind != null) out += 'Viento: ' + wind + ' km/h' + (isExtreme && wind >= 25 ? ' ← VIENTO FUERTE' : '') + '\n';
                     out += '\n';
                 }
 
