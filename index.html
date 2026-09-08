@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p204"/>
+    <meta name="mr-version" content="v2.30.1-p205"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p204';
+            window.__MR_VERSION = 'v2.30.1-p205';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9026,7 +9026,9 @@
            Encabezado Aurora A + Hero score + Veredicto + 3 Insights + Reco */
         .mr-ia-c4-hdr {
             position: relative;
-            padding: 22px 20px 20px;
+            /* [p205] padding-top 34px para que la burbuja no se corte al ocultarse
+               la cabecera flotante del visor (que ocupaba ~62px). */
+            padding: 34px 20px 20px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -29228,6 +29230,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
     let ltValue = 170; // bpm
     let paceValue = 262; // seconds per km (4'22" = 262s)
+    /* [p205 · Fase 4] Exponer LT y pace threshold para que _mrEval
+       pueda calcular zonas COROS correctas (% LT en vez de % HRR). */
+    try { Object.defineProperty(window, '_userLtHr', { get: function(){ return ltValue; }, configurable: true }); } catch(_){}
+    try { Object.defineProperty(window, '_userLtPace', { get: function(){ return paceValue; }, configurable: true }); } catch(_){}
     // [Auto-umbral COROS · B2] Valor manual del usuario (fallback cuando NO hay
     // COROS conectado / dato válido). ltValue/paceValue son el valor EFECTIVO
     // (COROS medido si conectado, manual si no). Persistidos aparte; migración
@@ -77767,7 +77773,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p204';
+        window.__mrCorosVersion = 'v2.30.1-p205';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86172,25 +86178,44 @@ window.addEventListener('DOMContentLoaded', function() {
             }
 
             /* ═══════════════════════════════════════════════════════════════
-               6 · hrZoneDist(act, hrMax, hrRest) — % tiempo en Z1-Z5
+               6 · hrZoneDist(act, hrMax, hrRest) — % tiempo en zonas COROS
                ═══════════════════════════════════════════════════════════════
-               Zonas Karvonen (HRR):
-                 Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100% */
+               [p205] MR/COROS usan zonas por % UMBRAL cardíaco (LT), NO % HRR.
+               Umbrales oficiales (LT del usuario expuesto en window._userLtHr):
+                 Recuperación: <80% LT
+                 Resistencia Aeróbica (Z2): 80-91% LT
+                 Potencia Aeróbica (Z3): 91-95% LT
+                 Umbral (Z4): 95-102% LT
+                 VO2max (Z5): >102% LT (agrupamos ResAnaer+PotAnaer)
+               Ejemplo Álvaro (LT=170): Z1<136, Z2 136-155, Z3 155-162, Z4 162-173, Z5>173 */
             function hrZoneDist(act, hrMax, hrRest){
-                if (!act || !hrMax) return null;
+                if (!act) return null;
                 var hrSeries = _arr(act.hrSeries);
                 if (hrSeries.length < THR.MIN_DATA_POINTS) return null;
-                var hrr = hrMax - (hrRest || 50);
-                if (hrr <= 0) return null;
+                /* Preferir LT del usuario (COROS-style). Fallback: derivar LT del
+                   HRmax como 0.89*HRmax (aproximación cuando no hay LT medido). */
+                var lt = (typeof window._userLtHr === 'number' && window._userLtHr > 0)
+                       ? window._userLtHr
+                       : (hrMax ? Math.round(hrMax * 0.89) : null);
+                if (!lt) return null;
+                var t1 = lt * 0.80;  /* Z1→Z2 */
+                var t2 = lt * 0.91;  /* Z2→Z3 */
+                var t3 = lt * 0.95;  /* Z3→Z4 */
+                var t4 = lt * 1.02;  /* Z4→Z5 */
                 var buckets = [0, 0, 0, 0, 0];
                 var totalDt = 0;
                 for (var i=1;i<hrSeries.length;i++){
                     var p0 = hrSeries[i-1], p1 = hrSeries[i];
                     if (!p0 || !p1 || p1.v == null) continue;
                     var dt = (p1.t - p0.t);
-                    if (dt <= 0 || dt > 30) continue; /* pausas o gaps */
-                    var pct = (p1.v - (hrRest||50)) / hrr * 100;
-                    var idx = pct < 60 ? 0 : pct < 70 ? 1 : pct < 80 ? 2 : pct < 90 ? 3 : 4;
+                    if (dt <= 0 || dt > 30) continue;
+                    var bpm = p1.v;
+                    var idx;
+                    if (bpm < t1) idx = 0;
+                    else if (bpm < t2) idx = 1;
+                    else if (bpm < t3) idx = 2;
+                    else if (bpm < t4) idx = 3;
+                    else idx = 4;
                     buckets[idx] += dt;
                     totalDt += dt;
                 }
@@ -86201,7 +86226,16 @@ window.addEventListener('DOMContentLoaded', function() {
                     z3Pct: _round(buckets[2]/totalDt*100, 1),
                     z4Pct: _round(buckets[3]/totalDt*100, 1),
                     z5Pct: _round(buckets[4]/totalDt*100, 1),
-                    totalSec: Math.round(totalDt)
+                    totalSec: Math.round(totalDt),
+                    ltUsed: lt,
+                    thresholds: { z1max: Math.round(t1), z2max: Math.round(t2), z3max: Math.round(t3), z4max: Math.round(t4) },
+                    zoneLabels: {
+                        z1: 'Recuperación (<' + Math.round(t1) + ' bpm)',
+                        z2: 'Resistencia Aeróbica (' + Math.round(t1) + '-' + Math.round(t2) + ')',
+                        z3: 'Potencia Aeróbica (' + Math.round(t2) + '-' + Math.round(t3) + ')',
+                        z4: 'Umbral (' + Math.round(t3) + '-' + Math.round(t4) + ')',
+                        z5: 'VO2max (>' + Math.round(t4) + ')'
+                    }
                 };
             }
 
@@ -86283,18 +86317,35 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (!act) return null;
                 var out = { cadence: null, balance: null, stride: null, verticalOsc: null };
 
-                var cadAvg = _num(act.avgCadence) || _mean(_seriesVals(act.cadSeries));
+                /* [p205] Filtrar outliers cadencia. Running humano válido: 130-220 spm.
+                   Reloj a veces registra picos absurdos (248 spm imposible mantenido).
+                   Filtramos ANTES de computar mean/std/max para que el análisis IA
+                   no interprete artefactos del sensor como "cadencia rara". */
+                var cadRawVals = _seriesVals(act.cadSeries);
+                var cadCleanVals = cadRawVals.filter(function(v){ return v >= 130 && v <= 220; });
+                var cadAvg = _num(act.avgCadence);
+                if (cadAvg == null && cadCleanVals.length > 0) cadAvg = _mean(cadCleanVals);
                 if (cadAvg != null) {
-                    var cadStd = _std(_seriesVals(act.cadSeries), cadAvg);
+                    var cadStd = cadCleanVals.length > 10 ? _std(cadCleanVals, cadAvg) : null;
+                    var cadMaxRaw = _num(act.maxCadence);
+                    /* Si maxRaw es un outlier (>220 sostenido no es humano),
+                       usar el max REAL de la serie filtrada. */
+                    var cadMaxClean = cadCleanVals.length > 0
+                        ? cadCleanVals.reduce(function(a,b){ return b>a?b:a; }, 0)
+                        : null;
+                    var cadMaxFinal = (cadMaxRaw != null && cadMaxRaw <= 220) ? cadMaxRaw : cadMaxClean;
                     var cadZone;
                     if (cadAvg >= THR.CADENCE_GOOD) cadZone = 'good';
                     else if (cadAvg >= THR.CADENCE_LOW) cadZone = 'ok';
                     else cadZone = 'low';
                     out.cadence = {
                         avgSpm: _round(cadAvg, 0),
-                        maxSpm: _num(act.maxCadence),
+                        maxSpm: cadMaxFinal != null ? _round(cadMaxFinal, 0) : null,
                         stdSpm: cadStd != null ? _round(cadStd, 1) : null,
-                        zone: cadZone
+                        zone: cadZone,
+                        /* Meta para IA · saber si hubo outliers descartados */
+                        outliersFiltered: Math.max(0, cadRawVals.length - cadCleanVals.length),
+                        samplesUsed: cadCleanVals.length
                     };
                 }
 
@@ -86316,11 +86367,18 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 var strideCm = _num(act.strideLen);
                 if (strideCm != null && strideCm > 0) {
+                    /* [p205] Filtrar outliers stride. Running humano válido: 40-180 cm.
+                       Sensor a veces mete 0 o valores extremos que hacen que el std
+                       parezca enorme cuando en realidad corre uniforme. */
+                    var strideRawVals = _seriesVals(act.strideSer);
+                    var strideCleanVals = strideRawVals.filter(function(v){ return v >= 40 && v <= 180; });
                     out.stride = {
                         avgCm: _round(strideCm, 0),
-                        series: _seriesVals(act.strideSer).length > 0 ? {
-                            meanCm: _round(_mean(_seriesVals(act.strideSer)), 0),
-                            stdCm: _round(_std(_seriesVals(act.strideSer)), 1)
+                        series: strideCleanVals.length > 10 ? {
+                            meanCm: _round(_mean(strideCleanVals), 0),
+                            stdCm: _round(_std(strideCleanVals, _mean(strideCleanVals)), 1),
+                            outliersFiltered: strideRawVals.length - strideCleanVals.length,
+                            samplesUsed: strideCleanVals.length
                         } : null
                     };
                 }
@@ -86905,6 +86963,12 @@ window.addEventListener('DOMContentLoaded', function() {
                     '- El "grade" numérico ya viene precomputado — puedes usarlo pero céntrate en explicar el porqué.\n' +
                     '- Adapta el foco según sessionType: la sección FOCO te lo indica.\n' +
                     '- Longitud total (title+verdict+3 insights+recommendation): 140-220 palabras.\n' +
+                    '- ZONAS FC: las que veas ya vienen calculadas con el UMBRAL cardíaco LT del runner ' +
+                        '(estándar COROS). Cada zona incluye su rango bpm exacto. Usa los NOMBRES REALES ' +
+                        '(Resistencia Aeróbica, Potencia Aeróbica, Umbral, VO2max), NO digas "Z2/Z3" a secas.\n' +
+                    '- BIOMECÁNICA: los valores ya están FILTRADOS de outliers de sensor. Si ves "std ±X spm" ' +
+                        'bajo (< 5 spm) es cadencia sólida, aunque "máx" muestre picos altos son artefactos ' +
+                        'descartados, NO variabilidad real. No digas "cadencia rara" si el std es bajo.\n' +
                     '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
                 );
             }
@@ -86988,11 +87052,19 @@ window.addEventListener('DOMContentLoaded', function() {
                     out += '\n';
                 }
 
-                /* Zonas FC */
+                /* Zonas FC · [p205] nombres COROS reales con rangos bpm */
                 if (m.hrZoneDist) {
                     var z = m.hrZoneDist;
-                    out += '### Zonas FC\n';
-                    out += 'Z1: ' + z.z1Pct + '% · Z2: ' + z.z2Pct + '% · Z3: ' + z.z3Pct + '% · Z4: ' + z.z4Pct + '% · Z5: ' + z.z5Pct + '%\n';
+                    out += '### Zonas FC (calculadas por % del UMBRAL cardíaco LT=' + z.ltUsed + ' bpm)\n';
+                    if (z.zoneLabels) {
+                        out += 'Recuperación (<' + z.thresholds.z1max + ' bpm): ' + z.z1Pct + '%\n';
+                        out += 'Resistencia Aeróbica (' + z.thresholds.z1max + '-' + z.thresholds.z2max + ' bpm): ' + z.z2Pct + '%\n';
+                        out += 'Potencia Aeróbica (' + z.thresholds.z2max + '-' + z.thresholds.z3max + ' bpm): ' + z.z3Pct + '%\n';
+                        out += 'Umbral (' + z.thresholds.z3max + '-' + z.thresholds.z4max + ' bpm): ' + z.z4Pct + '%\n';
+                        out += 'VO2max (>' + z.thresholds.z4max + ' bpm): ' + z.z5Pct + '%\n';
+                    } else {
+                        out += 'Z1: ' + z.z1Pct + '% · Z2: ' + z.z2Pct + '% · Z3: ' + z.z3Pct + '% · Z4: ' + z.z4Pct + '% · Z5: ' + z.z5Pct + '%\n';
+                    }
                     out += '\n';
                 }
 
@@ -87026,18 +87098,34 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 /* Biomecánica */
                 if (m.biomech) {
-                    out += '### Biomecánica\n';
+                    out += '### Biomecánica (valores filtrados de outliers de sensor)\n';
                     if (m.biomech.cadence) {
-                        out += 'Cadencia: ' + m.biomech.cadence.avgSpm + ' spm avg (' + m.biomech.cadence.zone + ')';
-                        if (m.biomech.cadence.stdSpm) out += ' · std ±' + m.biomech.cadence.stdSpm;
-                        out += '\n';
+                        var c = m.biomech.cadence;
+                        out += 'Cadencia media: ' + c.avgSpm + ' spm';
+                        if (c.maxSpm) out += ' · máx real ' + c.maxSpm + ' spm';
+                        if (c.stdSpm != null) out += ' · std ±' + c.stdSpm + ' spm';
+                        out += ' (' + c.zone + ')\n';
+                        if (c.outliersFiltered > 0) {
+                            out += '  [' + c.outliersFiltered + ' outliers >220 o <130 spm descartados como artefacto sensor]\n';
+                        }
                     }
                     if (m.biomech.balance) {
-                        out += 'Balance I/D: ' + m.biomech.balance.leftPct + '/' + m.biomech.balance.rightPct + ' · desviación ' + m.biomech.balance.deviationPct + '% (' + m.biomech.balance.zone + ')';
-                        if (m.biomech.balance.zone !== 'optimal') out += ' · dominante: ' + m.biomech.balance.dominantSide;
+                        var b = m.biomech.balance;
+                        out += 'Balance I/D: ' + b.leftPct + '/' + b.rightPct + ' · desviación ' + b.deviationPct + '% (' + b.zone + ')';
+                        if (b.zone !== 'optimal') out += ' · dominante: ' + b.dominantSide;
                         out += '\n';
                     }
-                    if (m.biomech.stride) out += 'Zancada: ' + m.biomech.stride.avgCm + ' cm\n';
+                    if (m.biomech.stride) {
+                        var s = m.biomech.stride;
+                        out += 'Zancada media: ' + s.avgCm + ' cm';
+                        if (s.series) {
+                            out += ' · std ±' + s.series.stdCm + ' cm';
+                            if (s.series.outliersFiltered > 0) {
+                                out += ' (' + s.series.outliersFiltered + ' outliers descartados)';
+                            }
+                        }
+                        out += '\n';
+                    }
                     if (m.biomech.verticalOsc) out += 'Oscilación vertical: ' + m.biomech.verticalOsc.avgCm + ' cm\n';
                     out += '\n';
                 }
