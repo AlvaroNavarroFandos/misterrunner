@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p209"/>
+    <meta name="mr-version" content="v2.30.1-p210"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p209';
+            window.__MR_VERSION = 'v2.30.1-p210';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -4372,10 +4372,15 @@
         touch-action: pan-y;
         will-change: transform;
     }
-    /* [p208] REVERT p204 #4 · Ya NO ocultamos la cabecera flotante en Card 4 IA.
-       Solución más simple: dejar cabecera visible (back+share+pill) y dar padding-top
-       de 100px al .mr-ia-c4-hdr para que el header aurora quede POR DEBAJO. Así la
-       burbuja está garantizado bien posicionada en cualquier dispositivo. */
+    /* [p210] Card 4 IA · SIN cabecera flotante. El header aurora premium
+       ocupa toda esa zona con burbuja + título + chips. La cabecera se OCULTA
+       con display:none (no opacity) para que no ocupe espacio ni se renderice. */
+    .det-overlay.det-hdr-hidden .det-header {
+        display: none !important;
+    }
+    .det-overlay.det-hdr-hidden .mr-ia-cta {
+        display: none !important;
+    }
     .det-overlay .det-header {
         transition: opacity .22s ease, transform .22s ease;
     }
@@ -9017,11 +9022,11 @@
            Encabezado Aurora A + Hero score + Veredicto + 3 Insights + Reco */
         .mr-ia-c4-hdr {
             position: relative;
-            /* [p209] SIMPLIFICADO · info redundante (fecha, km, tipo) ya viene en la
-               cabecera flotante. El header aurora solo lleva burbuja + título +
-               subtítulo "Evaluación". padding-top 110px generoso + burbuja mini
-               (46px, sin pulses exteriores) para layout limpio y compacto. */
-            padding: 110px 20px 20px;
+            /* [p210] Padding-top MÍNIMO (14px) porque la cabecera flotante está
+               oculta en Card 4 IA. El .det-overlay ya aporta safe-area-inset-top
+               del sistema (~44px iOS notch). Total: burbuja empieza a ~58px del
+               top del viewport → visible completa con aire suficiente. */
+            padding: 14px 20px 22px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -9062,14 +9067,8 @@
             -webkit-background-clip: text; background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        /* [p209] chips eliminados · info duplicada con cabecera flotante */
-        .mr-ia-c4-hdr__sub {
-            font-size: 11.5px;
-            font-weight: 700;
-            color: var(--ts);
-            letter-spacing: .3px;
-            margin-top: 5px;
-            text-transform: uppercase;
+        .mr-ia-c4-hdr__chips {
+            display: flex; gap: 6px; margin-top: 11px; flex-wrap: wrap;
         }
         .mr-ia-c4-hdr__chip {
             font-size: 9.5px; font-weight: 800;
@@ -42287,15 +42286,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const distStr = (act.distKm != null ? (Math.round(act.distKm*100)/100)+' km' : '');
             const dateStr = (act.dateStr ? new Date(act.dateStr).toLocaleDateString('es-ES', {day:'2-digit', month:'short', year:'numeric'}) : '');
 
-            /* [p209] Header simplificado · burbuja mini SIN pulses/halos exteriores
-               (para no confundir con "cortada" visualmente) + título + subtitle
-               "Evaluación". Info de fecha/tipo/km ya viene en la cabecera flotante
-               (arriba, siempre visible), no la duplicamos aquí. */
+            /* [p210] Header aurora PREMIUM · burbuja completa 62px con pulses/halos
+               aurora + título Míster IA gradient + 3 chips (tipo, km, fecha). La
+               cabecera flotante está oculta en Card 4 IA (fix p210 en goToCard).
+               Padding-top mínimo (14px CSS) para pegarse al borde superior. */
             const c4Hdr = document.createElement('div');
             c4Hdr.className = 'mr-ia-c4-hdr';
             c4Hdr.innerHTML =
                 '<div class="mr-ia-c4-hdr__row">' +
-                    '<button class="mi-bubble" style="--mi-size: 46px;" type="button" tabindex="-1" aria-hidden="true">' +
+                    '<button class="mi-bubble" style="--mi-size: 62px;" type="button" tabindex="-1" aria-hidden="true">' +
+                        '<div class="mi-bubble__pulse-1"></div>' +
+                        '<div class="mi-bubble__pulse-2"></div>' +
+                        '<div class="mi-bubble__ring-outer"></div>' +
+                        '<div class="mi-bubble__ring-mid"></div>' +
                         '<div class="mi-bubble__ring-inner"></div>' +
                         '<div class="mi-bubble__icon-wrap">' +
                             '<img class="mi-bubble__icon" data-mi-avatar-slot="1" src="" alt="M">' +
@@ -42303,7 +42306,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '</button>' +
                     '<div class="mr-ia-c4-hdr__txt">' +
                         '<div class="mr-ia-c4-hdr__title">Míster IA</div>' +
-                        '<div class="mr-ia-c4-hdr__sub">Evaluación</div>' +
+                        '<div class="mr-ia-c4-hdr__chips">' +
+                            '<span class="mr-ia-c4-hdr__chip mr-ia-c4-hdr__chip--gold">' + _sessionTypeLabel(_sessionType) + '</span>' +
+                            (distStr ? '<span class="mr-ia-c4-hdr__chip">' + distStr + '</span>' : '') +
+                            (dateStr ? '<span class="mr-ia-c4-hdr__chip">' + dateStr + '</span>' : '') +
+                        '</div>' +
                     '</div>' +
                 '</div>';
             c4.appendChild(c4Hdr);
@@ -42592,7 +42599,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
             track.style.transform  = 'translateX('+(-curCard*100)+'%)';
             dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
-            /* [p208] REVERT · ya no toggle det-hdr-hidden. Cabecera SIEMPRE visible. */
+            /* [p210] Toggle det-hdr-hidden: OCULTAR cabecera cuando estamos en
+               Card 4 IA (idx=3 con _hasIaReport). Header aurora premium la reemplaza. */
+            try {
+                var isCard4Ia = _hasIaReport && curCard === 3;
+                ov.classList.toggle('det-hdr-hidden', isCard4Ia);
+            } catch(_){}
             // Only allow scroll on active card, lock others.
             // IMPORTANT: must be 'auto' (not '') on active card — clearing the inline
             // style falls back to the .det-card class rule which is overflow:hidden,
@@ -42618,7 +42630,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             track.style.transform  = 'translateX('+(-curCard*100)+'%)';
             dots.forEach((dot,i)=>dot.classList.toggle('active',i===curCard));
             allCards.forEach((c,i)=>{ c.style.overflowY = i===curCard ? 'auto' : 'hidden'; });
-            /* [p208] REVERT · no toggle det-hdr-hidden. */
+            /* [p210] Mismo toggle cabecera para arranque directo en Card 4 IA */
+            try {
+                var isCard4IaStart = _hasIaReport && curCard === 3;
+                ov.classList.toggle('det-hdr-hidden', isCard4IaStart);
+            } catch(_){}
             // Restaurar transición para los swipes posteriores del usuario.
             requestAnimationFrame(function(){ track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)'; });
         } else {
@@ -77765,7 +77781,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p209';
+        window.__mrCorosVersion = 'v2.30.1-p210';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
