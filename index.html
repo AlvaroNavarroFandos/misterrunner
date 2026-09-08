@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p219"/>
+    <meta name="mr-version" content="v2.30.1-p220"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p219';
+            window.__MR_VERSION = 'v2.30.1-p220';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -77869,7 +77869,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p219';
+        window.__mrCorosVersion = 'v2.30.1-p220';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -87266,7 +87266,11 @@ window.addEventListener('DOMContentLoaded', function() {
 
             var API_ENDPOINT = 'https://api.anthropic.com/v1/messages';
             var API_TIMEOUT_MS = 90000;
-            var MAX_TOKENS = 2500;
+            /* [p220] Subido 2500→3500 · colchón para prompt engordado en p219
+               con bloques del reloj + detalle repes. El JSON esperado sigue
+               siendo 140-220 palabras, pero elimina el escenario "consumió
+               todos los tokens pensando sin emitir el JSON". */
+            var MAX_TOKENS = 3500;
 
             /* ═════ Helpers privados ═════ */
 
@@ -87420,6 +87424,14 @@ window.addEventListener('DOMContentLoaded', function() {
                         'de las series). Si viene modo "laps" con "⚠️ NO fiable", NO lo cites como si ' +
                         'mostrara ejecución caótica — en series/fartlek un CV alto km-a-km es INEVITABLE ' +
                         'y no significa nada.\n' +
+                    '- NOTACIÓN DE RITMOS Y TIEMPOS DENTRO DEL JSON (crítico · rompe el parser si lo violas):\n' +
+                        '    · Usa DOS PUNTOS: "4:30/km", "12:00", "1:45:20", "45s".\n' +
+                        '    · NUNCA uses la comilla-doble como marcador de segundos: prohibido "4\'30\\"/km", ' +
+                        '"2\'00\\"", "12\'28\\"", "5\'44\\"/km".\n' +
+                        '    · NUNCA uses el apóstrofe como marcador de minutos: prohibido "6\' rec", ' +
+                        '"2\' work", escribe "6:00 rec" o "6 min rec".\n' +
+                        '    · La comilla-doble (") DENTRO de un string JSON rompe el JSON y toda la ' +
+                        'evaluación se descarta. Es la causa #1 de errores. Sé estricto.\n' +
                     '- NUNCA rompas el JSON. NADA fuera del objeto JSON.'
                 );
             }
@@ -87835,7 +87847,13 @@ window.addEventListener('DOMContentLoaded', function() {
                 return out;
             }
 
-            /* ═════ JSON extractor tolerante ═════ */
+            /* ═════ JSON extractor tolerante ═════
+               [p220] Auto-reparador de la causa #1 de fallos: la IA a veces
+               escribe ritmos con notación runner (4'30"/km, 2'00" rec, 12'28"),
+               y la comilla-doble rompe el string JSON aunque el system prompt
+               lo prohíba. Estrategia: intentar JSON.parse crudo, y si falla,
+               sanear las notaciones de ritmo/tiempo dentro de strings para
+               convertir 4'30"/km → 4:30/km, y reintentar. */
             function _extractJson(text){
                 if (!text) return null;
                 var t = text.trim();
@@ -87847,11 +87865,45 @@ window.addEventListener('DOMContentLoaded', function() {
                 var last  = t.lastIndexOf('}');
                 if (first < 0 || last < first) return null;
                 var candidate = t.substring(first, last + 1);
-                try { return JSON.parse(candidate); }
-                catch(e){ return null; }
+
+                /* Intento 1 · crudo */
+                try { return JSON.parse(candidate); } catch(e1){}
+
+                /* Intento 2 · saneado de notación de ritmos.
+                   Convierte patrones tipo:
+                     4'30"        → 4:30
+                     4'30"/km     → 4:30/km
+                     12'28"       → 12:28
+                     1'45"        → 1:45
+                     45"          → 45s
+                     2' rec       → 2min rec  (apóstrofe suelto tras dígito)
+                   Solo actúa sobre patrones inequívocamente numéricos para no
+                   tocar apóstrofes/comillas legítimas de otras palabras. */
+                var repaired = candidate;
+                /* min'seg" → min:seg (con o sin sufijo /km) */
+                repaired = repaired.replace(/(\d{1,2})'(\d{2})"/g, '$1:$2');
+                /* seg" suelto (45", 30") → 45s, 30s (evita picar tras dos puntos) */
+                repaired = repaired.replace(/(?<![:\d])(\d{1,3})"/g, '$1s');
+                /* min' suelto seguido de espacio o palabra (2' rec, 6' work) → 2min */
+                repaired = repaired.replace(/(\d{1,2})'(?=\s|[a-záéíóúñ])/gi, '$1min');
+                /* Comillas dobles curvas si aparecen (") también son problemáticas */
+                repaired = repaired.replace(/(\d{1,2}):(\d{2})”/g, '$1:$2');
+                repaired = repaired.replace(/”/g, '');
+
+                try { return JSON.parse(repaired); } catch(e2){}
+
+                /* Intento 3 · último recurso: strip toda comilla-doble que
+                   aparezca inmediatamente después de un dígito, sin tocar
+                   las que abren/cierran strings JSON. */
+                var lastResort = candidate.replace(/(\d)"/g, '$1');
+                try { return JSON.parse(lastResort); } catch(e3){}
+
+                return null;
             }
 
-            /* ═════ SSE parser · procesa chunks de fetch stream ═════ */
+            /* ═════ SSE parser · procesa chunks de fetch stream ═════
+               [p220] Captura stop_reason y usage para diagnosticar streams
+               vacíos (antes solo devolvíamos fullText y el error era ciego). */
             async function _consumeSSEStream(response, cb){
                 var reader = response.body.getReader();
                 var decoder = new TextDecoder();
@@ -87859,6 +87911,8 @@ window.addEventListener('DOMContentLoaded', function() {
                 var fullText = '';
                 var firstTokenFired = false;
                 var usage = null;
+                var stopReason = null;
+                var messageStopSeen = false;
 
                 while (true) {
                     var readResult = await reader.read();
@@ -87888,14 +87942,25 @@ window.addEventListener('DOMContentLoaded', function() {
                             }
                             if (cb && typeof cb.onStreamText === 'function') try { cb.onStreamText(fullText); } catch(_){}
                             if (cb && typeof cb.onProgress === 'function') try { cb.onProgress(fullText.length); } catch(_){}
-                        } else if (evt.type === 'message_delta' && evt.usage) {
-                            usage = evt.usage;
+                        } else if (evt.type === 'message_delta') {
+                            /* [p220] message_delta contiene stop_reason + usage.
+                               Anthropic lo emite justo antes de message_stop. */
+                            if (evt.delta && evt.delta.stop_reason) stopReason = evt.delta.stop_reason;
+                            if (evt.usage) usage = evt.usage;
+                        } else if (evt.type === 'message_start' && evt.message && evt.message.usage) {
+                            /* usage inicial (input_tokens) llega en message_start */
+                            usage = evt.message.usage;
                         } else if (evt.type === 'message_stop') {
-                            /* fin del stream */
+                            messageStopSeen = true;
                         }
                     }
                 }
-                return { fullText: fullText, usage: usage };
+                return {
+                    fullText:        fullText,
+                    usage:           usage,
+                    stopReason:      stopReason,
+                    messageStopSeen: messageStopSeen
+                };
             }
 
             /* ═════ Función principal · _mrGenerateActivityReport ═════ */
@@ -88030,83 +88095,139 @@ window.addEventListener('DOMContentLoaded', function() {
                 var userPrompt = _buildUserPrompt(payload);
                 var apiModel = _getApiModel();
 
-                /* 8. Fetch SSE streaming */
-                var controller = new AbortController();
-                var timeoutId = setTimeout(function(){ controller.abort(); }, API_TIMEOUT_MS);
-                var resp = null;
-
-                try {
-                    resp = await fetch(API_ENDPOINT, {
-                        method: 'POST',
-                        headers: {
-                            'x-api-key': apiKey,
-                            'anthropic-version': '2023-06-01',
-                            'anthropic-dangerous-direct-browser-access': 'true',
-                            'content-type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            model:      apiModel,
-                            max_tokens: MAX_TOKENS,
-                            stream:     true,
-                            system:     systemPrompt,
-                            messages:   [{ role:'user', content: userPrompt }]
-                        }),
-                        signal: controller.signal
-                    });
-                } catch (fetchErr) {
-                    clearTimeout(timeoutId);
-                    var msg = (fetchErr && fetchErr.name === 'AbortError')
-                            ? 'Timeout (60s) — la API tardó demasiado'
-                            : ('Fetch error: ' + (fetchErr.message || String(fetchErr)));
-                    await _persistError(sb, reportRow.id, uid, msg);
-                    status('error');
-                    return { success:false, error:msg, reportId: reportRow.id };
-                }
-                clearTimeout(timeoutId);
-
-                if (!resp.ok) {
-                    var errText = '';
-                    try { errText = await resp.text(); } catch(_){}
-                    var errDetail = '';
+                /* [p220] Helper de UN intento · devuelve
+                     { ok, contentJson?, narrativeText?, error?, retriable?, streamResult?, httpStatus? }
+                   Encapsula fetch + SSE + extractJson para poder reintentar
+                   1 vez ante fallos transitorios (stream vacío por overload,
+                   JSON roto irrecuperable). */
+                async function _attemptGeneration(){
+                    var ctrl = new AbortController();
+                    var toId = setTimeout(function(){ ctrl.abort(); }, API_TIMEOUT_MS);
+                    var r;
                     try {
-                        var errObj = JSON.parse(errText);
-                        if (errObj && errObj.error && errObj.error.message) {
-                            errDetail = String(errObj.error.type || 'error') + ': ' + errObj.error.message;
+                        r = await fetch(API_ENDPOINT, {
+                            method: 'POST',
+                            headers: {
+                                'x-api-key': apiKey,
+                                'anthropic-version': '2023-06-01',
+                                'anthropic-dangerous-direct-browser-access': 'true',
+                                'content-type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                model:      apiModel,
+                                max_tokens: MAX_TOKENS,
+                                stream:     true,
+                                system:     systemPrompt,
+                                messages:   [{ role:'user', content: userPrompt }]
+                            }),
+                            signal: ctrl.signal
+                        });
+                    } catch (fErr) {
+                        clearTimeout(toId);
+                        var abortMsg = (fErr && fErr.name === 'AbortError')
+                                     ? 'Timeout (' + Math.round(API_TIMEOUT_MS/1000) + 's) — la API tardó demasiado'
+                                     : ('Fetch error: ' + (fErr.message || String(fErr)));
+                        /* Los timeouts sí son retriables (glitch de red); otros fetch errors no. */
+                        var isTimeout = fErr && fErr.name === 'AbortError';
+                        return { ok:false, error:abortMsg, retriable:isTimeout };
+                    }
+                    clearTimeout(toId);
+
+                    if (!r.ok) {
+                        var eT = '';
+                        try { eT = await r.text(); } catch(_){}
+                        var eD = '';
+                        try {
+                            var eO = JSON.parse(eT);
+                            if (eO && eO.error && eO.error.message) {
+                                eD = String(eO.error.type || 'error') + ': ' + eO.error.message;
+                            }
+                        } catch(_){ eD = eT.slice(0, 300); }
+                        /* 5xx y 429 (overloaded) son retriables · 4xx auth/validation no */
+                        var isRetriableHttp = (r.status >= 500 && r.status < 600) || r.status === 429;
+                        return {
+                            ok:false,
+                            error:'API HTTP ' + r.status + ' — ' + eD,
+                            retriable: isRetriableHttp,
+                            httpStatus: r.status
+                        };
+                    }
+
+                    var sR;
+                    try {
+                        sR = await _consumeSSEStream(r, cb);
+                    } catch (sErr) {
+                        /* Stream errors (network drop mid-stream) son retriables */
+                        return {
+                            ok:false,
+                            error:'Stream error: ' + (sErr.message || String(sErr)),
+                            retriable:true
+                        };
+                    }
+
+                    var nT = (sR.fullText || '').trim();
+                    if (!nT) {
+                        /* [p220] Stream vacío · loguear stop_reason + usage para diagnóstico */
+                        var diagBits = [];
+                        if (sR.stopReason) diagBits.push('stop_reason=' + sR.stopReason);
+                        if (sR.usage) {
+                            if (sR.usage.input_tokens != null)  diagBits.push('in=' + sR.usage.input_tokens + 'tk');
+                            if (sR.usage.output_tokens != null) diagBits.push('out=' + sR.usage.output_tokens + 'tk');
                         }
-                    } catch(_){ errDetail = errText.slice(0, 300); }
-                    var errMsg = 'API HTTP ' + resp.status + ' — ' + errDetail;
-                    await _persistError(sb, reportRow.id, uid, errMsg);
-                    status('error');
-                    return { success:false, error:errMsg, reportId: reportRow.id };
+                        if (!sR.messageStopSeen) diagBits.push('stream_incompleto');
+                        var diag = diagBits.length ? (' · ' + diagBits.join(' · ')) : '';
+                        try { console.warn('[MR][mister-ia] stream vacío' + diag, sR); } catch(_){}
+                        /* Retriable salvo refusal (el modelo se negó, no cambiará al reintentar) */
+                        var isRefusal = sR.stopReason === 'refusal';
+                        return {
+                            ok:false,
+                            error:'API respuesta vacía (sin texto)' + diag,
+                            retriable:!isRefusal,
+                            streamResult:sR
+                        };
+                    }
+
+                    var cJ = _extractJson(nT);
+                    if (!cJ || !cJ.title || !cJ.verdict || !Array.isArray(cJ.insights) || !cJ.recommendation) {
+                        /* JSON roto o incompleto · retriable (siguiente intento puede
+                           salir bien si el modelo emite notación correcta). */
+                        try { console.warn('[MR][mister-ia] JSON parse fail · raw 300 chars:', nT.slice(0,300)); } catch(_){}
+                        return {
+                            ok:false,
+                            error:'Respuesta IA no cumple formato JSON esperado. Raw (300 primeros chars): ' + nT.slice(0, 300),
+                            retriable:true,
+                            narrativeText:nT,
+                            streamResult:sR
+                        };
+                    }
+
+                    return { ok:true, contentJson:cJ, narrativeText:nT, streamResult:sR };
                 }
 
-                /* 9. Procesar stream SSE */
-                var streamResult;
-                try {
-                    streamResult = await _consumeSSEStream(resp, cb);
-                } catch (streamErr) {
-                    var sErrMsg = 'Stream error: ' + (streamErr.message || String(streamErr));
-                    await _persistError(sb, reportRow.id, uid, sErrMsg);
-                    status('error');
-                    return { success:false, error:sErrMsg, reportId: reportRow.id };
+                /* 8-10 · Ejecutar con hasta 1 retry ante fallos transitorios */
+                var attempt = await _attemptGeneration();
+                var retried = false;
+                if (!attempt.ok && attempt.retriable) {
+                    retried = true;
+                    try { console.log('[MR][mister-ia] retry · motivo: ' + attempt.error); } catch(_){}
+                    await new Promise(function(res){ setTimeout(res, 800); });
+                    attempt = await _attemptGeneration();
                 }
-
-                var narrativeText = (streamResult.fullText || '').trim();
-                if (!narrativeText) {
-                    var eMsg = 'API respuesta vacía (sin texto)';
-                    await _persistError(sb, reportRow.id, uid, eMsg);
+                if (!attempt.ok) {
+                    var finalErr = attempt.error + (retried ? ' (tras 1 reintento)' : '');
+                    await _persistError(sb, reportRow.id, uid, finalErr);
                     status('error');
-                    return { success:false, error:eMsg, reportId: reportRow.id };
+                    return {
+                        success:false,
+                        error:finalErr,
+                        reportId: reportRow.id,
+                        rawText: attempt.narrativeText || null,
+                        retried: retried
+                    };
                 }
-
-                /* 10. Extraer JSON estructurado */
-                var contentJson = _extractJson(narrativeText);
-                if (!contentJson || !contentJson.title || !contentJson.verdict || !Array.isArray(contentJson.insights) || !contentJson.recommendation) {
-                    var pMsg = 'Respuesta IA no cumple formato JSON esperado. Raw (300 primeros chars): ' + narrativeText.slice(0, 300);
-                    await _persistError(sb, reportRow.id, uid, pMsg);
-                    status('error');
-                    return { success:false, error:pMsg, reportId: reportRow.id, rawText: narrativeText };
-                }
+                var contentJson = attempt.contentJson;
+                var narrativeText = attempt.narrativeText;
+                var streamResult = attempt.streamResult;
 
                 /* 11. Enriquecer con metadata + persistir */
                 var elapsedMs = Date.now() - t0;
