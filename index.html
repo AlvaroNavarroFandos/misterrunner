@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p205"/>
+    <meta name="mr-version" content="v2.30.1-p206"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p205';
+            window.__MR_VERSION = 'v2.30.1-p206';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9026,9 +9026,9 @@
            Encabezado Aurora A + Hero score + Veredicto + 3 Insights + Reco */
         .mr-ia-c4-hdr {
             position: relative;
-            /* [p205] padding-top 34px para que la burbuja no se corte al ocultarse
-               la cabecera flotante del visor (que ocupaba ~62px). */
-            padding: 34px 20px 20px;
+            /* [p206] padding-top 44px + safe-area-inset para acomodar iOS notch
+               cuando la cabecera flotante se oculta. Antes: 34px insuficiente. */
+            padding: max(44px, calc(env(safe-area-inset-top, 0px) + 20px)) 20px 22px;
             background:
                 radial-gradient(ellipse 100% 90% at 20% 0%, rgba(139,92,246,.14) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 60% at 90% 100%, rgba(217,70,239,.10) 0%, transparent 60%),
@@ -9070,7 +9070,9 @@
             -webkit-text-fill-color: transparent;
         }
         .mr-ia-c4-hdr__chips {
-            display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap;
+            display: flex; gap: 6px; margin-top: 11px; flex-wrap: wrap;
+            /* [p206] asegurar visibilidad chips (bug reportado en imagen p205) */
+            width: 100%;
         }
         .mr-ia-c4-hdr__chip {
             font-size: 9.5px; font-weight: 800;
@@ -43082,6 +43084,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
     // MISTER & PLAN — localStorage persistence
     // ═══════════════════════════════════════════════════════
     let activePlan = null;
+    /* [p206 · Fase 4] Exponer activePlan para que _mrEval.getPlanContext pueda
+       leerlo (antes accedía a window.activePlan que era siempre undefined,
+       la IA no sabía el ritmo objetivo del plan). Se sync tras cada asignación
+       vía _mrSyncActivePlan(). */
+    window._mrGetActivePlan = function(){ return activePlan; };
+
     let activeStrengthPlan = null; // Independent strength plan         // { name, weeks:[ {n, sessions:[ {day,type,dist,pace,fc,desc} ]} ] }
     let planCurrentWeek = 0;       // 0-based index
 
@@ -77773,7 +77781,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p205';
+        window.__mrCorosVersion = 'v2.30.1-p206';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86026,6 +86034,40 @@ window.addEventListener('DOMContentLoaded', function() {
                ═══════════════════════════════════════════════════════════════ */
             function splitHalves(act){
                 if (!act) return null;
+                var laps = _arr(act.laps);
+                /* [p206] FUENTE PRINCIPAL · laps del reloj (auto-lap 1km sin pausas
+                   ni ruido de GPS). Antes: distSer con `tEnd-tStart` incluía pausas
+                   → tercios/mitades falsos que hacían la IA inventar el fade. */
+                if (laps.length >= 4) {
+                    var validLaps = laps.filter(function(l){ return l && l.paceS > 60 && l.paceS < 900; });
+                    if (validLaps.length >= 4) {
+                        var mid = Math.floor(validLaps.length / 2);
+                        var h1Laps = validLaps.slice(0, mid);
+                        var h2Laps = validLaps.slice(mid);
+                        var h1Pace = _round(_mean(h1Laps.map(function(l){ return l.paceS; })), 0);
+                        var h2Pace = _round(_mean(h2Laps.map(function(l){ return l.paceS; })), 0);
+                        var h1HrLaps = h1Laps.map(function(l){ return l.avgHr; }).filter(function(v){ return v != null; });
+                        var h2HrLaps = h2Laps.map(function(l){ return l.avgHr; }).filter(function(v){ return v != null; });
+                        var h1Hr = h1HrLaps.length ? _round(_mean(h1HrLaps), 0) : null;
+                        var h2Hr = h2HrLaps.length ? _round(_mean(h2HrLaps), 0) : null;
+                        var deltaSec = (h1Pace && h2Pace) ? (h2Pace - h1Pace) : null;
+                        var type = null;
+                        if (deltaSec != null) {
+                            if (deltaSec <= -THR.SPLIT_EVEN_SEC_PER_KM) type = 'negative';
+                            else if (deltaSec >= THR.SPLIT_EVEN_SEC_PER_KM) type = 'positive';
+                            else type = 'even';
+                        }
+                        return {
+                            firstHalf: { distKm: h1Laps.length, durationSec: h1Laps.length * h1Pace, paceSecPerKm: h1Pace, paceStr: _paceStr(h1Pace), avgHr: h1Hr, lapsUsed: h1Laps.length },
+                            secondHalf: { distKm: h2Laps.length, durationSec: h2Laps.length * h2Pace, paceSecPerKm: h2Pace, paceStr: _paceStr(h2Pace), avgHr: h2Hr, lapsUsed: h2Laps.length },
+                            type: type,
+                            deltaSecPerKm: deltaSec,
+                            deltaPct: (deltaSec != null && h1Pace) ? _round(deltaSec / h1Pace * 100, 1) : null,
+                            source: 'laps'
+                        };
+                    }
+                }
+                /* Fallback · distSer si no hay laps suficientes */
                 var distSer = _arr(act.distSer);
                 var hrSeries = _arr(act.hrSeries);
                 if (distSer.length < THR.MIN_DATA_POINTS) return null;
@@ -86034,7 +86076,6 @@ window.addEventListener('DOMContentLoaded', function() {
                 var halfMeters = totalMeters / 2;
                 var idxHalf = _findIdxAtDist(distSer, halfMeters);
                 if (idxHalf <= 0 || idxHalf >= distSer.length - 1) return null;
-
                 var t0 = distSer[0].t, tMid = distSer[idxHalf].t, tEnd = distSer[distSer.length-1].t;
                 var h1DurSec = tMid - t0;
                 var h2DurSec = tEnd - tMid;
@@ -86065,17 +86106,59 @@ window.addEventListener('DOMContentLoaded', function() {
                ═══════════════════════════════════════════════════════════════ */
             function thirds(act){
                 if (!act) return null;
-                var distSer = _arr(act.distSer);
                 var hrSeries = _arr(act.hrSeries);
+                var laps = _arr(act.laps);
+
+                /* [p206] FUENTE PRINCIPAL · laps agregados en 3 grupos.
+                   Antes: distSer con tEnd-tStart incluía pausas → tercios falsos. */
+                if (laps.length >= 6) {
+                    var validLaps = laps.filter(function(l){ return l && l.paceS > 60 && l.paceS < 900; });
+                    if (validLaps.length >= 6) {
+                        var n = validLaps.length;
+                        var b1 = Math.floor(n / 3);
+                        var b2 = Math.floor(2 * n / 3);
+                        function buildFromLaps(slice){
+                            var pace = _round(_mean(slice.map(function(l){ return l.paceS; })), 0);
+                            var hrs = slice.map(function(l){ return l.avgHr; }).filter(function(v){ return v != null; });
+                            return {
+                                distKm: slice.length,
+                                durationSec: slice.length * pace,
+                                paceSecPerKm: pace,
+                                avgHr: hrs.length ? _round(_mean(hrs), 0) : null,
+                                lapsUsed: slice.length,
+                                paceStr: _paceStr(pace)
+                            };
+                        }
+                        var t1 = buildFromLaps(validLaps.slice(0, b1));
+                        var t2 = buildFromLaps(validLaps.slice(b1, b2));
+                        var t3 = buildFromLaps(validLaps.slice(b2));
+                        var fadeSec = (t1.paceSecPerKm && t3.paceSecPerKm) ? (t3.paceSecPerKm - t1.paceSecPerKm) : null;
+                        var fadePct = (fadeSec != null && t1.paceSecPerKm) ? _round(fadeSec/t1.paceSecPerKm*100, 1) : null;
+                        /* Peor lap del último tercio */
+                        var worstIdx = -1, slowest = -1;
+                        for (var i=b2;i<validLaps.length;i++){
+                            if (validLaps[i].paceS > slowest) { slowest = validLaps[i].paceS; worstIdx = i; }
+                        }
+                        var worstKmRange = worstIdx >= 0 ? 'km ' + (worstIdx + 1) : null;
+                        return {
+                            first: t1, middle: t2, last: t3,
+                            fadeSecPerKm: fadeSec,
+                            fadePct: fadePct,
+                            worstKmRange: worstKmRange,
+                            source: 'laps'
+                        };
+                    }
+                }
+
+                /* Fallback · distSer (menor precisión) */
+                var distSer = _arr(act.distSer);
                 if (distSer.length < THR.MIN_DATA_POINTS) return null;
                 var totalMeters = _distMeters(distSer[distSer.length - 1]);
                 if (!totalMeters) return null;
-
                 var boundaries = [totalMeters/3, 2*totalMeters/3];
                 var idxA = _findIdxAtDist(distSer, boundaries[0]);
                 var idxB = _findIdxAtDist(distSer, boundaries[1]);
                 if (idxA <= 0 || idxB <= idxA || idxB >= distSer.length-1) return null;
-
                 function buildThird(iStart, iEnd, distStart, distEnd){
                     var durSec = distSer[iEnd].t - distSer[iStart].t;
                     var meters = distEnd - distStart;
@@ -86092,23 +86175,9 @@ window.addEventListener('DOMContentLoaded', function() {
                 t1.paceStr = _paceStr(t1.paceSecPerKm);
                 t2.paceStr = _paceStr(t2.paceSecPerKm);
                 t3.paceStr = _paceStr(t3.paceSecPerKm);
-
                 var fadeSec = (t1.paceSecPerKm && t3.paceSecPerKm) ? (t3.paceSecPerKm - t1.paceSecPerKm) : null;
                 var fadePct = (fadeSec != null && t1.paceSecPerKm) ? _round(fadeSec/t1.paceSecPerKm*100, 1) : null;
-
-                /* Detectar peor tramo por km (paso más lento) */
                 var worstKmRange = null;
-                var laps = _arr(act.laps);
-                if (laps.length >= 3) {
-                    var slowest = null, slowestIdx = -1;
-                    for (var i=0;i<laps.length;i++){
-                        var p = laps[i] && (laps[i].paceS || laps[i].pace_sec_per_km);
-                        if (p && (slowest == null || p > slowest)) { slowest = p; slowestIdx = i; }
-                    }
-                    if (slowestIdx >= 0) {
-                        worstKmRange = 'km ' + slowestIdx + '-' + (slowestIdx+1);
-                    }
-                }
                 return {
                     first:  t1,
                     middle: t2,
@@ -86578,7 +86647,13 @@ window.addEventListener('DOMContentLoaded', function() {
                     planName: null
                 };
                 try {
-                    var plan = window.activePlan;
+                    /* [p206] Preferir _mrGetActivePlan (var local activePlan) sobre
+                       window.activePlan (siempre undefined en el código actual). */
+                    var plan = null;
+                    try {
+                        if (typeof window._mrGetActivePlan === 'function') plan = window._mrGetActivePlan();
+                    } catch(_){}
+                    if (!plan) plan = window.activePlan;
                     if (!plan || !Array.isArray(plan.weeks)) return out;
                     out.planName = plan.name || plan.planName || null;
                     var actDate = act && act.dateStr;
@@ -86734,6 +86809,20 @@ window.addEventListener('DOMContentLoaded', function() {
                 };
                 var grade = computeGrade(m, sessionType);
 
+                /* [p206] Splits raw · fuente reloj para prompt km-a-km */
+                var rawLapsCompact = [];
+                var lapsSrc = _arr(act.laps);
+                for (var lki=0;lki<lapsSrc.length;lki++){
+                    var lp = lapsSrc[lki];
+                    if (!lp) continue;
+                    var paceS = lp.paceS || lp.pace_sec_per_km || null;
+                    if (!paceS || paceS < 60 || paceS > 900) continue;
+                    rawLapsCompact.push({
+                        paceS: paceS,
+                        avgHr: (lp.avgHr != null) ? lp.avgHr : null
+                    });
+                }
+
                 return {
                     activity: {
                         type:          act.type || null,
@@ -86771,8 +86860,9 @@ window.addEventListener('DOMContentLoaded', function() {
                             city: profile.city || null
                         }
                     },
+                    rawLaps: rawLapsCompact,
                     _meta: {
-                        payloadVersion: 'v1',
+                        payloadVersion: 'v2',
                         generatedAt: new Date().toISOString()
                     }
                 };
@@ -86981,6 +87071,14 @@ window.addEventListener('DOMContentLoaded', function() {
                 var c = p.context;
                 var focus = SESSION_TYPE_FOCUS[a.detectedType] || SESSION_TYPE_FOCUS.other;
 
+                /* [p206] Helper local para formatear pace en s/km → M:SS */
+                function _paceStrLocal(s){
+                    if (!s || !isFinite(s)) return '—';
+                    var mm = Math.floor(s/60);
+                    var ss = s - mm*60;
+                    return mm + ':' + (ss<10?'0':'') + ss;
+                }
+
                 function line(label, val){
                     if (val == null || val === '' || val === undefined) return '';
                     return label + ': ' + val + '\n';
@@ -86992,6 +87090,20 @@ window.addEventListener('DOMContentLoaded', function() {
                 /* ── FOCO SEGÚN TIPO ── */
                 out += '## FOCO PARA ESTE TIPO DE SESIÓN\n';
                 out += 'Tipo detectado: ' + a.detectedType + '\n';
+                /* [p206] Si hay plan activo, destacar ARRIBA la sesión planificada
+                   (ritmo target, km target, descripción) para que la IA lo tenga
+                   siempre presente al evaluar. Antes: quedaba oculta al final. */
+                if (c.plan && c.plan.plannedSession) {
+                    var ps = c.plan.plannedSession;
+                    out += '\n📋 SESIÓN PLANIFICADA HOY (comparar ejecución vs plan):\n';
+                    if (ps.type) out += '  Tipo plan: ' + ps.type + '\n';
+                    if (ps.km) out += '  Distancia target: ' + ps.km + ' km\n';
+                    if (ps.pace) out += '  RITMO OBJETIVO: ' + ps.pace + '/km\n';
+                    if (ps.desc) out += '  Descripción: ' + ps.desc + '\n';
+                    out += '\n';
+                } else {
+                    out += '  (Sin sesión planificada hoy · adhoc o libre)\n\n';
+                }
                 out += 'Prioridad: ' + focus.priority + '\n';
                 out += 'Qué vigilar: ' + focus.watch + '\n';
                 out += 'Criterio A: ' + focus.grade + '\n\n';
@@ -87016,6 +87128,21 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 /* ── MÉTRICAS COMPUTADAS ── */
                 out += '## MÉTRICAS COMPUTADAS\n\n';
+
+                /* [p206] Splits km-a-km ANTES que agregados (mitades/tercios). Así
+                   la IA ve el desglose real del reloj y no puede inventar. */
+                if (Array.isArray(p.rawLaps) && p.rawLaps.length >= 3) {
+                    out += '### Parciales km-a-km (fuente reloj · sin pausas)\n';
+                    var lapLines = [];
+                    for (var lki=0;lki<p.rawLaps.length;lki++){
+                        var lp = p.rawLaps[lki];
+                        if (!lp) continue;
+                        var line = 'km ' + (lki+1) + ': ' + _paceStrLocal(lp.paceS);
+                        if (lp.avgHr != null) line += ' · FC ' + lp.avgHr;
+                        lapLines.push(line);
+                    }
+                    out += lapLines.join('\n') + '\n\n';
+                }
 
                 /* Split */
                 if (m.split) {
