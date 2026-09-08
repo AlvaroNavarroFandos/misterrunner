@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p220"/>
+    <meta name="mr-version" content="v2.30.1-p221"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p220';
+            window.__MR_VERSION = 'v2.30.1-p221';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -649,13 +649,13 @@
         line-height:1;font-variant-numeric:tabular-nums;flex-shrink:0;font-family:var(--f);
     }
     .mr-rec .batt-h{
-        flex:1;min-width:0;position:relative;height:20px;
-        border:1.5px solid var(--tw);border-radius:3px;
-        padding:2px;display:flex;gap:2px;align-items:stretch;
+        flex:1;min-width:0;position:relative;height:26px;
+        border:2px solid var(--tw);border-radius:3.5px;
+        padding:3px;display:flex;gap:3px;align-items:stretch;
     }
     .mr-rec .batt-h::after{
-        content:'';position:absolute;top:50%;right:-4px;transform:translateY(-50%);
-        width:3px;height:9px;background:var(--tw);border-radius:0 2px 2px 0;
+        content:'';position:absolute;top:50%;right:-5px;transform:translateY(-50%);
+        width:4px;height:13px;background:var(--tw);border-radius:0 2px 2px 0;
     }
     .mr-rec .batt-h .cell{flex:1;border-radius:1.5px;box-shadow:inset 0 1px 0 rgba(255,255,255,.25);}
     .mr-rec .batt-h .cell.empty{background:transparent;box-shadow:none;}
@@ -9127,6 +9127,17 @@
         .mr-ia-c4-hdr__row {
             display: flex; align-items: center; gap: 16px;
             position: relative; z-index: 2;
+        }
+        /* [p221] Burbuja Card 4 (--mi-size 62px): elevar la gorra sobre las
+           auroras/pulsos morados para que no la eclipsen visualmente. Solo
+           afecta a la burbuja pequeña del header IA · la burbuja grande del
+           sheet analizando (140px) queda intacta. Sin cambiar tamaños. */
+        .mr-ia-c4-hdr .mi-bubble__icon-wrap {
+            z-index: 10;
+        }
+        .mr-ia-c4-hdr .mi-bubble__icon {
+            filter: drop-shadow(0 1.5px 3px rgba(0,0,0,.42))
+                    drop-shadow(0 0 1px rgba(0,0,0,.35));
         }
         .mr-ia-c4-hdr__txt { flex: 1; min-width: 0; }
         .mr-ia-c4-hdr__title {
@@ -40668,7 +40679,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // v2.30.1-p14 · Altura mapa 400→420 (+5%) para que la fila de datos de
         // elevación (D+/D-/Máx/Mín/Media) NO aparezca sin scroll bajo la línea
         // TIEMPO/RITMO/R.ESFUERZO. Los primeros datos siempre visibles al abrir.
-        mapOutfitRow.style.cssText = 'display:flex;height:420px;flex-shrink:0;background:var(--det-bg);';
+        // [p221] 420→370 (-12%). Con el header fijo (p216) y el track centrado
+        // con fitBounds simétrico, cabe de sobras y RPE/TRIMP entran antes de
+        // hacer scroll (Álvaro).
+        mapOutfitRow.style.cssText = 'display:flex;height:370px;flex-shrink:0;background:var(--det-bg);';
 
         // GPS map — anchura completa
         const mapWrap = document.createElement('div');
@@ -77869,7 +77883,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p220';
+        window.__mrCorosVersion = 'v2.30.1-p221';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86628,14 +86642,27 @@ window.addEventListener('DOMContentLoaded', function() {
                         chosen.used = true;
                         var dev = chosen.paceS - p.targetPaceSec;
                         deviations.push(dev);
-                        if (Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC) met++;
+                        var inTol = Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC;
+                        if (inTol) met++;
+                        /* [p221] Clasificación asimétrica del cumplimiento:
+                           - on_target: |delta| ≤ 15s/km (dentro tolerancia estricta)
+                           - too_fast:  delta < -15s/km (más rápido de lo tolerable
+                                        pero CUMPLIÓ el estímulo — no ideal por control,
+                                        pero la sesión sí trabajó lo pedido)
+                           - too_slow:  delta > +15s/km (más lento — NO llegó al
+                                        estímulo, fallo real de la sesión) */
+                        var repVerdict;
+                        if (inTol) repVerdict = 'on_target';
+                        else if (dev < 0) repVerdict = 'too_fast';
+                        else repVerdict = 'too_slow';
                         matches.push({
                             plannedLabel: p.label,
                             targetPaceSec: p.targetPaceSec,
                             executedPaceSec: chosen.paceS,
                             executedHr: chosen.hr,
                             deltaSec: dev,
-                            inTolerance: Math.abs(dev) <= THR.BLOCK_PACE_TOLERANCE_SEC
+                            inTolerance: inTol,
+                            verdict: repVerdict
                         });
                     } else {
                         matches.push({
@@ -86644,18 +86671,36 @@ window.addEventListener('DOMContentLoaded', function() {
                             executedPaceSec: null,
                             deltaSec: null,
                             inTolerance: false,
+                            verdict: 'unmatched',
                             unmatched: true
                         });
                     }
                 }
                 var avgDev = deviations.length ? _round(_mean(deviations), 0) : null;
                 var complianceRate = deviations.length ? _round(met/deviations.length*100, 0) : null;
+                /* [p221] Métricas asimétricas · valorar "cumplió estímulo" por
+                   separado de "cumplió tolerancia estricta". */
+                var tooFast = 0, tooSlow = 0, metOrExceeded = 0, unmatched = 0;
+                for (var mm=0;mm<matches.length;mm++){
+                    var mv = matches[mm].verdict;
+                    if (mv === 'on_target') { metOrExceeded++; }
+                    else if (mv === 'too_fast') { tooFast++; metOrExceeded++; }
+                    else if (mv === 'too_slow') { tooSlow++; }
+                    else if (mv === 'unmatched') { unmatched++; }
+                }
+                var stimulusRate = matches.length ? _round(metOrExceeded/matches.length*100, 0) : null;
                 return {
                     totalPlanned: planned.length,
                     executed: executedRaw.length,
                     blocksAnalyzed: deviations.length,
                     metTolerance: met,
                     compliancePct: complianceRate,
+                    /* [p221] Nuevas métricas asimétricas */
+                    metOrExceededTarget: metOrExceeded,
+                    stimulusMetPct: stimulusRate,
+                    tooFastCount: tooFast,
+                    tooSlowCount: tooSlow,
+                    unmatchedCount: unmatched,
                     avgDeviationSecPerKm: avgDev,
                     matchingMode: useCsvBlocks ? 'csvBlocks_proximity' : 'laps_proximity',
                     matches: matches
@@ -86837,12 +86882,35 @@ window.addEventListener('DOMContentLoaded', function() {
                     push('Pace vs Plan', pv + ' (' + metrics.paceVsPlan.excessPctInHigherZones + '% fuera Z' + metrics.paceVsPlan.targetZone + ')', wpv, dpv*wpv);
                 }
 
-                /* Block compliance */
+                /* Block compliance · [p221] usar stimulusMetPct (asimétrico:
+                   llegar al target o pasarse rápido cuenta como cumplido) como
+                   señal principal en sesiones por bloques. Antes solo usaba
+                   compliancePct estricto (±15s) → penalizaba injustamente
+                   sesiones donde todas las repes fueron al target o más rápidas. */
                 if (metrics.blockCompliance && metrics.blockCompliance.compliancePct != null) {
-                    var cp = metrics.blockCompliance.compliancePct;
-                    var dc = cp >= 90 ? 20 : cp >= 70 ? 10 : cp >= 50 ? 0 : -12;
-                    var wc = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek') ? 2.0 : 1;
-                    push('Block compliance', cp+'%', wc, dc*wc);
+                    var bcM = metrics.blockCompliance;
+                    var isBlockSess = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek');
+                    var wc = isBlockSess ? 2.0 : 1;
+                    if (isBlockSess && bcM.stimulusMetPct != null) {
+                        /* Métrica principal: estímulo cumplido */
+                        var sp = bcM.stimulusMetPct;
+                        var dsp = sp >= 90 ? 22 : sp >= 75 ? 14 : sp >= 60 ? 4 : sp >= 40 ? -6 : -18;
+                        push('Estímulo cumplido', sp+'%', wc, dsp*wc);
+                        /* Métrica secundaria: control estricto (bonus/malus más suave) */
+                        var cp = bcM.compliancePct;
+                        var dcp = cp >= 90 ? 6 : cp >= 70 ? 2 : cp >= 50 ? -2 : -6;
+                        push('Control estricto (±15s)', cp+'%', 1, dcp);
+                        /* Penalización extra por too_slow (fallo real del estímulo) */
+                        if (bcM.tooSlowCount > 0) {
+                            var slowPenalty = -Math.min(15, bcM.tooSlowCount * 4);
+                            push('Repes que se quedaron cortas', bcM.tooSlowCount + ' repes', 1, slowPenalty);
+                        }
+                    } else {
+                        /* Fallback clásico para no-bloques (por si acaso) */
+                        var cpF = bcM.compliancePct;
+                        var dcF = cpF >= 90 ? 20 : cpF >= 70 ? 10 : cpF >= 50 ? 0 : -12;
+                        push('Block compliance', cpF+'%', wc, dcF*wc);
+                    }
                 }
 
                 /* Consistency (metronómico bonus) */
@@ -87311,24 +87379,24 @@ window.addEventListener('DOMContentLoaded', function() {
                     grade:    'A = todo Z1-Z2 con calma. Cualquier bloque Z3+ es fallar el objetivo.'
                 },
                 series: {
-                    priority: 'block_compliance + consistencia entre repes',
-                    watch:    'cumplir el pace target de cada bloque ±5s/km · reps consistentes entre sí',
-                    grade:    'A = >90% bloques dentro tolerancia + reps con desviación <3s entre ellas.'
+                    priority: 'stimulus_met + block_compliance + consistencia entre repes',
+                    watch:    'llegar al ritmo objetivo (o superarlo) en cada rep · pasarse rápido cuenta como estímulo cumplido · quedarse corto es fallo real',
+                    grade:    'A = todas las repes al ritmo target o más rápidas + repes consistentes entre sí. Ir un poco más rápido del target NO es fallo grave; quedarse corto SÍ.'
                 },
                 threshold: {
-                    priority: 'block_compliance + zone_adherence Z4',
-                    watch:    'cumplir ritmo umbral ±5s/km · sostener FC en Z4 sin subir a Z5',
-                    grade:    'A = ritmo objetivo cumplido + FC Z4 sostenida sin creep desmedido.'
+                    priority: 'stimulus_met + block_compliance + zone_adherence Z4',
+                    watch:    'llegar al ritmo umbral (o algo más rápido) + sostener FC en Z4 sin subir a Z5',
+                    grade:    'A = ritmo objetivo cumplido o superado ligeramente + FC Z4 sostenida. Pasarse un poco rápido cuenta como cumplido; quedarse lento es fallo.'
                 },
                 tempo: {
-                    priority: 'block_compliance + fc_drift bajo en el bloque tempo',
-                    watch:    'ritmo tempo cumplido + FC no se dispara mid-tempo',
-                    grade:    'A = ritmo consistente + FC subida controlada.'
+                    priority: 'stimulus_met + block_compliance + fc_drift bajo en el bloque tempo',
+                    watch:    'ritmo tempo cumplido o superado + FC no se dispara mid-tempo',
+                    grade:    'A = ritmo consistente al target o algo más rápido + FC subida controlada. Quedarse lento es fallo del estímulo.'
                 },
                 fartlek: {
-                    priority: 'block_compliance + recuperación entre bloques rápidos',
-                    watch:    'ejecutar los bloques rápidos y RECUPERAR entre ellos (no dejar la FC arriba)',
-                    grade:    'A = bloques fuertes + FC baja bien en recuperaciones.'
+                    priority: 'stimulus_met + block_compliance + recuperación entre bloques rápidos',
+                    watch:    'ejecutar los bloques rápidos al ritmo objetivo (o algo más) y RECUPERAR entre ellos',
+                    grade:    'A = bloques al target o algo más rápidos + FC baja bien en recuperaciones. Pasarse rápido es cumplimiento del estímulo; quedarse corto es fallo.'
                 },
                 progressive: {
                     priority: 'aceleración progresiva controlada + no descontrol final',
@@ -87419,6 +87487,21 @@ window.addEventListener('DOMContentLoaded', function() {
                         'demuestra lo contrario. Si la métrica de bloques falta o no encontró matches, ' +
                         'admítelo ("no puedo confirmar cumplimiento por bloques") en vez de inventar un ' +
                         'veredicto basado en los km-a-km.\n' +
+                    '- ASIMETRÍA EN SERIES/FARTLEK/THRESHOLD/TEMPO (crítico): el objetivo del plan es ' +
+                        'LLEGAR al ritmo target · pasarse un poco más RÁPIDO cumple el estímulo aunque ' +
+                        'no sea control perfecto, quedarse LENTO no llega al estímulo y sí es fallo real. ' +
+                        'Cada rep viene marcada con un verdict:\n' +
+                        '    · [on_target] · dentro ±15s/km — cumplió tolerancia estricta.\n' +
+                        '    · [too_fast · estímulo OK] · más de 15s bajo target — CUMPLIÓ EL ESTÍMULO ' +
+                        'aunque el control fue mejorable. NO es fallo grave, es "podrías haber ajustado ' +
+                        'mejor" a lo sumo. NO bajes el veredicto a Mejorable/D solo por esto.\n' +
+                        '    · [too_slow · NO cumplió] · más de 15s sobre target — NO llegó al estímulo, ' +
+                        'sí es fallo real de la sesión, sí baja el veredicto.\n' +
+                        'La métrica clave es "Estímulo cumplido (target o más rápido)": si es 80%+ la ' +
+                        'sesión CUMPLIÓ SU FUNCIÓN aunque "Dentro tolerancia estricta" sea baja. Prioriza ' +
+                        'ESTÍMULO CUMPLIDO sobre TOLERANCIA ESTRICTA al valorar el grade. En un caso ' +
+                        'donde todas las repes fueron ≤ target (algunas al ritmo justo, otras más rápidas), ' +
+                        'el veredicto correcto es Bueno/Notable con nota sobre control, NO Mejorable.\n' +
                     '- CV EN SESIONES POR BLOQUES: si "Consistencia ritmo" viene con modo "work_blocks", ' +
                         'ese CV mide variabilidad ENTRE REPES DE TRABAJO (bueno para juzgar constancia ' +
                         'de las series). Si viene modo "laps" con "⚠️ NO fiable", NO lo cites como si ' +
@@ -87658,22 +87741,41 @@ window.addEventListener('DOMContentLoaded', function() {
                     out += '\n';
                 }
 
-                /* Block compliance · [p219] muestra matches detallados de cada rep */
+                /* Block compliance · [p219] muestra matches detallados de cada rep
+                   · [p221] métricas asimétricas: stimulus_met (llegó al target o
+                   pasó rápido) vs compliance estricta (±15s). too_fast NO es
+                   fallo grave; too_slow SÍ. */
                 if (m.blockCompliance && m.blockCompliance.blocksAnalyzed > 0) {
+                    var bc = m.blockCompliance;
                     out += '### Cumplimiento bloques del plan\n';
-                    out += 'Bloques planificados (work): ' + m.blockCompliance.totalPlanned + '\n';
-                    out += 'Repes emparejadas: ' + m.blockCompliance.blocksAnalyzed + '\n';
-                    out += 'Dentro tolerancia (±15s/km): ' + m.blockCompliance.metTolerance + ' de ' + m.blockCompliance.blocksAnalyzed + ' (' + m.blockCompliance.compliancePct + '%)\n';
-                    if (m.blockCompliance.avgDeviationSecPerKm != null) {
-                        out += 'Desviación media: ' + (m.blockCompliance.avgDeviationSecPerKm > 0 ? '+' : '') + m.blockCompliance.avgDeviationSecPerKm + 's/km\n';
+                    out += 'Bloques planificados (work): ' + bc.totalPlanned + '\n';
+                    out += 'Repes emparejadas: ' + bc.blocksAnalyzed + '\n';
+                    /* Métrica ESTÍMULO (llegó al objetivo o lo superó) — la más
+                       importante para valorar si la sesión CUMPLIÓ SU FUNCIÓN. */
+                    if (bc.stimulusMetPct != null) {
+                        out += 'Estímulo cumplido (target o más rápido): ' + bc.metOrExceededTarget + ' de ' + bc.blocksAnalyzed + ' (' + bc.stimulusMetPct + '%)\n';
                     }
-                    if (m.blockCompliance.matchingMode) {
-                        out += 'Método: ' + m.blockCompliance.matchingMode + '\n';
+                    out += 'Dentro tolerancia estricta (±15s/km): ' + bc.metTolerance + ' de ' + bc.blocksAnalyzed + ' (' + bc.compliancePct + '%)\n';
+                    /* Desglose asimétrico */
+                    if (bc.tooFastCount > 0 || bc.tooSlowCount > 0) {
+                        var desglose = [];
+                        if (bc.tooFastCount > 0) desglose.push(bc.tooFastCount + ' pasadas rápidas (>15s bajo target · estímulo cumplido, control mejorable)');
+                        if (bc.tooSlowCount > 0) desglose.push(bc.tooSlowCount + ' quedadas cortas (>15s sobre target · NO cumplieron estímulo)');
+                        if (bc.unmatchedCount > 0) desglose.push(bc.unmatchedCount + ' sin match');
+                        out += 'Desglose fuera de tolerancia: ' + desglose.join(' · ') + '\n';
                     }
-                    if (Array.isArray(m.blockCompliance.matches) && m.blockCompliance.matches.length) {
+                    if (bc.avgDeviationSecPerKm != null) {
+                        out += 'Desviación media: ' + (bc.avgDeviationSecPerKm > 0 ? '+' : '') + bc.avgDeviationSecPerKm + 's/km ';
+                        out += (bc.avgDeviationSecPerKm < 0 ? '(en promedio MÁS RÁPIDO que el target)' : bc.avgDeviationSecPerKm > 0 ? '(en promedio MÁS LENTO que el target)' : '(en promedio bordado)');
+                        out += '\n';
+                    }
+                    if (bc.matchingMode) {
+                        out += 'Método: ' + bc.matchingMode + '\n';
+                    }
+                    if (Array.isArray(bc.matches) && bc.matches.length) {
                         out += 'Detalle repes (target vs real):\n';
-                        for (var mi=0;mi<m.blockCompliance.matches.length;mi++){
-                            var mt = m.blockCompliance.matches[mi];
+                        for (var mi=0;mi<bc.matches.length;mi++){
+                            var mt = bc.matches[mi];
                             if (!mt) continue;
                             var mline = '  rep ' + (mi+1) + ' → target ' + _paceStrLocal(mt.targetPaceSec);
                             if (mt.unmatched) {
@@ -87683,7 +87785,10 @@ window.addEventListener('DOMContentLoaded', function() {
                                 if (mt.executedHr) mline += ' · FC ' + mt.executedHr;
                                 var deltaStr = (mt.deltaSec > 0 ? '+' : '') + mt.deltaSec + 's';
                                 mline += ' · Δ ' + deltaStr;
-                                mline += mt.inTolerance ? ' ✓' : ' ✗';
+                                /* [p221] Etiqueta visual por verdict */
+                                if (mt.verdict === 'on_target')      mline += ' ✓ [on_target]';
+                                else if (mt.verdict === 'too_fast')  mline += ' ⚡ [too_fast · estímulo OK]';
+                                else if (mt.verdict === 'too_slow')  mline += ' ✗ [too_slow · NO cumplió]';
                             }
                             out += mline + '\n';
                         }
