@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p226"/>
+    <meta name="mr-version" content="v2.30.1-p227"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p226';
+            window.__MR_VERSION = 'v2.30.1-p227';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -77953,7 +77953,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p226';
+        window.__mrCorosVersion = 'v2.30.1-p227';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -87542,8 +87542,15 @@ window.addEventListener('DOMContentLoaded', function() {
             /* [p220] Subido 2500→3500 · colchón para prompt engordado en p219
                con bloques del reloj + detalle repes. El JSON esperado sigue
                siendo 140-220 palabras, pero elimina el escenario "consumió
-               todos los tokens pensando sin emitir el JSON". */
-            var MAX_TOKENS = 3500;
+               todos los tokens pensando sin emitir el JSON".
+               [p227] 3500→6000 · en p226 la IA empezó a emitir verdicts +
+               insights más detallados con las nuevas reglas de estímulo/CV/
+               HR creep · varios se estaban cortando a mitad de frase por
+               tope de tokens. 6000 da colchón amplio sin coste práctico. */
+            var MAX_TOKENS = 6000;
+            /* [p227] Fallback si el primer intento se corta por stop_reason=
+               max_tokens · el retry se dispara con este tope mayor. */
+            var MAX_TOKENS_RETRY = 10000;
 
             /* ═════ Helpers privados ═════ */
 
@@ -87664,6 +87671,13 @@ window.addEventListener('DOMContentLoaded', function() {
                     '- El "grade" numérico ya viene precomputado — puedes usarlo pero céntrate en explicar el porqué.\n' +
                     '- Adapta el foco según sessionType: la sección FOCO te lo indica.\n' +
                     '- Longitud total (title+verdict+3 insights+recommendation): 140-220 palabras.\n' +
+                    '- PRESUPUESTO POR CAMPO (crítico · no te pases o el JSON se corta):\n' +
+                        '    · title: ≤ 12 palabras.\n' +
+                        '    · verdict: 2-3 frases, ~40-60 palabras. Directo, sin retórica.\n' +
+                        '    · insights[].text: 1-2 frases por insight, ≤ 35 palabras cada uno.\n' +
+                        '    · recommendation: 1-2 frases, ≤ 30 palabras.\n' +
+                        '  Si necesitas más matices, resume · el ancho de banda es limitado. ' +
+                        'Verdicts demasiado largos truncan el JSON y todo se pierde.\n' +
                     '- ZONAS FC: las que veas ya vienen calculadas con el UMBRAL cardíaco LT del runner ' +
                         '(estándar COROS). Cada zona incluye su rango bpm exacto. Usa los NOMBRES REALES ' +
                         '(Resistencia Aeróbica, Potencia Aeróbica, Umbral, VO2max), NO digas "Z2/Z3" a secas.\n' +
@@ -88453,8 +88467,11 @@ window.addEventListener('DOMContentLoaded', function() {
                      { ok, contentJson?, narrativeText?, error?, retriable?, streamResult?, httpStatus? }
                    Encapsula fetch + SSE + extractJson para poder reintentar
                    1 vez ante fallos transitorios (stream vacío por overload,
-                   JSON roto irrecuperable). */
-                async function _attemptGeneration(){
+                   JSON roto irrecuperable).
+                   [p227] Acepta override opcional de max_tokens · si el primer
+                   intento se cortó por max_tokens, el retry usa un valor mayor. */
+                async function _attemptGeneration(overrideMaxTokens){
+                    var thisMaxTokens = overrideMaxTokens || MAX_TOKENS;
                     var ctrl = new AbortController();
                     var toId = setTimeout(function(){ ctrl.abort(); }, API_TIMEOUT_MS);
                     var r;
@@ -88469,7 +88486,7 @@ window.addEventListener('DOMContentLoaded', function() {
                             },
                             body: JSON.stringify({
                                 model:      apiModel,
-                                max_tokens: MAX_TOKENS,
+                                max_tokens: thisMaxTokens,
                                 stream:     true,
                                 system:     systemPrompt,
                                 messages:   [{ role:'user', content: userPrompt }]
@@ -88544,11 +88561,18 @@ window.addEventListener('DOMContentLoaded', function() {
                     var cJ = _extractJson(nT);
                     if (!cJ || !cJ.title || !cJ.verdict || !Array.isArray(cJ.insights) || !cJ.recommendation) {
                         /* JSON roto o incompleto · retriable (siguiente intento puede
-                           salir bien si el modelo emite notación correcta). */
-                        try { console.warn('[MR][mister-ia] JSON parse fail · raw 300 chars:', nT.slice(0,300)); } catch(_){}
+                           salir bien si el modelo emite notación correcta).
+                           [p227] Incluir stop_reason + usage · si el corte fue por
+                           max_tokens el UI lo indica y el retry usará MAX_TOKENS_RETRY. */
+                        var diagBitsJ = [];
+                        if (sR.stopReason) diagBitsJ.push('stop_reason=' + sR.stopReason);
+                        if (sR.usage && sR.usage.output_tokens != null) diagBitsJ.push('out=' + sR.usage.output_tokens + 'tk');
+                        diagBitsJ.push('max_tokens=' + thisMaxTokens);
+                        var diagJ = ' · ' + diagBitsJ.join(' · ');
+                        try { console.warn('[MR][mister-ia] JSON parse fail' + diagJ + ' · raw 300 chars:', nT.slice(0,300)); } catch(_){}
                         return {
                             ok:false,
-                            error:'Respuesta IA no cumple formato JSON esperado. Raw (300 primeros chars): ' + nT.slice(0, 300),
+                            error:'Respuesta IA no cumple formato JSON esperado' + diagJ + '. Raw (300 primeros chars): ' + nT.slice(0, 300),
                             retriable:true,
                             narrativeText:nT,
                             streamResult:sR
@@ -88558,14 +88582,23 @@ window.addEventListener('DOMContentLoaded', function() {
                     return { ok:true, contentJson:cJ, narrativeText:nT, streamResult:sR };
                 }
 
-                /* 8-10 · Ejecutar con hasta 1 retry ante fallos transitorios */
+                /* 8-10 · Ejecutar con hasta 1 retry ante fallos transitorios
+                   [p227] Si el primer intento se cortó por max_tokens (verdict
+                   detallado que superó 6000 tk), el retry usa MAX_TOKENS_RETRY
+                   (10000). Elimina el bucle infinito de retries idénticos que
+                   fallaban por la misma razón. */
                 var attempt = await _attemptGeneration();
                 var retried = false;
                 if (!attempt.ok && attempt.retriable) {
                     retried = true;
-                    try { console.log('[MR][mister-ia] retry · motivo: ' + attempt.error); } catch(_){}
+                    var wasMaxTokens = attempt.streamResult && attempt.streamResult.stopReason === 'max_tokens';
+                    var retryMax = wasMaxTokens ? MAX_TOKENS_RETRY : null;
+                    try {
+                        console.log('[MR][mister-ia] retry · motivo: ' + attempt.error +
+                                    (wasMaxTokens ? ' · retry con max_tokens=' + MAX_TOKENS_RETRY : ''));
+                    } catch(_){}
                     await new Promise(function(res){ setTimeout(res, 800); });
-                    attempt = await _attemptGeneration();
+                    attempt = await _attemptGeneration(retryMax);
                 }
                 if (!attempt.ok) {
                     var finalErr = attempt.error + (retried ? ' (tras 1 reintento)' : '');
