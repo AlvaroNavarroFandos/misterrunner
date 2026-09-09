@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p225"/>
+    <meta name="mr-version" content="v2.30.1-p226"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p225';
+            window.__MR_VERSION = 'v2.30.1-p226';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -77953,7 +77953,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p225';
+        window.__mrCorosVersion = 'v2.30.1-p226';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86078,12 +86078,30 @@ window.addEventListener('DOMContentLoaded', function() {
                 DRIFT_EXCELLENT_PCT: 3.5,        /* Joe Friel */
                 DRIFT_GOOD_PCT: 5,
                 DRIFT_WARN_PCT: 8,
-                CONSISTENCY_ELITE_CV: 3,         /* % CV pace */
+                /* [p226] CV pace consistency · umbrales GLOBALES (easy/long/race) */
+                CONSISTENCY_ELITE_CV: 3,
                 CONSISTENCY_GOOD_CV: 6,
                 CONSISTENCY_VAR_CV: 10,
+                /* [p226] CV pace · umbrales WORK_BLOCKS (series/fartlek/threshold/tempo)
+                   MÁS GENEROSOS: intervals reales tienen variación natural del
+                   4-10% que NO significa mala ejecución. Antes 8x400 con CV
+                   9.4% caía en "variable" y penalizaba — ahora "consistente". */
+                CONSISTENCY_ELITE_CV_WB: 4,
+                CONSISTENCY_GOOD_CV_WB: 8,
+                CONSISTENCY_VAR_CV_WB: 12,
                 BLOCK_PACE_TOLERANCE_SEC: 15,    /* ±s/km respecto target */
-                FATIGUE_HR_CREEP_PCT: 3,         /* HR último tercio vs primero */
-                FATIGUE_PACE_FADE_PCT: 4,        /* pace fade último tercio */
+                /* [p226] Umbrales fatiga globales SUBIDOS · 3%/4% era ridículo
+                   (cualquier easy disparaba hr_creep). Ahora requiere señal
+                   real de fatiga. */
+                FATIGUE_HR_CREEP_PCT: 10,        /* HR último tercio vs primero */
+                FATIGUE_PACE_FADE_PCT: 7,        /* pace fade último tercio */
+                /* [p226] Umbrales fatiga WORK_BLOCKS más altos aún · en 8x400
+                   Z4-Z5 subir 8-12% FC entre primera y última rep es RESPUESTA
+                   CARDIACA NORMAL, no fatiga patológica. Solo alerta con creep
+                   real. Idem pace fade — las últimas repes se cansan un poco
+                   naturalmente. */
+                FATIGUE_HR_CREEP_PCT_WB: 15,
+                FATIGUE_PACE_FADE_PCT_WB: 8,
                 BAL_LR_GREEN: 1,                 /* ±1% óptimo */
                 BAL_LR_YELLOW: 3,                /* ±3% aceptable */
                 CADENCE_LOW: 165,                /* spm bajo */
@@ -86425,10 +86443,14 @@ window.addEventListener('DOMContentLoaded', function() {
                         var sdW = _std(workPaces, mW);
                         if (mW && sdW != null) {
                             var cvW = _round(sdW/mW * 100, 1);
+                            /* [p226] Umbrales work_blocks GENEROSOS · un CV 9.4%
+                               en 8x400 antes salía "variable" (dañino en veredicto),
+                               ahora sale "consistente". Refleja realidad del
+                               interval training. */
                             var labelW;
-                            if (cvW < THR.CONSISTENCY_ELITE_CV) labelW = 'metronómico';
-                            else if (cvW < THR.CONSISTENCY_GOOD_CV) labelW = 'consistente';
-                            else if (cvW < THR.CONSISTENCY_VAR_CV) labelW = 'variable';
+                            if (cvW < THR.CONSISTENCY_ELITE_CV_WB) labelW = 'metronómico';
+                            else if (cvW < THR.CONSISTENCY_GOOD_CV_WB) labelW = 'consistente';
+                            else if (cvW < THR.CONSISTENCY_VAR_CV_WB) labelW = 'variable';
                             else labelW = 'caótico';
                             return {
                                 cvPct: cvW,
@@ -86438,7 +86460,7 @@ window.addEventListener('DOMContentLoaded', function() {
                                 stdPaceSecPerKm: _round(sdW, 1),
                                 mode: 'work_blocks',
                                 targetPaceSec: targetPaceSec,
-                                note: 'CV entre repes de trabajo (recuperaciones excluidas)'
+                                note: 'CV entre repes de trabajo (recuperaciones excluidas) · umbrales adaptados a interval training'
                             };
                         }
                     }
@@ -86894,17 +86916,22 @@ window.addEventListener('DOMContentLoaded', function() {
                         didWorkMode = true;
                         var firstW = works[0];
                         var lastW  = works[works.length - 1];
-                        /* HR creep entre primer y último work */
+                        /* [p226] Umbrales work_blocks GENEROSOS · 8x400 Z4-Z5
+                           donde la FC sube 8-12% entre primera y última rep NO
+                           es fatiga, es respuesta cardiaca esperada. Solo alerta
+                           con creep real >15%. Idem pace fade — las últimas
+                           repes se cansan un poco naturalmente, no penalizar
+                           por debajo de 8%. */
                         if (firstW.hr && lastW.hr) {
                             var hrCreepW = _round((lastW.hr - firstW.hr) / firstW.hr * 100, 1);
-                            if (hrCreepW >= THR.FATIGUE_HR_CREEP_PCT) {
-                                signals.push({ kind: 'hr_creep', pct: hrCreepW, msg: 'FC sube ' + hrCreepW + '% entre primera y última rep de trabajo' });
+                            if (hrCreepW >= THR.FATIGUE_HR_CREEP_PCT_WB) {
+                                signals.push({ kind: 'hr_creep', pct: hrCreepW, msg: 'FC sube ' + hrCreepW + '% entre primera y última rep de trabajo (>15% es alerta real)' });
                             }
                         }
                         /* Pace fade entre primer y último work (positivo = ritmo más lento) */
                         var paceFadeW = _round((lastW.paceS - firstW.paceS) / firstW.paceS * 100, 1);
-                        if (paceFadeW >= THR.FATIGUE_PACE_FADE_PCT) {
-                            signals.push({ kind: 'pace_fade', pct: paceFadeW, msg: 'Ritmo cae ' + paceFadeW + '% entre primera y última rep de trabajo' });
+                        if (paceFadeW >= THR.FATIGUE_PACE_FADE_PCT_WB) {
+                            signals.push({ kind: 'pace_fade', pct: paceFadeW, msg: 'Ritmo cae ' + paceFadeW + '% entre primera y última rep de trabajo (>8% alerta)' });
                         }
                     }
                 }
@@ -87062,6 +87089,57 @@ window.addEventListener('DOMContentLoaded', function() {
                 }
 
                 score = Math.max(0, Math.min(100, Math.round(score)));
+
+                /* [p226] FLOOR de estímulo cumplido para sesiones por bloques.
+                   Si el atleta llegó al target (o más rápido) en TODAS las
+                   repes de trabajo, la sesión CUMPLIÓ SU FUNCIÓN y no puede
+                   quedar en C 60/100 aunque haya matices menores (algo de
+                   creep, CV moderado, biomec regular). Esos matices salen en
+                   el veredicto de la IA como "algo a mejorar", no bajan el
+                   grade principal.
+
+                   Reglas:
+                   - stimulusMetPct 100% + compliancePct ≥90%: mínimo 88 → A
+                     (todas las repes al target o cercanas, ejecución sobresaliente)
+                   - stimulusMetPct 100% + compliancePct <90%: mínimo 78 → B
+                     (todas cumplieron estímulo, pero con más rangos por control)
+                   - stimulusMetPct ≥80% + tooSlowCount 0: mínimo 68 → C+
+                     (mayoría cumplió estímulo, sin fallos de "no llegar")
+                   
+                   Excepción: si tooSlowCount > 0 el floor NO aplica (hubo
+                   repes que no llegaron al target = fallo real). */
+                var isBlockSess226 = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek');
+                if (isBlockSess226 && metrics.blockCompliance && metrics.blockCompliance.blocksAnalyzed > 0) {
+                    var bc226 = metrics.blockCompliance;
+                    var noSlowFails = (bc226.tooSlowCount === 0);
+                    var stim = bc226.stimulusMetPct;
+                    var strict = bc226.compliancePct;
+                    if (stim === 100 && noSlowFails) {
+                        var floor226;
+                        if (strict >= 90)      floor226 = 88; /* A por defecto */
+                        else                    floor226 = 78; /* B por defecto */
+                        if (score < floor226) {
+                            factors.push({
+                                label: 'Floor estímulo perfecto',
+                                value: 'estímulo 100% + control ' + strict + '%',
+                                weight: null,
+                                delta: (floor226 - score)
+                            });
+                            score = floor226;
+                        }
+                    } else if (stim >= 80 && noSlowFails) {
+                        if (score < 68) {
+                            factors.push({
+                                label: 'Floor estímulo alto',
+                                value: 'estímulo ' + stim + '% sin repes cortas',
+                                weight: null,
+                                delta: (68 - score)
+                            });
+                            score = 68;
+                        }
+                    }
+                }
+
                 var grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
                 var label = grade==='A' ? 'Excelente' : grade==='B' ? 'Sólido' : grade==='C' ? 'Aceptable' : grade==='D' ? 'Mejorable' : 'Mal ejecutado';
                 return { score: score, grade: grade, label: label, factors: factors };
@@ -87643,6 +87721,29 @@ window.addEventListener('DOMContentLoaded', function() {
                         'recuperaciones fueron "cambiantes", la sesión ES BUENA. NO inventes un veredicto ' +
                         'negativo tipo "recuperaciones que se disparan" · esto es tratar como fallo algo ' +
                         'que el plan explícitamente deja libre.\n' +
+                    '- RESPUESTA CARDIACA ESPERADA EN SESIONES POR BLOQUES (crítico): en series, ' +
+                        'fartlek, threshold y tempo la FC SUBE progresivamente entre las primeras y ' +
+                        'últimas repes — es respuesta fisiológica NORMAL a esfuerzo Z4-Z5 acumulado, ' +
+                        'NO fatiga patológica. Reglas:\n' +
+                        '    · HR creep 5-15% entre primera y última rep: NORMAL. NO citarlo como ' +
+                        'problema, NO usarlo para bajar el grade. En 8×400 a Z4 subir de 150 a 162 bpm ' +
+                        '(+8%) es LO ESPERABLE de un atleta que empuja.\n' +
+                        '    · HR creep >15%: alerta real, sí citarlo.\n' +
+                        '    · Pace fade 3-8% entre repes: NORMAL (las últimas se cansan un poco). NO ' +
+                        'penalizar. Solo alerta con fade >8%.\n' +
+                        '    · Si "Señales de fatiga" viene con severity mild y modo work_blocks, ' +
+                        'MENCIONA el creep/fade como "esfuerzo cumplido con margen para pulir el ritmo" ' +
+                        'a modo de nota constructiva, NUNCA como fallo grave. La única fatiga real en ' +
+                        'series es que las últimas repes se queden CORTAS del target (too_slow) o que ' +
+                        'aparezcan varios síntomas juntos (severity moderate+).\n' +
+                    '- SUELO DE NOTA EN SESIONES POR BLOQUES (crítico · alinea con el grade computado): ' +
+                        'si "Estímulo cumplido" viene 100% Y ninguna rep quedó [too_slow], la sesión ' +
+                        'CUMPLIÓ SU FUNCIÓN. En ese caso el veredicto MÍNIMO es "Sólido" (B) y con ' +
+                        'control estricto ≥90% es "Excelente" (A) con notas menores. NUNCA des grade C ' +
+                        'o D en esta situación aunque haya CV moderado, creep esperado o algún matiz ' +
+                        'biomecánico. Los matices se citan como "algo a pulir para la próxima" en ' +
+                        'insights o recomendación, no bajan el grade principal. El "grade precomputado" ' +
+                        'que recibes ya aplica este floor — respétalo salvo error evidente.\n' +
                     '- CV EN SESIONES POR BLOQUES: si "Consistencia ritmo" viene con modo "work_blocks", ' +
                         'ese CV mide variabilidad ENTRE REPES DE TRABAJO (bueno para juzgar constancia ' +
                         'de las series). Si viene modo "laps" con "⚠️ NO fiable", NO lo cites como si ' +
