@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p223"/>
+    <meta name="mr-version" content="v2.30.1-p224"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p223';
+            window.__MR_VERSION = 'v2.30.1-p224';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -38799,7 +38799,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //  - Outfit completo sin marco
             //  - Icono cámara dorado si hay foto
             sliding.innerHTML = `
-                <div class="mr-lib-card-inner" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">
+                <div class="mr-lib-card-inner" data-db-activity-id="${act && act._dbActivityId ? String(act._dbActivityId) : ''}" style="display:flex;height:120px;border-radius:12px;overflow:hidden;position:relative;">
                     <!-- ░░░ [Light Apple · Bib Layout] COLUMNA IZQUIERDA: OUTFIT centrado real ░░░
                          justify-content:center en padre + hijo sin flex:1 → el height:100% del
                          wrapper interno de buildOutfitFull colapsa a auto → outfit centrado vertical. -->
@@ -77963,7 +77963,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p223';
+        window.__mrCorosVersion = 'v2.30.1-p224';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -88652,15 +88652,21 @@ window.addEventListener('DOMContentLoaded', function() {
                             .select('activity_id')
                             .eq('user_id', uid)
                             .eq('status', 'ready');
-                        if (r.error || !Array.isArray(r.data)) return new Set();
+                        if (r.error) {
+                            try { console.warn('[MR][p224] IA prefetch error:', r.error.message); } catch(_){}
+                            return new Set();
+                        }
+                        if (!Array.isArray(r.data)) return new Set();
                         var s = new Set();
                         for (var i=0;i<r.data.length;i++){
                             var aid = r.data[i] && r.data[i].activity_id;
                             if (aid != null) s.add(String(aid));
                         }
                         window._mrIaSet = s;
+                        try { console.log('[MR][p224] IA prefetch OK · ' + s.size + ' actividades con report ready'); } catch(_){}
                         return s;
-                    } catch(_){
+                    } catch(err){
+                        try { console.warn('[MR][p224] IA prefetch exception:', err && err.message); } catch(_){}
                         return new Set();
                     }
                 })();
@@ -88670,35 +88676,36 @@ window.addEventListener('DOMContentLoaded', function() {
 
             /* [p223] Repinta los badges rayo IA en las cards de biblioteca ya
                renderizadas. Se llama cuando el prefetch resuelve TRAS el primer
-               render (cards ya en DOM sin badge → hay que añadirlo ahora). */
+               render (cards ya en DOM sin badge → hay que añadirlo ahora).
+               [p224] FIX · antes usaba window.activities que NO existe (la
+               variable global es 'let activities' en scope de script). Ahora
+               busca directamente por el atributo data-db-activity-id que se
+               inyecta en cada .mr-lib-card-inner al renderizar. Sin lookups
+               externos, sin dependencia de globales. */
             window._mrPaintLibIaBadges = function(){
-                if (!window._mrIaSet || !window._mrIaSet.size) return;
+                if (!window._mrIaSet || !window._mrIaSet.size) return 0;
+                var added = 0;
                 try {
-                    var list = document.getElementById('activities-list');
-                    if (!list) return;
-                    var wraps = list.querySelectorAll('.act-swipe-wrap[data-act-id]');
-                    for (var i=0;i<wraps.length;i++){
-                        var wrap = wraps[i];
-                        var innerCard = wrap.querySelector('.mr-lib-card-inner');
-                        if (!innerCard) continue;
+                    /* Buscar en toda la app · cubre biblioteca (#activities-list)
+                       Y cualquier otra vista futura que use la clase. */
+                    var inners = document.querySelectorAll('.mr-lib-card-inner[data-db-activity-id]');
+                    for (var i=0;i<inners.length;i++){
+                        var inner = inners[i];
+                        var aid = inner.getAttribute('data-db-activity-id');
+                        if (!aid) continue;
+                        if (!window._mrIaSet.has(String(aid))) continue;
                         /* Ya tiene badge → skip */
-                        if (innerCard.querySelector('.mr-lib-ia-badge')) continue;
-                        /* Resolver activity real y su _dbActivityId */
-                        var actId = wrap.getAttribute('data-act-id');
-                        if (!actId || !Array.isArray(window.activities)) continue;
-                        var act = null;
-                        for (var j=0;j<window.activities.length;j++){
-                            if (String(window.activities[j].id) === String(actId)) { act = window.activities[j]; break; }
-                        }
-                        if (!act || !act._dbActivityId) continue;
-                        if (!window._mrIaSet.has(String(act._dbActivityId))) continue;
+                        if (inner.querySelector('.mr-lib-ia-badge')) continue;
                         var badge = document.createElement('div');
                         badge.className = 'mr-lib-ia-badge';
                         badge.setAttribute('aria-label', 'Con evaluación IA');
                         badge.innerHTML = '<svg viewBox="0 0 24 24"><path d="M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z"/></svg>';
-                        innerCard.appendChild(badge);
+                        inner.appendChild(badge);
+                        added++;
                     }
                 } catch(_){}
+                try { console.log('[MR][p224] _mrPaintLibIaBadges · Set size=' + window._mrIaSet.size + ' · badges añadidos=' + added); } catch(_){}
+                return added;
             };
 
             /* Exponer prompts para debugging desde consola */
