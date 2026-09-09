@@ -19,7 +19,7 @@
          · console.log gigante al arrancar (window load)
          · window.__MR_VERSION en la consola JS
          · Chip de versión abajo del sheet Settings (footer) -->
-    <meta name="mr-version" content="v2.30.1-p221"/>
+    <meta name="mr-version" content="v2.30.1-p222"/>
     <meta name="mr-build" content="2026-09-07T20:00:00Z"/>
 
     <!-- Manifest inyectado por JS en DOMContentLoaded (ver bloque PWA BOOTSTRAP) -->
@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p221';
+            window.__MR_VERSION = 'v2.30.1-p222';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -626,7 +626,10 @@
     .mr-rec .rw{
         background:var(--card);
         border:1.5px solid rgba(0,0,0,.14);
-        border-radius:16px;padding:12px 14px;
+        /* [p222] padding-top 12→5 y padding-bottom 12→10 · compacta la card
+           por arriba y por abajo eliminando espacio blanco (Álvaro). El
+           "aire" que había arriba lo pasa el .rec-hdr a margin-top:7px. */
+        border-radius:16px;padding:5px 14px 10px;
         box-shadow:0 10px 28px rgba(93,97,104,.24),0 3px 8px rgba(0,0,0,.14);
         cursor:pointer;transition:transform .09s ease-out;
         position:relative;overflow:hidden;
@@ -637,11 +640,13 @@
     }
     .mr-rec .rw.mr-rec-pressing{transform:scale(.98);}
     /* [v2.30.1-p198] Layout: título arriba · fila [% · batería 20 celdas · h.restantes]
-       · altura original 20px · celdas granulares con radius 1.5px. */
+       · altura original 20px · celdas granulares con radius 1.5px.
+       [p222] margin-top 7px · baja "Recovery" 7px respecto al nuevo borde
+       superior compactado. */
     .mr-rec .rec-hdr{
         font-size:9.5px;font-weight:800;color:var(--ts);
         letter-spacing:1.4px;text-transform:uppercase;
-        margin-bottom:9px;line-height:1;
+        margin-top:7px;margin-bottom:9px;line-height:1;
     }
     .mr-rec .rec-row{display:flex;align-items:center;gap:12px;}
     .mr-rec .rec-big-pct{
@@ -9128,16 +9133,32 @@
             display: flex; align-items: center; gap: 16px;
             position: relative; z-index: 2;
         }
-        /* [p221] Burbuja Card 4 (--mi-size 62px): elevar la gorra sobre las
-           auroras/pulsos morados para que no la eclipsen visualmente. Solo
-           afecta a la burbuja pequeña del header IA · la burbuja grande del
-           sheet analizando (140px) queda intacta. Sin cambiar tamaños. */
+        /* [p222] Burbuja Card 4 · fix gorra "comida por la burbuja".
+           Diagnóstico: en 62px el CSS proporcional del .mi-bubble deja el
+           ring-inner con background:transparent, y las auroras rotan
+           ópticamente por delante de la gorra aunque el z-index diga que
+           NO. Fix: dar al ring-inner un fondo cristalino SÓLIDO (blanco
+           translúcido / oscuro translúcido) que corta las auroras detrás
+           y hace de "cara" donde reposa la gorra — igual que en el sheet
+           analizando 140px que sí se ve bien (el mayor blur del pulse-1
+           en tamaño grande difumina lo suficiente para no invadir la
+           gorra). Además drop-shadow más fuerte al icono para pop. */
         .mr-ia-c4-hdr .mi-bubble__icon-wrap {
             z-index: 10;
         }
+        .mr-ia-c4-hdr .mi-bubble__ring-inner {
+            background: rgba(255,255,255,.92);
+        }
+        body.dark-mode .mr-ia-c4-hdr .mi-bubble__ring-inner {
+            background: rgba(22,17,34,.90);
+        }
         .mr-ia-c4-hdr .mi-bubble__icon {
-            filter: drop-shadow(0 1.5px 3px rgba(0,0,0,.42))
-                    drop-shadow(0 0 1px rgba(0,0,0,.35));
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,.30))
+                    drop-shadow(0 0 1px rgba(0,0,0,.25));
+        }
+        body.dark-mode .mr-ia-c4-hdr .mi-bubble__icon {
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,.55))
+                    drop-shadow(0 0 1px rgba(0,0,0,.40));
         }
         .mr-ia-c4-hdr__txt { flex: 1; min-width: 0; }
         .mr-ia-c4-hdr__title {
@@ -77883,7 +77904,7 @@ window.addEventListener('DOMContentLoaded', function() {
     (function initMrCorosPaso12(){
         'use strict';
         // ─── Version marker ────────────────────────────────────────────
-        window.__mrCorosVersion = 'v2.30.1-p221';
+        window.__mrCorosVersion = 'v2.30.1-p222';
 
         // ─── MD5 vanilla RFC 1321 (Joseph Myers implementation) ────────
         // Uso: window.__mrMd5('mi_password') → '5f4dcc3b5aa765d61d8327deb882cf99'
@@ -86789,27 +86810,79 @@ window.addEventListener('DOMContentLoaded', function() {
             }
 
             /* ═══════════════════════════════════════════════════════════════
-               10 · fatigueSignals(act) — desfallecimiento último tercio
-               ═══════════════════════════════════════════════════════════════ */
-            function fatigueSignals(act){
-                var t = thirds(act);
-                if (!t) return null;
+               10 · fatigueSignals(act, opts) — desfallecimiento último tercio
+               ═══════════════════════════════════════════════════════════════
+               [p222] opts.sessionType + opts.targetPaceSec: en sesiones por
+               bloques (series/fartlek/threshold/tempo) comparar work-blocks
+               (primer trabajo vs último trabajo) en vez de tercios de la
+               sesión. Antes: las recuperaciones largas del último tercio
+               arrastraban el "ritmo medio" y disparaban falsos pace_fade. */
+            function fatigueSignals(act, opts){
+                opts = opts || {};
+                var st = opts.sessionType || null;
+                var isBlockSess = (st==='series'||st==='fartlek'||st==='threshold'||st==='tempo');
+                var target = _num(opts.targetPaceSec);
                 var signals = [];
 
-                /* HR creep: subida FC último tercio vs primero */
-                if (t.first.avgHr && t.last.avgHr) {
-                    var hrCreepPct = _round((t.last.avgHr - t.first.avgHr) / t.first.avgHr * 100, 1);
-                    if (hrCreepPct >= THR.FATIGUE_HR_CREEP_PCT) {
-                        signals.push({ kind: 'hr_creep', pct: hrCreepPct, msg: 'FC sube ' + hrCreepPct + '% en último tercio' });
+                /* [p222] Modo work-blocks: solo si es bloques + hay target
+                   + csvBlocks con ≥2 work blocks identificables. */
+                var didWorkMode = false;
+                if (isBlockSess && target && _arr(act.csvBlocks).length >= 4) {
+                    var csv = _arr(act.csvBlocks);
+                    var WW = 90; /* s/km · misma ventana que blockCompliance */
+                    var works = [];
+                    for (var i=0;i<csv.length;i++){
+                        var b = csv[i];
+                        if (!b) continue;
+                        var bp = b.avgPaceS || b.paceS || null;
+                        if (!bp || bp < 60 || bp > 900) continue;
+                        if (Math.abs(bp - target) <= WW) works.push({
+                            paceS: bp,
+                            hr:    (b.avgHr != null && b.avgHr > 0) ? b.avgHr : null
+                        });
+                    }
+                    if (works.length >= 2) {
+                        didWorkMode = true;
+                        var firstW = works[0];
+                        var lastW  = works[works.length - 1];
+                        /* HR creep entre primer y último work */
+                        if (firstW.hr && lastW.hr) {
+                            var hrCreepW = _round((lastW.hr - firstW.hr) / firstW.hr * 100, 1);
+                            if (hrCreepW >= THR.FATIGUE_HR_CREEP_PCT) {
+                                signals.push({ kind: 'hr_creep', pct: hrCreepW, msg: 'FC sube ' + hrCreepW + '% entre primera y última rep de trabajo' });
+                            }
+                        }
+                        /* Pace fade entre primer y último work (positivo = ritmo más lento) */
+                        var paceFadeW = _round((lastW.paceS - firstW.paceS) / firstW.paceS * 100, 1);
+                        if (paceFadeW >= THR.FATIGUE_PACE_FADE_PCT) {
+                            signals.push({ kind: 'pace_fade', pct: paceFadeW, msg: 'Ritmo cae ' + paceFadeW + '% entre primera y última rep de trabajo' });
+                        }
                     }
                 }
 
-                /* Pace fade: pérdida de ritmo último tercio */
-                if (t.fadePct != null && t.fadePct >= THR.FATIGUE_PACE_FADE_PCT) {
-                    signals.push({ kind: 'pace_fade', pct: t.fadePct, msg: 'Ritmo cae ' + t.fadePct + '% en último tercio' });
+                /* Modo clásico (fallback si no es bloques o no hay work-blocks
+                   identificables): usa thirds sobre la sesión completa. */
+                if (!didWorkMode) {
+                    var t = thirds(act);
+                    if (!t) return null;
+
+                    /* HR creep: subida FC último tercio vs primero */
+                    if (t.first.avgHr && t.last.avgHr) {
+                        var hrCreepPct = _round((t.last.avgHr - t.first.avgHr) / t.first.avgHr * 100, 1);
+                        if (hrCreepPct >= THR.FATIGUE_HR_CREEP_PCT) {
+                            signals.push({ kind: 'hr_creep', pct: hrCreepPct, msg: 'FC sube ' + hrCreepPct + '% en último tercio' });
+                        }
+                    }
+
+                    /* Pace fade: pérdida de ritmo último tercio */
+                    if (t.fadePct != null && t.fadePct >= THR.FATIGUE_PACE_FADE_PCT) {
+                        signals.push({ kind: 'pace_fade', pct: t.fadePct, msg: 'Ritmo cae ' + t.fadePct + '% en último tercio' });
+                    }
                 }
 
-                /* Cadence drop en último tercio (si tenemos series) */
+                /* Cadence drop en último tercio (si tenemos series) — se
+                   mantiene igual porque la cadencia no baja "por recuperaciones",
+                   baja por fatiga muscular real. */
                 var cadSer = _arr(act.cadSeries);
                 if (cadSer.length >= 60) {
                     var third = Math.floor(cadSer.length/3);
@@ -86829,7 +86902,12 @@ window.addEventListener('DOMContentLoaded', function() {
                 else if (signals.length === 2) severity = 'moderate';
                 else severity = 'severe';
 
-                return { signals: signals, severity: severity, count: signals.length };
+                return {
+                    signals: signals,
+                    severity: severity,
+                    count: signals.length,
+                    mode: didWorkMode ? 'work_blocks' : 'thirds'
+                };
             }
 
             /* ═══════════════════════════════════════════════════════════════
@@ -87187,7 +87265,7 @@ window.addEventListener('DOMContentLoaded', function() {
                     paceVsPlan:       paceVsPlanExcess(act, planCtx.plannedSession, _zoneDistLocal, sessionType),
                     blockCompliance:  planCtx.plannedSession ? blockCompliance(act, planCtx.plannedSession) : null,
                     biomech:          biomechAnalysis(act),
-                    fatigueSignals:   fatigueSignals(act)
+                    fatigueSignals:   fatigueSignals(act, { sessionType: sessionType, targetPaceSec: _targetPaceSec })
                 };
                 var grade = computeGrade(m, sessionType);
 
@@ -87380,13 +87458,13 @@ window.addEventListener('DOMContentLoaded', function() {
                 },
                 series: {
                     priority: 'stimulus_met + block_compliance + consistencia entre repes',
-                    watch:    'llegar al ritmo objetivo (o superarlo) en cada rep · pasarse rápido cuenta como estímulo cumplido · quedarse corto es fallo real',
-                    grade:    'A = todas las repes al ritmo target o más rápidas + repes consistentes entre sí. Ir un poco más rápido del target NO es fallo grave; quedarse corto SÍ.'
+                    watch:    'llegar al ritmo objetivo (o superarlo) en cada rep · recuperaciones son LIBRES (no juzgar su ritmo/distancia) · pasarse rápido cuenta como estímulo cumplido · quedarse corto es fallo real',
+                    grade:    'A = todas las repes al ritmo target o más rápidas + repes consistentes entre sí. Ir un poco más rápido del target NO es fallo grave; quedarse corto SÍ. Las recuperaciones NO cuentan.'
                 },
                 threshold: {
                     priority: 'stimulus_met + block_compliance + zone_adherence Z4',
-                    watch:    'llegar al ritmo umbral (o algo más rápido) + sostener FC en Z4 sin subir a Z5',
-                    grade:    'A = ritmo objetivo cumplido o superado ligeramente + FC Z4 sostenida. Pasarse un poco rápido cuenta como cumplido; quedarse lento es fallo.'
+                    watch:    'llegar al ritmo umbral (o algo más rápido) + sostener FC en Z4 sin subir a Z5 · recuperaciones son LIBRES',
+                    grade:    'A = ritmo objetivo cumplido o superado ligeramente + FC Z4 sostenida. Pasarse un poco rápido cuenta como cumplido; quedarse lento es fallo. Las recuperaciones NO cuentan.'
                 },
                 tempo: {
                     priority: 'stimulus_met + block_compliance + fc_drift bajo en el bloque tempo',
@@ -87394,9 +87472,9 @@ window.addEventListener('DOMContentLoaded', function() {
                     grade:    'A = ritmo consistente al target o algo más rápido + FC subida controlada. Quedarse lento es fallo del estímulo.'
                 },
                 fartlek: {
-                    priority: 'stimulus_met + block_compliance + recuperación entre bloques rápidos',
-                    watch:    'ejecutar los bloques rápidos al ritmo objetivo (o algo más) y RECUPERAR entre ellos',
-                    grade:    'A = bloques al target o algo más rápidos + FC baja bien en recuperaciones. Pasarse rápido es cumplimiento del estímulo; quedarse corto es fallo.'
+                    priority: 'stimulus_met + block_compliance en bloques rápidos',
+                    watch:    'ejecutar los bloques rápidos al ritmo objetivo (o algo más) · recuperaciones son LIBRES (andar, trotar, correr suave — el corredor decide)',
+                    grade:    'A = bloques al target o algo más rápidos. Pasarse rápido es cumplimiento del estímulo; quedarse corto es fallo. Las recuperaciones NO cuentan para el grade.'
                 },
                 progressive: {
                     priority: 'aceleración progresiva controlada + no descontrol final',
@@ -87502,6 +87580,20 @@ window.addEventListener('DOMContentLoaded', function() {
                         'ESTÍMULO CUMPLIDO sobre TOLERANCIA ESTRICTA al valorar el grade. En un caso ' +
                         'donde todas las repes fueron ≤ target (algunas al ritmo justo, otras más rápidas), ' +
                         'el veredicto correcto es Bueno/Notable con nota sobre control, NO Mejorable.\n' +
+                    '- RECUPERACIONES ENTRE REPES SON LIBRES (crítico · aplica a series/fartlek/threshold): ' +
+                        'el plan NO prescribe ritmo para las recuperaciones — el corredor puede andar, ' +
+                        'trotar, correr suave o incluso pararse. Solo prescribe DURACIÓN. Por tanto:\n' +
+                        '    · NO juzgues las recuperaciones por su ritmo/distancia recorrida. NO uses ' +
+                        '"la distancia recorrida en la recuperación bajó" como razón para bajar el ' +
+                        'veredicto ni para inferir fatiga. Que la rec 3 sea a 6:32 y la rec 5 a 8:08 es ' +
+                        'IRRELEVANTE — pueden ser paso, trote, o parada. El corredor decide.\n' +
+                        '    · Solo cita las recuperaciones si el patrón es DRAMÁTICO (ej. parada total, ' +
+                        'o caída de ritmo >100% que sugiera necesidad de sentarse) Y aún así como ' +
+                        'CONTEXTO informativo, NUNCA como razón para bajar el grade.\n' +
+                        '    · Si el TRABAJO se cumplió (repes al target o más rápidas) y las ' +
+                        'recuperaciones fueron "cambiantes", la sesión ES BUENA. NO inventes un veredicto ' +
+                        'negativo tipo "recuperaciones que se disparan" · esto es tratar como fallo algo ' +
+                        'que el plan explícitamente deja libre.\n' +
                     '- CV EN SESIONES POR BLOQUES: si "Consistencia ritmo" viene con modo "work_blocks", ' +
                         'ese CV mide variabilidad ENTRE REPES DE TRABAJO (bueno para juzgar constancia ' +
                         'de las series). Si viene modo "laps" con "⚠️ NO fiable", NO lo cites como si ' +
@@ -87830,10 +87922,17 @@ window.addEventListener('DOMContentLoaded', function() {
                     out += '\n';
                 }
 
-                /* Fatigue signals */
+                /* Fatigue signals · [p222] muestra modo (work_blocks en series) */
                 if (m.fatigueSignals) {
-                    out += '### Señales de fatiga (último tercio)\n';
-                    out += 'Severidad: ' + m.fatigueSignals.severity + '\n';
+                    var fMode = m.fatigueSignals.mode || 'thirds';
+                    if (fMode === 'work_blocks') {
+                        out += '### Señales de fatiga (comparación entre repes de trabajo)\n';
+                        out += 'Severidad: ' + m.fatigueSignals.severity + '\n';
+                        out += 'Modo: comparación primer work vs último work (recuperaciones EXCLUIDAS)\n';
+                    } else {
+                        out += '### Señales de fatiga (último tercio)\n';
+                        out += 'Severidad: ' + m.fatigueSignals.severity + '\n';
+                    }
                     if (m.fatigueSignals.signals && m.fatigueSignals.signals.length) {
                         m.fatigueSignals.signals.forEach(function(s){
                             out += '- ' + s.msg + '\n';
