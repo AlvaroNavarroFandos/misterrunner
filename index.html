@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p267';
+            window.__MR_VERSION = 'v2.30.1-p268';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -41098,7 +41098,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 elevation: '<svg '+s+'><path d="M1 14 L4.5 8 L7 11 L11 4 L15 14 Z" '+W+'/></svg>',
                 target:    '<svg '+s+'><rect x="1.5" y="4"  width="3" height="8" rx=".5" '+W+'/><rect x="6.5" y="2"  width="3" height="12" rx=".5" '+W+' opacity=".55"/><rect x="11.5" y="6" width="3" height="6" rx=".5" '+W+'/></svg>',
                 splits:    '<svg '+s+'><path d="M2 12.5 L5.5 8 L8.5 10 L14 3.5" '+SW+'/><path d="M11 3.5 H14 V6.5" '+SW+'/></svg>',
-                trophy:    '<svg '+s+'><path d="M4 2 h8 v3 a4 4 0 0 1 -8 0 z M5.5 8 h5 l-.5 4.5 h-4z M4 13 h8 v1.2 h-8z M12 3.5 h1.5 v2 a1.5 1.5 0 0 1 -1.5 1.5 M4 3.5 h-1.5 v2 a1.5 1.5 0 0 0 1.5 1.5" '+W+'/></svg>',
+                trophy:    '<svg '+s+'><path d="M4.5 1.5 L7 6.5 M11.5 1.5 L9 6.5" '+SW+'/><circle cx="8" cy="10.5" r="4" '+W+'/></svg>',
                 pace:      '<svg '+s+'><path d="M2 12.5 L5.5 8 L8.5 10 L14 3.5" '+SW+'/><path d="M10.5 3.5 H14 V7" '+SW+'/></svg>',
                 hr:        '<svg '+s+'><path d="M8 14 C 3 10, 1.5 7, 3 5 C 4.2 3.4, 6.5 3.6, 8 5.5 C 9.5 3.6, 11.8 3.4, 13 5 C 14.5 7, 13 10, 8 14 Z" '+W+'/></svg>'
             };
@@ -41894,9 +41894,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Ritmo section (TOP) ───────────────────────────────────
         // [p266] Card premium con header "Ritmo" + chip "Media X'XX/km" + icono
+        // [p268] flex:1 + flex-direction:column para distribuir altura auto
         var _paceCard = _premiumCardWrap('Ritmo', _premiumIcon('pace'), true, 'Media ' + pace);
+        _paceCard.style.flex = '1 1 0';
+        _paceCard.style.minHeight = '0';
+        _paceCard.style.display = 'flex';
+        _paceCard.style.flexDirection = 'column';
         const pcCanvas = document.createElement('canvas');
-        pcCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;background:var(--det-bg);padding-top:6px;';
+        pcCanvas.style.cssText = 'width:100%;display:block;background:var(--det-bg);flex:1 1 0;min-height:0;';
         pcCanvas.dataset.type = 'pace';
         _paceCard.appendChild(pcCanvas);
         _paceCard.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS_PC));
@@ -41906,8 +41911,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [p266] Card premium con header "FC" + chip "Media X · Máx Y" + icono
         var _fcCard = _premiumCardWrap('Frecuencia Cardíaca', _premiumIcon('hr'), false,
             'Media ' + (act.avgHr||'—') + ' · Máx ' + (act.maxHr||'—'));
+        _fcCard.style.flex = '1 1 0';
+        _fcCard.style.minHeight = '0';
+        _fcCard.style.display = 'flex';
+        _fcCard.style.flexDirection = 'column';
         const hrCanvas = document.createElement('canvas');
-        hrCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;background:var(--det-bg);padding-top:6px;';
+        hrCanvas.style.cssText = 'width:100%;display:block;background:var(--det-bg);flex:1 1 0;min-height:0;';
         hrCanvas.dataset.type = 'hr';
         _fcCard.appendChild(hrCanvas);
         _fcCard.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS_HR));
@@ -41978,25 +41987,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
 
             // Auto-size card 2 charts to fill available space
-            // [p266] Ahora las gráficas viven DENTRO de _paceCard / _fcCard
-            // (2 cards premium con header dorado + canvas + zoneMini cada una).
-            // El cálculo de altura tiene que recorrer los hijos INTERNOS de
-            // cada card para computar fixedH correctamente.
-            // v2.30.1-p17 · c2.offsetHeight incluye padding-top:66 del header
-            // flotante glass que NO está disponible para el flexbox.
-            const c2H = c2.offsetHeight - 66;
-            let fixedH = 6; // padding-top de c2
-            Array.from(c2.children).forEach(function(card){
-                // Sumar todo lo que NO es canvas dentro de cada card premium
-                Array.from(card.children).forEach(function(el){
-                    if (el.tagName !== 'CANVAS') fixedH += el.offsetHeight;
-                });
-                // margin-top de las cards no-first + border (1px×2)
-                fixedH += 2;
-                if (card !== c2.firstElementChild) fixedH += 10;
-            });
-            // Cada chart ocupa la mitad del espacio disponible
-            const chartH = Math.max(80, Math.floor((c2H - fixedH) / 2));
+            // [p268] Con flex:1 en cards y canvas, el layout nativo distribuye
+            // altura equitativamente. Solo hay que MEDIR la altura que flex
+            // asignó al canvas (offsetHeight) y sincronizar el atributo height
+            // interno del canvas para el drawing (píxeles CSS ≠ píxeles canvas).
+            // Fallback conservador si aún no está layouteado.
+            const chartH = Math.max(80, pcCanvas.offsetHeight || 100);
 
             // [Pre-Capacitor TODO-3 · C28] Lazy init de cache memoizado para este act.
             // Hit en reaperturas: no se recrea el array .map(p=>p.v) ni el bucle de paceVals.
