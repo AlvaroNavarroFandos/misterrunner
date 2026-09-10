@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p241';
+            window.__MR_VERSION = 'v2.30.1-p242';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -87273,20 +87273,45 @@ window.addEventListener('DOMContentLoaded', function() {
                     push('Split', metrics.split.type, w, d*w);
                 }
 
-                /* FC drift */
+                /* FC drift
+                   [p242] En series/fartlek cortos el drift es esperable (cada rep
+                   sube FC) y NO es KPI válido. Solo pesa como KPI en aeróbicos
+                   (easy/long/recov) y en tempo/threshold largos donde SÍ es
+                   diagnóstico de si estabas en umbral real. */
                 if (metrics.fcDrift && metrics.fcDrift.interpretation !== 'no_data') {
                     var i = metrics.fcDrift.interpretation;
-                    var dd = i==='excellent' ? 12 : i==='good' ? 6 : i==='warn' ? -8 : -18;
-                    var ww = (sessionType==='easy'||sessionType==='long'||sessionType==='recovery') ? 1.5 : 1;
-                    push('FC drift', i, ww, dd*ww);
+                    var _isShortBlockSess = (sessionType==='series' || sessionType==='fartlek');
+                    if (_isShortBlockSess) {
+                        /* Solo bonus por drift excellent (bien controlado), sin
+                           malus por warn/severe (esperable en repeticiones). */
+                        var ddShort = i==='excellent' ? 6 : i==='good' ? 3 : 0;
+                        push('FC drift (bonus-only en series/fartlek)', i, 1, ddShort);
+                    } else {
+                        var dd = i==='excellent' ? 12 : i==='good' ? 6 : i==='warn' ? -8 : -18;
+                        var ww = (sessionType==='easy'||sessionType==='long'||sessionType==='recovery') ? 1.5 : 1;
+                        push('FC drift', i, ww, dd*ww);
+                    }
                 }
 
-                /* Zone adherence */
+                /* Zone adherence
+                   [p242] En sesiones POR BLOQUES (series/fartlek/tempo/threshold),
+                   la zona FC del ENTRENO COMPLETO NO es KPI válido: incluye
+                   calentamiento, recuperaciones y enfriamiento que necesariamente
+                   están fuera de la zona objetivo del bloque de trabajo. Un
+                   fartlek con solo 4' de trabajo real en Z4 tendrá "1% en Umbral"
+                   y eso es NORMAL. El KPI real es blockCompliance (que analiza
+                   cada bloque de trabajo por separado). Se muestra informativo
+                   con delta 0. */
                 if (metrics.zoneAdherence && metrics.zoneAdherence.verdict !== 'no_data') {
+                    var _isBlockSess242 = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek');
                     var v = metrics.zoneAdherence.verdict;
-                    var dv = v==='excellent' ? 15 : v==='good' ? 8 : v==='partial' ? -5 : -15;
-                    var wv = (sessionType==='easy'||sessionType==='recovery') ? 2.0 : 1;
-                    push('Zone adherence', v, wv, dv*wv);
+                    if (!_isBlockSess242) {
+                        var dv = v==='excellent' ? 15 : v==='good' ? 8 : v==='partial' ? -5 : -15;
+                        var wv = (sessionType==='easy'||sessionType==='recovery') ? 2.0 : 1;
+                        push('Zone adherence', v, wv, dv*wv);
+                    } else {
+                        push('Zone adherence (irrelevante en block sess · KPI es blockCompliance)', v, 0, 0);
+                    }
                 }
 
                 /* [p215] Pace vs Plan · penalizar easy/long/recovery corridos demasiado
@@ -87348,12 +87373,21 @@ window.addEventListener('DOMContentLoaded', function() {
                     push('Consistency', lab, 1, dl);
                 }
 
-                /* Fatigue */
+                /* Fatigue
+                   [p242] En series/fartlek el "desfallecimiento" en el último tercio
+                   suele ser el propio pico del entreno (últimas repes más rápidas o
+                   más FC). Se suaviza para block sessions. */
                 if (metrics.fatigueSignals) {
                     var sev = metrics.fatigueSignals.severity;
-                    var ds = sev==='none' ? 6 : sev==='mild' ? -3 : sev==='moderate' ? -10 : -18;
-                    var ws = (sessionType==='long'||sessionType==='race'||sessionType==='test') ? 1.5 : 1;
-                    push('Fatigue', sev, ws, ds*ws);
+                    var _isShortBlockSessFat = (sessionType==='series' || sessionType==='fartlek');
+                    if (_isShortBlockSessFat) {
+                        var dsShort = sev==='none' ? 3 : sev==='mild' ? 0 : sev==='moderate' ? -3 : -6;
+                        push('Fatigue (suave en series/fartlek)', sev, 1, dsShort);
+                    } else {
+                        var ds = sev==='none' ? 6 : sev==='mild' ? -3 : sev==='moderate' ? -10 : -18;
+                        var ws = (sessionType==='long'||sessionType==='race'||sessionType==='test') ? 1.5 : 1;
+                        push('Fatigue', sev, ws, ds*ws);
+                    }
                 }
 
                 /* Biomechanics — small bonus si todo verde */
@@ -87372,49 +87406,48 @@ window.addEventListener('DOMContentLoaded', function() {
                    sin depender de sessionType (que a veces viene mal detectado desde
                    el plan). Filosofía aprobada por Álvaro: cumplir el estímulo
                    GARANTIZA una nota mínima que no puede caer por métricas secundarias
-                   (drift, consistencia, ritmo medio del entreno). */
+                   (drift, consistencia, ritmo medio del entreno).
+                   [p242] REESCRITO 4ª vez. Diagnóstico D·40 con fartlek 6/6 stim 100%.
+                   Floor movido al FINAL (después del clamp) y con umbrales más
+                   generosos + debug trace visible en factors. */
                 if (metrics.blockCompliance && metrics.blockCompliance.blocksAnalyzed > 0) {
-                    var bc226 = metrics.blockCompliance;
-                    var noSlowFails = ((bc226.tooSlowCount|0) === 0);
-                    var stim = bc226.stimulusMetPct;
-                    var strict = bc226.compliancePct;
-                    /* Floor A: estímulo 100% + control estricto ≥70% → 90 (grade A)
-                       Floor B+: estímulo 100% (menor control) → 85 (grade B+)
-                       Floor B: estímulo ≥90% sin repes cortas → 80 (grade B)
-                       Floor C+: estímulo ≥75% sin repes cortas → 65 (grade C+) */
-                    if (stim === 100 && noSlowFails) {
-                        var floor226;
-                        if (strict >= 70)      floor226 = 90; /* A */
-                        else                    floor226 = 85; /* B+ */
-                        if (score < floor226) {
-                            factors.push({
-                                label: 'Floor estímulo perfecto',
-                                value: 'estímulo 100% · control estricto ' + strict + '% · sin repes too_slow',
-                                weight: null,
-                                delta: (floor226 - score)
-                            });
-                            score = floor226;
-                        }
-                    } else if (stim >= 90 && noSlowFails) {
-                        if (score < 80) {
-                            factors.push({
-                                label: 'Floor estímulo alto',
-                                value: 'estímulo ' + stim + '% · sin repes too_slow',
-                                weight: null,
-                                delta: (80 - score)
-                            });
-                            score = 80;
-                        }
-                    } else if (stim >= 75 && noSlowFails) {
-                        if (score < 65) {
-                            factors.push({
-                                label: 'Floor estímulo notable',
-                                value: 'estímulo ' + stim + '% · sin repes too_slow',
-                                weight: null,
-                                delta: (65 - score)
-                            });
-                            score = 65;
-                        }
+                    var bc242 = metrics.blockCompliance;
+                    var _stim242 = bc242.stimulusMetPct;
+                    var _strict242 = bc242.compliancePct;
+                    var _slow242 = (bc242.tooSlowCount|0);
+                    /* DEBUG · siempre añade trace de entrada al floor para diagnóstico */
+                    factors.push({
+                        label: '[dbg] Floor input',
+                        value: 'stim='+_stim242+'% · strict='+_strict242+'% · slow='+_slow242+' · blocksAn='+bc242.blocksAnalyzed+' · pre-floor score='+score,
+                        weight: null,
+                        delta: 0
+                    });
+                    var _floorTarget = null;
+                    var _floorReason = null;
+                    if (_stim242 === 100 && _slow242 === 0) {
+                        /* Estímulo perfecto → suelo A (88 min garantizado). El grade
+                           adaptado (A+/A/A-) se ajusta según strict% pero el suelo
+                           es A. */
+                        _floorTarget = _strict242 >= 70 ? 90 : 88;
+                        _floorReason = 'Estímulo 100% + sin repes cortas · SUELO A garantizado';
+                    } else if (_stim242 >= 90 && _slow242 === 0) {
+                        _floorTarget = 82;
+                        _floorReason = 'Estímulo ≥90% + sin repes cortas · SUELO B+ garantizado';
+                    } else if (_stim242 >= 75 && _slow242 === 0) {
+                        _floorTarget = 72;
+                        _floorReason = 'Estímulo ≥75% + sin repes cortas · SUELO B garantizado';
+                    } else if (_stim242 >= 60) {
+                        _floorTarget = 60;
+                        _floorReason = 'Estímulo ≥60% · SUELO C+ garantizado';
+                    }
+                    if (_floorTarget != null && score < _floorTarget) {
+                        factors.push({
+                            label: 'FLOOR aplicado',
+                            value: _floorReason + ' · score ' + score + ' → ' + _floorTarget,
+                            weight: null,
+                            delta: (_floorTarget - score)
+                        });
+                        score = _floorTarget;
                     }
                 }
 
