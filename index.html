@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p246';
+            window.__MR_VERSION = 'v2.30.1-p247';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -4298,22 +4298,45 @@
        gradiente morado→rosa + glow morado sutil (variante D del preview).
        Técnica: div con background:linear-gradient + mask-image:url(SVG)
        — evita SVG inline duplicados en cada card y problemas de IDs. */
+    /* [p247] Badge IA reemplazado: antes era rayito con mask-image, ahora
+       es pill CUADRADA morada con la nota "88/100" en texto blanco. Se lee
+       de un vistazo la calidad del entreno sin abrir la card. */
     .mr-lib-ia-badge {
         position: absolute;
         top: 6px; right: 6px;
-        width: 20px; height: 20px;
-        background: linear-gradient(135deg, #7c3aed 0%, #ec4899 100%);
-        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z'/></svg>") center/contain no-repeat;
-                mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M13 2 L4 14 L11 14 L10 22 L20 10 L13 10 Z'/></svg>") center/contain no-repeat;
+        min-width: 34px;
+        padding: 3px 6px 3px 7px;
+        border-radius: 5px;
+        background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+        color: #fff;
+        font-family: var(--f);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: -.3px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        display: inline-flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 1px;
+        box-shadow:
+            0 2px 6px rgba(124,58,237,.35),
+            inset 0 1px 0 rgba(255,255,255,.20);
         z-index: 5;
         pointer-events: none;
-        filter: drop-shadow(0 1px 2px rgba(0,0,0,.35))
-                drop-shadow(0 0 3px rgba(124,58,237,.40));
+        text-align: center;
+    }
+    .mr-lib-ia-badge small {
+        font-size: 7.5px;
+        font-weight: 800;
+        opacity: .70;
+        letter-spacing: 0;
     }
     body.dark-mode .mr-lib-ia-badge {
-        background: linear-gradient(135deg, #a855f7 0%, #f472b6 100%);
-        filter: drop-shadow(0 1px 2px rgba(0,0,0,.6))
-                drop-shadow(0 0 4px rgba(168,85,247,.55));
+        background: linear-gradient(135deg, #8b5cf6 0%, #c084fc 100%);
+        box-shadow:
+            0 2px 6px rgba(139,92,246,.50),
+            inset 0 1px 0 rgba(255,255,255,.20);
     }
 
     /* [FASE 6 · Badge foto V4 · Light Apple] Indica que la activity tiene foto.
@@ -38965,7 +38988,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     <!-- [Light Apple · Photo dot V4] Anclado a .mr-lib-card-inner (position:relative)
                          → esquina sup-izq de la CARD (no del mapa). No afecta al flujo del outfit. -->
                     ${_libPhotoBadgeHTML(act)}
-                    ${(window._mrIaSet && act && act._dbActivityId && window._mrIaSet.has(String(act._dbActivityId))) ? '<div class="mr-lib-ia-badge" aria-label="Con evaluación IA"></div>' : ''}
+                    ${(window._mrIaSet && act && act._dbActivityId && window._mrIaSet.has(String(act._dbActivityId))) ? '<div class="mr-lib-ia-badge" aria-label="Evaluación IA">' + ((window._mrIaScores && window._mrIaScores.get(String(act._dbActivityId))) != null ? window._mrIaScores.get(String(act._dbActivityId)) : '·') + '<small>/100</small></div>' : ''}
                 </div>`;
 
             // ─── Long-press premium en card → modal Editar / Eliminar ───
@@ -41943,7 +41966,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 hrCanvas.height = chartH;
                 hrCanvas.style.height = chartH + 'px';
                 var _hrEle = _mrResampleEle(act.eleSeries, hrVals.length);
-                drawSparkline(hrCanvas, hrVals, '#22C55E', 30, 220, fcB, ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], false, _hrEle);
+                /* [p247] Rango Y forzado a 85-190 ppm (respectRange=true) para que
+                   la línea salga PLANA sin picos exagerados. Antes usaba auto-fit
+                   (dataMin*0.97 → dataMax*1.03) que amplificaba variaciones de
+                   20-30 ppm haciendo que un rodaje aeróbico normal pareciera un
+                   fartlek dientes de sierra. Con 105 ppm de rango total, las
+                   variaciones típicas de FC en running quedan suaves y legibles. */
+                drawSparkline(hrCanvas, hrVals, '#22C55E', 85, 190, fcB, ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], false, _hrEle, true);
             }
             if (pcCanvas && ds.length > 1) {
                 // [v2.30.1-p187 · adaptive smoothing]
@@ -89319,7 +89348,7 @@ window.addEventListener('DOMContentLoaded', function() {
                         if (!uid) return new Set();
                         var r = await sb
                             .from('mister_activity_reports')
-                            .select('activity_id')
+                            .select('activity_id, score_total')
                             .eq('user_id', uid)
                             .eq('status', 'ready');
                         if (r.error) {
@@ -89328,12 +89357,21 @@ window.addEventListener('DOMContentLoaded', function() {
                         }
                         if (!Array.isArray(r.data)) return new Set();
                         var s = new Set();
+                        /* [p247] Map paralelo activity_id → score_total para pintar
+                           la nota en el badge cuadrado morado de biblioteca. */
+                        var scoreMap = new Map();
                         for (var i=0;i<r.data.length;i++){
-                            var aid = r.data[i] && r.data[i].activity_id;
-                            if (aid != null) s.add(String(aid));
+                            var row = r.data[i];
+                            var aid = row && row.activity_id;
+                            if (aid != null) {
+                                var aidStr = String(aid);
+                                s.add(aidStr);
+                                if (row.score_total != null) scoreMap.set(aidStr, row.score_total|0);
+                            }
                         }
                         window._mrIaSet = s;
-                        try { console.log('[MR][p224] IA prefetch OK · ' + s.size + ' actividades con report ready'); } catch(_){}
+                        window._mrIaScores = scoreMap;
+                        try { console.log('[MR][p247] IA prefetch OK · ' + s.size + ' actividades con report · ' + scoreMap.size + ' con score'); } catch(_){}
                         return s;
                     } catch(err){
                         try { console.warn('[MR][p224] IA prefetch exception:', err && err.message); } catch(_){}
@@ -89355,6 +89393,7 @@ window.addEventListener('DOMContentLoaded', function() {
             window._mrPaintLibIaBadges = function(){
                 if (!window._mrIaSet || !window._mrIaSet.size) return 0;
                 var added = 0;
+                var scoresMap = window._mrIaScores || new Map();
                 try {
                     /* Buscar en toda la app · cubre biblioteca (#activities-list)
                        Y cualquier otra vista futura que use la clase. */
@@ -89368,12 +89407,15 @@ window.addEventListener('DOMContentLoaded', function() {
                         if (inner.querySelector('.mr-lib-ia-badge')) continue;
                         var badge = document.createElement('div');
                         badge.className = 'mr-lib-ia-badge';
-                        badge.setAttribute('aria-label', 'Con evaluación IA');
+                        /* [p247] Pill cuadrada morada con nota "88/100" en blanco. */
+                        var _score = scoresMap.get(String(aid));
+                        badge.innerHTML = (_score != null ? _score : '·') + '<small>/100</small>';
+                        badge.setAttribute('aria-label', 'Evaluación IA' + (_score != null ? ': ' + _score + '/100' : ''));
                         inner.appendChild(badge);
                         added++;
                     }
                 } catch(_){}
-                try { console.log('[MR][p224] _mrPaintLibIaBadges · Set size=' + window._mrIaSet.size + ' · badges añadidos=' + added); } catch(_){}
+                try { console.log('[MR][p247] _mrPaintLibIaBadges · Set size=' + window._mrIaSet.size + ' · badges añadidos=' + added); } catch(_){}
                 return added;
             };
 
