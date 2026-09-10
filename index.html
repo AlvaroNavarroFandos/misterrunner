@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p270';
+            window.__MR_VERSION = 'v2.30.1-p271';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42216,11 +42216,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
             // [p270] Card 3 biomec canvas: pintar tras montar (necesita
             // clientWidth/clientHeight reales del contenedor).
+            // [p271] Propaga minValid al filtro de dominio.
             c3.querySelectorAll('canvas.mr-cbio-canvas').forEach(canvas => {
                 try {
                     const vals = JSON.parse(canvas.dataset.vals);
                     const colorVar = canvas.dataset.colorvar;
-                    _drawBiomecCanvas(canvas, vals, colorVar);
+                    const minValid = parseFloat(canvas.dataset.minvalid);
+                    _drawBiomecCanvas(canvas, vals, colorVar, isNaN(minValid) ? 0 : minValid);
                 } catch(_){}
             });
         });
@@ -42313,13 +42315,49 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // ── Dibujado de dots en Canvas 2D ─────────────────────────────────
         // [p270] Reemplazo del SVG con preserveAspectRatio="none" que
-        // estiraba los círculos a elipsoides gigantes (el contenedor no es
-        // cuadrado). Canvas dibuja círculos reales en pixels reales con dpr
-        // para retina. Color desde CSS var vía getComputedStyle → respeta
-        // dark mode automáticamente.
-        function _drawBiomecCanvas(canvas, vals, colorVar) {
-            const nonZero = vals.filter(v => v > 0);
-            if (!nonZero.length) return;
+        // estiraba los círculos a elipsoides. Canvas dibuja círculos reales
+        // con dpr. Color desde CSS var → respeta dark mode.
+        // [p271] Tres mejoras para limpiar la gráfica en block sessions:
+        //   1) Filtro por umbral de dominio (minValid) que coincide con el
+        //      que usan avgCad/maxCad → descarta descansos entre series.
+        //   2) Rango Y por percentiles P2-P98 con padding → outliers salen
+        //      del canvas visible pero siguen contando para el chip Máx
+        //      (honestidad: el chip refleja los datos reales, la gráfica la
+        //      banda de trabajo).
+        //   3) Nth-sampling a máx 200 puntos preservando el índice temporal
+        //      original en X → conserva el patrón series/descanso sin
+        //      solapes.
+        function _drawBiomecCanvas(canvas, vals, colorVar, minValid) {
+            const validPairs = [];
+            const nVals = vals.length;
+            const threshold = (typeof minValid === 'number') ? minValid : 0;
+            for (let i = 0; i < nVals; i++) {
+                const v = vals[i];
+                if (v > threshold) validPairs.push({ i: i, v: v });
+            }
+            if (!validPairs.length) return;
+
+            // Nth-sampling
+            const MAX_POINTS = 200;
+            let sampled = validPairs;
+            if (validPairs.length > MAX_POINTS) {
+                const step = Math.ceil(validPairs.length / MAX_POINTS);
+                sampled = [];
+                for (let i = 0; i < validPairs.length; i += step) sampled.push(validPairs[i]);
+            }
+
+            // Rango Y por percentiles P2-P98 con padding 12%
+            const sorted = validPairs.map(p => p.v).sort(function(a,b){ return a - b; });
+            const nSorted = sorted.length;
+            const p2  = sorted[Math.max(0, Math.floor(nSorted * 0.02))];
+            const p98 = sorted[Math.min(nSorted - 1, Math.floor(nSorted * 0.98))];
+            const spread = Math.max(0.5, p98 - p2);
+            const pad = spread * 0.12;
+            const minV = p2 - pad;
+            const maxV = p98 + pad;
+            const range = Math.max(0.1, maxV - minV);
+            const avgV = validPairs.reduce(function(a,p){ return a + p.v; }, 0) / validPairs.length;
+
             const dpr = window.devicePixelRatio || 1;
             const w = canvas.clientWidth || canvas.parentElement.offsetWidth;
             const h = canvas.clientHeight || canvas.parentElement.offsetHeight;
@@ -42330,13 +42368,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#22c55e';
             const PAD = 6;
-            const minV = Math.min.apply(null, nonZero);
-            const maxV = Math.max.apply(null, nonZero);
-            const rangeRaw = maxV - minV;
-            const range = rangeRaw > 0 ? rangeRaw : Math.max(1, Math.abs(minV) * 0.05);
-            const avgV = nonZero.reduce((a,b)=>a+b,0) / nonZero.length;
-            const avgY = PAD + (h - PAD*2) * (1 - (avgV - minV) / range);
-            // Línea de media (punteada, opacity .35)
+            const denomX = Math.max(1, nVals - 1);
+            // Media (clampeada al rango visible)
+            const avgClamped = Math.max(minV, Math.min(maxV, avgV));
+            const avgY = PAD + (h - PAD*2) * (1 - (avgClamped - minV) / range);
             ctx.strokeStyle = color;
             ctx.globalAlpha = 0.35;
             ctx.lineWidth = 0.8;
@@ -42346,16 +42381,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.lineTo(w - PAD, avgY);
             ctx.stroke();
             ctx.setLineDash([]);
-            // Dots (radius 1.8px, fill-opacity .75)
+            // Dots — solo los que caen dentro del rango P2-P98 (outliers no visibles)
             ctx.fillStyle = color;
             ctx.globalAlpha = 0.75;
-            const N = vals.length;
-            const denom = Math.max(1, N - 1);
-            for (let i = 0; i < N; i++) {
-                const v = vals[i];
-                if (v <= 0) continue;
-                const x = PAD + (w - PAD*2) * (i / denom);
-                const y = PAD + (h - PAD*2) * (1 - (v - minV) / range);
+            for (let k = 0; k < sampled.length; k++) {
+                const p = sampled[k];
+                if (p.v < minV || p.v > maxV) continue;
+                const x = PAD + (w - PAD*2) * (p.i / denomX);
+                const y = PAD + (h - PAD*2) * (1 - (p.v - minV) / range);
                 ctx.beginPath();
                 ctx.arc(x, y, 1.8, 0, Math.PI * 2);
                 ctx.fill();
@@ -42364,7 +42397,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // ── Constructor de bloque biomec (label + chip + canvas) ──────────
-        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst) {
+        // [p271] minValid propaga al canvas via dataset para el filtro de
+        // dominio (mismos umbrales que usa el cálculo del chip).
+        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst, minValid) {
             const block = document.createElement('div');
             block.className = 'mr-cbio-block';
             block.style.cssText = 'flex:1 1 0;min-height:0;padding:10px 14px 8px;background:var(--det-bg);display:flex;flex-direction:column;'
@@ -42376,8 +42411,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
               + '<span style="font-size:11.5px;color:var(--det-tm);font-family:var(--f);font-variant-numeric:tabular-nums;">' + chipHtml + '</span>';
             const chartWrap = document.createElement('div');
             chartWrap.style.cssText = 'flex:1 1 0;min-height:0;position:relative;';
-            const nonZero = vals.filter(v => v > 0);
-            if (!nonZero.length) {
+            const threshold = (typeof minValid === 'number') ? minValid : 0;
+            const hasValid = vals.some(v => v > threshold);
+            if (!hasValid) {
                 chartWrap.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--det-tp);font-family:var(--f);opacity:.6;">Sin datos</div>';
             } else {
                 const cv = document.createElement('canvas');
@@ -42385,6 +42421,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cv.style.cssText = 'display:block;width:100%;height:100%;';
                 cv.dataset.vals = JSON.stringify(vals);
                 cv.dataset.colorvar = colorVar;
+                cv.dataset.minvalid = String(threshold);
                 chartWrap.appendChild(cv);
             }
             block.appendChild(hdr);
@@ -42404,21 +42441,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgCad>0?Math.round(avgCad):'—') + '</b> spm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxCad>0?Math.round(maxCad):'—') + '</b>',
             cadVals,
             '--cad-color',
-            true
+            true,
+            100
         ));
         _biomecCard.appendChild(_buildBiomecBlock(
             'Zancada',
             'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgStride>0?Math.round(avgStride):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxStride>0?Math.round(maxStride):'—') + '</b>',
             strideVals,
             '--stride-color',
-            false
+            false,
+            50
         ));
         _biomecCard.appendChild(_buildBiomecBlock(
             'Osc. vertical',
             'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgVert>0?avgVert.toFixed(1):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxVert>0?maxVert.toFixed(1):'—') + '</b>',
             vertVals,
             '--vert-color',
-            false
+            false,
+            0
         ));
 
         c3.appendChild(_biomecCard);
