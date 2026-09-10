@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p263';
+            window.__MR_VERSION = 'v2.30.1-p264';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -41087,6 +41087,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + '</div>';
         }
 
+        // [p264] Wrapper card premium — devuelve un DOM element con el header
+        // dorado ya inyectado. Cada bloque grande de la Card 1 (Resumen,
+        // Desnivel, Bloques, Parciales, Best Efforts) vive en su propio wrapper
+        // separado con border, radius y sombra sutil. Todos se apilan
+        // consecutivamente dentro de c1 con margin-top entre ellos.
+        function _premiumCardWrap(title, iconChar) {
+            var _wrap = document.createElement('div');
+            _wrap.style.cssText = 'flex-shrink:0;margin:14px 12px 0;'
+                + 'background:var(--card);border:1px solid var(--border);'
+                + 'border-radius:14px;overflow:hidden;'
+                + 'box-shadow:0 2px 8px rgba(0,0,0,.05);';
+            _wrap.insertAdjacentHTML('beforeend', _premiumHeader(title, iconChar));
+            return _wrap;
+        }
+
         // ── Fila héroe: Distancia · Tiempo · Ritmo (centrados) ─────────
         function _heroCell(val, unit, label, withDiv) {
             // v2.30.1-p9 · Revertido a tamaños originales (Álvaro prefería el
@@ -41149,8 +41164,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             } catch(e){ return null; }
         })();
 
-        // [p263] Header RESUMEN dorado premium (patrón reutilizable)
-        c1.insertAdjacentHTML('beforeend', _premiumHeader('Resumen', '📊'));
+        // [p264] Card RESUMEN premium — wrap dorado que contiene todos los
+        // stats (hero row + corazón + mecánica + esfuerzo + trimp).
+        var _resumenCard = _premiumCardWrap('Resumen', '📊');
 
         var _heroDiv = document.createElement('div');
         _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);padding:8px 4px 6px;';
@@ -41160,7 +41176,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             + (_effortPaceStr
                   ? _heroCell(_effortPaceStr, '/km', 'R. esfuerzo', true)
                   : _heroCell(act.distKm>0?act.distKm.toFixed(2):'—', act.distKm>0?'km':'', 'Distancia', true));
-        c1.appendChild(_heroDiv);
+        _resumenCard.appendChild(_heroDiv);
 
         // ── Sección Corazón (+ chip kcal en el eyebrow) ────────────────
         var _kcalChip = (act.calories > 0)
@@ -41175,7 +41191,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   _detSectCell(act.maxHr>0?act.maxHr:'—', act.maxHr>0?'ppm':'', 'FC máx', null)
             +   _detSectCell(decouplingDisplay, '', 'Desacople', _dcColor||null)
             + '</div>';
-        c1.appendChild(_heartDiv);
+        _resumenCard.appendChild(_heartDiv);
 
         // ── Sección Mecánica ───────────────────────────────────────────
         // v2.30.1-p12 · Helper específico para Eq. I/D con balancín SVG que se
@@ -41210,7 +41226,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             +   _detSectCell(avgStrideDisplay, '', 'Zancada', null)
             +   _detBalanceCell(balDisplay)
             + '</div>';
-        c1.appendChild(_mechDiv);
+        _resumenCard.appendChild(_mechDiv);
 
         // ── [p261] Sección "Esfuerzo" con 3 stats: RPE · Eficiencia · Potencia ──
         // Reemplaza los strips gordos anteriores de EFIC y RPE. Colores semáforo
@@ -41257,7 +41273,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +   _detSectCell(_efVal, '', 'Eficiencia', _efColorNew)
                 +   _detSectCell(_powVal, _powUnit, 'Potencia', _powColor)
                 + '</div>';
-            c1.appendChild(_effortDiv);
+            _resumenCard.appendChild(_effortDiv);
         }
         // recálculo de trimpDisplay (que ya hace fallback con hrSeries).
         // Resolvemos el número aquí para tener int crudo + tag interpretativa.
@@ -41285,16 +41301,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +'<span style="font-size:14px;font-weight:800;color:'+lvl.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+trimpValue+'<span style="font-size:9px;color:var(--det-tt);font-weight:600;margin-left:1px;"> AU</span></span>'
                 +'<span style="font-size:11px;color:'+lvl.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+lvl.tag+'</span>'
                 +'</div></div>';
-            c1.appendChild(trimpStrip);
+            _resumenCard.appendChild(trimpStrip);
         })();
+        // [p264] Insertar la card Resumen ya completa dentro de c1
+        c1.appendChild(_resumenCard);
 
         // ── Elevation profile ──────────────────────────────────────
         if (act.eleSeries && act.eleSeries.length > 10) {
-            // [p263] Header DESNIVEL dorado premium (mismo patrón que Resumen)
-            c1.insertAdjacentHTML('beforeend', _premiumHeader('Desnivel', '⛰️'));
+            // [p264] Card DESNIVEL premium (wrap independiente)
+            var _desnivelCard = _premiumCardWrap('Desnivel', '⛰️');
             const eleBlock = document.createElement('div');
             eleBlock.id = 'det-ele-block'; // used for share image cutoff
-            // [FASE 5.7.4-c] bloque elevación a #000 + border-top sutil
             eleBlock.style.cssText = 'background:var(--det-bg);padding:8px 14px;';
 
             // Stats header: D+ · D- · Máx · Mín · Media
@@ -41333,7 +41350,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             eleCanvas.style.cssText = 'width:100%;height:80px;display:block;border-radius:6px;';
             eleCanvas.dataset.ele = '1';
             eleBlock.appendChild(eleCanvas);
-            c1.appendChild(eleBlock);
+            _desnivelCard.appendChild(eleBlock);
+            c1.appendChild(_desnivelCard);
 
             // Draw elevation profile after DOM ready
             requestAnimationFrame(() => {
@@ -41374,7 +41392,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             }
         }
         if (_showBlocks) {
-            c1.insertAdjacentHTML('beforeend','<div style="padding:10px 14px 4px;font-size:9px;color:var(--det-lbl-accent);opacity:.75;text-transform:uppercase;letter-spacing:1px;font-family:var(--f);">Análisis por bloques</div>');
+            // [p264] Card ANÁLISIS POR BLOQUES premium
+            var _blocksCard = _premiumCardWrap('Análisis por bloques', '🎯');
             const bTbl = document.createElement('table'); bTbl.className = 'laps-table';
             bTbl.innerHTML = '<thead><tr><th>Bloque</th><th>Dist</th><th>Tiempo</th><th>Ritmo</th><th>FC</th></tr></thead>';
             const bTb = document.createElement('tbody');
@@ -41384,8 +41403,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 bTb.insertAdjacentHTML('beforeend','<tr><td>'+b.n+'</td><td>'+(typeof b.dist === 'number' ? b.dist.toFixed(2) : (b.dist || '—'))+' km</td><td>'+bm+':'+String(bs).padStart(2,'0')+'</td><td>'+pm+"'"+String(ps).padStart(2,'0')+'"</td><td>'+(b.avgHr||'—')+'</td></tr>');
             });
             bTbl.appendChild(bTb);
-            const bW=document.createElement('div'); bW.style.cssText='padding:0 14px 8px;';
-            bW.appendChild(bTbl); c1.appendChild(bW);
+            const bW=document.createElement('div'); bW.style.cssText='padding:8px 14px;background:var(--det-bg);';
+            bW.appendChild(bTbl);
+            _blocksCard.appendChild(bW);
+            c1.appendChild(_blocksCard);
         }
 
         // ── Parciales por km (estilo Strava: Km · Ritmo · barra · Desn. · FC) ──
@@ -41481,11 +41502,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                 var accent = 'var(--det-lbl-accent)';
                 var cols = 'grid-template-columns:26px 46px 1fr 42px 34px;';
-                var html = '<div style="padding:11px 14px 13px;background:var(--det-bg);border-top:1px solid var(--det-border-lo);">';
-                html += '<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;">'
-                     +  '<span style="font-size:8.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:'+accent+';opacity:.85;white-space:nowrap;font-family:var(--f);">Parciales por km</span>'
-                     +  '<span style="flex:1;height:1px;background:var(--det-border);"></span>'
-                     +  '</div>';
+                /* [p264] Card PARCIALES premium — quitado eyebrow interno
+                   duplicado (el header dorado ya lo aporta) */
+                var html = '<div style="padding:9px 14px 11px;background:var(--det-bg);">';
                 html += '<div style="display:grid;'+cols+'gap:8px;align-items:center;font-size:8.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:'+accent+';opacity:.8;padding-bottom:7px;margin-bottom:2px;border-bottom:1px solid var(--det-border);font-family:var(--f);">'
                      +  '<span>Km</span><span>Ritmo</span><span></span><span style="text-align:right;">Desn.</span><span style="text-align:right;">FC</span>'
                      +  '</div>';
@@ -41514,7 +41533,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                          +  '</div>';
                 });
                 html += '</div>';
-                c1.insertAdjacentHTML('beforeend', html);
+                /* [p264] Envolver todo el html de Parciales en la card premium */
+                var _parcialesCard = _premiumCardWrap('Parciales km a km', '🏃');
+                _parcialesCard.insertAdjacentHTML('beforeend', html);
+                c1.appendChild(_parcialesCard);
             })();
         }
 
@@ -41635,9 +41657,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             //    en cuyo caso no tiene sentido mostrar 7 candados)
             if (!hasAny) return;
 
-            var header = '<div class="be-section-head">Best efforts</div>';
-            var container = '<div class="be-container">' + rows.join('') + '</div>';
-            c1.insertAdjacentHTML('beforeend', header + container);
+            /* [p264] Card BEST EFFORTS premium — reemplaza el header interno
+               "be-section-head" (el header dorado del wrap ya cumple ese rol) */
+            var _beCard = _premiumCardWrap('Best efforts', '🏆');
+            _beCard.insertAdjacentHTML('beforeend', '<div class="be-container" style="background:var(--det-bg);">' + rows.join('') + '</div>');
+            c1.appendChild(_beCard);
         })();
 
         // (extra stats now in main 3×3 grid)
