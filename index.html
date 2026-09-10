@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p265';
+            window.__MR_VERSION = 'v2.30.1-p266';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9772,6 +9772,10 @@
                 0 8px 24px rgba(0,0,0,.55),
                 0 2px 6px rgba(0,0,0,.35) !important;
         }
+        /* [p266] Color del km más rápido en Parciales · dorado en light,
+           ROJO en dark para que destaque contra el fondo negro. */
+        :root { --kmfast-color: var(--gold-text); }
+        body.dark-mode { --kmfast-color: #f87171; }
 
         /* Botón "colapsar" — solo visible cuando expanded.
            [v2.30.1-p112] Posición BOTTOM-CENTER para NO solaparse con la
@@ -41087,13 +41091,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Título en blanco sobre gradiente dorado fuerte + icono a la derecha,
         // muy compacto (~22px altura) para no aumentar la altura total.
         // Idéntico en light y dark porque los colores son hex directos.
-        function _premiumHeader(title, iconChar) {
+        // [p266] Acepta chipHtml opcional (ej. "Media 5'38"/km" para Ritmo,
+        // "Media 143 · Máx 164" para FC) que va entre el título y el icono.
+        function _premiumHeader(title, iconChar, chipHtml) {
             return '<div style="flex-shrink:0;'
                 +      'background:linear-gradient(135deg,#e0b856 0%,#a67b1e 100%);'
                 +      'padding:6px 14px;'
-                +      'display:flex;align-items:center;justify-content:space-between;gap:8px;'
+                +      'display:flex;align-items:center;gap:8px;'
                 +      'border-bottom:1px solid rgba(139,105,20,.35);">'
                 +   '<span style="font-size:12px;font-weight:900;letter-spacing:2px;text-transform:uppercase;color:#fff;font-family:var(--f);line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.25);">'+title+'</span>'
+                + (chipHtml
+                    ? '<span style="margin-left:auto;font-size:11px;font-weight:700;color:rgba(255,255,255,.92);font-family:var(--f);text-shadow:0 1px 2px rgba(0,0,0,.20);white-space:nowrap;letter-spacing:.2px;">'+chipHtml+'</span>'
+                    : '<span style="flex:1;"></span>')
                 +   '<span style="font-size:14px;line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25));">'+(iconChar||'')+'</span>'
                 + '</div>';
         }
@@ -41105,7 +41114,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // consecutivamente dentro de c1 con margin-top entre ellos.
         // [p265] isFirst opcional para pegar al mapa (margin-top:0) · sombra
         // más premium · lateral más pegado a los bordes (12→5px).
-        function _premiumCardWrap(title, iconChar, isFirst) {
+        // [p266] chipHtml opcional → pasado a _premiumHeader (Card 2 usa esto
+        // para mostrar el valor medio a la derecha del título).
+        function _premiumCardWrap(title, iconChar, isFirst, chipHtml) {
             var _wrap = document.createElement('div');
             _wrap.className = 'mr-premium-card';
             var _mt = isFirst ? '0' : '10px';
@@ -41114,7 +41125,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 + 'border:1px solid rgba(0,0,0,.10);'
                 + 'border-radius:14px;overflow:hidden;'
                 + 'box-shadow:0 6px 20px rgba(0,0,0,.10), 0 2px 5px rgba(0,0,0,.06);';
-            _wrap.insertAdjacentHTML('beforeend', _premiumHeader(title, iconChar));
+            _wrap.insertAdjacentHTML('beforeend', _premiumHeader(title, iconChar, chipHtml));
             return _wrap;
         }
 
@@ -41235,7 +41246,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
             var _numColor = (valTxt === '—') ? 'var(--gold-text)' : (inZone ? '#16a34a' : '#dc2626');
-            return '<div style="display:flex;flex-direction:column;align-items:center;">'
+            /* [p266] justify-content:center + height:100% para centrar
+               verticalmente en el grid cell (font-size 17px es menor que los
+               22px de Cadencia/Zancada → visualmente el contenido quedaba
+               apoyado arriba). */
+            return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">'
                 + '<div style="font-size:17px;font-weight:700;letter-spacing:-.3px;line-height:1.15;color:'+_numColor+';font-family:var(--f);white-space:nowrap;">'
                 +   valTxt + (valTxt !== '—' ? '<span style="font-size:10px;font-weight:400;opacity:.55;color:var(--det-tw);">%</span>' : '')
                 + '</div>'
@@ -41548,10 +41563,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var sep = idx > 0 ? 'border-top:1px solid var(--det-border-lo);' : '';
                     var barHtml = isResidual
                         ? '<span style="height:15px;display:flex;align-items:center;"></span>'  // vacío, sin barra
-                        : '<span style="height:15px;display:flex;align-items:center;"><span style="height:15px;border-radius:5px;background:'+(isFast?'var(--gold-text)':accent)+';min-width:6px;width:'+w.toFixed(0)+'%;"></span></span>';
+                        : '<span style="height:15px;display:flex;align-items:center;"><span style="height:15px;border-radius:5px;background:'+(isFast?'var(--kmfast-color)':accent)+';min-width:6px;width:'+w.toFixed(0)+'%;"></span></span>';
                     html += '<div style="display:grid;'+cols+'gap:8px;align-items:center;padding:5px 0;'+sep+'">'
                          +  '<span style="font-size:13px;font-weight:700;color:var(--det-ts);font-family:var(--f);'+(r.partial||isResidual?'opacity:.6;':'')+'">'+r.label+'</span>'
-                         +  '<span style="font-size:13.5px;font-weight:700;letter-spacing:-.3px;font-family:var(--f);color:'+(isFast?'var(--gold-text)':'var(--det-tw)')+';'+(isResidual?'opacity:.6;':'')+'">'+_fmtPace(r.paceS)+'</span>'
+                         +  '<span style="font-size:13.5px;font-weight:700;letter-spacing:-.3px;font-family:var(--f);color:'+(isFast?'var(--kmfast-color)':'var(--det-tw)')+';'+(isResidual?'opacity:.6;':'')+'">'+_fmtPace(r.paceS)+'</span>'
                          +  barHtml
                          +  '<span style="font-size:12px;font-weight:600;color:var(--det-ts);text-align:right;font-family:var(--f);">'+desn+'</span>'
                          +  '<span style="font-size:12.5px;font-weight:700;color:var(--det-tw);text-align:right;font-family:var(--f);">'+(r.avgHr||'—')+'</span>'
@@ -41856,35 +41871,25 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // ── Ritmo section (TOP) ───────────────────────────────────
-        const pcHeader = document.createElement('div');
-        pcHeader.style.cssText = 'flex-shrink:0;display:flex;justify-content:space-between;align-items:baseline;padding:10px 14px 4px;';
-        pcHeader.innerHTML = '<span style="font-size:12.5px;font-weight:700;color:var(--det-lbl-accent);font-family:var(--f);text-transform:uppercase;letter-spacing:1.1px;opacity:.9;">Ritmo</span>'
-            +'<span style="font-size:11px;font-weight:600;color:var(--det-ts);font-family:var(--f);">Media '+pace+'</span>';
-        c2.appendChild(pcHeader);
-
+        // [p266] Card premium con header "Ritmo" + chip "Media X'XX/km" + icono
+        var _paceCard = _premiumCardWrap('Ritmo', '📈', true, 'Media ' + pace);
         const pcCanvas = document.createElement('canvas');
-        pcCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;';
+        pcCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;background:var(--det-bg);padding-top:6px;';
         pcCanvas.dataset.type = 'pace';
-        c2.appendChild(pcCanvas);
-        c2.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS_PC));
-
-        // Divider
-        const div2 = document.createElement('div');
-        div2.style.cssText = 'flex-shrink:0;height:1px;background:var(--det-elev-hover);margin:10px 0;';
-        c2.appendChild(div2);
+        _paceCard.appendChild(pcCanvas);
+        _paceCard.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS_PC));
+        c2.appendChild(_paceCard);
 
         // ── FC section (BOTTOM) ───────────────────────────────────
-        const hrHeader = document.createElement('div');
-        hrHeader.style.cssText = 'flex-shrink:0;display:flex;justify-content:space-between;align-items:baseline;padding:4px 14px 4px;';
-        hrHeader.innerHTML = '<span style="font-size:12.5px;font-weight:700;color:var(--det-lbl-accent);font-family:var(--f);text-transform:uppercase;letter-spacing:1.1px;opacity:.9;">Frecuencia Cardíaca</span>'
-            +'<span style="font-size:11px;font-weight:600;color:var(--det-ts);font-family:var(--f);">Media '+(act.avgHr||'—')+' · Máx '+(act.maxHr||'—')+'</span>';
-        c2.appendChild(hrHeader);
-
+        // [p266] Card premium con header "FC" + chip "Media X · Máx Y" + icono
+        var _fcCard = _premiumCardWrap('Frecuencia Cardíaca', '❤️', false,
+            'Media ' + (act.avgHr||'—') + ' · Máx ' + (act.maxHr||'—'));
         const hrCanvas = document.createElement('canvas');
-        hrCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;';
+        hrCanvas.style.cssText = 'width:100%;display:block;flex-shrink:0;background:var(--det-bg);padding-top:6px;';
         hrCanvas.dataset.type = 'hr';
-        c2.appendChild(hrCanvas);
-        c2.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS_HR));
+        _fcCard.appendChild(hrCanvas);
+        _fcCard.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS_HR));
+        c2.appendChild(_fcCard);
 
         track.appendChild(c2);
 
