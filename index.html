@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p264';
+            window.__MR_VERSION = 'v2.30.1-p265';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9760,6 +9760,17 @@
             transform: translateY(120%);
             opacity: 0;
             pointer-events: none;
+        }
+
+        /* [p265] Cards premium dentro del visor · sombra ajustada por tema.
+           En light la sombra es sutil (rgba .10/.06), en dark necesita ser
+           más profunda para destacar contra el fondo negro. Border también
+           más claro en dark para verse. */
+        body.dark-mode .mr-premium-card {
+            border: 1px solid rgba(255,255,255,.10) !important;
+            box-shadow:
+                0 8px 24px rgba(0,0,0,.55),
+                0 2px 6px rgba(0,0,0,.35) !important;
         }
 
         /* Botón "colapsar" — solo visible cuando expanded.
@@ -41092,12 +41103,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Desnivel, Bloques, Parciales, Best Efforts) vive en su propio wrapper
         // separado con border, radius y sombra sutil. Todos se apilan
         // consecutivamente dentro de c1 con margin-top entre ellos.
-        function _premiumCardWrap(title, iconChar) {
+        // [p265] isFirst opcional para pegar al mapa (margin-top:0) · sombra
+        // más premium · lateral más pegado a los bordes (12→5px).
+        function _premiumCardWrap(title, iconChar, isFirst) {
             var _wrap = document.createElement('div');
-            _wrap.style.cssText = 'flex-shrink:0;margin:14px 12px 0;'
-                + 'background:var(--card);border:1px solid var(--border);'
+            _wrap.className = 'mr-premium-card';
+            var _mt = isFirst ? '0' : '10px';
+            _wrap.style.cssText = 'flex-shrink:0;margin:' + _mt + ' 5px 0;'
+                + 'background:var(--card);'
+                + 'border:1px solid rgba(0,0,0,.10);'
                 + 'border-radius:14px;overflow:hidden;'
-                + 'box-shadow:0 2px 8px rgba(0,0,0,.05);';
+                + 'box-shadow:0 6px 20px rgba(0,0,0,.10), 0 2px 5px rgba(0,0,0,.06);';
             _wrap.insertAdjacentHTML('beforeend', _premiumHeader(title, iconChar));
             return _wrap;
         }
@@ -41166,7 +41182,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
         // [p264] Card RESUMEN premium — wrap dorado que contiene todos los
         // stats (hero row + corazón + mecánica + esfuerzo + trimp).
-        var _resumenCard = _premiumCardWrap('Resumen', '📊');
+        // [p265] isFirst:true para pegar al mapa sin aire vertical.
+        var _resumenCard = _premiumCardWrap('Resumen', '📊', true);
 
         var _heroDiv = document.createElement('div');
         _heroDiv.style.cssText = 'flex-shrink:0;display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--det-bg);padding:8px 4px 6px;';
@@ -41201,7 +41218,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function _detBalanceCell(bal) {
             /* [p261] Álvaro pide sin barra decorativa · solo los números en verde
                (dentro del ±1% óptimo) o rojo (fuera). Mismo estilo tamaño que
-               las otras celdas de la sección (font 22px, label 10px). */
+               las otras celdas de la sección (font 22px, label 10px).
+               [p265] Font-size 22→17px + white-space:nowrap para que "49.6/50.4%"
+               quepa en una sola línea sin wrapping (con 22px el "%" y el label
+               "Eq. I/D" bajaban a la línea siguiente). */
             var L = null, D = null, valTxt = '—', inZone = false;
             if (bal && bal !== '—') {
                 var mm = String(bal).match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
@@ -41215,7 +41235,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
             var _numColor = (valTxt === '—') ? 'var(--gold-text)' : (inZone ? '#16a34a' : '#dc2626');
-            return _detSectCell(valTxt, valTxt!=='—' ? '%' : '', 'Eq. I/D', _numColor);
+            return '<div style="display:flex;flex-direction:column;align-items:center;">'
+                + '<div style="font-size:17px;font-weight:700;letter-spacing:-.3px;line-height:1.15;color:'+_numColor+';font-family:var(--f);white-space:nowrap;">'
+                +   valTxt + (valTxt !== '—' ? '<span style="font-size:10px;font-weight:400;opacity:.55;color:var(--det-tw);">%</span>' : '')
+                + '</div>'
+                + '<div style="font-size:10px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);margin-top:2px;text-align:center;font-family:var(--f);">Eq. I/D</div>'
+                + '</div>';
         }
         var _mechDiv = document.createElement('div');
         _mechDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:3px 14px 4px;';
