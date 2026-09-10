@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p268';
+            window.__MR_VERSION = 'v2.30.1-p269';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9776,6 +9776,19 @@
            ROJO en dark para que destaque contra el fondo negro. */
         :root { --kmfast-color: var(--gold-text); }
         body.dark-mode { --kmfast-color: #f87171; }
+
+        /* [p269] Colores de las gráficas biomecánicas (Card 3 Análisis biomecánico).
+           Tonos más luminosos en dark para que los dots destaquen contra el fondo negro. */
+        :root {
+            --cad-color: #22c55e;
+            --stride-color: #a855f7;
+            --vert-color: #f59e0b;
+        }
+        body.dark-mode {
+            --cad-color: #4ade80;
+            --stride-color: #c084fc;
+            --vert-color: #fbbf24;
+        }
 
         /* Botón "colapsar" — solo visible cuando expanded.
            [v2.30.1-p112] Posición BOTTOM-CENTER para NO solaparse con la
@@ -41100,7 +41113,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 splits:    '<svg '+s+'><path d="M2 12.5 L5.5 8 L8.5 10 L14 3.5" '+SW+'/><path d="M11 3.5 H14 V6.5" '+SW+'/></svg>',
                 trophy:    '<svg '+s+'><path d="M4.5 1.5 L7 6.5 M11.5 1.5 L9 6.5" '+SW+'/><circle cx="8" cy="10.5" r="4" '+W+'/></svg>',
                 pace:      '<svg '+s+'><path d="M2 12.5 L5.5 8 L8.5 10 L14 3.5" '+SW+'/><path d="M10.5 3.5 H14 V7" '+SW+'/></svg>',
-                hr:        '<svg '+s+'><path d="M8 14 C 3 10, 1.5 7, 3 5 C 4.2 3.4, 6.5 3.6, 8 5.5 C 9.5 3.6, 11.8 3.4, 13 5 C 14.5 7, 13 10, 8 14 Z" '+W+'/></svg>'
+                hr:        '<svg '+s+'><path d="M8 14 C 3 10, 1.5 7, 3 5 C 4.2 3.4, 6.5 3.6, 8 5.5 C 9.5 3.6, 11.8 3.4, 13 5 C 14.5 7, 13 10, 8 14 Z" '+W+'/></svg>',
+                biomec:    '<svg '+s+'><circle cx="3" cy="4" r="1.2" '+W+'/><circle cx="8" cy="8" r="1.2" '+W+'/><circle cx="13" cy="6" r="1.2" '+W+'/><circle cx="5" cy="12" r="1.2" '+W+'/><circle cx="11" cy="12" r="1.2" '+W+'/><circle cx="3" cy="9" r="1.2" '+W+'/></svg>'
             };
             return icons[kind] || '';
         }
@@ -42200,38 +42214,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle, _respectRange);
             }
-            // Card 3: auto-size and render dynamics charts
-            c3.querySelectorAll('canvas[data-vals]').forEach(canvas => {
-                const vals  = JSON.parse(canvas.dataset.vals);
-                const color = canvas.dataset.color;
-                const dpr = window.devicePixelRatio || 1;
-                const w = canvas.parentElement.offsetWidth;
-                const h = canvas.parentElement.offsetHeight;
-                if (w <= 0 || h <= 0) return;
-                canvas.width  = w * dpr;
-                canvas.height = h * dpr;
-                if (canvas.dataset.dyn === '1') {
-                    drawDynLine(canvas, vals, color, dpr);
-                } else {
-                    // Compatibilidad por si quedara algún caller antiguo
-                    const minY = +canvas.dataset.miny || 0;
-                    const maxY = +canvas.dataset.maxy || 100;
-                    drawScatter(canvas, vals, color, minY, maxY);
-                }
-            });
+            // [p269] Card 3 ahora usa SVG inline puro (dots), sin canvas.
+            // Nada que renderizar aquí post-DOM.
         });
 
-        // ══ CARD 3: DINÁMICA DE CARRERA — biomecánico + scores + 4 charts + insight ══
+        // ══ CARD 3: ANÁLISIS BIOMECÁNICO ═══════════════════════════════════
+        // [v2.30.1-p269] Rediseño completo variante A: 1 sola card premium
+        // dorada envolviendo 3 bloques verticales (Cadencia · Zancada · Osc.
+        // vertical) con gráfica de DOTS SVG inline cada uno. Sin canvas, sin
+        // scoring, sin silueta biomecánica. La 4ª gráfica (Potencia) queda
+        // aparcada hasta que llegue el dato de COROS/Strava (requiere edge fn
+        // `coros-sync` + columnas `power_avg`/`power_series` en Supabase).
+        // Los cálculos de series (cadVals, strideVals, vertVals) se preservan
+        // íntegros del bloque anterior — mismo fix p180 (strideByT/vertByT
+        // preferidos sobre los derivados), mismo fallback para Strava.
         const c3 = document.createElement('div');
         c3.className = 'det-card';
-        // v2.30.1-p15 · Idem Card 2 · padding-top para no solaparse con header flotante.
         c3.style.cssText = 'overflow:hidden;display:flex;flex-direction:column;padding-top:6px;';
 
+        // ── Cálculo de series biomecánicas (preservado de p180) ───────────
         const ds3 = act.distSer || [];
         const cadVals    = [];   // spm (ambos pies × 2)
         const strideVals = [];   // cm
-        const vertVals   = [];   // vertical oscillation estimada cm
-        const ratioVals  = [];   // stride ratio %
+        const vertVals   = [];   // cm
 
         const cadSrc = (act.cadSeries || []).filter(c=>c.v>30);
 
@@ -42239,26 +42244,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         let dsMap = {};
         ds3.forEach((d,i) => { dsMap[d.t] = i; });
 
-        // Vertical oscillation model: k / sqrt(spd_ms)
-        // Calibrated: at 3.17 m/s → vert=10.2cm (matches Coros Pace 2 exactly)
-        // k = 10.2 * sqrt(3.17) = 18.16
-        // Natural variation: slower pace → more bounce → higher ratio, faster → less
+        // Modelo fallback osc.vertical: k / sqrt(spd_ms)
+        // Calibrado: a 3.17 m/s → vert=10.2cm (matchea Coros Pace 2)
         const VERT_K = 18.16;
         function calcVert(spd) { return spd > 0.3 ? Math.round(VERT_K / Math.sqrt(spd) * 10) / 10 : 0; }
-        function calcRatio(vCm, sCm) { return sCm > 0 && vCm > 0 ? Math.round(vCm / sCm * 1000) / 10 : 0; }
 
-        // [v2.30.1-p180 · fix Bug 2+3] Cuando la activity viene con series
-        // biomecánicas reales del acelerómetro COROS (act.strideSer per-point
-        // en cm, act.vertSer per-point en cm oscilación vertical), preferirlas
-        // sobre los cálculos derivados spd*60/spm y VERT_K/sqrt(spd).
-        //   · strideSer proviene de pt.cadenceLength (edge fn coros-sync
-        //     v1.9.2-p1) — datos reales del reloj, no derivados. Arregla la
-        //     gráfica de zancada que aparecía TOTALMENTE PLANA.
-        //   · vertSer proviene de pt.verticalVibration/10 — datos reales del
-        //     acelerómetro (más precisos que el modelo empírico VERT_K=18.16
-        //     calibrado a mano).
-        // Fallback preservado (arrays vacíos → cálculo original) para Strava,
-        // activities COROS pre-v1.9.2-p1, y otros dispositivos.
+        // [v2.30.1-p180] Preferir series reales del acelerómetro COROS
+        // (strideSer = pt.cadenceLength, vertSer = pt.verticalVibration/10)
+        // sobre los cálculos derivados. Fallback preservado para Strava y
+        // activities COROS pre-v1.9.2-p1.
         const strideByT = {};
         const vertByT   = {};
         if (Array.isArray(act.strideSer)) act.strideSer.forEach(s => { if (s && s.v > 0) strideByT[s.t] = s.v; });
@@ -42270,7 +42264,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cadVals.push(spm);
                 const di  = dsMap[c.t];
                 const spd = (di !== undefined && ds3[di] && ds3[di].spd > 0.3) ? ds3[di].spd : 0;
-                // Preferir series reales del acelerómetro cuando existen
                 const realStride = strideByT[c.t];
                 const realVert   = vertByT[c.t];
                 const sCm = (typeof realStride === 'number' && realStride > 0)
@@ -42281,11 +42274,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     : calcVert(spd);
                 strideVals.push(sCm);
                 vertVals.push(vCm);
-                ratioVals.push(calcRatio(vCm, sCm));
             });
         } else {
             ds3.forEach(d => {
-                if (!d.spd || d.spd < 0.3) { cadVals.push(0); strideVals.push(0); vertVals.push(0); ratioVals.push(0); return; }
+                if (!d.spd || d.spd < 0.3) { cadVals.push(0); strideVals.push(0); vertVals.push(0); return; }
                 const avgCB = (act.strideLen && act.strideLen > 0)
                     ? Math.round(d.spd * 60 / (act.strideLen / 100))
                     : Math.round(d.spd * 60 / 1.09);
@@ -42294,276 +42286,104 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cadVals.push(avgCB);
                 strideVals.push(sCm);
                 vertVals.push(vCm);
-                ratioVals.push(calcRatio(vCm, sCm));
             });
         }
 
-        const avgCad    = cadVals.filter(v=>v>100).reduce((a,b)=>a+b,0) / (cadVals.filter(v=>v>100).length||1);
-        // [v2.30.1-p179] Álvaro: la media que calcula el stream propio nuestro
-        // (spd*60/spm*100) difiere ligeramente del strideLen oficial de COROS
-        // (Card 1 muestra 106 · Card 3 mostraba 113). Preferimos el oficial
-        // cuando existe → coherencia total entre Card 1 y Card 3 en la MEDIA.
-        // [v2.30.1-p180] Fix bug gráfica plana aplicado (ver bloque strideSer
-        // arriba). La MEDIA sigue viniendo del strideLen oficial de summary
-        // (más preciso que promediar per-point) — la gráfica ya no es plana
-        // porque strideVals ahora contiene los valores reales del reloj.
+        // ── Medias y máximos para chips ─────────────────────────────────
+        const cadNonZero    = cadVals.filter(v=>v>100);
+        const strideNonZero = strideVals.filter(v=>v>50);
+        const vertNonZero   = vertVals.filter(v=>v>0);
+        const avgCad    = cadNonZero.length    ? cadNonZero.reduce((a,b)=>a+b,0)    / cadNonZero.length    : 0;
+        // [p179] Preferir strideLen oficial de COROS summary sobre la media
+        // per-point (más preciso). Card 1 usa este mismo valor.
         const avgStride = (act.strideLen && act.strideLen > 0)
             ? act.strideLen
-            : strideVals.filter(v=>v>50).reduce((a,b)=>a+b,0) / (strideVals.filter(v=>v>50).length||1);
-        const avgVert   = vertVals.filter(v=>v>0).reduce((a,b)=>a+b,0) / (vertVals.filter(v=>v>0).length||1);
-        const avgRatio  = ratioVals.filter(v=>v>0).reduce((a,b)=>a+b,0) / (ratioVals.filter(v=>v>0).length||1);
-        const maxCad    = Math.max(...cadVals.filter(v=>v>0), 0);
+            : (strideNonZero.length ? strideNonZero.reduce((a,b)=>a+b,0) / strideNonZero.length : 0);
+        const avgVert   = vertNonZero.length ? vertNonZero.reduce((a,b)=>a+b,0) / vertNonZero.length : 0;
+        const maxCad    = cadNonZero.length    ? Math.max.apply(null, cadNonZero)   : 0;
+        const maxStride = strideNonZero.length ? Math.max.apply(null, strideNonZero) : 0;
+        const maxVert   = vertNonZero.length   ? Math.max.apply(null, vertNonZero)   : 0;
 
-        // ── Scoring (0-100) + etiqueta + posición en barra (0-100%) ─────────────
-        // Cadencia: óptima 170-180 spm. <150 mala · 150-165 mejorable · 165-170 bien · 170-180 exc · 180-190 bien · >190 mejorable
-        function scoreCadence(v) {
-            if (!v || v <= 0) return null;
-            if (v >= 170 && v <= 180) return {s:95, tag:'EXC', pos: 55 + (v-170)*1.5};
-            if (v >= 165 && v < 170)  return {s:80, tag:'BIEN', pos: 40 + (v-165)*3};
-            if (v >= 180 && v <= 190) return {s:80, tag:'BIEN', pos: 70 + (v-180)*1.5};
-            if (v >= 155 && v < 165)  return {s:60, tag:'OK', pos: 20 + (v-155)*2};
-            if (v > 190 && v <= 200)  return {s:55, tag:'OK', pos: Math.min(95, 85 + (v-190))};
-            if (v >= 145 && v < 155)  return {s:40, tag:'MEJ', pos: 8 + (v-145)*1.2};
-            return {s:25, tag:'BAJO', pos: v < 145 ? 5 : 95};
-        }
-        // Zancada (relativa a altura): óptimo 60-70% altura. <50 corto · 50-60 mejorable · 60-70 exc · 70-80 bien · >80 sobreextensión
-        function scoreStride(v, heightCm) {
-            if (!v || v <= 0) return null;
-            const h = heightCm && heightCm > 100 ? heightCm : 175; // fallback
-            const pct = v / h * 100;
-            if (pct >= 60 && pct <= 70) return {s:90, tag:'EXC',  pos: 45 + (pct-60)*2};
-            if (pct >  70 && pct <= 78) return {s:75, tag:'BIEN', pos: 65 + (pct-70)*2};
-            if (pct >= 55 && pct <  60) return {s:65, tag:'BIEN', pos: 30 + (pct-55)*3};
-            if (pct >= 50 && pct <  55) return {s:50, tag:'OK',   pos: 18 + (pct-50)*2.4};
-            if (pct >  78 && pct <= 85) return {s:45, tag:'MEJ',  pos: Math.min(92, 81 + (pct-78))};
-            return {s:25, tag:'BAJO', pos: pct < 50 ? 8 : 95};
-        }
-        // Oscilación vertical: ideal <9 cm. <7 elite · 7-9 exc · 9-10 bien · 10-12 ok · >12 mejorable. (BARRA INVERTIDA)
-        function scoreVert(v) {
-            if (!v || v <= 0) return null;
-            if (v < 7)              return {s:95, tag:'EXC',  pos: 8};
-            if (v >= 7  && v <= 9)  return {s:88, tag:'EXC',  pos: 20 + (v-7)*5};
-            if (v >  9  && v <= 10) return {s:75, tag:'BIEN', pos: 35 + (v-9)*10};
-            if (v >  10 && v <= 11) return {s:60, tag:'OK',   pos: 50 + (v-10)*10};
-            if (v >  11 && v <= 13) return {s:45, tag:'MEJ',  pos: 65 + (v-11)*8};
-            return {s:25, tag:'BAJO', pos: 92};
-        }
-        // Ratio vertical: ideal <8%. <6 elite · 6-8 exc · 8-9 bien · 9-10 ok · >10 mejorable. (BARRA INVERTIDA)
-        function scoreRatio(v) {
-            if (!v || v <= 0) return null;
-            if (v < 6)               return {s:95, tag:'EXC',  pos: 8};
-            if (v >= 6  && v <= 8)   return {s:88, tag:'EXC',  pos: 18 + (v-6)*7};
-            if (v >  8  && v <= 9)   return {s:78, tag:'BIEN', pos: 35 + (v-8)*12};
-            if (v >  9  && v <= 10)  return {s:62, tag:'OK',   pos: 50 + (v-9)*12};
-            if (v >  10 && v <= 12)  return {s:45, tag:'MEJ',  pos: 65 + (v-10)*10};
-            return {s:25, tag:'BAJO', pos: 92};
-        }
-        const userHeight = (typeof profileData !== 'undefined' && profileData && parseFloat(profileData.height)) || 0;
-        const sCad   = scoreCadence(avgCad);
-        const sStr   = scoreStride(avgStride, userHeight);
-        const sVert  = scoreVert(avgVert);
-        const sRatio = scoreRatio(avgRatio);
-
-        // Helpers de color por tag
-        function tagBg(t) {
-            return t==='EXC' ? 'rgba(76,175,80,.22)'
-                 : t==='BIEN'? 'rgba(76,175,80,.16)'
-                 : t==='OK'  ? 'rgba(255,193,7,.18)'
-                 : t==='MEJ' ? 'rgba(255,159,69,.18)'
-                 :             'rgba(255,87,87,.18)';
-        }
-        function tagCol(t) {
-            return t==='EXC' ? '#6BCB77'
-                 : t==='BIEN'? '#8BD78E'
-                 : t==='OK'  ? '#FFD93D'
-                 : t==='MEJ' ? '#FFA45C'
-                 :             '#FF7878';
-        }
-        function tagLabel(t) {
-            return t==='EXC' ? 'EXC'
-                 : t==='BIEN'? 'BIEN'
-                 : t==='OK'  ? 'OK'
-                 : t==='MEJ' ? 'MEJ'
-                 :             'BAJO';
-        }
-
-        // ── v2.29 · Header "ANÁLISIS BIOMECÁNICO" integrado en topHalf ────
-        // El header pasa DENTRO de la columna izquierda del topHalf (encima de
-        // la silueta). Los 4 bloques de la derecha suben así hasta la parte
-        // superior de la card, ganando aire vertical. Además el topHalf baja
-        // de 55% → 51%, transfiriendo esos 4pp de altura al bottomHalf (las
-        // 3 gráficas ganan tamaño). Padding-top del topHalf sube 4→10 para
-        // que el header respire arriba (antes lo daba el padding del propio
-        // header al ir suelto).
-        const topHalf = document.createElement('div');
-        topHalf.style.cssText = 'flex:0 0 51%;display:flex;gap:8px;padding:10px 10px 6px;min-height:0;';
-
-        // Columna izquierda: header + silueta (comparten la mitad izquierda)
-        const leftCol = document.createElement('div');
-        leftCol.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;';
-
-        const c3Header = document.createElement('div');
-        c3Header.style.cssText = 'font-size:12.5px;font-weight:700;color:var(--det-lbl-accent);text-transform:uppercase;letter-spacing:1.1px;opacity:.9;flex-shrink:0;font-family:var(--f);padding:0 2px 2px;';
-        c3Header.textContent = 'Análisis biomecánico';
-        leftCol.appendChild(c3Header);
-
-        // ── Izquierda: figura biomecánica (imagen real + cotas SVG superpuestas) ───
-        // v2.28.0-p4 · Correcciones finales de anatomía + limpieza visual:
-        //   - Pie ELEVADO (delantero) reubicado en su posición real: cluster
-        //     en píxeles PNG (172, 235) → viewBox cx=171 cy=357. Antes estaba
-        //     en cy=379 (mala detección, ese punto era la mano extendida).
-        //   - Pie APOYADO (trasero): cx=12 cy=400 (ajuste fino).
-        //   - Borde dorado del bloque bioWrap eliminado a petición del user.
-        //   - Cota zancada X ajustada a los nuevos pies (12 → 171), texto
-        //     centrado en x=92.
-        const bioWrap = document.createElement('div');
-        bioWrap.style.cssText = 'flex:1;background:var(--det-bg);border-radius:14px;position:relative;overflow:hidden;min-width:0;display:flex;align-items:stretch;justify-content:stretch;';
-        const vertLbl = (avgVert > 0 ? avgVert.toFixed(1) : '—') + ' cm';
-        const strideLbl = (avgStride > 0 ? Math.round(avgStride) : '—') + ' cm';
-        bioWrap.innerHTML =
-            '<svg viewBox="0 0 240 450" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block;transform:scale(0.85);transform-origin:center center;">'
-            // Imagen runner al máximo, sin filter (dark mode invierte por CSS)
-            + '<image class="mr-runner-silh" href="'+MR_RUNNER_IMG+'" x="2" y="9" width="236" height="400" preserveAspectRatio="none"/>'
-            // Oscilación vertical: cota cyan cerca de la cabeza, texto a la IZQUIERDA
-            + '<line x1="126" y1="6" x2="126" y2="44" stroke="#3BBCE0" stroke-width="2" stroke-dasharray="4,3" opacity="0.95"/>'
-            + '<polygon points="126,4 119,13 133,13" fill="#3BBCE0"/>'
-            + '<polygon points="126,46 119,37 133,37" fill="#3BBCE0"/>'
-            + '<text x="120" y="30" fill="#3BBCE0" font-size="14" font-weight="700" font-family="sans-serif" text-anchor="end">'+vertLbl+'</text>'
-            // Líneas de referencia horizontales (límites osc. vertical)
-            + '<line x1="90" y1="6" x2="170" y2="6" stroke="#3BBCE0" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.4"/>'
-            + '<line x1="90" y1="44" x2="170" y2="44" stroke="#3BBCE0" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.4"/>'
-            // Línea de suelo · al nivel del pie apoyado
-            + '<line x1="0" y1="407" x2="240" y2="407" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" stroke-dasharray="4,4"/>'
-            // Foot strikes: trasero apoyado ahora (12, 400) grande con anillo ·
-            // delantero PROYECTADO al suelo (215, 402) — donde va a aterrizar
-            // el pie que ahora está en vuelo. Ambos puntos en el suelo → la
-            // cota morada mide zancada real (distancia entre dos apoyos).
-            + '<circle cx="12" cy="400" r="5" fill="#FF9500"/>'
-            + '<circle cx="12" cy="400" r="9" fill="none" stroke="#FF9500" stroke-width="1.3" opacity="0.5"/>'
-            + '<circle cx="215" cy="402" r="4.5" fill="#FF9500" opacity="0.45"/>'
-            // Líneas guía verticales cortas · del punto en el suelo a la cota
-            + '<line x1="12" y1="408" x2="12" y2="430" stroke="#AF52DE" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.55"/>'
-            + '<line x1="215" y1="408" x2="215" y2="430" stroke="#AF52DE" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.55"/>'
-            // Cota de zancada (corchete morado)
-            + '<line x1="12" y1="430" x2="215" y2="430" stroke="#AF52DE" stroke-width="2.5"/>'
-            + '<path d="M 12 425 L 12 435 M 215 425 L 215 435" stroke="#AF52DE" stroke-width="2.5" stroke-linecap="round"/>'
-            + '<text x="114" y="447" fill="#AF52DE" font-size="14" font-weight="700" text-anchor="middle" font-family="sans-serif">'+strideLbl+'</text>'
-            + '</svg>';
-
-        // ── Derecha: 4 cards apiladas ─────────────────────────────────
-        const statsCol = document.createElement('div');
-        statsCol.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;';
-
-        function buildStatCard(label, valStr, unitStr, score, reverse, targetStr) {
-            const card = document.createElement('div');
-            // [FASE 5.7.4-e] Fondo negro opaco + borde dorado tenue (era gradient azul oscuro)
-            card.style.cssText = 'flex:1;background:var(--det-bg);border-radius:11px;padding:7px 10px 8px;border:1px solid var(--det-lbl-accent-bd);display:flex;flex-direction:column;justify-content:space-between;min-height:0;';
-            if (!score) {
-                card.innerHTML =
-                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">'
-                    + '<span style="font-size:9.5px;color:var(--det-lbl-accent);opacity:.75;font-weight:700;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;white-space:nowrap;">'+label+'</span>'
-                    + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
-                    + '<span style="font-size:9px;color:var(--det-tm);font-family:var(--f);font-variant-numeric:tabular-nums;">'+(targetStr||'')+'</span>'
-                    + '<span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:5px;background:var(--det-elev);color:var(--det-tm);font-family:var(--f);font-variant-numeric:tabular-nums;">—</span>'
-                    + '</div>'
-                    + '</div>'
-                    + '<div style="display:flex;align-items:baseline;gap:3px;line-height:1;margin:3px 0 5px;"><span style="font-size:24px;font-weight:800;color:var(--det-tm);font-family:var(--f);">—</span><span style="font-size:10px;color:var(--det-tt);font-weight:500;font-family:var(--f);">'+unitStr+'</span></div>'
-                    + '<div style="height:7px;border-radius:3px;background:var(--det-elev-lo);"></div>';
-                return card;
+        // ── Generador de SVG dots inline ──────────────────────────────────
+        // vals = array numérico · colorVar = CSS var (--cad-color, etc.) ·
+        // Renderiza puntos (radius 1.4 fill-opacity .75) + línea horizontal
+        // punteada en la media (opacity .35). Auto-ajusta el rango Y a los
+        // datos con padding para que el ruido no aplaste la señal.
+        function _dotsSvgBiomec(vals, colorVar) {
+            const nonZero = vals.filter(v => v > 0);
+            if (!nonZero.length) {
+                return '<div style="height:100%;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--det-tp);font-family:var(--f);opacity:.6;">Sin datos</div>';
             }
-            const tag = score.tag, sNum = score.s, pos = Math.max(3, Math.min(97, reverse ? (100 - sNum) : sNum));
-            const grad = reverse
-                ? 'linear-gradient(90deg,#4CAF50 0%,#6BCB77 25%,#FFD93D 50%,#FF9F45 75%,#FF5757 100%)'
-                : 'linear-gradient(90deg,#FF5757 0%,#FF9F45 25%,#FFD93D 50%,#6BCB77 75%,#4CAF50 100%)';
-            card.innerHTML =
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">'
-                + '<span style="font-size:9.5px;color:var(--det-lbl-accent);opacity:.85;font-weight:700;font-family:var(--f);text-transform:uppercase;letter-spacing:.9px;white-space:nowrap;">'+label+'</span>'
-                + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
-                + '<span style="font-size:9px;color:var(--det-tm);font-family:var(--f);font-variant-numeric:tabular-nums;">'+(targetStr||'')+'</span>'
-                + '<span style="font-size:11px;font-weight:800;padding:2px 7px;border-radius:5px;background:'+tagBg(tag)+';color:'+tagCol(tag)+';font-family:var(--f);font-variant-numeric:tabular-nums;">'+sNum+'</span>'
-                + '</div>'
-                + '</div>'
-                + '<div style="display:flex;align-items:baseline;gap:3px;line-height:1;margin:3px 0 5px;"><span style="font-size:24px;font-weight:800;color:var(--det-tw);font-family:var(--f);font-variant-numeric:tabular-nums;">'+valStr+'</span><span style="font-size:10px;color:var(--det-tm);font-weight:500;font-family:var(--f);">'+unitStr+'</span></div>'
-                + '<div style="height:7px;border-radius:3px;background:'+grad+';position:relative;">'
-                + '<div style="position:absolute;top:-3px;left:'+pos+'%;width:3px;height:13px;background:#fff;border-radius:1.5px;box-shadow:0 0 4px rgba(0,0,0,.6);transform:translateX(-50%);"></div>'
-                + '</div>';
-            return card;
-        }
+            const W = 100, H = 100, PAD = 6;
+            const minV = Math.min.apply(null, nonZero);
+            const maxV = Math.max.apply(null, nonZero);
+            const rangeRaw = maxV - minV;
+            const range = rangeRaw > 0 ? rangeRaw : Math.max(1, Math.abs(minV) * 0.05);
+            const avgV = nonZero.reduce((a,b)=>a+b,0) / nonZero.length;
+            const avgY = PAD + (H - PAD*2) * (1 - (avgV - minV) / range);
 
-        const strideTargetStr = userHeight > 100 && avgStride > 0
-            ? Math.round(avgStride / userHeight * 100) + '% altura'
-            : '60–70% altura';
-
-        statsCol.appendChild(buildStatCard('Cadencia',     avgCad>0 ? Math.round(avgCad).toString() : '—', 'spm', sCad,   false, '170–180'));
-        statsCol.appendChild(buildStatCard('Zancada',      avgStride>0 ? Math.round(avgStride).toString() : '—', 'cm',  sStr,   false, strideTargetStr));
-        statsCol.appendChild(buildStatCard('Osc. vert.',avgVert>0 ? avgVert.toFixed(1) : '—', 'cm',  sVert,  true,  '<9 cm ideal'));
-        statsCol.appendChild(buildStatCard('R. vertical',avgRatio>0 ? avgRatio.toFixed(1) : '—','%',   sRatio, true,  '<8% ideal'));
-
-        // v2.29 · bioWrap va dentro de leftCol (debajo del header). leftCol y
-        // statsCol comparten el topHalf al 50/50 en anchura.
-        leftCol.appendChild(bioWrap);
-        topHalf.appendChild(leftCol);
-        topHalf.appendChild(statsCol);
-        c3.appendChild(topHalf);
-
-        // ── MITAD INFERIOR: 4 charts apiladas + insight ───────────────
-        const bottomHalf = document.createElement('div');
-        bottomHalf.style.cssText = 'flex:1;display:flex;flex-direction:column;padding:4px 10px 10px;gap:4px;min-height:0;';
-
-        const chartsStack = document.createElement('div');
-        chartsStack.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;min-height:0;';
-
-        function buildDynChart(title, color, valStr, vals, yFixed) {
-            const row = document.createElement('div');
-            // [FASE 5.7.4-e] Fondo negro opaco + borde dorado tenue (era #0d1726 + borde blanco)
-            row.style.cssText = 'flex:1;background:var(--det-bg);border-radius:8px;padding:5px 9px 4px;border:1px solid var(--det-lbl-accent-bd);display:flex;flex-direction:column;min-height:0;';
-            const head = document.createElement('div');
-            head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;flex-shrink:0;line-height:1.1;';
-            head.innerHTML = '<span style="font-size:9.5px;font-weight:600;color:'+color+';font-family:var(--f);display:flex;align-items:center;gap:5px;"><span style="width:6px;height:6px;border-radius:50%;background:'+color+';"></span>'+title+'</span>'
-                + '<span style="font-size:9.5px;font-weight:700;color:var(--det-tp);font-family:var(--f);font-variant-numeric:tabular-nums;">'+valStr+'</span>';
-            const canvasWrap = document.createElement('div');
-            canvasWrap.style.cssText = 'flex:1;min-height:0;position:relative;';
-            const canvas = document.createElement('canvas');
-            canvas.style.cssText = 'width:100%;height:100%;display:block;';
-            canvas.dataset.vals  = JSON.stringify(vals);
-            canvas.dataset.color = color;
-            canvas.dataset.dyn   = '1'; // marker for new dynamics renderer
-            // [v2.30.1-p181] Rango Y fijo opcional (matchea look-and-feel COROS
-            // oficial que usa ejes estables 0-180 para zancada, 0-16 para osc.
-            // vertical). Sin esto, un outlier residual del acelerómetro
-            // (aunque el mapper ya filtra 40-200) estira toda la escala.
-            if (yFixed && typeof yFixed.min === 'number' && typeof yFixed.max === 'number') {
-                canvas.dataset.ymin = String(yFixed.min);
-                canvas.dataset.ymax = String(yFixed.max);
+            let dots = '';
+            const N = vals.length;
+            for (let i = 0; i < N; i++) {
+                const v = vals[i];
+                if (v <= 0) continue;
+                const x = PAD + (W - PAD*2) * (i / Math.max(1, N - 1));
+                const y = PAD + (H - PAD*2) * (1 - (v - minV) / range);
+                dots += '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="1.4" fill="var(' + colorVar + ')" fill-opacity="0.75"/>';
             }
-            canvasWrap.appendChild(canvas);
-            row.appendChild(head);
-            row.appendChild(canvasWrap);
-            return row;
+            const meanLine = '<line x1="' + PAD + '" y1="' + avgY.toFixed(2) + '" x2="' + (W-PAD) + '" y2="' + avgY.toFixed(2) + '" stroke="var(' + colorVar + ')" stroke-width="0.6" stroke-dasharray="2,3" stroke-opacity="0.35"/>';
+            return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:100%;display:block;overflow:visible;">' + meanLine + dots + '</svg>';
         }
 
-        chartsStack.appendChild(buildDynChart('Cadencia',       '#FF9500',
-            'Media '+(avgCad>0?Math.round(avgCad):'—')+(maxCad>0?' · Máx '+maxCad:'')+' spm', cadVals));
-        // v2.30.1-p181 · Ejes Y fijos para zancada (40-180 cm) y osc. vertical
-        // (4-20 cm), rangos típicos running adulto. Alinea con COROS oficial y
-        // absorbe outliers residuales.
-        chartsStack.appendChild(buildDynChart('Zancada',        '#AF52DE',
-            'Media '+(avgStride>0?Math.round(avgStride):'—')+' cm', strideVals,
-            { min: 40, max: 180 }));
-        chartsStack.appendChild(buildDynChart('Osc. vertical',  '#3BBCE0',
-            'Media '+(avgVert>0?avgVert.toFixed(1):'—')+' cm', vertVals,
-            { min: 4, max: 20 }));
+        // ── Constructor de bloque biomec (label + chip + gráfica) ─────────
+        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst) {
+            const block = document.createElement('div');
+            block.className = 'mr-cbio-block';
+            block.style.cssText = 'flex:1 1 0;min-height:0;padding:10px 14px 8px;background:var(--det-bg);display:flex;flex-direction:column;'
+                + (isFirst ? '' : 'border-top:1px solid var(--det-border-lo);');
+            const hdr = document.createElement('div');
+            hdr.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;flex-shrink:0;';
+            hdr.innerHTML =
+                '<span style="font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--gold-text);font-family:var(--f);">' + label + '</span>'
+              + '<span style="font-size:11.5px;color:var(--det-tm);font-family:var(--f);font-variant-numeric:tabular-nums;">' + chipHtml + '</span>';
+            const chart = document.createElement('div');
+            chart.style.cssText = 'flex:1 1 0;min-height:0;position:relative;';
+            chart.innerHTML = _dotsSvgBiomec(vals, colorVar);
+            block.appendChild(hdr);
+            block.appendChild(chart);
+            return block;
+        }
 
-        bottomHalf.appendChild(chartsStack);
+        // ── Ensamblado ────────────────────────────────────────────────────
+        const _biomecCard = _premiumCardWrap('Análisis biomecánico', _premiumIcon('biomec'), true, '3 métricas');
+        _biomecCard.style.flex = '1 1 0';
+        _biomecCard.style.minHeight = '0';
+        _biomecCard.style.display = 'flex';
+        _biomecCard.style.flexDirection = 'column';
 
-        // ── v2.28.0-p1 · Insight IA eliminado ──────────────────────────
-        // El bloque ✨/💡 que explicaba el mejor score se ha quitado; con
-        // ese espacio los 3 charts ganan altura (flex:1 los estira solo).
-        // Motivo: el texto ya se lee redundantemente en los tags EXC/OK/MEJ
-        // del bloque de la derecha, y las 3 gráficas ganan legibilidad.
+        _biomecCard.appendChild(_buildBiomecBlock(
+            'Cadencia',
+            'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgCad>0?Math.round(avgCad):'—') + '</b> spm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxCad>0?Math.round(maxCad):'—') + '</b>',
+            cadVals,
+            '--cad-color',
+            true
+        ));
+        _biomecCard.appendChild(_buildBiomecBlock(
+            'Zancada',
+            'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgStride>0?Math.round(avgStride):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxStride>0?Math.round(maxStride):'—') + '</b>',
+            strideVals,
+            '--stride-color',
+            false
+        ));
+        _biomecCard.appendChild(_buildBiomecBlock(
+            'Osc. vertical',
+            'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgVert>0?avgVert.toFixed(1):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxVert>0?maxVert.toFixed(1):'—') + '</b>',
+            vertVals,
+            '--vert-color',
+            false
+        ));
 
-        c3.appendChild(bottomHalf);
-
+        c3.appendChild(_biomecCard);
         track.appendChild(c3);
 
 
