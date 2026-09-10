@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p260';
+            window.__MR_VERSION = 'v2.30.1-p261';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -41073,8 +41073,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         function _heroCell(val, unit, label, withDiv) {
             // v2.30.1-p9 · Revertido a tamaños originales (Álvaro prefería el
             // tamaño previo; la potencia va en la fila CORAZÓN/MECÁNICA).
+            // [p261] Fuera separador vertical (el border-right hacía ruido visual).
+            // El parámetro withDiv queda como no-op para no romper callers.
             return '<div style="display:flex;flex-direction:column;align-items:center;position:relative;">'
-                + (withDiv ? '<div style="position:absolute;left:0;top:12%;height:76%;width:1px;background:var(--det-border);"></div>' : '')
                 + '<div style="font-size:27px;font-weight:800;letter-spacing:-1px;line-height:1;color:var(--gold-text);font-family:var(--f);">'
                 +   val + (unit ? '<span style="font-size:11px;font-weight:500;opacity:.55;letter-spacing:0;color:var(--det-tw);"> '+unit+'</span>' : '')
                 + '</div>'
@@ -41159,13 +41160,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // celdas mecánica para dejar protagonismo al balancín (más visual que
         // un simple % numérico).
         function _detBalanceCell(bal) {
+            /* [p261] Álvaro pide sin barra decorativa · solo los números en verde
+               (dentro del ±1% óptimo) o rojo (fuera). Mismo estilo tamaño que
+               las otras celdas de la sección (font 22px, label 10px). */
             var L = null, D = null, valTxt = '—', inZone = false;
-            // v2.30.1-p21 · Barra al aire (sin recuadro contenedor) con fondo rojo
-            // y zona verde central ampliada. Escala del marker ×8 para amplificar
-            // el rango realista 45-55% (que casi nunca se sobrepasa en la vida).
-            // Zona verde cubre 42%-58% del ancho (equivalente al balance ±1% con
-            // la escala ×8) → diferencias sutiles como 49.5/50.5 se ven perfectas.
-            // Números en verde si |L-50| ≤ 1%, en rojo si desviación mayor.
             if (bal && bal !== '—') {
                 var mm = String(bal).match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
                 if (mm) {
@@ -41177,114 +41175,68 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                 }
             }
-            // Marker position (0-100 %). Escala ×8 amplifica el rango realista.
-            // D=50 → 50 (centro), D=55 → 90, D=45 → 10. Clamped a 6-94 para no
-            // pegarse al borde con las letras I/D.
-            var markerPct = 50;
-            if (D !== null) {
-                markerPct = 50 + (D - 50) * 8;
-                markerPct = Math.max(6, Math.min(94, markerPct));
-            }
-            // v2.30.1-p29 · Marker cambiado de círculo (r=4.5) → aguja vertical
-            // tipo tacómetro. Álvaro: "la bola queda muy mal y coge con más
-            // precisión el valor que toque con un indicador de barra". SVG
-            // alto crecido 12→18 para que el marker sobresalga 3px por arriba
-            // y 3px por abajo de la barra roja/verde (que ahora va centrada
-            // en y=3 con altura 12). Barra en su sitio 42%-58% zona verde.
-            var svgW = 88, svgH = 18, barY = 3, barH = 12, barR = 3;
-            var greenX = svgW * 0.42;         // 42% (equivalente ±1% con escala ×8)
-            var greenW = svgW * 0.16;         //  16% ancho (42→58)
-            var markerX = svgW * markerPct / 100;
-            var markerW = 3.5;                // Aguja estrecha
-            // Color del número según cumple ±1%
-            var numColor = (valTxt === '—') ? 'var(--det-tw)' : (inZone ? '#16a34a' : '#dc2626');
-            var _svg = '<svg width="' + svgW + '" height="' + svgH + '" viewBox="0 0 ' + svgW + ' ' + svgH + '" style="display:block;overflow:visible;">'
-                    +   '<rect x="0" y="' + barY + '" width="' + svgW + '" height="' + barH + '" rx="' + barR + '" ry="' + barR + '" fill="#dc2626"/>'
-                    +   '<rect x="' + greenX.toFixed(1) + '" y="' + barY + '" width="' + greenW.toFixed(1) + '" height="' + barH + '" fill="#16a34a"/>'
-                    +   '<text x="4" y="' + (barY + barH/2 + 2.8) + '" font-size="8" font-weight="800" fill="#fff" font-family="var(--f)" style="paint-order:stroke;stroke:rgba(0,0,0,.5);stroke-width:.5px;">I</text>'
-                    +   '<text x="' + (svgW - 8) + '" y="' + (barY + barH/2 + 2.8) + '" font-size="8" font-weight="800" fill="#fff" font-family="var(--f)" style="paint-order:stroke;stroke:rgba(0,0,0,.5);stroke-width:.5px;">D</text>'
-                    +   (valTxt !== '—' ? '<rect x="' + (markerX - markerW/2).toFixed(1) + '" y="0" width="' + markerW + '" height="' + svgH + '" rx="1" ry="1" fill="#ffffff" stroke="#000000" stroke-width="1.5"/>' : '')
-                    + '</svg>';
-            return '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">'
-                +    _svg
-                +    '<div style="font-size:12px;font-weight:800;letter-spacing:-.2px;line-height:1.1;color:'+numColor+';font-family:var(--f);font-variant-numeric:tabular-nums;">'+valTxt+(valTxt!=='—'?'<span style="font-size:8px;font-weight:400;opacity:.55;"> %</span>':'')+'</div>'
-                +    '<div style="font-size:8.5px;font-weight:600;letter-spacing:.7px;text-transform:uppercase;color:var(--det-ts);text-align:center;font-family:var(--f);">Eq. I/D</div>'
-                + '</div>';
+            var _numColor = (valTxt === '—') ? 'var(--gold-text)' : (inZone ? '#16a34a' : '#dc2626');
+            return _detSectCell(valTxt, valTxt!=='—' ? '%' : '', 'Eq. I/D', _numColor);
         }
         var _mechDiv = document.createElement('div');
         _mechDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:5px 14px 6px;';
         _mechDiv.innerHTML =
               _detEyebrow('Mecánica', '')
-            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:end;">'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
             +   _detSectCell(avgCadDisplay, '', 'Cadencia', null)
             +   _detSectCell(avgStrideDisplay, '', 'Zancada', null)
             +   _detBalanceCell(balDisplay)
             + '</div>';
         c1.appendChild(_mechDiv);
 
-        // ── Barra de Eficiencia (4 niveles, estilo RPE/TRIMP) ──────────
-        // Umbrales EF = spd/hr × 100 (solo running): ≥2.20 muy buena (azul) ·
-        // 1.90-2.19 buena (verde) · 1.65-1.89 regular (amarillo) · <1.65 mala
-        // (rojo). Otros tipos: azul neutro sin tag.
-        if (efDisplay !== '—') {
-            var _efN = parseFloat(efDisplay);
-            var _isRunEF = (function(t){ t=String(t||'').toLowerCase(); return t==='easy'||t==='recovery'||t==='series'||t==='long'||t==='race'; })(act.type);
-            var _efColor, _efTag;
-            if (_isRunEF) {
-                if      (_efN >= 2.20) { _efColor = '#60a5fa'; _efTag = 'MUY BUENA'; }
-                else if (_efN >= 1.90) { _efColor = '#4ade80'; _efTag = 'BUENA'; }
-                else if (_efN >= 1.65) { _efColor = '#facc15'; _efTag = 'REGULAR'; }
-                else                   { _efColor = '#f87171'; _efTag = 'MALA'; }
-            } else { _efColor = '#7aaff5'; _efTag = ''; }
-            var _efPct = Math.max(2, Math.min(100, Math.round((_efN - 1.5) / 0.9 * 100)));
-            var _efStrip = document.createElement('div');
-            _efStrip.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:2px 14px;';
-            _efStrip.innerHTML =
-                '<div style="display:flex;align-items:center;gap:10px;background:'+_efColor+'1a;border-radius:8px;padding:8px 12px;">'
-                +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">EFIC.</span>'
-                +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
-                +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
-                +'<div style="height:100%;width:'+_efPct+'%;border-radius:2px;background:'+_efColor+';"></div>'
-                +'</div>'
-                +'<span style="font-size:14px;font-weight:800;color:'+_efColor+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+efDisplay+'</span>'
-                +(_efTag?'<span style="font-size:11px;color:'+_efColor+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+_efTag+'</span>':'')
-                +'</div></div>';
-            c1.appendChild(_efStrip);
-        }
-
-        // ─────────────────────────────────────────────────────────────
-        // [FASE 6.2 · S20] Strips finos RPE + TRIMP (~28px cada uno)
-        // Reemplazan el RPE strip gordo (~56px) anterior y añaden TRIMP.
-        // Estructura: LABEL dorado · barra gradiente · valor coloreado · tag.
-        // Si act.rpe ausente → no se pinta strip RPE (igual que antes).
-        // Si act.trimp ausente Y fallback null → no se pinta strip TRIMP.
-        // ─────────────────────────────────────────────────────────────
-
-        // Strip RPE fino
-        if (act.rpe) {
-            const rd = rpeData(act.rpe);
-            if (rd) {
-                const rpeStrip = document.createElement('div');
-                rpeStrip.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:2px 14px;';
-                // Tag corto (Coros style): Muy fácil / Fácil / Moderado / Duro / Máximo
-                var rpeTag = String(rd.label || '').toUpperCase();
-                // Ancho de barra proporcional al RPE (10 → 100%)
-                var rpePct = Math.max(2, Math.min(100, rd.n * 10));
-                rpeStrip.innerHTML =
-                    '<div style="display:flex;align-items:center;gap:10px;background:'+rd.color+'1a;border-radius:8px;padding:8px 12px;">'
-                    +'<span style="font-size:11px;color:var(--det-lbl-accent);opacity:.85;font-family:var(--f);text-transform:uppercase;letter-spacing:1px;font-weight:700;flex-shrink:0;">RPE</span>'
-                    +'<div style="flex:1;display:flex;align-items:center;gap:8px;">'
-                    +'<div style="flex:1;height:10px;background:var(--det-elev);border-radius:2px;overflow:hidden;">'
-                    +'<div style="height:100%;width:'+rpePct+'%;border-radius:2px;background:'+rd.color+';"></div>'
-                    +'</div>'
-                    +'<span style="font-size:14px;font-weight:800;color:'+rd.color+';line-height:1;letter-spacing:-.3px;font-family:var(--f);white-space:nowrap;">'+rd.n+'</span>'
-                    +'<span style="font-size:11px;color:'+rd.color+';font-weight:700;letter-spacing:.3px;white-space:nowrap;font-family:var(--f);">'+rpeTag+'</span>'
-                    +'</div></div>';
-                c1.appendChild(rpeStrip);
+        // ── [p261] Sección "Esfuerzo" con 3 stats: RPE · Eficiencia · Potencia ──
+        // Reemplaza los strips gordos anteriores de EFIC y RPE. Colores semáforo
+        // por valor (verde/ámbar/rojo). Cuando llegue potencia real de Strava/Coros
+        // reemplazamos '—' por el valor. TRIMP se mantiene como barra abajo por su
+        // importancia como métrica de carga.
+        var _effortHasAny = (act.rpe != null) || (efDisplay !== '—') || (act.powerAvg != null);
+        if (_effortHasAny) {
+            // RPE color + tag
+            var _rpeVal = '—', _rpeColor = 'var(--gold-text)';
+            if (act.rpe != null && isFinite(act.rpe)) {
+                var _rpeN = Math.round(Number(act.rpe));
+                _rpeVal = String(_rpeN);
+                if      (_rpeN <= 3) _rpeColor = '#16a34a'; /* Fácil · verde */
+                else if (_rpeN <= 6) _rpeColor = '#d97706'; /* Moderado · ámbar */
+                else if (_rpeN <= 8) _rpeColor = '#ea580c'; /* Duro · naranja */
+                else                 _rpeColor = '#dc2626'; /* Máximo · rojo */
             }
+            // Eficiencia color (solo running)
+            var _efVal = '—', _efColorNew = 'var(--gold-text)';
+            if (efDisplay !== '—') {
+                var _efNN = parseFloat(efDisplay);
+                _efVal = efDisplay;
+                var _isRunEFNew = (function(t){ t=String(t||'').toLowerCase(); return t==='easy'||t==='recovery'||t==='series'||t==='long'||t==='race'; })(act.type);
+                if (_isRunEFNew && isFinite(_efNN)) {
+                    if      (_efNN >= 2.20) _efColorNew = '#2563eb'; /* Muy buena · azul */
+                    else if (_efNN >= 1.90) _efColorNew = '#16a34a'; /* Buena · verde */
+                    else if (_efNN >= 1.65) _efColorNew = '#d97706'; /* Regular · ámbar */
+                    else                     _efColorNew = '#dc2626'; /* Mala · rojo */
+                }
+            }
+            // Potencia: viene de Strava/Coros cuando esté disponible
+            var _powVal = '—', _powUnit = '', _powColor = 'var(--gold-text)';
+            if (act.powerAvg != null && isFinite(act.powerAvg) && act.powerAvg > 0) {
+                _powVal = Math.round(Number(act.powerAvg));
+                _powUnit = 'W';
+                _powColor = '#2563eb'; /* Métrica objetiva · azul neutro */
+            }
+            var _effortDiv = document.createElement('div');
+            _effortDiv.style.cssText = 'flex-shrink:0;background:var(--det-bg);border-top:1px solid var(--det-border-lo);padding:5px 14px 6px;';
+            _effortDiv.innerHTML =
+                  _detEyebrow('Esfuerzo', '')
+                + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
+                +   _detSectCell(_rpeVal, '', 'RPE', _rpeColor)
+                +   _detSectCell(_efVal, '', 'Eficiencia', _efColorNew)
+                +   _detSectCell(_powVal, _powUnit, 'Potencia', _powColor)
+                + '</div>';
+            c1.appendChild(_effortDiv);
         }
-
-        // Strip TRIMP fino — fuente primaria act.trimp (BD); fallback al
         // recálculo de trimpDisplay (que ya hace fallback con hrSeries).
         // Resolvemos el número aquí para tener int crudo + tag interpretativa.
         (function() {
