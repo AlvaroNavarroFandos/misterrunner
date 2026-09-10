@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p243';
+            window.__MR_VERSION = 'v2.30.1-p244';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42492,8 +42492,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         if (_hasIaReport) {
             const _rep = act._iaReport;
             const _content = _rep.content || {};
-            const _score = _rep.score_total != null ? _rep.score_total
-                         : (_content.score != null ? _content.score : 50);
+            /* [p244] REPARADOR DE SCORE CACHEADO
+               Si el report tiene metrics_snapshot con blockCompliance completo
+               y el score cacheado es < 88 aunque estímulo 100% + 0 slow,
+               significa que fue generado con una versión ANTIGUA del scorer.
+               Recomputar localmente con computeGrade actual (sin llamar a la
+               IA otra vez) para que Álvaro vea la nota correcta sin regenerar. */
+            var _repairedScore = null;
+            try {
+                var _snap = _rep.metrics_snapshot || _rep.metricsSnapshot;
+                var _bc = _snap && _snap.metrics && _snap.metrics.blockCompliance;
+                if (!_bc && _snap && _snap.blockCompliance) _bc = _snap.blockCompliance;
+                var _cachedScore = _rep.score_total != null ? _rep.score_total : null;
+                if (_bc && _cachedScore != null
+                    && _bc.stimulusMetPct === 100
+                    && (_bc.tooSlowCount|0) === 0
+                    && _bc.blocksAnalyzed > 0
+                    && _cachedScore < 85) {
+                    /* Report cacheado con estímulo perfecto pero score < B+ → obsoleto */
+                    if (window._mrEval && typeof window._mrEval.computeGrade === 'function') {
+                        var _metricsForRecompute = _snap.metrics || _snap;
+                        var _sessTypeForRecompute = _rep.session_type || _snap.activity && _snap.activity.detectedType || 'other';
+                        var _newGrade = window._mrEval.computeGrade(_metricsForRecompute, _sessTypeForRecompute);
+                        if (_newGrade && _newGrade.score > _cachedScore) {
+                            _repairedScore = _newGrade.score;
+                            try {
+                                console.warn('[MR][p244 repair] Score cacheado obsoleto · ' + _cachedScore
+                                    + ' → recomputado a ' + _newGrade.score + ' (' + _newGrade.grade + ')');
+                            } catch(_){}
+                        }
+                    }
+                }
+            } catch(errRep){
+                try { console.warn('[MR][p244 repair] error:', errRep); } catch(_){}
+            }
+            const _score = _repairedScore != null ? _repairedScore
+                         : (_rep.score_total != null ? _rep.score_total
+                         : (_content.score != null ? _content.score : 50));
             /* [p235] Grade se calcula desde el score (fuente única de verdad).
                8 niveles sobre 4 colores: A+/A azul · B+/B verde · C+/C naranja · D/F rojo. */
             const _grade = (function(s){
@@ -87300,6 +87335,14 @@ window.addEventListener('DOMContentLoaded', function() {
                de la IA — la IA puede ajustar el score final si detecta
                matices que el algoritmo no ve. */
             function computeGrade(metrics, sessionType){
+                /* [p244] Firma visible en consola para verificar que el código
+                   nuevo se está ejecutando. Álvaro: si NO ves este log tras
+                   regenerar, tu navegador/Vercel está sirviendo una versión vieja. */
+                try {
+                    var _dbgBC = metrics && metrics.blockCompliance;
+                    console.warn('[MR][computeGrade p244] sessionType=' + sessionType
+                        + (_dbgBC ? ' · stim=' + _dbgBC.stimulusMetPct + '% · slow=' + _dbgBC.tooSlowCount + ' · blocksAn=' + _dbgBC.blocksAnalyzed : ' · blockCompliance=null'));
+                } catch(_){}
                 var score = 50; /* base neutra */
                 var factors = [];
 
@@ -87497,6 +87540,10 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 var grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
                 var label = grade==='A' ? 'Excelente' : grade==='B' ? 'Sólido' : grade==='C' ? 'Aceptable' : grade==='D' ? 'Mejorable' : 'Mal ejecutado';
+                /* [p244] Log final para trazabilidad total */
+                try {
+                    console.warn('[MR][computeGrade p244] FINAL score=' + score + ' · grade=' + grade + ' · factors=', factors);
+                } catch(_){}
                 return { score: score, grade: grade, label: label, factors: factors };
             }
 
