@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p244';
+            window.__MR_VERSION = 'v2.30.1-p246';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42497,34 +42497,40 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                y el score cacheado es < 88 aunque estímulo 100% + 0 slow,
                significa que fue generado con una versión ANTIGUA del scorer.
                Recomputar localmente con computeGrade actual (sin llamar a la
-               IA otra vez) para que Álvaro vea la nota correcta sin regenerar. */
+               IA otra vez) para que Álvaro vea la nota correcta sin regenerar.
+               [p245] Extendido: también recomputa si es block session con
+               score < 75 (aplicará el failsafe B garantizado). */
             var _repairedScore = null;
             try {
                 var _snap = _rep.metrics_snapshot || _rep.metricsSnapshot;
                 var _bc = _snap && _snap.metrics && _snap.metrics.blockCompliance;
                 if (!_bc && _snap && _snap.blockCompliance) _bc = _snap.blockCompliance;
                 var _cachedScore = _rep.score_total != null ? _rep.score_total : null;
-                if (_bc && _cachedScore != null
-                    && _bc.stimulusMetPct === 100
-                    && (_bc.tooSlowCount|0) === 0
-                    && _bc.blocksAnalyzed > 0
-                    && _cachedScore < 85) {
-                    /* Report cacheado con estímulo perfecto pero score < B+ → obsoleto */
-                    if (window._mrEval && typeof window._mrEval.computeGrade === 'function') {
-                        var _metricsForRecompute = _snap.metrics || _snap;
-                        var _sessTypeForRecompute = _rep.session_type || _snap.activity && _snap.activity.detectedType || 'other';
-                        var _newGrade = window._mrEval.computeGrade(_metricsForRecompute, _sessTypeForRecompute);
-                        if (_newGrade && _newGrade.score > _cachedScore) {
-                            _repairedScore = _newGrade.score;
-                            try {
-                                console.warn('[MR][p244 repair] Score cacheado obsoleto · ' + _cachedScore
-                                    + ' → recomputado a ' + _newGrade.score + ' (' + _newGrade.grade + ')');
-                            } catch(_){}
-                        }
+                var _sessTypeForRecompute = _rep.session_type || (_snap && _snap.activity && _snap.activity.detectedType) || 'other';
+                var _isBlockCache = (_sessTypeForRecompute==='series' || _sessTypeForRecompute==='fartlek'
+                                   || _sessTypeForRecompute==='tempo'  || _sessTypeForRecompute==='threshold'
+                                   || _sessTypeForRecompute==='long_blocks');
+                var _needsRepair = false;
+                if (_cachedScore != null) {
+                    if (_bc && _bc.stimulusMetPct === 100 && (_bc.tooSlowCount|0) === 0 && _bc.blocksAnalyzed > 0 && _cachedScore < 85) {
+                        _needsRepair = true; /* Caso p244: floor A no aplicado */
+                    } else if (_isBlockCache && _cachedScore < 75) {
+                        _needsRepair = true; /* Caso p245: block sess < B → aplicará failsafe */
+                    }
+                }
+                if (_needsRepair && window._mrEval && typeof window._mrEval.computeGrade === 'function') {
+                    var _metricsForRecompute = (_snap && _snap.metrics) || _snap;
+                    var _newGrade = window._mrEval.computeGrade(_metricsForRecompute, _sessTypeForRecompute);
+                    if (_newGrade && _newGrade.score > _cachedScore) {
+                        _repairedScore = _newGrade.score;
+                        try {
+                            console.warn('[MR][p245 repair] Score cacheado obsoleto · ' + _cachedScore
+                                + ' → recomputado a ' + _newGrade.score + ' (' + _newGrade.grade + ')');
+                        } catch(_){}
                     }
                 }
             } catch(errRep){
-                try { console.warn('[MR][p244 repair] error:', errRep); } catch(_){}
+                try { console.warn('[MR][p245 repair] error:', errRep); } catch(_){}
             }
             const _score = _repairedScore != null ? _repairedScore
                          : (_rep.score_total != null ? _rep.score_total
@@ -87016,6 +87022,65 @@ window.addEventListener('DOMContentLoaded', function() {
                     }
                 }
 
+                /* [p246] AUTO-DETECT desde csvBlocks del reloj.
+                   Si el plan no dio blocks estructurados NI parsedRepCount, pero
+                   la actividad tiene csvBlocks con clara alternancia trabajo/recuperación
+                   (ej. 14 bloques: WU + 6×(work+rec) + CD), inferimos la estructura
+                   directamente de los datos del reloj sin depender del plan.
+                   Álvaro (razón absoluta): "los bloques están, el evaluador debería
+                   detectarlos sin que le tenga que forzar nada". */
+                var _autoDetect = false;
+                if (!planned.length) {
+                    var _csvArr = _arr(act.csvBlocks);
+                    if (_csvArr.length >= 5) {
+                        /* Excluir primer y último (WU/CD probables) */
+                        var _cands = _csvArr.slice(1, -1);
+                        var _validCands = [];
+                        for (var _ci=0;_ci<_cands.length;_ci++){
+                            var _cb = _cands[_ci];
+                            if (!_cb) continue;
+                            var _cp = _cb.paceS || _cb.pace_sec_per_km || _cb.avgPaceS || _cb.avgPace || (_cb.avgSpeed ? (1000/_cb.avgSpeed) : null);
+                            if (_cp && _cp >= 60 && _cp <= 900) _validCands.push({ orig: _cb, paceS: _cp });
+                        }
+                        if (_validCands.length >= 4) {
+                            /* Ordenar por ritmo y separar en 2 mitades: rápidos y lentos */
+                            var _sortedPaces = _validCands.map(function(v){ return v.paceS; }).sort(function(a,b){ return a - b; });
+                            var _halfIdx = Math.floor(_sortedPaces.length / 2);
+                            var _fastHalfPaces = _sortedPaces.slice(0, _halfIdx);
+                            var _slowHalfPaces = _sortedPaces.slice(_halfIdx);
+                            var _fastMean = 0; for (var _fi=0;_fi<_fastHalfPaces.length;_fi++) _fastMean += _fastHalfPaces[_fi]; _fastMean = _fastMean / _fastHalfPaces.length;
+                            var _slowMean = 0; for (var _si=0;_si<_slowHalfPaces.length;_si++) _slowMean += _slowHalfPaces[_si]; _slowMean = _slowMean / _slowHalfPaces.length;
+                            var _gap = _slowMean - _fastMean;
+                            /* Diferencia ≥60s/km entre "rápido" y "lento" → alternancia clara de series/fartlek */
+                            if (_gap >= 60) {
+                                /* Target inferido = ritmo medio de la mitad rápida */
+                                var _inferredTarget = Math.round(_fastMean);
+                                /* Bloques dentro de +30s del target son "work" (dan margen para las últimas repes con drift) */
+                                var _workCount = 0;
+                                for (var _wi=0;_wi<_validCands.length;_wi++){
+                                    if (_validCands[_wi].paceS <= _inferredTarget + 30) _workCount++;
+                                }
+                                if (_workCount >= 3) {
+                                    _autoDetect = true;
+                                    for (var _wpi=0;_wpi<_workCount;_wpi++){
+                                        planned.push({
+                                            label: 'work ' + (_wpi+1) + ' (auto-detected)',
+                                            targetPaceSec: _inferredTarget,
+                                            km: null
+                                        });
+                                    }
+                                    try {
+                                        console.warn('[MR][blockCompliance p246 auto-detect] '
+                                            + _workCount + ' work blocks detectados · target inferido='
+                                            + Math.floor(_inferredTarget/60) + ':' + String(_inferredTarget%60).padStart(2,'0')
+                                            + '/km · gap fast/slow=' + Math.round(_gap) + 's/km');
+                                    } catch(_){}
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (!planned.length) return { totalPlanned: 0, executed: 0, avgDeviation: null, matchingMode: 'no_work_blocks' };
 
                 /* 2 · Executed: preferir csvBlocks (work+rec por tiempo real del reloj)
@@ -87124,7 +87189,8 @@ window.addEventListener('DOMContentLoaded', function() {
                     tooSlowCount: tooSlow,
                     unmatchedCount: unmatched,
                     avgDeviationSecPerKm: avgDev,
-                    matchingMode: useCsvBlocks ? 'csvBlocks_proximity' : 'laps_proximity',
+                    matchingMode: _autoDetect ? 'auto_detected_csvBlocks' : (useCsvBlocks ? 'csvBlocks_proximity' : 'laps_proximity'),
+                    autoDetected: _autoDetect,
                     matches: matches
                 };
             }
@@ -87535,6 +87601,49 @@ window.addEventListener('DOMContentLoaded', function() {
                             delta: (_floorTarget - score)
                         });
                         score = _floorTarget;
+                    }
+                }
+
+                /* [p245] FAILSAFE ABSOLUTO para block sessions cuando blockCompliance
+                   NO da datos (matchingMode:'no_work_blocks' porque el plan no tiene
+                   parsedTargetPaceSec/parsedRepCount ni blocks estructurados).
+                   Diagnóstico: en consola aparece stim=undefined · blocksAn=undefined
+                   y no hay push de "Estímulo cumplido" → el score puede caer a
+                   C/D injustamente. Filosofía: en series/fartlek/tempo la
+                   sesión CUMPLIÓ el objetivo del plan salvo evidencia contraria
+                   fuerte. Suelo B (75) por defecto en cualquier block session
+                   que no muestre un fallo explícito. */
+                var _isBlockSess245 = (sessionType==='series'||sessionType==='fartlek'
+                                    ||sessionType==='tempo'||sessionType==='threshold'
+                                    ||sessionType==='long_blocks');
+                if (_isBlockSess245 && score < 75) {
+                    /* ¿Hay evidencia FUERTE de fallo? Solo entonces se puede bajar de B. */
+                    var _hasHardFail = false;
+                    var _failReason = null;
+                    if (metrics.blockCompliance) {
+                        var _bcFail = metrics.blockCompliance;
+                        if (_bcFail.stimulusMetPct != null && _bcFail.stimulusMetPct < 60) {
+                            _hasHardFail = true;
+                            _failReason = 'stimulusMetPct='+_bcFail.stimulusMetPct+'% (<60)';
+                        } else if ((_bcFail.tooSlowCount|0) >= 3) {
+                            _hasHardFail = true;
+                            _failReason = 'tooSlowCount='+_bcFail.tooSlowCount+' repes cortas';
+                        }
+                    }
+                    factors.push({
+                        label: '[dbg] Failsafe check',
+                        value: 'sessionType='+sessionType+' · hardFail='+_hasHardFail+(_failReason?' ('+_failReason+')':'')+' · pre-failsafe score='+score,
+                        weight: null,
+                        delta: 0
+                    });
+                    if (!_hasHardFail) {
+                        factors.push({
+                            label: 'FAILSAFE block sess',
+                            value: 'Sin evidencia de fallo · SUELO B garantizado · score '+score+' → 75',
+                            weight: null,
+                            delta: (75 - score)
+                        });
+                        score = 75;
                     }
                 }
 
