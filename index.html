@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p240';
+            window.__MR_VERSION = 'v2.30.1-p241';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -87291,12 +87291,23 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 /* [p215] Pace vs Plan · penalizar easy/long/recovery corridos demasiado
                    rápido y por eso salidos de zona FC objetivo (Álvaro: "penaliza cuando
-                   me he pasado de ritmo en un easy o long"). */
+                   me he pasado de ritmo en un easy o long").
+                   [p241] Nueva regla aprobada por Álvaro: en sesiones POR BLOQUES
+                   (series/fartlek/tempo/threshold/long_blocks), ir más rápido del ritmo
+                   objetivo GLOBAL del entreno NO penaliza. El KPI es el cumplimiento
+                   del bloque de trabajo, no el ritmo medio del entreno.
+                   Sí penaliza en easy/long/recovery (donde el KPI es la zona fisiológica). */
                 if (metrics.paceVsPlan && (metrics.paceVsPlan.verdict === 'overpaced_mild' || metrics.paceVsPlan.verdict === 'overpaced_severe')) {
-                    var pv = metrics.paceVsPlan.verdict;
-                    var dpv = pv === 'overpaced_severe' ? -22 : -12;
-                    var wpv = 1.5;
-                    push('Pace vs Plan', pv + ' (' + metrics.paceVsPlan.excessPctInHigherZones + '% fuera Z' + metrics.paceVsPlan.targetZone + ')', wpv, dpv*wpv);
+                    var _isBlockSess241 = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek');
+                    if (!_isBlockSess241) {
+                        var pv = metrics.paceVsPlan.verdict;
+                        var dpv = pv === 'overpaced_severe' ? -22 : -12;
+                        var wpv = 1.5;
+                        push('Pace vs Plan', pv + ' (' + metrics.paceVsPlan.excessPctInHigherZones + '% fuera Z' + metrics.paceVsPlan.targetZone + ')', wpv, dpv*wpv);
+                    } else {
+                        /* Informativo: en block sessions ir más rápido es esperable y no penaliza */
+                        push('Pace vs Plan (irrelevante en block sess)', metrics.paceVsPlan.verdict, 0, 0);
+                    }
                 }
 
                 /* Block compliance · [p221] usar stimulusMetPct (asimétrico:
@@ -87355,24 +87366,26 @@ window.addEventListener('DOMContentLoaded', function() {
 
                 /* [p226] FLOOR de estímulo cumplido para sesiones por bloques.
                    [p228] Reforzado tras diagnóstico de fartlek 51/100 y 8x400
-                   60/100 · aunque el estímulo se cumplió 100%. Ahora umbrales
-                   más generosos y siempre añade factor "Floor" al desglose
-                   para que el debug sea trazable. */
-                var isBlockSess226 = (sessionType==='series'||sessionType==='threshold'||sessionType==='tempo'||sessionType==='long_blocks'||sessionType==='fartlek');
-                if (isBlockSess226 && metrics.blockCompliance && metrics.blockCompliance.blocksAnalyzed > 0) {
+                   60/100 · aunque el estímulo se cumplió 100%.
+                   [p241] Reforzado por 3ª vez tras diagnóstico D·37 con estímulo 100%:
+                   ahora el floor aplica SIEMPRE que haya blockCompliance analizado,
+                   sin depender de sessionType (que a veces viene mal detectado desde
+                   el plan). Filosofía aprobada por Álvaro: cumplir el estímulo
+                   GARANTIZA una nota mínima que no puede caer por métricas secundarias
+                   (drift, consistencia, ritmo medio del entreno). */
+                if (metrics.blockCompliance && metrics.blockCompliance.blocksAnalyzed > 0) {
                     var bc226 = metrics.blockCompliance;
                     var noSlowFails = ((bc226.tooSlowCount|0) === 0);
                     var stim = bc226.stimulusMetPct;
                     var strict = bc226.compliancePct;
-                    /* Floor A: estímulo 100% + control estricto ≥90% → 90 (grade A)
-                       Floor B+: estímulo 100% + control 70-89% → 85 (grade B+)
-                       Floor B: estímulo 100% (menor control) → 80 (grade B)
-                       Floor C+: estímulo ≥80% sin repes cortas → 70 (grade C+) */
+                    /* Floor A: estímulo 100% + control estricto ≥70% → 90 (grade A)
+                       Floor B+: estímulo 100% (menor control) → 85 (grade B+)
+                       Floor B: estímulo ≥90% sin repes cortas → 80 (grade B)
+                       Floor C+: estímulo ≥75% sin repes cortas → 65 (grade C+) */
                     if (stim === 100 && noSlowFails) {
                         var floor226;
-                        if (strict >= 90)      floor226 = 90; /* A */
-                        else if (strict >= 70) floor226 = 85; /* B+ */
-                        else                    floor226 = 80; /* B */
+                        if (strict >= 70)      floor226 = 90; /* A */
+                        else                    floor226 = 85; /* B+ */
                         if (score < floor226) {
                             factors.push({
                                 label: 'Floor estímulo perfecto',
@@ -87382,15 +87395,25 @@ window.addEventListener('DOMContentLoaded', function() {
                             });
                             score = floor226;
                         }
-                    } else if (stim >= 80 && noSlowFails) {
-                        if (score < 70) {
+                    } else if (stim >= 90 && noSlowFails) {
+                        if (score < 80) {
                             factors.push({
                                 label: 'Floor estímulo alto',
                                 value: 'estímulo ' + stim + '% · sin repes too_slow',
                                 weight: null,
-                                delta: (70 - score)
+                                delta: (80 - score)
                             });
-                            score = 70;
+                            score = 80;
+                        }
+                    } else if (stim >= 75 && noSlowFails) {
+                        if (score < 65) {
+                            factors.push({
+                                label: 'Floor estímulo notable',
+                                value: 'estímulo ' + stim + '% · sin repes too_slow',
+                                weight: null,
+                                delta: (65 - score)
+                            });
+                            score = 65;
                         }
                     }
                 }
