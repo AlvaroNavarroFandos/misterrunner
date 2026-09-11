@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p283';
+            window.__MR_VERSION = 'v2.30.1-p284';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42650,6 +42650,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const maxStride = _p99(strideNonZero);
         const maxVert   = _p99(vertNonZero);
 
+        // [p284] Moving average para suavizar zancada derivada (Strava daily).
+        // La zancada es spd × 60 / spm × 100 — una división de dos señales
+        // ruidosas. Aunque spd venga de velSmooth (suavizado), la variabilidad
+        // natural de cad crea dispersión visible. Ventana 10 puntos ≈ 10 s a
+        // 1 Hz de Strava. Cadencia y GCT no lo necesitan (son medidos directos).
+        // Cuando la zancada viene REAL (parseFitGarmin desde COROS/Garmin),
+        // el smoothing también atenúa un poco pero no perjudica.
+        function _smoothVals(vals, window) {
+            const half = Math.floor(window / 2);
+            const out = new Array(vals.length);
+            for (let i = 0; i < vals.length; i++) {
+                const from = Math.max(0, i - half);
+                const to   = Math.min(vals.length - 1, i + half);
+                let sum = 0, cnt = 0;
+                for (let j = from; j <= to; j++) {
+                    if (vals[j] > 0) { sum += vals[j]; cnt++; }
+                }
+                out[i] = cnt > 0 ? sum / cnt : 0;
+            }
+            return out;
+        }
+        const strideValsSmooth = _smoothVals(strideVals, 10);
+
         // [p276] Media y máx (P99) de Potencia y GCT para los chips
         const powerNonZero = powerVals.filter(v => v > 0);
         const gctNonZero   = gctVals.filter(v => v > 0);
@@ -42881,10 +42904,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _biomecCard.appendChild(_buildBiomecBlock(
             'Zancada',
             'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgStride>0?Math.round(avgStride):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxStride>0?Math.round(maxStride):'—') + '</b>',
-            strideVals,
+            strideValsSmooth,
             '--stride-color',
             false,
-            40, 200
+            20, 220
         ));
         // Ground Contact Time — solo si viene (COROS emitió stance_time).
         if (hasGct) {
