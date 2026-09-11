@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p288';
+            window.__MR_VERSION = 'v2.30.1-p289';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -74260,6 +74260,8 @@ window._handleStravaReturn = _handleStravaReturn;
                 // Match en corosItems por timestamp + duración + distancia.
                 // Shape real de toFrontendListItem: startTimeEpoch (seg),
                 // distKm (km), durationSec (seg). NO son startTimeEpochMs/etc.
+                // [p289] Tolerancias amplias — Strava reporta moving time,
+                // COROS elapsed time; distancias con smoothing GPS distinto.
                 var best = null;
                 var closest = null;
                 var closestDiffMs = Infinity;
@@ -74273,9 +74275,9 @@ window._handleStravaReturn = _handleStravaReturn;
                         closestDiffMs = diffMs;
                         closest = { item: ci, diffMs: diffMs, diffDurSec: ciDurSec - mrDurSec, diffDistM: ciDistM - mrDistM };
                     }
-                    if (diffMs < 60000
-                     && Math.abs(ciDurSec - mrDurSec) < 10
-                     && Math.abs(ciDistM - mrDistM) < 200) {
+                    if (diffMs < 300000               // ± 5 minutos
+                     && Math.abs(ciDurSec - mrDurSec) < 60      // ± 1 minuto
+                     && Math.abs(ciDistM - mrDistM) < 500) {    // ± 500m
                         best = ci;
                         break;
                     }
@@ -74284,20 +74286,20 @@ window._handleStravaReturn = _handleStravaReturn;
                     skipNoMatch++;
                     if (!firstMissDebug && closest) {
                         firstMissDebug = {
-                            mr: { start: row.start_date, durSec: mrDurSec, distKm: row.dist_km.toFixed(2) },
-                            closestCoros: closest.item ? {
-                                label: closest.item.labelId,
-                                date: closest.item.dateStr,
-                                durSec: closest.item.durationSec,
-                                distKm: (closest.item.distKm || 0).toFixed(2)
-                            } : null,
-                            diffs: {
-                                startMs: closest.diffMs,
-                                durSec: closest.diffDurSec,
-                                distM: closest.diffDistM
-                            }
+                            mr_start: row.start_date,
+                            mr_dur: mrDurSec,
+                            mr_dist_km: row.dist_km.toFixed(2),
+                            closest_label: closest.item && closest.item.labelId,
+                            closest_date: closest.item && closest.item.dateStr,
+                            closest_dur: closest.item && closest.item.durationSec,
+                            closest_dist_km: closest.item && (closest.item.distKm || 0).toFixed(2),
+                            diff_startMs: closest.diffMs,
+                            diff_startMinutes: Math.round(closest.diffMs / 60000),
+                            diff_durSec: closest.diffDurSec,
+                            diff_distM: closest.diffDistM
                         };
-                        console.log('%c[MR][p287 enrich] primer miss:', 'color:#DC2027;font-weight:600;', firstMissDebug);
+                        console.log('%c[MR][p289 enrich] primer miss (JSON): ' + JSON.stringify(firstMissDebug, null, 2),
+                            'color:#DC2027;font-weight:600;');
                     }
                     continue;
                 }
