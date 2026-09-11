@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p289';
+            window.__MR_VERSION = 'v2.30.1-p290';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -74262,6 +74262,13 @@ window._handleStravaReturn = _handleStravaReturn;
                 // distKm (km), durationSec (seg). NO son startTimeEpochMs/etc.
                 // [p289] Tolerancias amplias — Strava reporta moving time,
                 // COROS elapsed time; distancias con smoothing GPS distinto.
+                // [p290] Detección placeholder "T12:00:00" en start_date de MR
+                // (fallback cuando el bridge Strava daily no traía startTime
+                // real). En ese caso el timestamp no sirve para match — usamos
+                // dateStr + dur + dist. Duración y distancia son muy precisas
+                // (0s / 0.44m en el ejemplo de Álvaro).
+                var mrIsPlaceholder = /T12:00:00/.test(row.start_date);
+                var mrDateStr = String(row.start_date).slice(0, 10);
                 var best = null;
                 var closest = null;
                 var closestDiffMs = Infinity;
@@ -74275,11 +74282,20 @@ window._handleStravaReturn = _handleStravaReturn;
                         closestDiffMs = diffMs;
                         closest = { item: ci, diffMs: diffMs, diffDurSec: ciDurSec - mrDurSec, diffDistM: ciDistM - mrDistM };
                     }
-                    if (diffMs < 300000               // ± 5 minutos
-                     && Math.abs(ciDurSec - mrDurSec) < 60      // ± 1 minuto
-                     && Math.abs(ciDistM - mrDistM) < 500) {    // ± 500m
-                        best = ci;
-                        break;
+                    var durOk  = Math.abs(ciDurSec - mrDurSec) < 60;
+                    var distOk = Math.abs(ciDistM - mrDistM) < 500;
+                    if (mrIsPlaceholder) {
+                        // Solo fecha + dur + dist (ignoramos timestamp placeholder)
+                        if (ci.dateStr === mrDateStr && durOk && distOk) {
+                            best = ci;
+                            break;
+                        }
+                    } else {
+                        // Match normal con timestamp real
+                        if (diffMs < 300000 && durOk && distOk) {
+                            best = ci;
+                            break;
+                        }
                     }
                 }
                 if (!best) {
@@ -74323,9 +74339,20 @@ window._handleStravaReturn = _handleStravaReturn;
                 }
                 var times = streamsObj.streams.time;
 
-                // Realinear timestamps COROS al frame Strava
-                var corosStartMs = (best.startTimeEpoch || 0) * 1000;
-                var deltaSec = (corosStartMs - mrStartMs) / 1000;   // t_strava = t_coros + deltaSec
+                // Realinear timestamps COROS al frame Strava.
+                // [p290] Si mr_start es placeholder (T12:00:00Z fallback), NO
+                // podemos usarlo como referencia. Los `time[]` del gzip Strava
+                // son relativos al inicio REAL de la actividad (no al placeholder),
+                // igual que los t's de COROS son relativos a su inicio real —
+                // ambos entrenos empezaron a la misma hora ± unos segundos, así
+                // que delta = 0 es la asunción correcta.
+                var deltaSec;
+                if (mrIsPlaceholder) {
+                    deltaSec = 0;
+                } else {
+                    var corosStartMs = (best.startTimeEpoch || 0) * 1000;
+                    deltaSec = (corosStartMs - mrStartMs) / 1000;   // t_strava = t_coros + deltaSec
+                }
 
                 function _buildMap(arr) {
                     var m = {};
