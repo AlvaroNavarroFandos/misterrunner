@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p294'; // [v2.30.1-p294] Fase Y · Card 2 gráficos premium (variante B+C aprobada por Álvaro). Silueta desnivel de B (gradiente dorado #c9a84c .05→.30/.35 + contorno dorado 1.4px + micro-labels altitud "MAX m"/"MIN m" a la derecha) — desnivel ahora se lee claro sin abrir Card 1. Eje Y de C (3-4 ticks intermedios calculados en pasos de 10 con niceTicks + gridlines horizontales discontinuas [1.5,4] rgba .10 + labels blancos luminosos con glow 2px en dark / negro 70% en light, font 600 10px -apple-system tabular). Canvas envuelto en .mr-chart-wrap (border-radius 10px + border dorado tenue .20/.18). Padding L 2→32 · R 2→8. Aplica a AMBAS sparklines (pace Card 2 con invertY + fmt mm'ss" y FC Card 2 con ppm entero). Sin cambios en línea datos, glow zonas, cortes pausas, avg line ni buildZoneMini.
+            window.__MR_VERSION = 'v2.30.1-p296'; // [v2.30.1-p296] Fix scroll pestaña plan (vista semana). Álvaro reportó que al meter el contenido semanal en el bloque #plan-view-content (p256), el scroll táctil dejó de arrancar en la vista semana (mes también estructuralmente afectado pero cabía en viewport). Causa: el bloque como hijo directo del flex-column scroller #view-cal, sin flex-shrink ni min-height explícitos, se encogía al alto de la viewport → scrollHeight ≡ clientHeight → no había overflow real que activar. Fix minimo CSS: min-height: min-content + flex-shrink: 0 en #plan-view-content. Fuerza al bloque a medir su contenido real (7 días + sesiones expandidas) y bloquea que flex lo encoja.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -43596,7 +43596,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const clampMax = respectRange ? maxV : Math.min(maxV, dataMax);
         // [v2.30.1-p294] Padding L 2 → 32 (espacio labels eje Y ticks premium).
         // Padding R 2 → 8 (aire para labels altitud "330 m" a la derecha).
-        const pad = {t:8, b:18, l:32, r:8};
+        // [v2.30.1-p295] Pad L dinámico: 44 para pace (invertY, labels mm'ss"
+        // hasta 6 chars) · 32 para FC (números ppm 3 chars). Álvaro reportó
+        // labels de ritmo cortados con pad L=32 tras el fix p294.
+        const pad = {t:8, b:18, l: invertY ? 44 : 32, r:8};
 
         function toX(i) { return pad.l + (i / (vals.length-1)) * (W - pad.l - pad.r); }
         function toY(v) {
@@ -43644,12 +43647,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 for (let i = 1; i < eleVals.length; i++) ctx.lineTo(eX(i), eY(eleVals[i]));
                 ctx.strokeStyle = _spIsDark ? 'rgba(201,168,76,.65)' : 'rgba(166,123,30,.65)';
                 ctx.lineWidth = 1.4; ctx.stroke();
-                // Micro-labels altitud (MAX arriba, MIN abajo · a la derecha)
-                ctx.fillStyle = _spIsDark ? 'rgba(201,168,76,.7)' : 'rgba(166,123,30,.75)';
-                ctx.font = '9.5px -apple-system, BlinkMacSystemFont, sans-serif';
-                ctx.textAlign = 'right';
-                ctx.fillText(Math.round(eMax) + ' m', W - pad.r - 2, eTop + 3);
-                ctx.fillText(Math.round(eMin) + ' m', W - pad.r - 2, H - pad.b - 2);
+                // [v2.30.1-p295] Labels altitud "MAX m" / "MIN m" eliminados
+                // por decisión de Álvaro. La silueta dorada por sí sola ya
+                // comunica el desnivel; los números redundaban con Card 1.
             }
         }
 
@@ -43762,6 +43762,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const xp = toX(xi);
             ctx.fillText(min === 0 ? '0' : min + "'", xp, H - 2);
             // Vertical tick
+            // [v2.30.1-p295] En el ritmo (invertY) se omite la vertical del
+            // primer tick (min=0). Álvaro pidió quitar "la raya de puntos de
+            // inicio" solo en la de ritmo. En FC se mantiene el comportamiento
+            // previo (todas las verticales, incluyendo la del 0).
+            if (invertY && min === 0) continue;
             ctx.strokeStyle = _spVGrid;
             ctx.lineWidth = 0.5;
             ctx.beginPath(); ctx.moveTo(xp, pad.t); ctx.lineTo(xp, H-pad.b); ctx.stroke();
@@ -44033,6 +44038,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             border-radius: 14px !important;
             box-shadow: 0 2px 8px rgba(0,0,0,.05);
             margin-top: 8px;
+            /* [v2.30.1-p296] Fix scroll vista semana. Al meter TODO el
+               contenido semanal en este bloque (p256), como hijo directo
+               del flex-column scroller #view-cal y sin flex-shrink/min-
+               height explícitos, el bloque se comprimía al alto de la
+               viewport → scrollHeight ≡ clientHeight → el scroll táctil
+               no arrancaba. min-content fuerza al bloque a medir su
+               contenido real (7 días + sesiones expandidas) y shrink:0
+               impide que flex lo encoja. En MES no se notaba porque
+               el matrix del calendario cabe en la viewport (aunque el
+               problema estructural era el mismo). */
+            min-height: min-content;
+            flex-shrink: 0;
         }
         /* [p259] Eliminar el margin-bottom del último hijo directo del bloque
            para que no se sume al padding-bottom → hueco mínimo entre la última
