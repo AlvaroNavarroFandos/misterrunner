@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p280';
+            window.__MR_VERSION = 'v2.30.1-p281';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -73692,29 +73692,52 @@ window._handleStravaReturn = _handleStravaReturn;
             var sess = await sb.auth.getSession();
             var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
             if (!uid) { el.textContent = ''; return; }
-            var { data, error } = await sb.from('activities')
-                .select('id', { count: 'exact', head: true })
+            // [p280 fix] Strava daily se guarda con source in ('strava', 'strava_auto', 'manual').
+            // El external_id de las 'manual' es 'manual:iso:...', NO el strava_activity_id.
+            // La correspondencia mr_id ↔ strava_activity_id vive en strava_import_log.
+            var resp = await sb.from('activities')
+                .select('id, source, external_id')
                 .eq('user_id', uid)
-                .in('source', ['strava', 'strava_auto'])
+                .in('source', ['strava', 'strava_auto', 'manual'])
                 .gte('start_date', from + 'T00:00:00Z')
                 .lte('start_date', to + 'T23:59:59Z');
-            if (error) {
-                console.warn('[MR][p280] preview count err:', error.message);
-                el.textContent = '';
-                return;
+            if (resp.error) { el.textContent = ''; return; }
+            var rows = resp.data || [];
+            // Resolver cuántas tienen strava_activity_id (resincronizables)
+            var ids = rows.map(function(r){ return r.id; });
+            var solved = 0;
+            if (ids.length > 0) {
+                // Cross-check strava_import_log en chunks (por si son muchas)
+                var chunkSz = 100;
+                var solvedSet = {};
+                for (var i = 0; i < ids.length; i += chunkSz) {
+                    var chunk = ids.slice(i, i + chunkSz);
+                    var lRes = await sb.from('strava_import_log')
+                        .select('mr_activity_id, strava_activity_id')
+                        .in('mr_activity_id', chunk)
+                        .eq('user_id', uid);
+                    if (!lRes.error && lRes.data) {
+                        lRes.data.forEach(function(r){
+                            if (r.mr_activity_id && r.strava_activity_id) solvedSet[r.mr_activity_id] = true;
+                        });
+                    }
+                    // Fallback pending_imports
+                    var stillMissing = chunk.filter(function(x){ return !solvedSet[x]; });
+                    if (stillMissing.length > 0) {
+                        var pRes = await sb.from('strava_pending_imports')
+                            .select('consumed_mr_activity_id, strava_activity_id')
+                            .in('consumed_mr_activity_id', stillMissing)
+                            .eq('user_id', uid);
+                        if (!pRes.error && pRes.data) {
+                            pRes.data.forEach(function(r){
+                                if (r.consumed_mr_activity_id && r.strava_activity_id) solvedSet[r.consumed_mr_activity_id] = true;
+                            });
+                        }
+                    }
+                }
+                solved = Object.keys(solvedSet).length;
             }
-            // Fallback: si count viene null, hacemos select real
-            var count = null;
-            try {
-                var resp2 = await sb.from('activities')
-                    .select('id')
-                    .eq('user_id', uid)
-                    .in('source', ['strava', 'strava_auto'])
-                    .gte('start_date', from + 'T00:00:00Z')
-                    .lte('start_date', to + 'T23:59:59Z');
-                count = Array.isArray(resp2.data) ? resp2.data.length : 0;
-            } catch(_) { count = 0; }
-            el.textContent = count + ' activit' + (count === 1 ? 'y' : 'ies') + ' Strava daily en este rango';
+            el.textContent = solved + ' activit' + (solved === 1 ? 'y' : 'ies') + ' Strava en el rango (' + rows.length + ' total, ' + (rows.length - solved) + ' sin strava_activity_id)';
         } catch (e) {
             el.textContent = '';
         }
@@ -73734,43 +73757,82 @@ window._handleStravaReturn = _handleStravaReturn;
         if (rep) { rep.style.display = 'none'; rep.innerHTML = ''; }
 
         var sb = window._sbClient;
-        if (!sb) { _mrRssFinish(0, 0, 0, ['No hay sesión Supabase']); return; }
+        if (!sb) { _mrRssFinish(0, 0, 0, 0, ['No hay sesión Supabase']); return; }
         var sess = await sb.auth.getSession();
         var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
-        if (!uid) { _mrRssFinish(0, 0, 0, ['Sesión Supabase caducada']); return; }
+        if (!uid) { _mrRssFinish(0, 0, 0, 0, ['Sesión Supabase caducada']); return; }
 
+        // Paso 1: cargar activities en el rango
+        if (pm) pm.textContent = 'Cargando actividades…';
         var { data: rows, error } = await sb.from('activities')
             .select('id, external_id, streams_path, source, start_date')
             .eq('user_id', uid)
-            .in('source', ['strava', 'strava_auto'])
+            .in('source', ['strava', 'strava_auto', 'manual'])
             .gte('start_date', from + 'T00:00:00Z')
             .lte('start_date', to + 'T23:59:59Z')
             .order('start_date', { ascending: false });
-        if (error) { _mrRssFinish(0, 0, 0, ['Error BD: ' + error.message]); return; }
+        if (error) { _mrRssFinish(0, 0, 0, 0, ['Error BD: ' + error.message]); return; }
         rows = rows || [];
-        if (!rows.length) { _mrRssFinish(0, 0, 0, ['No hay actividades en ese rango']); return; }
+        if (!rows.length) { _mrRssFinish(0, 0, 0, 0, ['No hay actividades en ese rango']); return; }
 
-        var ok = 0, skipNoWatts = 0, err = 0, errList = [];
-        for (var i = 0; i < rows.length; i++) {
-            var row = rows[i];
-            if (pm) pm.textContent = 'Procesando ' + (i + 1) + ' de ' + rows.length + '…';
-            if (pf) pf.style.width = ((i / rows.length) * 100) + '%';
-            if (!row.external_id) { err++; errList.push('#' + i + ' sin external_id'); continue; }
+        // Paso 2: resolver strava_activity_id via strava_import_log + pending_imports
+        if (pm) pm.textContent = 'Resolviendo strava_activity_id…';
+        var mrToStravaId = {};
+        var mrIds = rows.map(function(r){ return r.id; });
+        var chunkSz = 100;
+        for (var i = 0; i < mrIds.length; i += chunkSz) {
+            var chunk = mrIds.slice(i, i + chunkSz);
+            var lRes = await sb.from('strava_import_log')
+                .select('mr_activity_id, strava_activity_id')
+                .in('mr_activity_id', chunk)
+                .eq('user_id', uid);
+            if (!lRes.error && lRes.data) {
+                lRes.data.forEach(function(r){
+                    if (r.mr_activity_id && r.strava_activity_id) mrToStravaId[r.mr_activity_id] = r.strava_activity_id;
+                });
+            }
+        }
+        // Fallback pending_imports para las que no resolvió el log
+        var stillMissing = mrIds.filter(function(id){ return !mrToStravaId[id]; });
+        for (var j = 0; j < stillMissing.length; j += chunkSz) {
+            var chk = stillMissing.slice(j, j + chunkSz);
+            var pRes = await sb.from('strava_pending_imports')
+                .select('consumed_mr_activity_id, strava_activity_id')
+                .in('consumed_mr_activity_id', chk)
+                .eq('user_id', uid);
+            if (!pRes.error && pRes.data) {
+                pRes.data.forEach(function(r){
+                    if (r.consumed_mr_activity_id && r.strava_activity_id && !mrToStravaId[r.consumed_mr_activity_id]) {
+                        mrToStravaId[r.consumed_mr_activity_id] = r.strava_activity_id;
+                    }
+                });
+            }
+        }
+
+        // Paso 3: procesar cada activity con strava_activity_id resuelto
+        var ok = 0, skipNoWatts = 0, skipNoStravaId = 0, err = 0, errList = [];
+        for (var k = 0; k < rows.length; k++) {
+            var row = rows[k];
+            if (pm) pm.textContent = 'Procesando ' + (k + 1) + ' de ' + rows.length + '…';
+            if (pf) pf.style.width = ((k / rows.length) * 100) + '%';
+            var stravaId = mrToStravaId[row.id];
+            if (!stravaId) {
+                skipNoStravaId++;
+                continue;   // Manual .fit sin strava_activity_id, no procesable
+            }
             try {
                 var resp = await _stravaFetch('/fetch-activity', {
                     method: 'POST',
-                    body: JSON.stringify({ strava_activity_id: row.external_id })
+                    body: JSON.stringify({ strava_activity_id: stravaId })
                 });
                 if (!resp.ok) {
                     err++;
-                    errList.push('#' + (i+1) + ' fetch HTTP ' + resp.status + ' · ' + row.start_date);
+                    errList.push('#' + (k+1) + ' fetch HTTP ' + resp.status + ' · ' + row.start_date);
                     continue;
                 }
                 var pfd = await window._stravaToPendingFitData(resp.body.activity, resp.body.streams);
-                if (!pfd) { err++; errList.push('#' + (i+1) + ' bridge devolvió null'); continue; }
+                if (!pfd) { err++; errList.push('#' + (k+1) + ' bridge devolvió null'); continue; }
 
-                // Construir un mini-act compatible con _uploadManualStreams
-                // (solo requiere series + summary; no toca RPE/notas/shoe).
                 var actLite = {
                     _dbActivityId: row.id,
                     distKm:       pfd.distKm,
@@ -73794,8 +73856,7 @@ window._handleStravaReturn = _handleStravaReturn;
                 };
 
                 var streamsPath = await _uploadManualStreams(sb, uid, row.id, actLite);
-                if (!streamsPath) { err++; errList.push('#' + (i+1) + ' upload streams falló'); continue; }
-                // Update columnas nativas + streams_path
+                if (!streamsPath) { err++; errList.push('#' + (k+1) + ' upload streams falló'); continue; }
                 var updPayload = { streams_path: streamsPath };
                 if (pfd.avgPower  != null) updPayload.avg_power  = pfd.avgPower;
                 if (pfd.maxPower  != null) updPayload.max_power  = pfd.maxPower;
@@ -73803,28 +73864,24 @@ window._handleStravaReturn = _handleStravaReturn;
                 var updRes = await sb.from('activities').update(updPayload).eq('id', row.id);
                 if (updRes && updRes.error) {
                     err++;
-                    errList.push('#' + (i+1) + ' update BD: ' + updRes.error.message);
+                    errList.push('#' + (k+1) + ' update BD: ' + updRes.error.message);
                     continue;
                 }
-                if (Array.isArray(pfd.powerSeries) && pfd.powerSeries.length === 0) {
-                    skipNoWatts++;   // Streams re-fetched pero reloj no emitió watts
-                }
+                if (Array.isArray(pfd.powerSeries) && pfd.powerSeries.length === 0) skipNoWatts++;
                 ok++;
             } catch (e) {
                 err++;
-                errList.push('#' + (i+1) + ' excepción · ' + (e && e.message || e));
+                errList.push('#' + (k+1) + ' excepción · ' + (e && e.message || e));
                 console.warn('[MR][p280] resync err:', e);
             }
-            // Rate limit: 100 requests / 15min. Con ~30 activities cabe holgado.
-            // Metemos un pequeño throttle para no rebotar.
             await new Promise(function(r){ setTimeout(r, 300); });
         }
         if (pf) pf.style.width = '100%';
-        _mrRssFinish(ok, skipNoWatts, err, errList);
+        _mrRssFinish(ok, skipNoWatts, skipNoStravaId, err, errList);
     }
     window._mrRunResyncStrava = _mrRunResyncStrava;
 
-    function _mrRssFinish(ok, skipNoWatts, err, errList) {
+    function _mrRssFinish(ok, skipNoWatts, skipNoStravaId, err, errList) {
         var btn = document.getElementById('rss-start-btn');
         var pm  = document.getElementById('rss-progress-msg');
         var rep = document.getElementById('rss-report');
@@ -73833,8 +73890,9 @@ window._handleStravaReturn = _handleStravaReturn;
         if (rep) {
             var h = '<b style="color:var(--tw);">Resumen</b><br>';
             h += '<span style="color:#22c55e;">✓ ' + ok + '</span> actualizadas · ';
-            h += (skipNoWatts > 0 ? '<span style="color:#f59e0b;">⚠ ' + skipNoWatts + '</span> sin watts (reloj no lo emitió) · ' : '');
-            h += (err > 0 ? '<span style="color:#ef4444;">✗ ' + err + '</span> con error' : '');
+            if (skipNoWatts > 0)    h += '<span style="color:#f59e0b;">⚠ ' + skipNoWatts + '</span> sin watts (reloj sin Stryd/COROS) · ';
+            if (skipNoStravaId > 0) h += '<span style="color:#71717a;">— ' + skipNoStravaId + '</span> sin strava_id (manual .fit) · ';
+            if (err > 0)            h += '<span style="color:#ef4444;">✗ ' + err + '</span> con error';
             if (errList && errList.length) {
                 h += '<div style="margin-top:8px;font-size:11px;color:var(--tm);max-height:120px;overflow-y:auto;">' + errList.slice(0, 20).map(function(m){ return '· ' + m; }).join('<br>') + '</div>';
             }
