@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p277';
+            window.__MR_VERSION = 'v2.30.1-p278';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -73714,7 +73714,12 @@ window._handleStravaReturn = _handleStravaReturn;
         var heartrate = streamData('heartrate');
         var cadence   = streamData('cadence');
         var velSmooth = streamData('velocity_smooth');
-        // temp/watts/moving/grade_smooth no consumidos en v1 del bridge
+        // [p278] Ya consumimos watts (running power) para la Card 3.
+        // Strava expone este stream cuando el reloj lo emite (COROS Pace Pro,
+        // Fenix, Stryd, etc.). El summary con avgPower/maxPower ya se leía;
+        // ahora tenemos la serie per-punto para el gráfico.
+        var watts     = streamData('watts');
+        // temp/moving/grade_smooth siguen sin consumirse (fuera de scope).
 
         // dateStr formato YYYY-MM-DD desde start_date_local (UTC* literal)
         var dateStr = '';
@@ -73778,10 +73783,12 @@ window._handleStravaReturn = _handleStravaReturn;
         var cadSeries = [];
         var distSer   = [];
         var eleSeries = altitude.slice(); // plano OK
+        // [p278] Serie de potencia per-punto para el gráfico de Card 3.
+        var powerSeries = [];
         // Pivote temporal: el stream `time` es la fuente de verdad. Si falta,
         // usamos i como segundo (Strava muestrea ~1Hz).
         var nSamples = Math.max(
-            time.length, heartrate.length, cadence.length, distance.length, velSmooth.length
+            time.length, heartrate.length, cadence.length, distance.length, velSmooth.length, watts.length
         );
         for (var i2 = 0; i2 < nSamples; i2++) {
             var t = (time[i2] != null) ? time[i2] : i2;
@@ -73799,6 +73806,13 @@ window._handleStravaReturn = _handleStravaReturn;
                     d: Math.round(distance[i2] * 100),       // m → cm
                     spd: (velSmooth[i2] != null) ? velSmooth[i2] : 0
                 });
+            }
+            // [p278] Potencia: filtrar nulls, ceros y valores absurdos (>2000W).
+            // Strava puede meter null durante paradas y valores > 2000 son
+            // artefactos (Stryd/COROS running power realista: 100-500 W).
+            if (watts[i2] != null) {
+                var wv = watts[i2];
+                if (wv > 0 && wv < 2000) powerSeries.push({ t: t, v: wv });
             }
         }
 
@@ -73947,6 +73961,9 @@ window._handleStravaReturn = _handleStravaReturn;
             cadSeries:       cadSeries,
             eleSeries:       eleSeries,
             distSer:         distSer,
+            // [p278] Serie temporal de potencia — la Card 3 la lee para el
+            // gráfico de dots. Solo se poblará si el reloj emitió watts.
+            powerSeries:     powerSeries,
             csvBlocks:       csvBlocks,
             calories:        calories,
             bestPace:        bestPace,
