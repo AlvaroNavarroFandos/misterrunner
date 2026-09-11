@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p297'; // [v2.30.1-p297] Scroll pestaña plan (segundo intento). El fix p296 (min-height:min-content + flex-shrink:0 en #plan-view-content) fue defensivo pero no suficiente. Añadido spacer transparente #plan-scroll-spacer (60px, flex-shrink:0, pointer-events:none) como HIJO DIRECTO de #view-cal, DESPUÉS del bloque plan-view-content. Al estar fuera del bloque, no adopta el fondo --card2 dorado → no genera hueco visible (razón por la que p260 puso el spacer interno a height:0). Al ser flex-shrink:0 con altura fija, garantiza scrollHeight > clientHeight en cualquier semana → el scroll táctil arranca siempre. Los cambios de p296 se mantienen como refuerzo.
+            window.__MR_VERSION = 'v2.30.1-p298'; // [v2.30.1-p298] Doble frente. CARD 2 · 3 fixes tras review Álvaro sobre p295-p297: (1) rango Y del pace simétrico [avgPace-100, avgPace+100] aplicado a TODAS las activities (easy/long/series/tempo) — la avg queda centrada en el 50% del canvas ("el ritmo con la media en medio"), eliminado el guard _hasShortLaps que dejaba Series en auto-fit. (2) Silueta desnivel eTop 0.42→0.55 — el pico llegaba justo al borde superior y se veía cortado, ahora tiene aire arriba para leerse completo (aplica en pace y FC). (3) Suprimida línea dashed vertical del arranque (pause cut en primeros 6px del canvas) — era artefacto de webhook Strava por gap dt>6s tras synthetic prepend / primer punto FC, no una pausa real; los cortes intermedios (semáforos, hidratación) siguen dibujándose. SCROLL PLAN · segundo intento p297 dejó overflow pero no se activaba táctilmente: (1) quitado flex-shrink:0 del #plan-view-content que se puso en p296 (rompía scroll en iOS PWA, el scroller no propagaba el gesto vertical). El spacer externo #plan-scroll-spacer (p297) ya garantiza scrollHeight suficiente. (2) touch-action:pan-y explícito en el bloque para forzar propagación del gesto al scroller padre. (3) -webkit-overflow-scrolling:touch explícito en #view-cal (refuerzo para iOS PWA con anidamiento flex).
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42558,16 +42558,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // Con series cortas: mantener 150-800 (dinámico) para no cortar
                 // picos de series a 3:40/km cuando el avg es 5:30/km.
                 // [v2.30.1-p188] respectRange flag → forzar rango sin auto-fit.
+                // [v2.30.1-p298] Rango cambiado a SIMÉTRICO [avgPace-100, avgPace+100]
+                // aplicado a TODAS las activities (easy/long/series/tempo). Álvaro
+                // pidió "el ritmo con la media en el medio y así se ve toda la
+                // gráfica bien". Con -100/+100 la avg cae en el 50% del canvas
+                // (norm=0.5). El _hasShortLaps guard queda eliminado — en Series
+                // los picos rápidos (>avg-100) y descansos (>avg+100) se clampean
+                // al top/bottom, pero eso es aceptable: la lectura principal es la
+                // MEDIA centrada. En easy/long la banda sigue cabiendo holgada
+                // dentro de ±100s del avg.
                 var _rangeMin = 150, _rangeMax = 800;
                 var _respectRange = false;
-                if (!_hasShortLaps) {
-                    var _avgPaceS = (act.durationSec > 0 && act.distKm > 0)
-                        ? Math.round(act.durationSec / act.distKm) : 0;
-                    if (_avgPaceS > 0) {
-                        _rangeMin = Math.max(150, _avgPaceS - 90);
-                        _rangeMax = Math.min(800, _avgPaceS + 180);
-                        _respectRange = true;
-                    }
+                var _avgPaceS = (act.durationSec > 0 && act.distKm > 0)
+                    ? Math.round(act.durationSec / act.distKm) : 0;
+                if (_avgPaceS > 0) {
+                    _rangeMin = Math.max(150, _avgPaceS - 100);
+                    _rangeMax = Math.min(800, _avgPaceS + 100);
+                    _respectRange = true;
                 }
                 drawSparkline(pcCanvas, paceVals, '#22C55E', _rangeMin, _rangeMax, [pB[0],pB[1],pB[2],pB[3],pB[4]], ['#3BBCE0','#0EA5E9','#22C55E','#FBBF24','#F97316','#EF4444'], true, _pcEle, _respectRange);
             }
@@ -43638,7 +43645,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (ev < eMin) eMin = ev; if (ev > eMax) eMax = ev;
             }
             if (eMax > eMin) {
-                const eTop = H * 0.42;
+                // [v2.30.1-p298] eTop 0.42 → 0.55. Álvaro reportó que el pico
+                // de la silueta llegaba justo al borde superior (y=eTop) y se
+                // veía "cortado". Bajar la silueta al 45% inferior deja aire
+                // arriba para que el pico se lea completo. Además libera espacio
+                // para que la banda de ritmo (con avg centrado en 50%) tenga
+                // margen antes de solaparse con el desnivel.
+                const eTop = H * 0.55;
                 const eY = v => (H - pad.b + 2) - ((v - eMin) / (eMax - eMin)) * ((H - pad.b + 2) - eTop);
                 const eX = i => pad.l + (i / (eleVals.length - 1)) * (W - pad.l - pad.r);
                 const grad = ctx.createLinearGradient(0, eTop, 0, H);
@@ -43708,6 +43721,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
         // Función para pintar corte vertical (línea gris discontinua) en pausa
         function _drawPauseCut(xPos) {
+            // [v2.30.1-p298] Suprimir cortes muy cerca del arranque (primeros
+            // 6px del área de datos). Álvaro reportó una línea dashed vertical
+            // blanca al inicio en webhook Strava (ritmo y FC). Causa: gap dt>6s
+            // entre el primer punto real y el segundo tras el synthetic start
+            // → paceVals[16] o hrSeries[1] = 0 → entrada a pausa que dibuja el
+            // cut casi en el borde izquierdo. Es un artefacto de la decimación
+            // Strava, no una pausa real del reloj. Los cortes intermedios
+            // (semáforos, hidratación) siguen dibujándose normalmente.
+            if (xPos - pad.l < 6) return;
             ctx.save();
             ctx.shadowBlur = 0;
             // [v2.30.1-p193] Más visibles: 1→1.6px, opacity .35→.55 / .30→.50,
@@ -44047,18 +44069,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             border-radius: 14px !important;
             box-shadow: 0 2px 8px rgba(0,0,0,.05);
             margin-top: 8px;
-            /* [v2.30.1-p296] Fix scroll vista semana. Al meter TODO el
-               contenido semanal en este bloque (p256), como hijo directo
-               del flex-column scroller #view-cal y sin flex-shrink/min-
-               height explícitos, el bloque se comprimía al alto de la
-               viewport → scrollHeight ≡ clientHeight → el scroll táctil
-               no arrancaba. min-content fuerza al bloque a medir su
-               contenido real (7 días + sesiones expandidas) y shrink:0
-               impide que flex lo encoja. En MES no se notaba porque
-               el matrix del calendario cabe en la viewport (aunque el
-               problema estructural era el mismo). */
+            /* [v2.30.1-p296] Fix scroll vista semana. min-content fuerza al
+               bloque a medir su contenido real (7 días + sesiones expandidas). */
             min-height: min-content;
-            flex-shrink: 0;
+            /* [v2.30.1-p298] flex-shrink:0 quitado (rompía scroll en iOS PWA:
+               el scroller no propagaba el gesto). El spacer externo
+               #plan-scroll-spacer (p297) ya garantiza scrollHeight > clientHeight.
+               touch-action explícito refuerza que el gesto vertical llegue al
+               scroller padre (#view-cal). */
+            touch-action: pan-y;
         }
         /* [p259] Eliminar el margin-bottom del último hijo directo del bloque
            para que no se sume al padding-bottom → hueco mínimo entre la última
@@ -44077,6 +44096,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
            mínimo suficiente sin gap. */
         #view-cal {
             padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px) !important;
+            /* [v2.30.1-p298] Refuerzo explícito para iOS PWA. Aunque .view
+               ya lo tiene, algunos motores iOS lo pierden con anidamiento
+               flex si no está en el propio scroller. */
+            -webkit-overflow-scrolling: touch;
         }
         .plan-day-row:last-child { border-bottom:none; }
         .plan-day-label { font-size:9px; text-transform:uppercase; letter-spacing:.8px; color:var(--tm); min-width:20px; padding-top:2px; }
