@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p275';
+            window.__MR_VERSION = 'v2.30.1-p276';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9783,11 +9783,16 @@
             --cad-color: #22c55e;
             --stride-color: #a855f7;
             --vert-color: #f59e0b;
+            /* [p276] Potencia azul, GCT cyan. */
+            --power-color: #3b82f6;
+            --gct-color: #06b6d4;
         }
         body.dark-mode {
             --cad-color: #4ade80;
             --stride-color: #c084fc;
             --vert-color: #fbbf24;
+            --power-color: #60a5fa;
+            --gct-color: #22d3ee;
         }
 
         /* Botón "colapsar" — solo visible cuando expanded.
@@ -42426,7 +42431,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const ds3 = act.distSer || [];
         const cadVals    = [];   // spm (ambos pies × 2)
         const strideVals = [];   // cm
-        const vertVals   = [];   // cm
+        const vertVals   = [];   // cm (mantenido para compat, ya no se pinta)
+        // [p276] Series nuevas Card 3: Potencia (W) + Ground Contact Time (ms).
+        // Ambas SOLO reales — no hay fallback derivado. Vacías si el parser
+        // no las emitió (ej. Strava daily bridge todavía no consume watts).
+        const powerVals = [];    // W
+        const gctVals   = [];    // ms
 
         const cadSrc = (act.cadSeries || []).filter(c=>c.v>30);
 
@@ -42445,8 +42455,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // activities COROS pre-v1.9.2-p1.
         const strideByT = {};
         const vertByT   = {};
-        if (Array.isArray(act.strideSer)) act.strideSer.forEach(s => { if (s && s.v > 0) strideByT[s.t] = s.v; });
-        if (Array.isArray(act.vertSer))   act.vertSer.forEach(s   => { if (s && s.v > 0) vertByT[s.t]   = s.v; });
+        const powerByT  = {};
+        const gctByT    = {};
+        if (Array.isArray(act.strideSer))  act.strideSer.forEach(s  => { if (s && s.v > 0) strideByT[s.t] = s.v; });
+        if (Array.isArray(act.vertSer))    act.vertSer.forEach(s    => { if (s && s.v > 0) vertByT[s.t]   = s.v; });
+        if (Array.isArray(act.powerSeries)) act.powerSeries.forEach(p => { if (p && p.v > 0) powerByT[p.t] = p.v; });
+        if (Array.isArray(act.gctSer))     act.gctSer.forEach(g     => { if (g && g.v > 0) gctByT[g.t]   = g.v; });
 
         if (cadSrc.length > 0) {
             cadSrc.forEach(c => {
@@ -42464,10 +42478,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     : calcVert(spd);
                 strideVals.push(sCm);
                 vertVals.push(vCm);
+                // [p276] Potencia y GCT: solo si el reloj los emitió (no hay derivado).
+                const realPower = powerByT[c.t];
+                const realGct   = gctByT[c.t];
+                powerVals.push(typeof realPower === 'number' ? realPower : 0);
+                gctVals.push(typeof realGct === 'number' ? realGct : 0);
             });
         } else {
             ds3.forEach(d => {
-                if (!d.spd || d.spd < 0.3) { cadVals.push(0); strideVals.push(0); vertVals.push(0); return; }
+                if (!d.spd || d.spd < 0.3) {
+                    cadVals.push(0); strideVals.push(0); vertVals.push(0);
+                    powerVals.push(0); gctVals.push(0);
+                    return;
+                }
                 const avgCB = (act.strideLen && act.strideLen > 0)
                     ? Math.round(d.spd * 60 / (act.strideLen / 100))
                     : Math.round(d.spd * 60 / 1.09);
@@ -42476,6 +42499,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cadVals.push(avgCB);
                 strideVals.push(sCm);
                 vertVals.push(vCm);
+                // [p276] Sin cadSrc no hay eje temporal para cruzar con powerByT/gctByT
+                // → estos bloques quedarán vacíos ("Sin datos"). Ok: sin cadSeries
+                // real es muy improbable que haya powerSeries de todos modos.
+                powerVals.push(0);
+                gctVals.push(0);
             });
         }
 
@@ -42502,28 +42530,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const maxStride = _p99(strideNonZero);
         const maxVert   = _p99(vertNonZero);
 
-        // [p275] Moving average para suavizar señal ruidosa (osc.vertical).
-        // El acelerómetro capta cada micro-movimiento del reloj: la señal
-        // per-punto tiene ±1 cm de ruido inherente. Cadencia y zancada no lo
-        // necesitan (contraste running/descanso es enorme y tapa el ruido);
-        // osc.vertical sí (contraste solo 5 cm, ruido gana). Ventana 15
-        // puntos ~= 4 segundos a 4 Hz de COROS Pace Pro. Ignora ceros para
-        // no contaminar la media en momentos sin señal.
-        function _smoothVals(vals, window) {
-            const half = Math.floor(window / 2);
-            const out = new Array(vals.length);
-            for (let i = 0; i < vals.length; i++) {
-                const from = Math.max(0, i - half);
-                const to   = Math.min(vals.length - 1, i + half);
-                let sum = 0, cnt = 0;
-                for (let j = from; j <= to; j++) {
-                    if (vals[j] > 0) { sum += vals[j]; cnt++; }
-                }
-                out[i] = cnt > 0 ? sum / cnt : 0;
-            }
-            return out;
-        }
-        const vertValsSmooth = _smoothVals(vertVals, 15);
+        // [p276] Media y máx (P99) de Potencia y GCT para los chips
+        const powerNonZero = powerVals.filter(v => v > 0);
+        const gctNonZero   = gctVals.filter(v => v > 0);
+        const avgPower = powerNonZero.length ? powerNonZero.reduce((a,b)=>a+b,0) / powerNonZero.length : 0;
+        const avgGct   = gctNonZero.length   ? gctNonZero.reduce((a,b)=>a+b,0)   / gctNonZero.length   : 0;
+        const maxPower = _p99(powerNonZero);
+        const maxGct   = _p99(gctNonZero);
+        const hasPower = powerNonZero.length > 0;
+        const hasGct   = gctNonZero.length   > 0;
+        const metricsCount = 2 + (hasPower ? 1 : 0) + (hasGct ? 1 : 0);  // Cad + Stride siempre; +Power si hay; +GCT si hay
 
         // ── Dibujado de dots en Canvas 2D (estilo Coros) ─────────────────
         // [p272] Rediseño: rango Y FIJO por métrica (0-220 cadencia,
@@ -42615,7 +42631,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         // ── Ensamblado ────────────────────────────────────────────────────
-        const _biomecCard = _premiumCardWrap('Análisis biomecánico', _premiumIcon('biomec'), true, '3 métricas');
+        // [p276] Chip dinámico: 3 métricas (Strava daily) vs 4 métricas (COROS).
+        // Osc.vertical retirada (señal muy ruidosa, ni Coros app la muestra).
+        const _biomecCard = _premiumCardWrap('Análisis biomecánico', _premiumIcon('biomec'), true, metricsCount + ' métricas');
         _biomecCard.style.flex = '1 1 0';
         _biomecCard.style.minHeight = '0';
         _biomecCard.style.display = 'flex';
@@ -42637,14 +42655,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             false,
             40, 200
         ));
+        // Potencia — siempre visible. Sin dato → "Sin datos" (Strava daily hoy;
+        // se activará cuando Sesión 2 lea streams.watts del bridge).
         _biomecCard.appendChild(_buildBiomecBlock(
-            'Osc. vertical',
-            'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgVert>0?avgVert.toFixed(1):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxVert>0?maxVert.toFixed(1):'—') + '</b>',
-            vertValsSmooth,
-            '--vert-color',
+            'Potencia',
+            hasPower
+              ? 'Media <b style="color:var(--det-tw);font-weight:700;">' + Math.round(avgPower) + '</b> W · Máx <b style="color:var(--det-tw);font-weight:700;">' + Math.round(maxPower) + '</b>'
+              : 'Sin datos',
+            powerVals,
+            '--power-color',
             false,
-            5, 14
+            80, 450
         ));
+        // Ground Contact Time — solo si viene (COROS emitió stance_time).
+        if (hasGct) {
+            _biomecCard.appendChild(_buildBiomecBlock(
+                'Tiempo contacto',
+                'Media <b style="color:var(--det-tw);font-weight:700;">' + Math.round(avgGct) + '</b> ms · Máx <b style="color:var(--det-tw);font-weight:700;">' + Math.round(maxGct) + '</b>',
+                gctVals,
+                '--gct-color',
+                false,
+                150, 320
+            ));
+        }
 
         c3.appendChild(_biomecCard);
         track.appendChild(c3);
