@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p298'; // [v2.30.1-p298] Doble frente. CARD 2 · 3 fixes tras review Álvaro sobre p295-p297: (1) rango Y del pace simétrico [avgPace-100, avgPace+100] aplicado a TODAS las activities (easy/long/series/tempo) — la avg queda centrada en el 50% del canvas ("el ritmo con la media en medio"), eliminado el guard _hasShortLaps que dejaba Series en auto-fit. (2) Silueta desnivel eTop 0.42→0.55 — el pico llegaba justo al borde superior y se veía cortado, ahora tiene aire arriba para leerse completo (aplica en pace y FC). (3) Suprimida línea dashed vertical del arranque (pause cut en primeros 6px del canvas) — era artefacto de webhook Strava por gap dt>6s tras synthetic prepend / primer punto FC, no una pausa real; los cortes intermedios (semáforos, hidratación) siguen dibujándose. SCROLL PLAN · segundo intento p297 dejó overflow pero no se activaba táctilmente: (1) quitado flex-shrink:0 del #plan-view-content que se puso en p296 (rompía scroll en iOS PWA, el scroller no propagaba el gesto vertical). El spacer externo #plan-scroll-spacer (p297) ya garantiza scrollHeight suficiente. (2) touch-action:pan-y explícito en el bloque para forzar propagación del gesto al scroller padre. (3) -webkit-overflow-scrolling:touch explícito en #view-cal (refuerzo para iOS PWA con anidamiento flex).
+            window.__MR_VERSION = 'v2.30.1-p299'; // [v2.30.1-p299] Scroll pestaña plan · tercer intento. Álvaro reportó que aunque haya contenido tras la nav bar, el scroll táctil no arrancaba porque el margen era demasiado ajustado. Su diagnóstico: "hasta que no saliera todo por encima de la nav bar dejara hacer scroll". Dos cambios que trabajan juntos: (1) buffer #view-cal padding-bottom +12px → +40px (restaura el valor original pre-p258, sacrifica el estar "pegado" al nav a cambio de aire real bajo el último ítem). (2) spacer #plan-scroll-spacer 60px → 120px. Total aire bajo el bloque plan: ~160px + safe_area + nav_h → el gesto de scroll táctil tiene margen suficiente para arrancar y desplazar el último ítem claramente sobre el nav.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -12320,8 +12320,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                  fuera del bloque plan-view-content para NO generar el "hueco
                  rosa" con fondo dorado del bloque (razón por la que p260 puso
                  el spacer interno a height:0). Sin background propio → se
-                 mezcla con el fondo transparente de #view-cal. -->
-            <div id="plan-scroll-spacer" style="flex-shrink:0;height:60px;pointer-events:none;" aria-hidden="true"></div>
+                 mezcla con el fondo transparente de #view-cal.
+                 [v2.30.1-p299] 60 → 120px. Con 60px el scroll seguía sin
+                 arrancar cómodamente: aunque hubiera overflow real, el
+                 gesto necesitaba mayor margen para que el último ítem
+                 pudiera desplazarse claramente por encima del nav. Con 120px
+                 + buffer +40px del view-cal hay ~160px de aire real bajo
+                 el último ítem del plan. -->
+            <div id="plan-scroll-spacer" style="flex-shrink:0;height:120px;pointer-events:none;" aria-hidden="true"></div>
         </section>
 
         <!-- BIBLIOTECA -->
@@ -44093,9 +44099,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
            visual bajo el último ítem. Con el nuevo bloque plan que tiene su
            propio background/borde, el buffer se percibía como espacio vacío
            bajo el bloque. Con 12px queda apenas 12px sobre el nav → aire
-           mínimo suficiente sin gap. */
+           mínimo suficiente sin gap.
+           [v2.30.1-p299] 12 → 40px. Álvaro reportó que aunque haya contenido
+           tras la nav bar, el scroll táctil no arrancaba porque el margen
+           era demasiado ajustado — el gesto necesita margen suficiente para
+           que el último ítem pueda desplazarse claramente POR ENCIMA de la
+           nav bar. Aceptamos volver a tener algo de "hueco" bajo el bloque
+           plan a cambio de que el scroll funcione. */
         #view-cal {
-            padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px) !important;
+            padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 40px) !important;
             /* [v2.30.1-p298] Refuerzo explícito para iOS PWA. Aunque .view
                ya lo tiene, algunos motores iOS lo pierden con anidamiento
                flex si no está en el propio scroller. */
