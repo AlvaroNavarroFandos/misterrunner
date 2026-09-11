@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p285';
+            window.__MR_VERSION = 'v2.30.1-p286';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -74204,11 +74204,15 @@ window._handleStravaReturn = _handleStravaReturn;
 
         // Paso 2: fetch listado COROS (paginar hasta cubrir el rango)
         if (pm) pm.textContent = 'Listando actividades COROS…';
+        if (typeof window._corosFetch !== 'function') {
+            _mrEcFinish(0, 0, 0, ['_corosFetch no disponible — ¿COROS conectado?']);
+            return;
+        }
         var corosItems = [];
         try {
             var page = 1, maxPages = 5;
             while (page <= maxPages) {
-                var lresp = await _corosFetch('GET', '/activities?size=200&page=' + page, null);
+                var lresp = await window._corosFetch('GET', '/activities?size=200&page=' + page, null);
                 if (!lresp.ok) {
                     _mrEcFinish(0, 0, 0, ['Error listando COROS: ' + (lresp.error || lresp.status)]);
                     return;
@@ -74260,7 +74264,7 @@ window._handleStravaReturn = _handleStravaReturn;
                 if (!best) { skipNoMatch++; continue; }
 
                 // Fetch detail COROS
-                var dresp = await _corosFetch('POST', '/activity-detail', { labelId: best.labelId });
+                var dresp = await window._corosFetch('POST', '/activity-detail', { labelId: best.labelId });
                 if (!dresp.ok) { err++; errList.push('#' + (i+1) + ' fetch detail: ' + (dresp.error || dresp.status)); continue; }
                 var pfd = dresp.data && dresp.data.pendingFitData;
                 if (!pfd) { err++; errList.push('#' + (i+1) + ' sin pendingFitData'); continue; }
@@ -79692,6 +79696,10 @@ window.addEventListener('DOMContentLoaded', function() {
         }
 
         // ═══ Wrappers públicos ══════════════════════════════════════════
+        // [v2.30.1-p285] Exponer _corosFetch en window para uso en la
+        // herramienta dev "Enriquecer con COROS" (handler _mrRunEnrichCoros
+        // vive fuera del scope de este IIFE).
+        window._corosFetch = _corosFetch;
         window.mrCorosStatus = function() {
             return _corosFetch('GET', '/status');
         };
