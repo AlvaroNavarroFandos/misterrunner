@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p287';
+            window.__MR_VERSION = 'v2.30.1-p288';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -74234,8 +74234,19 @@ window._handleStravaReturn = _handleStravaReturn;
             return;
         }
 
+        // Debug logs
+        console.log('%c[MR][p287 enrich] corosItems cargados: ' + corosItems.length,
+            'color:#DC2027;font-weight:600;');
+        if (corosItems.length > 0) {
+            console.log('%c[MR][p287 enrich] primer item COROS:', 'color:#DC2027;', corosItems[0]);
+            console.log('%c[MR][p287 enrich] segundo item COROS:', 'color:#DC2027;', corosItems[1]);
+        }
+        console.log('%c[MR][p287 enrich] filas MR: ' + rows.length,
+            'color:#DC2027;font-weight:600;', rows.slice(0, 2));
+
         // Paso 3: matching + fetch detail + merge + persist
         var ok = 0, skipNoMatch = 0, err = 0, errList = [];
+        var firstMissDebug = null;   // captura la 1ª fallida para el reporte
         for (var i = 0; i < rows.length; i++) {
             var row = rows[i];
             if (pm) pm.textContent = 'Procesando ' + (i + 1) + ' de ' + rows.length + '…';
@@ -74250,19 +74261,46 @@ window._handleStravaReturn = _handleStravaReturn;
                 // Shape real de toFrontendListItem: startTimeEpoch (seg),
                 // distKm (km), durationSec (seg). NO son startTimeEpochMs/etc.
                 var best = null;
+                var closest = null;
+                var closestDiffMs = Infinity;
                 for (var j = 0; j < corosItems.length; j++) {
                     var ci = corosItems[j];
                     var ciStartMs = (ci.startTimeEpoch || 0) * 1000;
                     var ciDurSec  = ci.durationSec || 0;
                     var ciDistM   = (ci.distKm || 0) * 1000;
-                    if (Math.abs(ciStartMs - mrStartMs) < 60000
+                    var diffMs = Math.abs(ciStartMs - mrStartMs);
+                    if (diffMs < closestDiffMs) {
+                        closestDiffMs = diffMs;
+                        closest = { item: ci, diffMs: diffMs, diffDurSec: ciDurSec - mrDurSec, diffDistM: ciDistM - mrDistM };
+                    }
+                    if (diffMs < 60000
                      && Math.abs(ciDurSec - mrDurSec) < 10
                      && Math.abs(ciDistM - mrDistM) < 200) {
                         best = ci;
                         break;
                     }
                 }
-                if (!best) { skipNoMatch++; continue; }
+                if (!best) {
+                    skipNoMatch++;
+                    if (!firstMissDebug && closest) {
+                        firstMissDebug = {
+                            mr: { start: row.start_date, durSec: mrDurSec, distKm: row.dist_km.toFixed(2) },
+                            closestCoros: closest.item ? {
+                                label: closest.item.labelId,
+                                date: closest.item.dateStr,
+                                durSec: closest.item.durationSec,
+                                distKm: (closest.item.distKm || 0).toFixed(2)
+                            } : null,
+                            diffs: {
+                                startMs: closest.diffMs,
+                                durSec: closest.diffDurSec,
+                                distM: closest.diffDistM
+                            }
+                        };
+                        console.log('%c[MR][p287 enrich] primer miss:', 'color:#DC2027;font-weight:600;', firstMissDebug);
+                    }
+                    continue;
+                }
 
                 // Fetch detail COROS
                 var dresp = await window._corosFetch('POST', '/activity-detail', { labelId: best.labelId });
