@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p293'; // [v2.30.1-p293] Fix histórico COROS Card 3: _corosBFBuildActFromPending ahora preserva las 4 series biomec (powerSeries/strideSer/vertSer/gctSer) que el backend v1.10.0-p1 emite. Sin este fix las series se perdían al pasar de pfd → act → gzip → hidratación. Ahora histórico ≡ daily.
+            window.__MR_VERSION = 'v2.30.1-p294'; // [v2.30.1-p294] Fase Y · Card 2 gráficos premium (variante B+C aprobada por Álvaro). Silueta desnivel de B (gradiente dorado #c9a84c .05→.30/.35 + contorno dorado 1.4px + micro-labels altitud "MAX m"/"MIN m" a la derecha) — desnivel ahora se lee claro sin abrir Card 1. Eje Y de C (3-4 ticks intermedios calculados en pasos de 10 con niceTicks + gridlines horizontales discontinuas [1.5,4] rgba .10 + labels blancos luminosos con glow 2px en dark / negro 70% en light, font 600 10px -apple-system tabular). Canvas envuelto en .mr-chart-wrap (border-radius 10px + border dorado tenue .20/.18). Padding L 2→32 · R 2→8. Aplica a AMBAS sparklines (pace Card 2 con invertY + fmt mm'ss" y FC Card 2 con ppm entero). Sin cambios en línea datos, glow zonas, cortes pausas, avg line ni buildZoneMini.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -9748,6 +9748,25 @@
             box-shadow:
                 0 8px 24px rgba(0,0,0,.55),
                 0 2px 6px rgba(0,0,0,.35) !important;
+        }
+        /* [v2.30.1-p294] Wrap del canvas de charts Card 2 (Ritmo + FC).
+           Silueta desnivel dorada + eje Y con ticks premium (variante B+C).
+           Border-radius + border dorado tenue para separar la gráfica del
+           header premium sin romper la card contenedora. flex:1 hereda el
+           reparto de altura del padre (la .mr-premium-card ya es flex-column). */
+        .mr-chart-wrap {
+            position: relative;
+            box-sizing: border-box;
+            margin: 8px 6px 4px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--det-bg);
+            border: 1px solid rgba(201,168,76,.20);
+            flex: 1 1 0;
+            min-height: 0;
+        }
+        body.dark-mode .mr-chart-wrap {
+            border-color: rgba(201,168,76,.18);
         }
         /* [p266] Color del km más rápido en Parciales · dorado en light,
            ROJO en dark para que destaque contra el fondo negro. */
@@ -42223,30 +42242,39 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // ── Ritmo section (TOP) ───────────────────────────────────
         // [p266] Card premium con header "Ritmo" + chip "Media X'XX/km" + icono
         // [p268] flex:1 + flex-direction:column para distribuir altura auto
+        // [v2.30.1-p294] Canvas envuelto en .mr-chart-wrap para el look premium
+        // (borde dorado tenue + border-radius). El flex:1 pasa del canvas al wrap.
         var _paceCard = _premiumCardWrap('Ritmo', _premiumIcon('pace'), true, 'Media ' + pace);
         _paceCard.style.flex = '1 1 0';
         _paceCard.style.minHeight = '0';
         _paceCard.style.display = 'flex';
         _paceCard.style.flexDirection = 'column';
+        var _pcWrap = document.createElement('div');
+        _pcWrap.className = 'mr-chart-wrap';
         const pcCanvas = document.createElement('canvas');
-        pcCanvas.style.cssText = 'width:100%;display:block;background:var(--det-bg);flex:1 1 0;min-height:0;';
+        pcCanvas.style.cssText = 'width:100%;height:100%;display:block;background:transparent;';
         pcCanvas.dataset.type = 'pace';
-        _paceCard.appendChild(pcCanvas);
+        _pcWrap.appendChild(pcCanvas);
+        _paceCard.appendChild(_pcWrap);
         _paceCard.appendChild(buildZoneMini(pcZS, pcTotal, pcLabels, ZDEFS_PC));
         c2.appendChild(_paceCard);
 
         // ── FC section (BOTTOM) ───────────────────────────────────
         // [p266] Card premium con header "FC" + chip "Media X · Máx Y" + icono
+        // [v2.30.1-p294] Canvas envuelto en .mr-chart-wrap (mismo patrón que Ritmo)
         var _fcCard = _premiumCardWrap('Frecuencia Cardíaca', _premiumIcon('hr'), false,
             'Media ' + (act.avgHr||'—') + ' · Máx ' + (act.maxHr||'—'));
         _fcCard.style.flex = '1 1 0';
         _fcCard.style.minHeight = '0';
         _fcCard.style.display = 'flex';
         _fcCard.style.flexDirection = 'column';
+        var _hrWrap = document.createElement('div');
+        _hrWrap.className = 'mr-chart-wrap';
         const hrCanvas = document.createElement('canvas');
-        hrCanvas.style.cssText = 'width:100%;display:block;background:var(--det-bg);flex:1 1 0;min-height:0;';
+        hrCanvas.style.cssText = 'width:100%;height:100%;display:block;background:transparent;';
         hrCanvas.dataset.type = 'hr';
-        _fcCard.appendChild(hrCanvas);
+        _hrWrap.appendChild(hrCanvas);
+        _fcCard.appendChild(_hrWrap);
         _fcCard.appendChild(buildZoneMini(hrZS, hrTotal, fcLabels, ZDEFS_HR));
         c2.appendChild(_fcCard);
 
@@ -42320,7 +42348,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // asignó al canvas (offsetHeight) y sincronizar el atributo height
             // interno del canvas para el drawing (píxeles CSS ≠ píxeles canvas).
             // Fallback conservador si aún no está layouteado.
-            const chartH = Math.max(80, pcCanvas.offsetHeight || 100);
+            // [v2.30.1-p294] Ahora medimos el wrap (parentElement) porque el
+            // flex:1 pasó del canvas al wrap. El canvas es height:100% dentro
+            // → offsetHeight sigue siendo el mismo, pero clientHeight del wrap
+            // es semánticamente más correcto.
+            const _pcWrapEl = pcCanvas.parentElement;
+            const chartH = Math.max(80, (_pcWrapEl && _pcWrapEl.clientHeight) || pcCanvas.offsetHeight || 100);
+            const chartW = (_pcWrapEl && _pcWrapEl.clientWidth) || c2.offsetWidth;
 
             // [Pre-Capacitor TODO-3 · C28] Lazy init de cache memoizado para este act.
             // Hit en reaperturas: no se recrea el array .map(p=>p.v) ni el bucle de paceVals.
@@ -42342,7 +42376,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 } else {
                     hrVals = act.hrSeries.map(p=>p.v);
                 }
-                hrCanvas.width  = c2.offsetWidth;
+                hrCanvas.width  = chartW;
                 hrCanvas.height = chartH;
                 hrCanvas.style.height = chartH + 'px';
                 var _hrEle = _mrResampleEle(act.eleSeries, hrVals.length);
@@ -42503,7 +42537,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     }
                     if (_sparkCacheEntry) _sparkCacheEntry.pc = paceVals;
                 }
-                pcCanvas.width  = c2.offsetWidth;
+                pcCanvas.width  = chartW;
                 pcCanvas.height = chartH;
                 pcCanvas.style.height = chartH + 'px';
                 var _pcEle = _mrResampleEle(act.eleSeries, paceVals.length);
@@ -43560,7 +43594,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         //     minúsculos, matchea COROS oficial)
         const clampMin = respectRange ? minV : Math.max(minV, dataMin);
         const clampMax = respectRange ? maxV : Math.min(maxV, dataMax);
-        const pad = {t:6, b:16, l:2, r:2};
+        // [v2.30.1-p294] Padding L 2 → 32 (espacio labels eje Y ticks premium).
+        // Padding R 2 → 8 (aire para labels altitud "330 m" a la derecha).
+        const pad = {t:8, b:18, l:32, r:8};
 
         function toX(i) { return pad.l + (i / (vals.length-1)) * (W - pad.l - pad.r); }
         function toY(v) {
@@ -43571,10 +43607,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 : H - pad.b - norm * (H - pad.t - pad.b);      // higher HR = higher on chart
         }
 
-        // ── [D2] Silueta de desnivel de fondo (mitad inferior del chart) ──
-        // Reemplaza las bandas de zona del diseño anterior (look "glow premium"
-        // sin bandas). Se resamplea eleSeries al largo de la serie antes de
-        // llamar (eleVals). En indoor/sin GPS eleVals viene null → sin silueta.
+        // ── [D2] Silueta de desnivel de fondo — premium dorada ──
+        // [v2.30.1-p294] Rediseñada tras variante B+C aprobada:
+        //   · Silueta ocupa 58% inferior (era 70%, eTop bajaba a H*0.30) para
+        //     que el desnivel se lea claro pero sin invadir el chart.
+        //   · Gradiente dorado `#c9a84c` transparente arriba → .30/.35 abajo
+        //     (light/dark). Antes gris tenue al 10-1% que apenas se veía.
+        //   · Contorno dorado 1.4px (era gris 1px) — remarca el perfil.
+        //   · Micro-labels altitud "MAX m" / "MIN m" en dorado a la derecha
+        //     (nuevo, no había labels de altitud). Se lee el desnivel real
+        //     sin abrir Card 1.
+        // En indoor/sin GPS eleVals viene null → sin silueta (igual que antes).
         if (eleVals && eleVals.length > 1) {
             let eMin = Infinity, eMax = -Infinity;
             for (let i = 0; i < eleVals.length; i++) {
@@ -43583,31 +43626,30 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (ev < eMin) eMin = ev; if (ev > eMax) eMax = ev;
             }
             if (eMax > eMin) {
-                const eTop = H * 0.30;
-                const eY = v => (H - 2) - ((v - eMin) / (eMax - eMin)) * ((H - 2) - eTop);
+                const eTop = H * 0.42;
+                const eY = v => (H - pad.b + 2) - ((v - eMin) / (eMax - eMin)) * ((H - pad.b + 2) - eTop);
                 const eX = i => pad.l + (i / (eleVals.length - 1)) * (W - pad.l - pad.r);
                 const grad = ctx.createLinearGradient(0, eTop, 0, H);
-                // [v2.30.1-p190] Silueta elevación atenuada del 100% al 30%.
-                // Motivo: en la comparación con COROS oficial, MR mostraba la
-                // silueta demasiado prominente, robando protagonismo a la
-                // línea de datos. Al 30% queda como fondo sutil informativo
-                // (matchea look-and-feel de COROS/Strava). Aplica a AMBAS
-                // sparklines (pace Card 2 y FC Card 2) sin tocar líneas ni
-                // zonas de datos.
-                grad.addColorStop(0, _spIsDark ? 'rgba(150,155,170,.10)' : 'rgba(120,120,130,.09)');
-                grad.addColorStop(1, _spIsDark ? 'rgba(150,155,170,.01)' : 'rgba(120,120,130,.01)');
+                grad.addColorStop(0, 'rgba(201,168,76,.05)');
+                grad.addColorStop(1, _spIsDark ? 'rgba(201,168,76,.35)' : 'rgba(201,168,76,.30)');
                 ctx.beginPath();
-                ctx.moveTo(pad.l, H);
+                ctx.moveTo(pad.l, H - pad.b + 2);
                 ctx.lineTo(eX(0), eY(eleVals[0]));
                 for (let i = 1; i < eleVals.length; i++) ctx.lineTo(eX(i), eY(eleVals[i]));
-                ctx.lineTo(W - pad.r, H);
+                ctx.lineTo(W - pad.r, H - pad.b + 2);
                 ctx.closePath();
                 ctx.fillStyle = grad; ctx.fill();
                 ctx.beginPath();
                 ctx.moveTo(eX(0), eY(eleVals[0]));
                 for (let i = 1; i < eleVals.length; i++) ctx.lineTo(eX(i), eY(eleVals[i]));
-                ctx.strokeStyle = _spIsDark ? 'rgba(160,165,180,.12)' : 'rgba(120,120,130,.10)';
-                ctx.lineWidth = 1; ctx.stroke();
+                ctx.strokeStyle = _spIsDark ? 'rgba(201,168,76,.65)' : 'rgba(166,123,30,.65)';
+                ctx.lineWidth = 1.4; ctx.stroke();
+                // Micro-labels altitud (MAX arriba, MIN abajo · a la derecha)
+                ctx.fillStyle = _spIsDark ? 'rgba(201,168,76,.7)' : 'rgba(166,123,30,.75)';
+                ctx.font = '9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(Math.round(eMax) + ' m', W - pad.r - 2, eTop + 3);
+                ctx.fillText(Math.round(eMin) + ' m', W - pad.r - 2, H - pad.b - 2);
             }
         }
 
@@ -43725,21 +43767,59 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.beginPath(); ctx.moveTo(xp, pad.t); ctx.lineTo(xp, H-pad.b); ctx.stroke();
         }
 
-        // Y-axis value labels (min and max)
-        ctx.fillStyle = _spLblY;
-        ctx.font = '9px sans-serif';
-        ctx.textAlign = 'left';
-        if (!invertY) {
-            ctx.fillText(Math.round(clampMax), pad.l+2, pad.t+10);
-            ctx.fillText(Math.round(clampMin), pad.l+2, H-pad.b-3);
-        } else {
-            const topVal = invertY ? clampMin : clampMax;
-            const botVal = invertY ? clampMax : clampMin;
-            const pm1=Math.floor(topVal/60),ps1=Math.round(topVal%60);
-            const pm2=Math.floor(botVal/60),ps2=Math.round(botVal%60);
-            ctx.fillText(pm1+"'"+String(ps1).padStart(2,'0')+'"', pad.l+2, pad.t+10);
-            ctx.fillText(pm2+"'"+String(ps2).padStart(2,'0')+'"', pad.l+2, H-pad.b-3);
+        // ── [D2] Eje Y premium con ticks intermedios (variante B+C) ──
+        // [v2.30.1-p294] Rediseñado: antes solo min/max en las esquinas
+        // (2 labels de 9px sans-serif gris tenue). Ahora:
+        //   · 3-4 ticks calculados en pasos de 10 (ppm o s/km), filtrados
+        //     para no chocar con el borde ±10.
+        //   · Formato ppm entero (FC) o mm'ss" (ritmo, invertY).
+        //   · Gridlines horizontales finas discontinuas [1.5,4] rgba .10
+        //     a la altura de cada tick — refuerzan la lectura sin dominar.
+        //   · Labels blancos luminosos (dark) con glow suave 2px / oscuros
+        //     al 70% (light). Font 600 10px -apple-system tabular.
+        // El textAlign se hace 'right' con pad.l - 4 para que el label
+        // quede pegado al canvas sin invadir el chart.
+        const _p294NiceTicks = function(mn, mx, isPace) {
+            const step = Math.max(10, Math.round((mx - mn) / 4 / 10) * 10);
+            const arr = [];
+            const start = Math.ceil(mn / 10) * 10;
+            const guard = isPace ? 10 : 5;
+            for (let v = start; v <= mx; v += step) {
+                if (v >= mn + guard && v <= mx - guard) arr.push(v);
+            }
+            return arr;
+        };
+        const _p294FmtTick = function(v, isPace) {
+            if (!isPace) return String(Math.round(v));
+            const m = Math.floor(v / 60), s = Math.round(v % 60);
+            return m + "'" + String(s).padStart(2, '0') + '"';
+        };
+        const _p294Ticks = _p294NiceTicks(clampMin, clampMax, invertY);
+        // Gridlines discontinuas
+        ctx.save();
+        ctx.setLineDash([1.5, 4]);
+        ctx.strokeStyle = _spIsDark ? 'rgba(255,255,255,.10)' : 'rgba(24,24,27,.10)';
+        ctx.lineWidth = 0.6;
+        for (const _tv of _p294Ticks) {
+            const _ty = toY(_tv);
+            ctx.beginPath(); ctx.moveTo(pad.l, _ty); ctx.lineTo(W - pad.r, _ty); ctx.stroke();
         }
+        ctx.restore();
+        // Labels luminosos con glow (dark)
+        ctx.save();
+        if (_spIsDark) {
+            ctx.shadowColor = 'rgba(255,255,255,.3)';
+            ctx.shadowBlur = 2;
+            ctx.fillStyle = 'rgba(255,255,255,.85)';
+        } else {
+            ctx.fillStyle = 'rgba(24,24,27,.7)';
+        }
+        ctx.font = '600 10px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'right';
+        for (const _tv of _p294Ticks) {
+            ctx.fillText(_p294FmtTick(_tv, invertY), pad.l - 4, toY(_tv) + 3.5);
+        }
+        ctx.restore();
     }
 
     // ── SCATTER CHART for running dynamics ───────────────────────
