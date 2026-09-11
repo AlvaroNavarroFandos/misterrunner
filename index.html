@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p281';
+            window.__MR_VERSION = 'v2.30.1-p282';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -73857,11 +73857,13 @@ window._handleStravaReturn = _handleStravaReturn;
 
                 var streamsPath = await _uploadManualStreams(sb, uid, row.id, actLite);
                 if (!streamsPath) { err++; errList.push('#' + (k+1) + ' upload streams falló'); continue; }
-                var updPayload = { streams_path: streamsPath };
-                if (pfd.avgPower  != null) updPayload.avg_power  = pfd.avgPower;
-                if (pfd.maxPower  != null) updPayload.max_power  = pfd.maxPower;
-                if (pfd.normPower != null) updPayload.norm_power = pfd.normPower;
-                var updRes = await sb.from('activities').update(updPayload).eq('id', row.id);
+                // [p281 fix] Update solo streams_path — las columnas avg_power/max_power/
+                // norm_power NO existen en la tabla `activities`. Los agregados de
+                // potencia se persisten en el summary del gzip (p279 _uploadManualStreams)
+                // y se hidratan al abrir via _mapStreamsToActFields (p279).
+                var updRes = await sb.from('activities')
+                    .update({ streams_path: streamsPath })
+                    .eq('id', row.id);
                 if (updRes && updRes.error) {
                     err++;
                     errList.push('#' + (k+1) + ' update BD: ' + updRes.error.message);
