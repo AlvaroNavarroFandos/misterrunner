@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p282';
+            window.__MR_VERSION = 'v2.30.1-p283';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -35237,7 +35237,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var times = Array.from(timeSet).sort(function(a,b){ return a - b; });
 
             // Maps t → valor
-            var hrMap = {}, cadMap = {}, distMMap = {}, altMap = {};
+            var hrMap = {}, cadMap = {}, distMMap = {}, altMap = {}, spdMap = {};
             var powerMap = {}, strideMap = {}, vertMap = {}, gctMap = {};
             hrArr.forEach(function(p){ if (p && typeof p.t === 'number') hrMap[p.t] = p.v; });
             cadArr.forEach(function(p){ if (p && typeof p.t === 'number') cadMap[p.t] = p.v; });
@@ -35247,6 +35247,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 if (typeof p.d === 'number') distMMap[p.t] = p.d / 100;
                 // ele en distSer prevalece si existe
                 if (typeof p.ele === 'number' && p.ele != null) altMap[p.t] = p.ele;
+                // [p283] Persistir spd (m/s) — importante para Strava daily donde el
+                // bridge usa velSmooth (suavizado, evita buckets de la decimación).
+                // Sin esto, el mapper recalcularía spd desde dd/dt y perdemos calidad.
+                if (typeof p.spd === 'number' && p.spd > 0) spdMap[p.t] = p.spd;
             });
             // [p279] Maps de las nuevas series
             powerArr.forEach(function(p){ if (p && typeof p.t === 'number' && typeof p.v === 'number') powerMap[p.t] = p.v; });
@@ -35271,7 +35275,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var timeOut = [], hrOut = [], cadOut = [], distOut = [], altOut = [];
             // [p279] Arrays de salida para las nuevas series
             var powerOut = [], strideOut = [], vertOut = [], gctOut = [];
+            // [p283] Array de spd persistido (m/s)
+            var spdOut = [];
             var anyPower = false, anyStride = false, anyVert = false, anyGct = false;
+            var anySpd = false;
             for (var _i = 0; _i < times.length; _i++) {
                 var t = times[_i];
                 timeOut.push(t);
@@ -35283,14 +35290,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var _st = strideMap[t] != null ? strideMap[t] : null;
                 var _vt = vertMap[t]   != null ? vertMap[t]   : null;
                 var _gt = gctMap[t]    != null ? gctMap[t]    : null;
+                var _sp = spdMap[t]    != null ? spdMap[t]    : null;
                 powerOut.push(_pw);
                 strideOut.push(_st);
                 vertOut.push(_vt);
                 gctOut.push(_gt);
+                spdOut.push(_sp);
                 if (_pw != null) anyPower  = true;
                 if (_st != null) anyStride = true;
                 if (_vt != null) anyVert   = true;
                 if (_gt != null) anyGct    = true;
+                if (_sp != null) anySpd    = true;
             }
 
             // Splits: shape que _mapStreamsToActFields espera es {km, durationSec, avgHr, elevGainM}
@@ -35314,6 +35324,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     cadence:  cadOut,      // [num] rpm one-foot (visor lo x2 para spm)
                     altitude: altOut,      // [num] metros
                     distance: distOut,     // [num] METROS acumulados
+                    // [p283] spd persistido (m/s). Bridge Strava daily lo pone
+                    // desde velocity_smooth; bulk lo deja null (mapper recalcula
+                    // desde dd/dt). Si viene aquí, el mapper lo respeta y evita
+                    // los buckets discretos de zancada derivada.
+                    spd:      anySpd    ? spdOut    : null,   // [num] m/s
                     // [p279] Series biomecánicas — solo se incluyen si hay algún valor
                     // (evitamos gastar bytes con arrays nulls). El mapper reconstruye
                     // act.powerSeries/strideSer/vertSer/gctSer desde estos.
@@ -42501,13 +42516,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // [p270] Card 3 biomec canvas: pintar tras montar (necesita
             // clientWidth/clientHeight reales del contenedor).
             // [p272] Rango Y fijo por métrica vía dataset ymin/ymax.
+            // [p283] dataset.style elige entre dots y line (Potencia usa line).
             c3.querySelectorAll('canvas.mr-cbio-canvas').forEach(canvas => {
                 try {
                     const vals = JSON.parse(canvas.dataset.vals);
                     const colorVar = canvas.dataset.colorvar;
                     const yMin = parseFloat(canvas.dataset.ymin);
                     const yMax = parseFloat(canvas.dataset.ymax);
-                    _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax);
+                    const style = canvas.dataset.style || 'dots';
+                    if (style === 'line') {
+                        _drawBiomecLine(canvas, vals, colorVar, yMin, yMax);
+                    } else {
+                        _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax);
+                    }
                 } catch(_){}
             });
         });
@@ -42697,9 +42718,104 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.globalAlpha = 1;
         }
 
+        // [p283] Variante línea continua para métricas donde queda mejor una
+        // "gráfica de línea" tipo Coros (Potencia principalmente). Rompe la
+        // línea en huecos (valor fuera de rango o 0). Sin dots — más limpio.
+        function _drawBiomecLine(canvas, vals, colorVar, yMin, yMax) {
+            let hasAny = false;
+            for (let i = 0; i < vals.length; i++) { if (vals[i] > 0) { hasAny = true; break; } }
+            if (!hasAny) return;
+            const dpr = window.devicePixelRatio || 1;
+            const w = canvas.clientWidth || canvas.parentElement.offsetWidth;
+            const h = canvas.clientHeight || canvas.parentElement.offsetHeight;
+            if (w <= 0 || h <= 0) return;
+            canvas.width  = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#3b82f6';
+            const PAD = 6;
+            const range = Math.max(0.1, yMax - yMin);
+            const nVals = vals.length;
+            const denomX = Math.max(1, nVals - 1);
+            // Media para línea horizontal punteada
+            let sum = 0, cnt = 0;
+            for (let i = 0; i < nVals; i++) { if (vals[i] > 0) { sum += vals[i]; cnt++; } }
+            const avgV = cnt > 0 ? sum / cnt : 0;
+            if (avgV >= yMin && avgV <= yMax) {
+                const avgY = PAD + (h - PAD*2) * (1 - (avgV - yMin) / range);
+                ctx.strokeStyle = color;
+                ctx.globalAlpha = 0.35;
+                ctx.lineWidth = 0.8;
+                ctx.setLineDash([2, 3]);
+                ctx.beginPath();
+                ctx.moveTo(PAD, avgY);
+                ctx.lineTo(w - PAD, avgY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            // Área bajo la línea con gradient (bonita)
+            const grad = ctx.createLinearGradient(0, PAD, 0, h - PAD);
+            grad.addColorStop(0,   color);
+            grad.addColorStop(1,   color);
+            // Extraemos rgba con opacity variable
+            ctx.globalAlpha = 0.18;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            let started = false;
+            let lastX = PAD, lastY = h - PAD;
+            for (let i = 0; i < nVals; i++) {
+                const v = vals[i];
+                if (v <= 0 || v < yMin || v > yMax) {
+                    if (started) {
+                        ctx.lineTo(lastX, h - PAD);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.beginPath();
+                        started = false;
+                    }
+                    continue;
+                }
+                const x = PAD + (w - PAD*2) * (i / denomX);
+                const y = PAD + (h - PAD*2) * (1 - (v - yMin) / range);
+                if (!started) {
+                    ctx.moveTo(x, h - PAD);
+                    ctx.lineTo(x, y);
+                    started = true;
+                } else {
+                    ctx.lineTo(x, y);
+                }
+                lastX = x; lastY = y;
+            }
+            if (started) {
+                ctx.lineTo(lastX, h - PAD);
+                ctx.closePath();
+                ctx.fill();
+            }
+            // Línea principal
+            ctx.globalAlpha = 0.95;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.3;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            started = false;
+            for (let i = 0; i < nVals; i++) {
+                const v = vals[i];
+                if (v <= 0 || v < yMin || v > yMax) { started = false; continue; }
+                const x = PAD + (w - PAD*2) * (i / denomX);
+                const y = PAD + (h - PAD*2) * (1 - (v - yMin) / range);
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else          { ctx.lineTo(x, y); }
+            }
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+
         // ── Constructor de bloque biomec (label + chip + canvas) ──────────
         // [p272] Ahora pasa yMin/yMax en vez de minValid.
-        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst, yMin, yMax) {
+        // [p283] chartStyle opcional: 'dots' (default) | 'line'.
+        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst, yMin, yMax, chartStyle) {
             const block = document.createElement('div');
             block.className = 'mr-cbio-block';
             block.style.cssText = 'flex:1 1 0;min-height:0;padding:10px 14px 8px;background:var(--det-bg);display:flex;flex-direction:column;'
@@ -42722,6 +42838,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cv.dataset.colorvar = colorVar;
                 cv.dataset.ymin = String(yMin);
                 cv.dataset.ymax = String(yMax);
+                cv.dataset.style = chartStyle || 'dots';
                 chartWrap.appendChild(cv);
             }
             block.appendChild(hdr);
@@ -42750,7 +42867,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             powerVals,
             '--power-color',
             true,
-            80, 450
+            80, 450,
+            'line'
         ));
         _biomecCard.appendChild(_buildBiomecBlock(
             'Cadencia',
@@ -56549,15 +56667,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             act.eleSeries = [];
         }
         // distSer: [{t, d, spd}] con d=cm acum, spd=m/s
-        // Calculamos spd desde pace (s/km) si está, o por diff finitas de distance.
+        // [p283] Preferimos s.spd persistido (Strava daily lo trae desde
+        // velocity_smooth, evita buckets discretos). Si no viene, calculamos
+        // desde pace o dd/dt (bulk histórico usa este path).
         var distArr = Array.isArray(s.distance) ? s.distance : null;
         var paceArr = Array.isArray(s.pace)     ? s.pace     : null;
+        var spdArr  = Array.isArray(s.spd)      ? s.spd      : null;
         if (distArr) {
             act.distSer = [];
             for (var m = 0; m < time.length; m++) {
                 if (distArr[m] == null) continue;
                 var spd = 0;
-                if (paceArr && paceArr[m] != null && paceArr[m] > 0) {
+                if (spdArr && spdArr[m] != null && spdArr[m] > 0) {
+                    // [p283] spd persistido explícitamente (Strava daily)
+                    spd = spdArr[m];
+                } else if (paceArr && paceArr[m] != null && paceArr[m] > 0) {
                     // pace en s/km → spd en m/s
                     spd = 1000 / paceArr[m];
                 } else if (m > 0 && distArr[m-1] != null) {
@@ -74213,17 +74337,18 @@ window._handleStravaReturn = _handleStravaReturn;
                 if (cv > 0) cadSeries.push({ t: t, v: cv });
             }
             if (distance[i2] != null) {
-                // [p280] spd desde distance diff (matchea shape parseFitStrava y
-                // _mapStreamsToActFields al recargar). El velocity_smooth de Strava
-                // está muy suavizado y ensucia la zancada derivada. Fallback a
-                // velSmooth solo si no hay diff válida (primer punto / gap).
+                // [p283] Preferimos velocity_smooth de Strava (float continuo,
+                // suavizado internamente por ellos). Fallback a dd/dt solo si
+                // velSmooth no viene. El dd/dt sobre distance decimada de la
+                // API creaba buckets discretos (3 bandas de zancada visibles).
                 var _spd = 0;
-                if (i2 > 0 && distance[i2 - 1] != null && time[i2] != null && time[i2 - 1] != null) {
+                if (velSmooth[i2] != null && velSmooth[i2] >= 0 && velSmooth[i2] < 15) {
+                    _spd = velSmooth[i2];
+                } else if (i2 > 0 && distance[i2 - 1] != null && time[i2] != null && time[i2 - 1] != null) {
                     var _dt = time[i2] - time[i2 - 1];
                     var _dd = distance[i2] - distance[i2 - 1];
-                    if (_dt > 0 && _dd >= 0 && _dd / _dt < 15) _spd = _dd / _dt;  // cap 15 m/s (sane bound)
+                    if (_dt > 0 && _dd >= 0 && _dd / _dt < 15) _spd = _dd / _dt;
                 }
-                if (_spd <= 0 && velSmooth[i2] != null) _spd = velSmooth[i2];
                 distSer.push({
                     t: t,
                     d: Math.round(distance[i2] * 100),       // m → cm
