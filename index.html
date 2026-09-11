@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p278';
+            window.__MR_VERSION = 'v2.30.1-p279';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -18343,10 +18343,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     distance:   msg.f5 != null ? msg.f5 / 100 : null,
                                     speed:      msg.f73 != null ? msg.f73 / 1000 : (msg.f6 != null ? msg.f6 / 1000 : null),
                                     // [p272] Running Dynamics (COROS Pace Pro/Fenix/etc. cuando el reloj los emite)
-                                    power:              (msg.f7  != null && msg.f7  > 0 && msg.f7  < 0xFFFF) ? msg.f7  : null,
-                                    step_length:        (msg.f85 != null && msg.f85 > 0 && msg.f85 < 0xFFFF) ? msg.f85 / 10 : null,  // → mm
-                                    vertical_oscillation:(msg.f39 != null && msg.f39 > 0 && msg.f39 < 0xFFFF) ? msg.f39 / 10 : null, // → mm
-                                    stance_time:        (msg.f41 != null && msg.f41 > 0 && msg.f41 < 0xFFFF) ? msg.f41 / 10 : null   // → ms
+                                    // [p279] Unidades y nombres unificados con el resto del ecosistema
+                                    //  (parseFitGarmin, _mapStreamsToActFields, Card 3): power W, stride/vertOsc cm, gct ms.
+                                    power:   (msg.f7  != null && msg.f7  > 0 && msg.f7  < 0xFFFF) ? msg.f7  : null,
+                                    stride:  (msg.f85 != null && msg.f85 > 0 && msg.f85 < 0xFFFF) ? msg.f85 / 100 : null,  // raw/100 → cm
+                                    vertOsc: (msg.f39 != null && msg.f39 > 0 && msg.f39 < 0xFFFF) ? msg.f39 / 100 : null,  // raw/100 → cm
+                                    gct:     (msg.f41 != null && msg.f41 > 0 && msg.f41 < 0xFFFF) ? msg.f41 / 10  : null   // raw/10  → ms
                                 });
                             } else if (def.global === GMSG_SESSION && !session) {
                                 session = {
@@ -18410,9 +18412,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     var timeArr = [], latArr = [], lngArr = [], altArr = [];
                     var hrArr = [], cadArr = [], distArr = [], paceArr = [];
                     // [p272] Streams biomecánicos (COROS Pace Pro/Fenix/etc.)
-                    var powerArr = [], stepLenArr = [], vertOscArr = [], stanceArr = [];
+                    // [p279] Nombres unificados con _mapStreamsToActFields.
+                    var powerArr = [], strideArr = [], vertOscArr = [], gctArr = [];
                     var anyAlt = false, anyHr = false, anyCad = false, anyDist = false, anyPace = false;
-                    var anyPower = false, anyStepLen = false, anyVertOsc = false, anyStance = false;
+                    var anyPower = false, anyStride = false, anyVertOsc = false, anyGct = false;
                     for (var rIdx = 0; rIdx < records.length; rIdx++) {
                         var rec = records[rIdx];
                         var tRel = (rec.timestamp != null && startSec != null) ? rec.timestamp - startSec : null;
@@ -18427,18 +18430,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (rec.speed != null && rec.speed > 0.1) pace = Math.round(1000 / rec.speed);
                         paceArr.push(pace);
                         powerArr.push(rec.power);
-                        stepLenArr.push(rec.step_length);
-                        vertOscArr.push(rec.vertical_oscillation);
-                        stanceArr.push(rec.stance_time);
+                        strideArr.push(rec.stride);
+                        vertOscArr.push(rec.vertOsc);
+                        gctArr.push(rec.gct);
                         if (rec.altitude   != null) anyAlt  = true;
                         if (rec.heart_rate != null) anyHr   = true;
                         if (rec.cadence    != null) anyCad  = true;
                         if (rec.distance   != null) anyDist = true;
                         if (pace           != null) anyPace = true;
-                        if (rec.power                != null) anyPower   = true;
-                        if (rec.step_length          != null) anyStepLen = true;
-                        if (rec.vertical_oscillation != null) anyVertOsc = true;
-                        if (rec.stance_time          != null) anyStance  = true;
+                        if (rec.power   != null) anyPower   = true;
+                        if (rec.stride  != null) anyStride  = true;
+                        if (rec.vertOsc != null) anyVertOsc = true;
+                        if (rec.gct     != null) anyGct     = true;
                     }
                     var streams = {
                         time:     timeArr,
@@ -18449,11 +18452,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         cadence:  anyCad  ? cadArr  : null,
                         pace:     anyPace ? paceArr : null,
                         distance: anyDist ? distArr : null,
-                        // [p272] Running Dynamics (unidades ya normalizadas en records[])
-                        power:                anyPower   ? powerArr   : null,   // W
-                        step_length:          anyStepLen ? stepLenArr : null,   // mm
-                        vertical_oscillation: anyVertOsc ? vertOscArr : null,   // mm
-                        stance_time:          anyStance  ? stanceArr  : null    // ms
+                        // [p279] Running Dynamics con nombres/unidades unificados
+                        power:    anyPower   ? powerArr   : null,   // W
+                        stride:   anyStride  ? strideArr  : null,   // cm
+                        vertOsc:  anyVertOsc ? vertOscArr : null,   // cm
+                        gct:      anyGct     ? gctArr     : null    // ms
                     };
 
                     var splits = _computeKmSplits(records, startSec);
@@ -35163,16 +35166,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var cadArr  = Array.isArray(act.cadSeries) ? act.cadSeries : [];
             var distArr = Array.isArray(act.distSer)   ? act.distSer   : [];
             var eleFlatArr = Array.isArray(act.eleSeries) ? act.eleSeries : []; // ya es plano
+            // [p279] Series biomecánicas nuevas — persistencia total en Storage.
+            // Antes se quedaban en memoria y se perdían al recargar la app.
+            var powerArr  = Array.isArray(act.powerSeries) ? act.powerSeries : [];
+            var strideArr = Array.isArray(act.strideSer)   ? act.strideSer   : [];
+            var vertArr   = Array.isArray(act.vertSer)     ? act.vertSer     : [];
+            var gctArr    = Array.isArray(act.gctSer)      ? act.gctSer      : [];
 
             // Recolectar todos los t únicos de todas las series
             var timeSet = new Set();
             hrArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
             cadArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
             distArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            // [p279] Añadir timestamps de las nuevas series al conjunto
+            powerArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            strideArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            vertArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
+            gctArr.forEach(function(p){ if (p && typeof p.t === 'number') timeSet.add(p.t); });
             var times = Array.from(timeSet).sort(function(a,b){ return a - b; });
 
             // Maps t → valor
             var hrMap = {}, cadMap = {}, distMMap = {}, altMap = {};
+            var powerMap = {}, strideMap = {}, vertMap = {}, gctMap = {};
             hrArr.forEach(function(p){ if (p && typeof p.t === 'number') hrMap[p.t] = p.v; });
             cadArr.forEach(function(p){ if (p && typeof p.t === 'number') cadMap[p.t] = p.v; });
             distArr.forEach(function(p){
@@ -35182,6 +35197,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // ele en distSer prevalece si existe
                 if (typeof p.ele === 'number' && p.ele != null) altMap[p.t] = p.ele;
             });
+            // [p279] Maps de las nuevas series
+            powerArr.forEach(function(p){ if (p && typeof p.t === 'number' && typeof p.v === 'number') powerMap[p.t] = p.v; });
+            strideArr.forEach(function(p){ if (p && typeof p.t === 'number' && typeof p.v === 'number') strideMap[p.t] = p.v; });
+            vertArr.forEach(function(p){ if (p && typeof p.t === 'number' && typeof p.v === 'number') vertMap[p.t] = p.v; });
+            gctArr.forEach(function(p){ if (p && typeof p.t === 'number' && typeof p.v === 'number') gctMap[p.t] = p.v; });
+
             // Si no hay altitudes por t (eleSeries es plano sin timestamps), hacer
             // mapeo proporcional index → tiempo (mejor esfuerzo).
             if (Object.keys(altMap).length === 0 && eleFlatArr.length > 1 && times.length > 1) {
@@ -35197,6 +35218,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             // Construir arrays paralelos planos (shape Strava-native)
             var timeOut = [], hrOut = [], cadOut = [], distOut = [], altOut = [];
+            // [p279] Arrays de salida para las nuevas series
+            var powerOut = [], strideOut = [], vertOut = [], gctOut = [];
+            var anyPower = false, anyStride = false, anyVert = false, anyGct = false;
             for (var _i = 0; _i < times.length; _i++) {
                 var t = times[_i];
                 timeOut.push(t);
@@ -35204,6 +35228,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cadOut.push(cadMap[t] != null ? cadMap[t] : null);
                 distOut.push(distMMap[t] != null ? distMMap[t] : null);
                 altOut.push(altMap[t] != null ? altMap[t] : null);
+                var _pw = powerMap[t]  != null ? powerMap[t]  : null;
+                var _st = strideMap[t] != null ? strideMap[t] : null;
+                var _vt = vertMap[t]   != null ? vertMap[t]   : null;
+                var _gt = gctMap[t]    != null ? gctMap[t]    : null;
+                powerOut.push(_pw);
+                strideOut.push(_st);
+                vertOut.push(_vt);
+                gctOut.push(_gt);
+                if (_pw != null) anyPower  = true;
+                if (_st != null) anyStride = true;
+                if (_vt != null) anyVert   = true;
+                if (_gt != null) anyGct    = true;
             }
 
             // Splits: shape que _mapStreamsToActFields espera es {km, durationSec, avgHr, elevGainM}
@@ -35226,7 +35262,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     hr:       hrOut,       // [num] bpm
                     cadence:  cadOut,      // [num] rpm one-foot (visor lo x2 para spm)
                     altitude: altOut,      // [num] metros
-                    distance: distOut      // [num] METROS acumulados
+                    distance: distOut,     // [num] METROS acumulados
+                    // [p279] Series biomecánicas — solo se incluyen si hay algún valor
+                    // (evitamos gastar bytes con arrays nulls). El mapper reconstruye
+                    // act.powerSeries/strideSer/vertSer/gctSer desde estos.
+                    power:    anyPower  ? powerOut  : null,   // [num] W
+                    stride:   anyStride ? strideOut : null,   // [num] cm
+                    vertOsc:  anyVert   ? vertOut   : null,   // [num] cm
+                    gct:      anyGct    ? gctOut    : null    // [num] ms
                 },
                 splits:   splitsOut,
                 polyline: null,
@@ -35236,7 +35279,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     avgHr:       act.avgHr,
                     maxHr:       act.maxHr,
                     ascentM:     act.ascentM,
-                    csvBlocks:   Array.isArray(act.csvBlocks) ? act.csvBlocks : []
+                    csvBlocks:   Array.isArray(act.csvBlocks) ? act.csvBlocks : [],
+                    // [p279] Persistir también los agregados de potencia por si el
+                    // summary del reloj los trajo (COROS Pace Pro sí los emite).
+                    avgPower:    act.avgPower  || act.powerAvg || null,
+                    maxPower:    act.maxPower  || act.powerMax || null,
+                    normPower:   act.normPower || null
                 }
             };
 
@@ -56492,6 +56540,57 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             act.csvBlocks = streamsObj.summary.csvBlocks;
         } else {
             act.csvBlocks = act.csvBlocks || [];
+        }
+        // [p279] Series biomecánicas — reconstrucción desde el gzip persistido.
+        // Simétrico a _uploadManualStreams. Solo se poblan si el gzip las trae
+        // (activities importadas tras p279 con reloj compatible). Para las
+        // antiguas: act.powerSeries etc. quedan vacías → Card 3 muestra "Sin
+        // datos" o fallback derivado según corresponda.
+        if (Array.isArray(s.power)) {
+            act.powerSeries = [];
+            for (var _pi = 0; _pi < time.length; _pi++) {
+                if (s.power[_pi] != null) act.powerSeries.push({ t: time[_pi], v: s.power[_pi] });
+            }
+        } else {
+            act.powerSeries = [];
+        }
+        if (Array.isArray(s.stride)) {
+            act.strideSer = [];
+            for (var _si = 0; _si < time.length; _si++) {
+                if (s.stride[_si] != null) act.strideSer.push({ t: time[_si], v: s.stride[_si] });
+            }
+        } else {
+            act.strideSer = [];
+        }
+        if (Array.isArray(s.vertOsc)) {
+            act.vertSer = [];
+            for (var _vi = 0; _vi < time.length; _vi++) {
+                if (s.vertOsc[_vi] != null) act.vertSer.push({ t: time[_vi], v: s.vertOsc[_vi] });
+            }
+        } else {
+            act.vertSer = [];
+        }
+        if (Array.isArray(s.gct)) {
+            act.gctSer = [];
+            for (var _gi = 0; _gi < time.length; _gi++) {
+                if (s.gct[_gi] != null) act.gctSer.push({ t: time[_gi], v: s.gct[_gi] });
+            }
+        } else {
+            act.gctSer = [];
+        }
+        // [p279] Agregados de potencia desde el summary (cuando el reloj los emitió)
+        if (streamsObj && streamsObj.summary) {
+            if (streamsObj.summary.avgPower != null) {
+                act.avgPower = streamsObj.summary.avgPower;
+                if (act.powerAvg == null) act.powerAvg = streamsObj.summary.avgPower;
+            }
+            if (streamsObj.summary.maxPower != null) {
+                act.maxPower = streamsObj.summary.maxPower;
+                if (act.powerMax == null) act.powerMax = streamsObj.summary.maxPower;
+            }
+            if (streamsObj.summary.normPower != null) {
+                act.normPower = streamsObj.summary.normPower;
+            }
         }
     }
 
