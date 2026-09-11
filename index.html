@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p313'; // [v2.30.1-p313] Dos ajustes: (1) Botón "IMPORTAR ACTIVIDAD" · Álvaro: iconos siguen a los bordes en p312. Reducir gap icono/texto para juntarlos y padding simétrico para que el conjunto compacto quede centrado en el botón. Padding 6px 4px 6px 14px → 6px 8px (simétrico) · gap 8→6. (2) Sheet Clima · Álvaro: sigue habiendo un hueco blanco enorme entre la línea "Tu ubicación · fecha" y la card actual · las barras de scores se ven comprimidas. DIAGNOSIS: la clase base `.sheet-body` (L3225) tiene `display:flex; flex-direction:column; gap:6px` que añade 6px de aire ENTRE CADA HIJO del sheet-body, invisible en mi CSS porque está en el sheet-* global. Ese gap fantasma sumaba ~24-30px extra en el sheet clima. FIX: inline `gap:0` en el style del sheet-body del sheet clima (sobrescribe la regla base sin afectar otros sheets). Además: mrwxsh-title-wrap margin-bottom 4→2 · mrwxsh-sub margin-bottom 10→3 · mrwxsh-hbar-fill height 60→90 (barras timeline recuperan altura previa).
+            window.__MR_VERSION = 'v2.30.1-p314'; // [v2.30.1-p314] Cierre rediseño Home tras varias iteraciones con Álvaro. Cambios: (1) Readiness · Eliminada la barra multicolor horizontal (5 zonas + marker). CSS .bar-inline y todas sus reglas satélite quedan como display:none. Sustituida por .rdn-spacer (div flex:1) para que la pill quede pegada a la derecha del todo. Número .pct-num 26→28px. Pill 10.5→12.5px, padding 5/11→6/13, radius 4→5. (2) Recovery · Quitado el "%" del número (era "72%" → "72"). Número .rec-big-pct 26→28px, letter-spacing -1→-1.2, width 68→56 (más estrecho al perder el %). Coherencia visual con Forma/Carga/Readiness al 28px. (3) Forma .fm-num y Carga .tl-num también subidos 26→28 para mantener EXACTA coherencia entre los 4 números principales de Home. (4) Bloque "Esta semana / Últimas 8 semanas" · tabs font 11.5→14 · padding 7→9 · weight 800/700 se mantiene por estado. El JS handler L67624 solo toca color/bg/fontWeight, no font-size, así que el cambio inline persiste al switch. (5) Card "Mi objetivo" · título 11→14, letter-spacing 1.2→.8 · icono contenedor 20x20→28x28, SVG 16→22, header gap 8→10. Cierre del ciclo de rediseño premium de Home iniciado en p300.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -647,7 +647,10 @@
         font-family: var(--f);
     }
     .mr-rdn .pct-num {
-        font-size: 26px;
+        /* [v2.30.1-p314] 26→28 · Álvaro: números un poco más grandes con
+           coherencia entre Forma/Carga/Readiness/Recovery al eliminar la
+           barra multicolor de Readiness (más espacio para respirar). */
+        font-size: 28px;
         font-weight: 900;
         color: var(--rdn-accent, var(--tw));
         letter-spacing: -1px;
@@ -658,9 +661,11 @@
         font-family: var(--f);
     }
     .mr-rdn .pill {
-        padding: 5px 11px;
-        border-radius: 4px;
-        font-size: 10.5px;
+        /* [v2.30.1-p314] Pill más grande al liberar espacio de la barra:
+           font 10.5→12.5 · padding 5/11→6/13 · radius 4→5. */
+        padding: 6px 13px;
+        border-radius: 5px;
+        font-size: 12.5px;
         font-weight: 900;
         letter-spacing: .5px;
         flex-shrink: 0;
@@ -669,31 +674,17 @@
         box-shadow: 0 2px 7px rgba(0,0,0,.2);
     }
     .mr-rdn .bar-inline {
+        /* [v2.30.1-p314] Deprecated · Álvaro pidió eliminar la barra multicolor
+           para dar más protagonismo al número + pill. HTML nuevo no la renderiza.
+           CSS conservado por si algún consumidor legacy la referencia. */
+        display: none;
+    }
+    .mr-rdn .rdn-spacer {
+        /* [v2.30.1-p314] Sustituye a la barra multicolor eliminada. Absorbe el
+           espacio entre "Readiness" y el número para que la pill quede a la
+           derecha del todo. */
         flex: 1;
-        min-width: 40px;
-        height: 14px;
-        border-radius: 4px;
-        position: relative;
-        background: linear-gradient(90deg,#6b7280 0% 15%,#ea580c 15% 40%,#f59e0b 40% 60%,#0ea5e9 60% 82%,#22c55e 82% 100%);
-        box-shadow: var(--barinset);
-    }
-    .mr-rdn .bar-inline::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: 4px;
-        pointer-events: none;
-        background: linear-gradient(180deg, rgba(255,255,255,.28) 0%, rgba(255,255,255,0) 45%, rgba(0,0,0,.10) 100%);
-    }
-    .mr-rdn .bar-inline .mk {
-        position: absolute;
-        top: -3px;
-        bottom: -3px;
-        width: 3px;
-        background: var(--rdn-accent, var(--tw));
-        border-radius: 2px;
-        box-shadow: 0 0 0 2px var(--card), 0 0 8px var(--rdn-accent-glow, transparent);
-        pointer-events: none;
+        min-width: 8px;
     }
 
     /* ═══════════════════════════════════════════════════════════════════
@@ -730,9 +721,10 @@
     .mr-rec .rw.mr-rec-pressing{transform:scale(.98);}
     /* [v2.30.1-p301] Número % con color del rango de batería (rojo/naranja/
        dorado/verde) tanto en light como en dark. Width fijo 68px para que
-       la batería no se mueva al pasar de "20%" a "100%". */
+       la batería no se mueva al pasar de "20%" a "100%".
+       [v2.30.1-p314] Número 26→28 · coherencia con Forma/Carga/Readiness. */
     .mr-rec .rec-big-pct{
-        font-size:26px;
+        font-size:28px;
         font-weight:900;
         letter-spacing:-1.2px;
         line-height:1;
@@ -741,7 +733,7 @@
         font-family:var(--f);
         color:var(--rec-color, var(--tw));
         text-shadow:0 0 12px var(--rec-glow, transparent);
-        width:68px;
+        width:56px;
         text-align:left;
     }
     /* [v2.30.1-p301] Batería más gruesa: altura 26 → 34, borde 2 → 2.5px,
@@ -1596,7 +1588,7 @@
         color: #22d3ee;
     }
     .mr-tl-card .tl-num {
-        font-size: 26px;
+        font-size: 28px;
         font-weight: 900;
         letter-spacing: -1px;
         line-height: 1;
@@ -1704,7 +1696,7 @@
         font-family: var(--f);
     }
     .mr-st-card .fm-num {
-        font-size: 26px;
+        font-size: 28px;
         font-weight: 900;
         color: var(--gold-text);
         letter-spacing: -1px;
@@ -13810,14 +13802,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         pointer-events: none; z-index: 0;
                     }
                     .mr-goal-header {
-                        display: flex; align-items: center; gap: 8px;
+                        display: flex; align-items: center; gap: 10px;
                         /* [p223] margin-bottom 14→10 · compactación Home. */
                         margin-bottom: 10px; position: relative; z-index: 2;
                     }
-                    .mr-goal-header-ic { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
+                    .mr-goal-header-ic { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; }
                     .mr-goal-title {
-                        flex: 1; font-size: 11px; font-weight: 800;
-                        color: var(--ts); text-transform: uppercase; letter-spacing: 1.2px;
+                        /* [v2.30.1-p314] Álvaro: título más grande para dar
+                           más empaque · font 11→14 · letter-spacing 1.2→.8. */
+                        flex: 1; font-size: 14px; font-weight: 800;
+                        color: var(--ts); text-transform: uppercase; letter-spacing: .8px;
                     }
                     .mr-goal-year { color: var(--gold-text); }
                     .mr-goal-edit {
@@ -58709,7 +58703,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             card.innerHTML =
                 '<div class="mr-goal-header">' +
                   '<div class="mr-goal-header-ic">' +
-                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4881e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="#c4881e"/></svg>' +
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c4881e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="#c4881e"/></svg>' +
                   '</div>' +
                   '<div class="mr-goal-title">Mi objetivo <span class="mr-goal-year">' + _MR_GOAL_YEAR + '</span></div>' +
                   '<button class="mr-goal-edit" onclick="_mrGoalOpenEditModal()" aria-label="Editar objetivo">' +
@@ -67311,8 +67305,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Estilos iniciales inline; el listener (línea ~42111) los actualiza
         // al cambiar tab conservando la coherencia crimson/dorado.
         const _tabsHtml = `<div id="home-resumen-tabs" style="display:flex;gap:4px;background:var(--bsoft);border-radius:10px;padding:3px;margin-bottom:0;">
-            <div data-tab="week" class="home-resumen-tab" style="flex:1;text-align:center;font-size:11.5px;font-weight:800;padding:7px 0;border-radius:7px;cursor:pointer;color:#fff;background:#22c55e;box-shadow:0 2px 6px rgba(34,197,94,.35);letter-spacing:-.1px;">Esta semana</div>
-            <div data-tab="month" class="home-resumen-tab" style="flex:1;text-align:center;font-size:11.5px;font-weight:700;padding:7px 0;border-radius:7px;cursor:pointer;color:var(--ts);">Últimas 8 semanas</div>
+            <div data-tab="week" class="home-resumen-tab" style="flex:1;text-align:center;font-size:14px;font-weight:800;padding:9px 0;border-radius:7px;cursor:pointer;color:#fff;background:#22c55e;box-shadow:0 2px 6px rgba(34,197,94,.35);letter-spacing:-.1px;">Esta semana</div>
+            <div data-tab="month" class="home-resumen-tab" style="flex:1;text-align:center;font-size:14px;font-weight:700;padding:9px 0;border-radius:7px;cursor:pointer;color:var(--ts);">Últimas 8 semanas</div>
         </div>`;
 
         // ═══════════════════════════════════════════════════════════════
@@ -80844,12 +80838,14 @@ window.addEventListener('DOMContentLoaded', function() {
             //   [barra vertical glow] · Readiness · [barra horizontal] · nº · [pill]
             // Sin monigote. Todos los elementos centrados verticalmente en la card
             // (padding 16px arriba/abajo mantiene la altura ~58px del "Buenos días").
+            // [v2.30.1-p314] Barra multicolor eliminada → sustituida por spacer
+            // flex:1. Número + pill más grandes.
             var scoreTxt = (score == null) ? '—' : score;
             card.innerHTML =
                 '<div class="rw" style="--rdn-accent:' + topA + ';--rdn-accent-hi:' + topB + ';--rdn-accent-glow:' + topAGlow + ';--rdn-tint:' + topATint + ';--rdn-bd:' + topABd + ';">' +
                   '<div class="accent-bar"></div>' +
                   '<div class="rdn-title-big">Readiness</div>' +
-                  '<div class="bar-inline">' + mkHtml + '</div>' +
+                  '<div class="rdn-spacer"></div>' +
                   '<div class="pct-num">' + scoreTxt + '</div>' +
                   '<div class="pill" style="background:' + pillBg + ';color:' + pillTx + ';">' + label + '</div>' +
                 '</div>';
@@ -80900,9 +80896,12 @@ window.addEventListener('DOMContentLoaded', function() {
             // batería flex:1 entre widths fijos = ancho constante en todos
             // los estados. Color del rango (--rec-color) aplicado al % y al
             // texto derecha vía CSS var.
+            // [v2.30.1-p314] Álvaro pidió quitar el "%" para hacer el número
+            // más grande (coherencia con Forma/Carga/Readiness). Solo el valor
+            // desnudo (mantiene el color del rango).
             card.innerHTML =
                 '<div class="rw" style="--rec-color:' + bc.text + ';--rec-glow:' + bc.glow + ';">' +
-                  '<div class="rec-big-pct">' + rec.pct + '%</div>' +
+                  '<div class="rec-big-pct">' + rec.pct + '</div>' +
                   '<div class="batt-h">' + cellsHtml + '</div>' +
                   '<div class="rec-rest">' + timeTxt + '</div>' +
                 '</div>';
