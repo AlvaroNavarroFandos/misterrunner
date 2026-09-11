@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p272';
+            window.__MR_VERSION = 'v2.30.1-p273';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -18336,7 +18336,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                                     heart_rate: msg.f3 != null ? msg.f3 : null,
                                     cadence:    msg.f4 != null ? msg.f4 : null,
                                     distance:   msg.f5 != null ? msg.f5 / 100 : null,
-                                    speed:      msg.f73 != null ? msg.f73 / 1000 : (msg.f6 != null ? msg.f6 / 1000 : null)
+                                    speed:      msg.f73 != null ? msg.f73 / 1000 : (msg.f6 != null ? msg.f6 / 1000 : null),
+                                    // [p272] Running Dynamics (COROS Pace Pro/Fenix/etc. cuando el reloj los emite)
+                                    power:              (msg.f7  != null && msg.f7  > 0 && msg.f7  < 0xFFFF) ? msg.f7  : null,
+                                    step_length:        (msg.f85 != null && msg.f85 > 0 && msg.f85 < 0xFFFF) ? msg.f85 / 10 : null,  // → mm
+                                    vertical_oscillation:(msg.f39 != null && msg.f39 > 0 && msg.f39 < 0xFFFF) ? msg.f39 / 10 : null, // → mm
+                                    stance_time:        (msg.f41 != null && msg.f41 > 0 && msg.f41 < 0xFFFF) ? msg.f41 / 10 : null   // → ms
                                 });
                             } else if (def.global === GMSG_SESSION && !session) {
                                 session = {
@@ -18399,7 +18404,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
                     var timeArr = [], latArr = [], lngArr = [], altArr = [];
                     var hrArr = [], cadArr = [], distArr = [], paceArr = [];
+                    // [p272] Streams biomecánicos (COROS Pace Pro/Fenix/etc.)
+                    var powerArr = [], stepLenArr = [], vertOscArr = [], stanceArr = [];
                     var anyAlt = false, anyHr = false, anyCad = false, anyDist = false, anyPace = false;
+                    var anyPower = false, anyStepLen = false, anyVertOsc = false, anyStance = false;
                     for (var rIdx = 0; rIdx < records.length; rIdx++) {
                         var rec = records[rIdx];
                         var tRel = (rec.timestamp != null && startSec != null) ? rec.timestamp - startSec : null;
@@ -18413,11 +18421,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         var pace = null;
                         if (rec.speed != null && rec.speed > 0.1) pace = Math.round(1000 / rec.speed);
                         paceArr.push(pace);
+                        powerArr.push(rec.power);
+                        stepLenArr.push(rec.step_length);
+                        vertOscArr.push(rec.vertical_oscillation);
+                        stanceArr.push(rec.stance_time);
                         if (rec.altitude   != null) anyAlt  = true;
                         if (rec.heart_rate != null) anyHr   = true;
                         if (rec.cadence    != null) anyCad  = true;
                         if (rec.distance   != null) anyDist = true;
                         if (pace           != null) anyPace = true;
+                        if (rec.power                != null) anyPower   = true;
+                        if (rec.step_length          != null) anyStepLen = true;
+                        if (rec.vertical_oscillation != null) anyVertOsc = true;
+                        if (rec.stance_time          != null) anyStance  = true;
                     }
                     var streams = {
                         time:     timeArr,
@@ -18427,7 +18443,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         hr:       anyHr   ? hrArr   : null,
                         cadence:  anyCad  ? cadArr  : null,
                         pace:     anyPace ? paceArr : null,
-                        distance: anyDist ? distArr : null
+                        distance: anyDist ? distArr : null,
+                        // [p272] Running Dynamics (unidades ya normalizadas en records[])
+                        power:                anyPower   ? powerArr   : null,   // W
+                        step_length:          anyStepLen ? stepLenArr : null,   // mm
+                        vertical_oscillation: anyVertOsc ? vertOscArr : null,   // mm
+                        stance_time:          anyStance  ? stanceArr  : null    // ms
                     };
 
                     var splits = _computeKmSplits(records, startSec);
@@ -29989,6 +30010,17 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 /garmin/i.test(_gpxCreator) ||
                 /^\d+_ACTIVITY\.fit$/i.test((pendingFiles.fit && pendingFiles.fit.name) || '')
             );
+            // [p272] Detección COROS. El wizard tiene brand='coros'; también
+            // detectamos por creator del GPX ("COROS Pace Pro" etc.). El .fit
+            // moderno de Pace Pro es FIT estándar completo (Running Dynamics,
+            // Potencia, Cadencia, etc.) → parseamos con parseFitGarmin. Sólo
+            // caemos al heurístico parseFitCoros si el estándar no encuentra
+            // records válidos (Pace 2 antiguo con formato truncado).
+            const isCoros = !isSuunto && !isPolar && !isGarmin && (
+                _wizBrand === 'coros' ||
+                /coros/i.test(_fname) ||
+                /coros/i.test(_gpxCreator)
+            );
 
             // Parse each file
             let fitData = null, gpxData = null, csvData = null;
@@ -30010,6 +30042,28 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // hr/cad/atemp). Validados con Vívoactive 3 y Fenix 8.
                     if (pendingFiles.fit) fitData = parseFitGarmin(new Uint8Array(pendingFiles.fit.content));
                     if (pendingFiles.gpx) gpxData = parseGPXGarmin(pendingFiles.gpx.content);
+                } else if (isCoros) {
+                    // [p272] COROS Pace Pro/Fenix2 emiten FIT estándar completo
+                    // con Running Dynamics (vertical_oscillation fid 39,
+                    // step_length fid 85, stance_time fid 41, power fid 7).
+                    // Usamos parseFitGarmin (FIT estándar) y sólo caemos al
+                    // heurístico parseFitCoros si el estándar no lee records
+                    // (Pace 2 antiguo con formato truncado). El fallback marca
+                    // deviceBrand='coros' explícito para Card 1/3.
+                    if (pendingFiles.fit) {
+                        const _bytes = new Uint8Array(pendingFiles.fit.content);
+                        fitData = parseFitGarmin(_bytes);
+                        const _hasSeries = fitData
+                            && ((Array.isArray(fitData.hrSeries)  && fitData.hrSeries.length)
+                                || (Array.isArray(fitData.distSer) && fitData.distSer.length));
+                        if (!_hasSeries) {
+                            console.warn('[MR][import] COROS: parseFitGarmin no encontró records; fallback a parseFitCoros heurístico');
+                            fitData = parseFitCoros(_bytes);
+                        } else if (fitData) {
+                            fitData.deviceBrand = 'coros';
+                        }
+                    }
+                    if (pendingFiles.gpx) gpxData = parseGPX(pendingFiles.gpx.content);
                 } else {
                     if (pendingFiles.fit) fitData = parseFitCoros(new Uint8Array(pendingFiles.fit.content));
                     if (pendingFiles.gpx) gpxData = parseGPX(pendingFiles.gpx.content);
@@ -30131,6 +30185,50 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     if (fitData.trainingEffect)        merged.trainingEffect  = fitData.trainingEffect;
                     if (fitData.vo2max)                merged.vo2max          = fitData.vo2max;
                     if (fitData.recoveryTimeMin)       merged.recoveryTimeMin = fitData.recoveryTimeMin;
+                    if (fitData.elapsedSec)            merged.elapsedSec      = fitData.elapsedSec;
+                    if (fitData.startDate)             merged.startDate       = fitData.startDate;
+                }
+
+                // [p272] Running Dynamics (Suunto/Garmin/Polar/Coros). Propagados de
+                // forma universal — cualquier FIT estándar los emite si el reloj
+                // tiene el sensor. Vacío para modelos que no. Card 3 detecta
+                // presencia y aplica fallback derivado solo cuando faltan.
+                if (isSuunto || isGarmin || isPolar || isCoros) {
+                    if (fitData.powerSeries && fitData.powerSeries.length)
+                                                       merged.powerSeries = fitData.powerSeries;
+                    if (fitData.strideSer && fitData.strideSer.length)
+                                                       merged.strideSer   = fitData.strideSer;
+                    if (fitData.vertSer && fitData.vertSer.length)
+                                                       merged.vertSer     = fitData.vertSer;
+                    if (fitData.gctSer && fitData.gctSer.length)
+                                                       merged.gctSer      = fitData.gctSer;
+                }
+                // [p272] Cuando COROS pasa por parseFitGarmin (FIT estándar),
+                // el summary Garmin es igual de válido: propagamos cadSeries,
+                // distSer, avgPower, etc. exactamente igual que un Garmin puro.
+                if (isCoros && fitData) {
+                    if (fitData.calories)              merged.calories   = fitData.calories;
+                    if (fitData.strideLen)             merged.strideLen  = fitData.strideLen;
+                    if (fitData.avgTemp !== null && fitData.avgTemp !== undefined)
+                                                       merged.avgTemp    = fitData.avgTemp;
+                    if (fitData.laps && fitData.laps.length)
+                                                       merged.laps       = fitData.laps;
+                    if (fitData.hrSeries && fitData.hrSeries.length)
+                                                       merged.hrSeries   = fitData.hrSeries;
+                    if (fitData.cadSeries && fitData.cadSeries.length)
+                                                       merged.cadSeries  = fitData.cadSeries;
+                    if (fitData.eleSeries && fitData.eleSeries.length)
+                                                       merged.eleSeries  = fitData.eleSeries;
+                    if (fitData.distSer && fitData.distSer.length)
+                                                       merged.distSer    = fitData.distSer;
+                    if (fitData.records && fitData.records.length)
+                                                       merged.records    = fitData.records;
+                    if (fitData.descentM)              merged.descentM        = fitData.descentM;
+                    if (fitData.avgCadence)            merged.avgCadence      = fitData.avgCadence;
+                    if (fitData.maxCadence)            merged.maxCadence      = fitData.maxCadence;
+                    if (fitData.avgPower)              merged.avgPower        = fitData.avgPower;
+                    if (fitData.maxPower)              merged.maxPower        = fitData.maxPower;
+                    if (fitData.normPower)             merged.normPower       = fitData.normPower;
                     if (fitData.elapsedSec)            merged.elapsedSec      = fitData.elapsedSec;
                     if (fitData.startDate)             merged.startDate       = fitData.startDate;
                 }
@@ -31358,6 +31456,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const distSer = [];
         const cadSeries = [];
         const eleSeries = [];
+        // [p272] Series biomecánicas nuevas (Card 3 + Card 1 Potencia).
+        // Valores convertidos a unidades usables por la UI:
+        //   powerSeries {t, v en W}      · fid 7  (uint16 directo)
+        //   strideSer   {t, v en cm}     · fid 85 step_length (raw/100)
+        //   vertSer     {t, v en cm}     · fid 39 vertical_oscillation (raw/100)
+        //   gctSer      {t, v en ms}     · fid 41 stance_time (raw/10)
+        // Vacío si el FIT no los emite (reloj sin Running Dynamics) → Card 3
+        // cae al fallback derivado o muestra "Sin datos" según corresponda.
+        const powerSeries = [];
+        const strideSer   = [];
+        const vertSer     = [];
+        const gctSer      = [];
         let maxHr = 0;
         let firstRecTs = 0;
         let lastRecTs = 0;
@@ -31493,6 +31603,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const hr = row[3], cad = row[4], distCm = row[5];
                         const spdLegacy = row[6], spdEnh = row[73];
                         const power = row[7], temp = row[13];
+                        // [p272] Running Dynamics — Card 3 biomec + Card 1 Potencia
+                        const stepLenRaw  = row[85];    // step_length uint16 (mm × 10)
+                        const vertOscRaw  = row[39];    // vertical_oscillation uint16 (mm × 10)
+                        const stanceRaw   = row[41];    // stance_time uint16 (ms × 10)
 
                         // HR
                         if (hr !== null && hr > 30 && hr < 250) {
@@ -31528,6 +31642,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (temp !== null && temp !== undefined) {
                             const tC = temp > 127 ? temp - 256 : temp;
                             if (tC > -40 && tC < 60) temperatures.push(tC);
+                        }
+                        // [p272] Running Dynamics: pushear a las series
+                        // Umbral > 0 filtra INVALID (0xFFFF) y momentos sin señal.
+                        // Los valores se guardan en las unidades que consume la UI.
+                        if (power !== null && power !== undefined && power > 0 && power < 0xFFFF) {
+                            powerSeries.push({ t, v: power });
+                        }
+                        if (stepLenRaw !== null && stepLenRaw !== undefined && stepLenRaw > 0 && stepLenRaw < 0xFFFF) {
+                            strideSer.push({ t, v: stepLenRaw / 100 });   // → cm
+                        }
+                        if (vertOscRaw !== null && vertOscRaw !== undefined && vertOscRaw > 0 && vertOscRaw < 0xFFFF) {
+                            vertSer.push({ t, v: vertOscRaw / 100 });     // → cm
+                        }
+                        if (stanceRaw !== null && stanceRaw !== undefined && stanceRaw > 0 && stanceRaw < 0xFFFF) {
+                            gctSer.push({ t, v: stanceRaw / 10 });        // → ms
                         }
                         // GPS (semicirculos → grados)
                         if (latS !== null && latS !== undefined && latS !== FIT_INVALID_S32 &&
@@ -31808,7 +31937,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             records: gpsPoints,
             distKm, durationSec, elapsedSec, avgHr, ascentM,
             maxHr: maxHr || (sMaxHr && sMaxHr > 30 && sMaxHr < 250 ? sMaxHr : null),
-            laps: outLaps, hrSeries, distSer, cadSeries, eleSeries, dateStr, startDate,
+            laps: outLaps, hrSeries, distSer, cadSeries, eleSeries, powerSeries, strideSer, vertSer, gctSer, dateStr, startDate,
             calories, avgTemp, strideLen,
             descentM,
             avgCadence: avgCadenceSpm,
@@ -31896,6 +32025,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const distSer = [];
         const cadSeries = [];
         const eleSeries = [];
+        // [p272] Series biomecánicas nuevas (Card 3 + Card 1 Potencia).
+        // Valores convertidos a unidades usables por la UI:
+        //   powerSeries {t, v en W}      · fid 7  (uint16 directo)
+        //   strideSer   {t, v en cm}     · fid 85 step_length (raw/100)
+        //   vertSer     {t, v en cm}     · fid 39 vertical_oscillation (raw/100)
+        //   gctSer      {t, v en ms}     · fid 41 stance_time (raw/10)
+        // Vacío si el FIT no los emite (reloj sin Running Dynamics) → Card 3
+        // cae al fallback derivado o muestra "Sin datos" según corresponda.
+        const powerSeries = [];
+        const strideSer   = [];
+        const vertSer     = [];
+        const gctSer      = [];
         let maxHr = 0;
         let firstRecTs = 0;
         let lastRecTs = 0;
@@ -32031,6 +32172,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const hr = row[3], cad = row[4], distCm = row[5];
                         const spdLegacy = row[6], spdEnh = row[73];
                         const power = row[7], temp = row[13];
+                        // [p272] Running Dynamics — Card 3 biomec + Card 1 Potencia
+                        const stepLenRaw  = row[85];    // step_length uint16 (mm × 10)
+                        const vertOscRaw  = row[39];    // vertical_oscillation uint16 (mm × 10)
+                        const stanceRaw   = row[41];    // stance_time uint16 (ms × 10)
 
                         // HR
                         if (hr !== null && hr > 30 && hr < 250) {
@@ -32066,6 +32211,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         if (temp !== null && temp !== undefined) {
                             const tC = temp > 127 ? temp - 256 : temp;
                             if (tC > -40 && tC < 60) temperatures.push(tC);
+                        }
+                        // [p272] Running Dynamics: pushear a las series
+                        // Umbral > 0 filtra INVALID (0xFFFF) y momentos sin señal.
+                        // Los valores se guardan en las unidades que consume la UI.
+                        if (power !== null && power !== undefined && power > 0 && power < 0xFFFF) {
+                            powerSeries.push({ t, v: power });
+                        }
+                        if (stepLenRaw !== null && stepLenRaw !== undefined && stepLenRaw > 0 && stepLenRaw < 0xFFFF) {
+                            strideSer.push({ t, v: stepLenRaw / 100 });   // → cm
+                        }
+                        if (vertOscRaw !== null && vertOscRaw !== undefined && vertOscRaw > 0 && vertOscRaw < 0xFFFF) {
+                            vertSer.push({ t, v: vertOscRaw / 100 });     // → cm
+                        }
+                        if (stanceRaw !== null && stanceRaw !== undefined && stanceRaw > 0 && stanceRaw < 0xFFFF) {
+                            gctSer.push({ t, v: stanceRaw / 10 });        // → ms
                         }
                         // GPS (semicirculos → grados)
                         if (latS !== null && latS !== undefined && latS !== FIT_INVALID_S32 &&
@@ -32346,7 +32506,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             records: gpsPoints,
             distKm, durationSec, elapsedSec, avgHr, ascentM,
             maxHr: maxHr || (sMaxHr && sMaxHr > 30 && sMaxHr < 250 ? sMaxHr : null),
-            laps: outLaps, hrSeries, distSer, cadSeries, eleSeries, dateStr, startDate,
+            laps: outLaps, hrSeries, distSer, cadSeries, eleSeries, powerSeries, strideSer, vertSer, gctSer, dateStr, startDate,
             calories, avgTemp, strideLen,
             descentM,
             avgCadence: avgCadenceSpm,
@@ -36578,6 +36738,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             cadSeries:   pendingFitData.cadSeries || [],
             eleSeries:   pendingFitData.eleSeries  || [],
             distSer:     pendingFitData.distSer  || [],
+            // [p272] Series biomecánicas nuevas (Card 3 + Card 1 Potencia).
+            // Vacías si el FIT no las emitía — Card 3 cae al fallback derivado.
+            powerSeries: pendingFitData.powerSeries || [],
+            strideSer:   pendingFitData.strideSer   || [],
+            vertSer:     pendingFitData.vertSer     || [],
+            gctSer:      pendingFitData.gctSer      || [],
             csvBlocks:   pendingFitData.csvBlocks  || [],
             calories:    pendingFitData.calories   || 0,
             bestPace:    pendingFitData.bestPace   || 0,
@@ -36594,6 +36760,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             avgPower:        pendingFitData.avgPower        || null,
             maxPower:        pendingFitData.maxPower        || null,
             normPower:       pendingFitData.normPower       || null,
+            // [p272] Alias hacia el nombre que Card 1 consume (act.powerAvg/powerMax).
+            // Si el summary del FIT no los trajo, derivamos de powerSeries. Así
+            // Card 1 muestra Potencia real sin depender del summary.
+            powerAvg: (pendingFitData.avgPower != null && pendingFitData.avgPower > 0)
+                      ? pendingFitData.avgPower
+                      : (Array.isArray(pendingFitData.powerSeries) && pendingFitData.powerSeries.length
+                          ? Math.round(pendingFitData.powerSeries.reduce(function(a,p){ return a + (p && p.v > 0 ? p.v : 0); }, 0)
+                                       / pendingFitData.powerSeries.filter(function(p){ return p && p.v > 0; }).length)
+                          : null),
+            powerMax: (pendingFitData.maxPower != null && pendingFitData.maxPower > 0)
+                      ? pendingFitData.maxPower
+                      : (Array.isArray(pendingFitData.powerSeries) && pendingFitData.powerSeries.length
+                          ? Math.max.apply(null, pendingFitData.powerSeries.filter(function(p){ return p && p.v > 0; }).map(function(p){ return p.v; }))
+                          : null),
             tssSuunto:       pendingFitData.tssSuunto       || null,
             trainingEffect:  pendingFitData.trainingEffect  || null,
             vo2maxSuunto:    pendingFitData.vo2maxSuunto    || null,
