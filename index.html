@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p274';
+            window.__MR_VERSION = 'v2.30.1-p275';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -42502,6 +42502,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const maxStride = _p99(strideNonZero);
         const maxVert   = _p99(vertNonZero);
 
+        // [p275] Moving average para suavizar señal ruidosa (osc.vertical).
+        // El acelerómetro capta cada micro-movimiento del reloj: la señal
+        // per-punto tiene ±1 cm de ruido inherente. Cadencia y zancada no lo
+        // necesitan (contraste running/descanso es enorme y tapa el ruido);
+        // osc.vertical sí (contraste solo 5 cm, ruido gana). Ventana 15
+        // puntos ~= 4 segundos a 4 Hz de COROS Pace Pro. Ignora ceros para
+        // no contaminar la media en momentos sin señal.
+        function _smoothVals(vals, window) {
+            const half = Math.floor(window / 2);
+            const out = new Array(vals.length);
+            for (let i = 0; i < vals.length; i++) {
+                const from = Math.max(0, i - half);
+                const to   = Math.min(vals.length - 1, i + half);
+                let sum = 0, cnt = 0;
+                for (let j = from; j <= to; j++) {
+                    if (vals[j] > 0) { sum += vals[j]; cnt++; }
+                }
+                out[i] = cnt > 0 ? sum / cnt : 0;
+            }
+            return out;
+        }
+        const vertValsSmooth = _smoothVals(vertVals, 15);
+
         // ── Dibujado de dots en Canvas 2D (estilo Coros) ─────────────────
         // [p272] Rediseño: rango Y FIJO por métrica (0-220 cadencia,
         // 0-200 zancada, 0-16 osc. vertical), TODOS los puntos (sin
@@ -42617,7 +42640,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _biomecCard.appendChild(_buildBiomecBlock(
             'Osc. vertical',
             'Media <b style="color:var(--det-tw);font-weight:700;">' + (avgVert>0?avgVert.toFixed(1):'—') + '</b> cm · Máx <b style="color:var(--det-tw);font-weight:700;">' + (maxVert>0?maxVert.toFixed(1):'—') + '</b>',
-            vertVals,
+            vertValsSmooth,
             '--vert-color',
             false,
             5, 14
