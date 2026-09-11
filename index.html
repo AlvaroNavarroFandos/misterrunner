@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p286';
+            window.__MR_VERSION = 'v2.30.1-p287';
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -74223,9 +74223,9 @@ window._handleStravaReturn = _handleStravaReturn;
                 if (page >= totalPage) break;
                 // Chequear si el último item ya es más antiguo que 'from'
                 var lastItem = items[items.length - 1];
-                if (lastItem && lastItem.startTimeEpochMs) {
+                if (lastItem && lastItem.startTimeEpoch) {
                     var fromMs = new Date(from + 'T00:00:00Z').getTime();
-                    if (lastItem.startTimeEpochMs < fromMs) break;
+                    if (lastItem.startTimeEpoch * 1000 < fromMs) break;
                 }
                 page++;
             }
@@ -74246,14 +74246,15 @@ window._handleStravaReturn = _handleStravaReturn;
                 var mrDurSec  = row.duration_sec;
                 var mrDistM   = row.dist_km * 1000;
 
-                // Match en corosItems por timestamp + duración + distancia
+                // Match en corosItems por timestamp + duración + distancia.
+                // Shape real de toFrontendListItem: startTimeEpoch (seg),
+                // distKm (km), durationSec (seg). NO son startTimeEpochMs/etc.
                 var best = null;
                 for (var j = 0; j < corosItems.length; j++) {
                     var ci = corosItems[j];
-                    // Shape del frontend list: startTimeEpochMs, distanceM, totalTimeS
-                    var ciStartMs = ci.startTimeEpochMs || (ci.startTime ? ci.startTime * 10 : 0);
-                    var ciDurSec  = ci.totalTimeS || (ci.totalTime ? ci.totalTime / 100 : 0);
-                    var ciDistM   = ci.distanceM || (ci.distance ? ci.distance / 100 : 0);
+                    var ciStartMs = (ci.startTimeEpoch || 0) * 1000;
+                    var ciDurSec  = ci.durationSec || 0;
+                    var ciDistM   = (ci.distKm || 0) * 1000;
                     if (Math.abs(ciStartMs - mrStartMs) < 60000
                      && Math.abs(ciDurSec - mrDurSec) < 10
                      && Math.abs(ciDistM - mrDistM) < 200) {
@@ -74283,10 +74284,8 @@ window._handleStravaReturn = _handleStravaReturn;
                 var times = streamsObj.streams.time;
 
                 // Realinear timestamps COROS al frame Strava
-                var corosStartMs = best.startTimeEpochMs || (best.startTime ? best.startTime * 10 : 0);
-                var deltaSec = (corosStartMs - mrStartMs) / 1000;   // t_coros_abs = t_strava_abs + deltaSec ... no: t_strava = t_coros - deltaSec sí t_coros=0 corresponde a corosStart y t_strava=0 a stravaStart
-                // t_strava = t_coros + (corosStart - stravaStart)_en_seg
-                //         = t_coros + deltaSec
+                var corosStartMs = (best.startTimeEpoch || 0) * 1000;
+                var deltaSec = (corosStartMs - mrStartMs) / 1000;   // t_strava = t_coros + deltaSec
 
                 function _buildMap(arr) {
                     var m = {};
