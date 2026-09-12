@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p319'; // [v2.30.1-p319] Ronda de tamaños/coherencia pedida por Álvaro. (1) Los 4 números principales de Home (Readiness/Recovery/Forma/Carga) bajados de 28→26px (se veían muy grandes). (2) Recovery recupera el "%" en el número (rec.pct+% de nuevo; width 56→72 para acomodar el símbolo, altura sin cambio). (3) Forma: barra más larga · número width 62→48 (cabe "74.3" cómodo, sobra ancho para que fm-bar flex:1 tome más espacio). (4) Widget Clima Home: temperatura 52→46px (bajo tamaño), sup vertical-align 22→18 acompaña. (5) Plan · vista semana · label tipo entreno 15→17px. (6) Home último entreno · MINICARD unificada con biblioteca (Álvaro: coherencia entre pestañas): título 10→14px sin text-transform:uppercase con letter-spacing:-.1, placeholder height 16→20, km 25→27, unit 11→13, stats 12→14, fecha 9→11. Regla CSS combinada extendida a #home-last-activity para el override text-transform:none del pill compact. (7) Biblioteca minicard título 12→14 (un tamaño más) + placeholder height 18→20. (8) Runner y Configuración · TODAS las 28 filas con títulos 15.5→17px (sed batch por patrón único). Aumento coherente en todo el tab Runner sin cambiar el resto (icono, chevron, layout).
+            window.__MR_VERSION = 'v2.30.1-p320'; // [v2.30.1-p320] Readiness · Álvaro elige variante C del preview (sparkline últimos 7 días) para rellenar el espacio vacío entre monigote y pill. Implementación: nueva función local `_rdnSpark7Html()` lee `localStorage.mr_coros_readiness` (misma fuente que L34670), extrae los últimos 7 días ordenados asc, y genera 7 barras verticales con `day.score` como height% (min 8%, max 100%). La barra de HOY (última) tiene opacity:1 + glow más intenso; las demás opacity:.55. Color hereda de --rdn-accent (color del estado). Días sin dato → barra placeholder gris al 10%. Fallback: si <2 días de historial → spacer vacío (comportamiento pre-p320). CSS nuevo `.rdn-spark` flex:1 min-width:42 + `.rdn-spark-bar` con transition. `.rdn-spacer` eliminada del CSS (código muerto). Gap del rw 10→8 para más aire lateral en móviles estrechos. En iPhone SE se comprimen las barras al mínimo pero siguen visibles; en iPhone 12+ cabe con holgura.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -635,11 +635,13 @@
         /* [v2.30.1-p317] padding vertical 16→12 para clavar altura 58px
            (= Recovery = "Buenos días"). Con monigote 34px + padding 12+12 = 58px
            exacto. gap 12→10 para dar más aire lateral y evitar que la pill se
-           salga por la derecha en móviles estrechos (iPhone SE). */
+           salga por la derecha en móviles estrechos (iPhone SE).
+           [v2.30.1-p320] gap 10→8 · con el sparkline añadido entre monigote y
+           pill se necesita más aire para que todo quepa en móviles estrechos. */
         padding: 12px 14px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
     }
     .mr-rdn .accent-bar {
         align-self: stretch;
@@ -695,12 +697,36 @@
            CSS conservado por si algún consumidor legacy la referencia. */
         display: none;
     }
-    .mr-rdn .rdn-spacer {
-        /* [v2.30.1-p314] Sustituye a la barra multicolor eliminada. Absorbe el
-           espacio entre "Readiness" y el número para que la pill quede a la
-           derecha del todo. */
+    /* [v2.30.1-p320] Sparkline últimos 7 días (variante C aprobada por Álvaro).
+       Ocupa el espacio entre monigote y pill (flex:1). Barras finas con color
+       del estado actual (--rdn-accent). La de HOY (última) tiene opacidad
+       completa y glow más intenso para destacar. */
+    .mr-rdn .rdn-spark {
         flex: 1;
-        min-width: 8px;
+        min-width: 42px;
+        height: 26px;
+        display: flex;
+        align-items: flex-end;
+        gap: 3px;
+        padding: 0 2px;
+    }
+    .mr-rdn .rdn-spark-bar {
+        flex: 1;
+        min-width: 0;
+        background: var(--rdn-accent, var(--tw));
+        border-radius: 2px;
+        opacity: .55;
+        box-shadow: 0 0 4px var(--rdn-accent-glow, transparent);
+        transition: height .35s ease;
+    }
+    .mr-rdn .rdn-spark-bar.today {
+        opacity: 1;
+        box-shadow: 0 0 8px var(--rdn-accent-glow, transparent);
+    }
+    .mr-rdn .rdn-spark-bar.empty {
+        background: rgba(150,150,150,.15);
+        box-shadow: none;
+        opacity: 1;
     }
     /* [v2.30.1-p316] Monigote runner recuperado tras petición Álvaro.
        [v2.30.1-p317] Álvaro: no es el SVG genérico, sino los PNGs originales
@@ -80926,6 +80952,45 @@ window.addEventListener('DOMContentLoaded', function() {
             // PNGs originales del bucket (muerto/fatiga/regular/listo/optimo) que
             // cambian de dibujo por zona. `zone.icon` ya viene del _rdnZone() con
             // el filename correcto. Fallback: div vacío si no hay zone (score nd).
+            // [v2.30.1-p320] Sparkline últimos 7 días de readiness · reemplaza
+            // al spacer vacío (variante C aprobada por Álvaro). Lee del cache
+            // localStorage 'mr_coros_readiness' (misma fuente que L34670).
+            // Fallback: si no hay datos o < 2 días, se usa el spacer plano.
+            function _rdnSpark7Html() {
+                try {
+                    var raw = localStorage.getItem('mr_coros_readiness');
+                    if (!raw) return null;
+                    var obj = JSON.parse(raw);
+                    var days = obj && obj.resp && Array.isArray(obj.resp.days) ? obj.resp.days : null;
+                    if (!days || days.length === 0) return null;
+                    // Orden ascendente por fecha (backend puede devolver desc)
+                    var sorted = days.slice().sort(function(a, b) {
+                        var da = (a && a.date) || '', db = (b && b.date) || '';
+                        return da < db ? -1 : (da > db ? 1 : 0);
+                    });
+                    // Últimos 7 (hoy es el último)
+                    var last7 = sorted.slice(-7);
+                    if (last7.length < 2) return null;
+                    var html = '<div class="rdn-spark">';
+                    for (var i = 0; i < last7.length; i++) {
+                        var s = parseFloat(last7[i] && (last7[i].score || last7[i].readinessScore));
+                        var isToday = (i === last7.length - 1);
+                        if (!isFinite(s) || s <= 0) {
+                            // Día sin dato: barra placeholder al 10% en gris
+                            html += '<div class="rdn-spark-bar empty" style="height:10%;"></div>';
+                        } else {
+                            var pct = Math.max(8, Math.min(100, s));
+                            html += '<div class="rdn-spark-bar' + (isToday ? ' today' : '') + '" style="height:' + pct.toFixed(0) + '%;"></div>';
+                        }
+                    }
+                    html += '</div>';
+                    return html;
+                } catch(_) { return null; }
+            }
+            var sparkHtml = _rdnSpark7Html();
+            // [v2.30.1-p320] Fallback: si no hay sparkline, un div flex:1 vacío
+            // (spacer) para que la pill quede a la derecha.
+            if (!sparkHtml) sparkHtml = '<div style="flex:1;min-width:8px;"></div>';
             var scoreTxt = (score == null) ? '—' : score;
             var iconFile = (obj.zone && obj.zone.icon) ? obj.zone.icon : null;
             var figHtml = iconFile
@@ -80937,7 +81002,7 @@ window.addEventListener('DOMContentLoaded', function() {
                   '<div class="rdn-title-big">Readiness</div>' +
                   '<div class="pct-num">' + scoreTxt + '</div>' +
                   figHtml +
-                  '<div class="rdn-spacer"></div>' +
+                  sparkHtml +
                   '<div class="pill" style="background:' + pillBg + ';color:' + pillTx + ';">' + label + '</div>' +
                 '</div>';
 
