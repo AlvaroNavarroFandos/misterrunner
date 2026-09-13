@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p323'; // [v2.30.1-p323] Tres cambios: (1) Plan · vista semanal · reducir aire entre tabs/botones de arriba y el encabezado de semana. #plan-view-content: padding-top 14→8, margin-top 8→4. Ahorro 10px verticales. (2) Readiness · SNAPSHOT DIARIO matinal. Álvaro: quiere una "foto diaria" con VFC + FC reposo + TSB a las 7am entre semana / 8am findes, y que esa foto sea la barra del histórico del sparkline (así ve como se levanta cada día). Implementación: nuevo helper local `_rdnMaybeSnapshot(obj)` en _paintReadiness que, si la hora ≥ minHour (7 o 8 según weekday) y aún no hay entrada de HOY en localStorage 'mr_rdn_daily_history', guarda { date, hrv, fc, tsb, score }. Trunca a 30 entradas. Se dispara en cada paint del readiness → captura automática la primera vez que se abre la app tras la hora umbral. `_rdnSpark7Html` reescrito con dos niveles de prioridad: 1º historial diario (score si está disponible, sino escala dinámica HRV min-max) 2º fallback al cache crudo COROS de p322. Persistencia garantizada — cada mañana quedará capturado el estado en local. (3) Sheet Carga (Home click) LIMPIADO de texto pequeño. Álvaro: "sobra mucho texto, todo lo explicativo va en la (i)". Cambios: (a) Panel (i) `_tlInfoPanelHtml` AMPLIADO con dos nuevas secciones: "Riesgo de lesión · zonas" (0-30/31-55/56-75/76-100) y "Factores del cálculo" con los pesos (ACWR 30% + Volumen 20% + Historial 25% + Physio Drift 15% + Rehab 10%) + nota "sin IA, datos locales". (b) Card ACWR: quitados `mr-acwr-card-zone-sub` (descripción larga zona), `mr-acwr-metric-src` (métrica TRIMP/sRPE/dist) y `degradedBanner`. (c) Injury Risk block: quitado el `mr-injrisk-factor-desc` (texto explicativo bajo cada factor) y `mr-injrisk-factor-weight` (×N% pill inline) + eliminada la `mr-injrisk-legend` (fórmula al final). Quedan visibles solo: score circular + zonas + factores con score y barra + señales activas/positivas.
+            window.__MR_VERSION = 'v2.30.1-p324'; // [v2.30.1-p324] Card 3 (Análisis biomecánico) · gráficas rediseñadas variante C aprobada por Álvaro tras preview (preview_card3_charts.html). Cambios en _drawBiomecCanvas (dots) y _drawBiomecLine (potencia): (1) Paddings asimétricos · PAD antes 6 uniforme → ahora PAD_L 38, PAD_R 8, PAD_T 12, PAD_B 8. El eje Y a la izquierda queda AMPLIO como pidió Álvaro para que las gráficas se vean más planas. (2) Eje Y visible · 3 labels max/med/min con font 700 9px + unidad en la esquina sup-izq (700 7px, apagada). Colores heredados de --det-tm. (3) Grid horizontal · 3 líneas al 5% opacity (top/mid/bottom del plot area). (4) DOTS · radio 0.9→2.6 · añadido outline con --det-bg (borde del color de card) que hace destacar cada dot cuando se solapan · alpha 0.9 mantenido. Aplica a Cadencia (--cad-color azul), Zancada (--stride-color verde), Contacto (--gct-color púrpura). (5) POTENCIA · stroke 1.3→3px · reemplazado el trazado por segmentos (recolectados por tramos válidos consecutivos) con curva Bezier suave · control points cardinales horizontales (mx entre puntos, misma y que los extremos) para curva orgánica sin overshoots · área bajo cada tramo con gradient (alpha 0.28). (6) Label "AVG" flotante junto a línea de media (dcha) en 700 7px alpha 0.7 del color de la métrica. (7) API ampliada: _buildBiomecBlock ahora acepta parámetro `unit` (W/spm/cm/ms), lo guarda en canvas.dataset.unit y lo pasa a los draw helpers para el label del eje Y. Actualizadas las 4 llamadas (Potencia W, Cadencia spm, Zancada cm, Contacto ms). Coherente para Strava y COROS (los bloques sin datos siguen mostrando "Sin datos" — la lógica no cambia).
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -43008,10 +43008,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     const yMin = parseFloat(canvas.dataset.ymin);
                     const yMax = parseFloat(canvas.dataset.ymax);
                     const style = canvas.dataset.style || 'dots';
+                    const unit = canvas.dataset.unit || '';
                     if (style === 'line') {
-                        _drawBiomecLine(canvas, vals, colorVar, yMin, yMax);
+                        _drawBiomecLine(canvas, vals, colorVar, yMin, yMax, unit);
                     } else {
-                        _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax);
+                        _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax, unit);
                     }
                 } catch(_){}
             });
@@ -43176,7 +43177,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // continuo. Los descansos entre series bajan como "pinchazos", los
         // outliers fuera del rango se descartan visualmente (siguen
         // contando para el chip vía P99).
-        function _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax) {
+        // [v2.30.1-p324] Variante C aprobada por Álvaro (preview_card3_charts.html):
+        //   - PAD_L 6→38 · eje Y amplio a la izquierda (3 labels max/med/min + unidad)
+        //   - Grid horizontal sutil (3 líneas al 5% opacity)
+        //   - Dots r 0.9→2.6 con outline del color de card (destacan al solaparse)
+        //   - Label "AVG" flotante junto a la línea de media (dcha)
+        function _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax, unit) {
             let hasAny = false;
             for (let i = 0; i < vals.length; i++) { if (vals[i] > 0) { hasAny = true; break; } }
             if (!hasAny) return;
@@ -43189,38 +43195,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const ctx = canvas.getContext('2d');
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#22c55e';
-            const PAD = 6;
+            const bgColor = (getComputedStyle(canvas).getPropertyValue('--det-bg') || '').trim() || '#0f0f10';
+            const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
+            // Paddings asimétricos: eje Y amplio a la izquierda
+            const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
             const range = Math.max(0.1, yMax - yMin);
             const nVals = vals.length;
             const denomX = Math.max(1, nVals - 1);
+            const plotW = w - PAD_L - PAD_R;
+            const plotH = h - PAD_T - PAD_B;
+            // ── Eje Y: 3 labels (max/med/min) + unidad ──────────────────
+            const yMed = (yMax + yMin) / 2;
+            ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+            ctx.textAlign = 'end';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = tmColor;
+            ctx.globalAlpha = 0.6;
+            ctx.fillText(String(Math.round(yMax)), PAD_L - 6, PAD_T + 2);
+            ctx.fillText(String(Math.round(yMed)), PAD_L - 6, PAD_T + plotH / 2);
+            ctx.fillText(String(Math.round(yMin)), PAD_L - 6, PAD_T + plotH - 2);
+            // Unidad arriba a la izquierda (más pequeña, más apagada)
+            if (unit) {
+                ctx.font = '700 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+                ctx.textAlign = 'start';
+                ctx.textBaseline = 'top';
+                ctx.globalAlpha = 0.4;
+                ctx.fillText(unit.toUpperCase(), 2, 1);
+            }
+            // ── Grid horizontal sutil (3 líneas) ────────────────────────
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = 'rgba(255,255,255,.05)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PAD_L, PAD_T);         ctx.lineTo(w - PAD_R, PAD_T);
+            ctx.moveTo(PAD_L, PAD_T + plotH/2); ctx.lineTo(w - PAD_R, PAD_T + plotH/2);
+            ctx.moveTo(PAD_L, PAD_T + plotH); ctx.lineTo(w - PAD_R, PAD_T + plotH);
+            ctx.stroke();
             // Media sobre valores válidos (>0)
             let sum = 0, cnt = 0;
             for (let i = 0; i < nVals; i++) { if (vals[i] > 0) { sum += vals[i]; cnt++; } }
             const avgV = cnt > 0 ? sum / cnt : 0;
-            // Línea de media (solo si cae dentro del rango visible)
+            // Línea de media (solo si cae dentro del rango visible) + label AVG
             if (avgV >= yMin && avgV <= yMax) {
-                const avgY = PAD + (h - PAD*2) * (1 - (avgV - yMin) / range);
+                const avgY = PAD_T + plotH * (1 - (avgV - yMin) / range);
                 ctx.strokeStyle = color;
                 ctx.globalAlpha = 0.35;
                 ctx.lineWidth = 0.8;
                 ctx.setLineDash([2, 3]);
                 ctx.beginPath();
-                ctx.moveTo(PAD, avgY);
-                ctx.lineTo(w - PAD, avgY);
+                ctx.moveTo(PAD_L, avgY);
+                ctx.lineTo(w - PAD_R, avgY);
                 ctx.stroke();
                 ctx.setLineDash([]);
+                // Label "AVG" flotante a la dcha
+                ctx.font = '800 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+                ctx.textAlign = 'end';
+                ctx.textBaseline = 'bottom';
+                ctx.fillStyle = color;
+                ctx.globalAlpha = 0.7;
+                ctx.fillText('AVG', w - PAD_R - 2, avgY - 1);
             }
-            // Dots: TODOS los puntos válidos, radio pequeño, alpha alta
-            ctx.fillStyle = color;
+            // Dots: TODOS los puntos válidos, radio 2.6, alpha 0.9, con outline del bg
             ctx.globalAlpha = 0.9;
+            ctx.fillStyle = color;
+            ctx.strokeStyle = bgColor;
+            ctx.lineWidth = 0.6;
             for (let i = 0; i < nVals; i++) {
                 const v = vals[i];
                 if (v <= 0 || v < yMin || v > yMax) continue;
-                const x = PAD + (w - PAD*2) * (i / denomX);
-                const y = PAD + (h - PAD*2) * (1 - (v - yMin) / range);
+                const x = PAD_L + plotW * (i / denomX);
+                const y = PAD_T + plotH * (1 - (v - yMin) / range);
                 ctx.beginPath();
-                ctx.arc(x, y, 0.9, 0, Math.PI * 2);
+                ctx.arc(x, y, 2.6, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.stroke();
             }
             ctx.globalAlpha = 1;
         }
@@ -43228,7 +43276,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [p283] Variante línea continua para métricas donde queda mejor una
         // "gráfica de línea" tipo Coros (Potencia principalmente). Rompe la
         // línea en huecos (valor fuera de rango o 0). Sin dots — más limpio.
-        function _drawBiomecLine(canvas, vals, colorVar, yMin, yMax) {
+        // [v2.30.1-p324] Variante C aprobada por Álvaro (preview_card3_charts.html):
+        //   - PAD_L 6→38 · eje Y amplio a la izquierda (3 labels + unidad)
+        //   - Grid horizontal sutil (3 líneas al 5%)
+        //   - Curva Bezier suave (control points cardinales horizontales) en vez
+        //     de líneas rectas → se ve orgánica, no zigzag
+        //   - Stroke 1.3→3 · gradient del área 0.18→0.35
+        //   - Label "AVG" flotante junto a la línea de media
+        function _drawBiomecLine(canvas, vals, colorVar, yMin, yMax, unit) {
             let hasAny = false;
             for (let i = 0; i < vals.length; i++) { if (vals[i] > 0) { hasAny = true; break; } }
             if (!hasAny) return;
@@ -43241,88 +43296,121 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const ctx = canvas.getContext('2d');
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#3b82f6';
-            const PAD = 6;
+            const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
+            const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
             const range = Math.max(0.1, yMax - yMin);
             const nVals = vals.length;
             const denomX = Math.max(1, nVals - 1);
-            // Media para línea horizontal punteada
+            const plotW = w - PAD_L - PAD_R;
+            const plotH = h - PAD_T - PAD_B;
+            // ── Eje Y: 3 labels (max/med/min) + unidad ──────────────────
+            const yMed = (yMax + yMin) / 2;
+            ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+            ctx.textAlign = 'end';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = tmColor;
+            ctx.globalAlpha = 0.6;
+            ctx.fillText(String(Math.round(yMax)), PAD_L - 6, PAD_T + 2);
+            ctx.fillText(String(Math.round(yMed)), PAD_L - 6, PAD_T + plotH / 2);
+            ctx.fillText(String(Math.round(yMin)), PAD_L - 6, PAD_T + plotH - 2);
+            if (unit) {
+                ctx.font = '700 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+                ctx.textAlign = 'start';
+                ctx.textBaseline = 'top';
+                ctx.globalAlpha = 0.4;
+                ctx.fillText(unit.toUpperCase(), 2, 1);
+            }
+            // ── Grid horizontal sutil ──────────────────────────────────
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = 'rgba(255,255,255,.05)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(PAD_L, PAD_T);         ctx.lineTo(w - PAD_R, PAD_T);
+            ctx.moveTo(PAD_L, PAD_T + plotH/2); ctx.lineTo(w - PAD_R, PAD_T + plotH/2);
+            ctx.moveTo(PAD_L, PAD_T + plotH); ctx.lineTo(w - PAD_R, PAD_T + plotH);
+            ctx.stroke();
+            // Media
             let sum = 0, cnt = 0;
             for (let i = 0; i < nVals; i++) { if (vals[i] > 0) { sum += vals[i]; cnt++; } }
             const avgV = cnt > 0 ? sum / cnt : 0;
             if (avgV >= yMin && avgV <= yMax) {
-                const avgY = PAD + (h - PAD*2) * (1 - (avgV - yMin) / range);
+                const avgY = PAD_T + plotH * (1 - (avgV - yMin) / range);
                 ctx.strokeStyle = color;
                 ctx.globalAlpha = 0.35;
                 ctx.lineWidth = 0.8;
                 ctx.setLineDash([2, 3]);
                 ctx.beginPath();
-                ctx.moveTo(PAD, avgY);
-                ctx.lineTo(w - PAD, avgY);
+                ctx.moveTo(PAD_L, avgY);
+                ctx.lineTo(w - PAD_R, avgY);
                 ctx.stroke();
                 ctx.setLineDash([]);
+                ctx.font = '800 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+                ctx.textAlign = 'end';
+                ctx.textBaseline = 'bottom';
+                ctx.fillStyle = color;
+                ctx.globalAlpha = 0.7;
+                ctx.fillText('AVG', w - PAD_R - 2, avgY - 1);
             }
-            // Área bajo la línea con gradient (bonita)
-            const grad = ctx.createLinearGradient(0, PAD, 0, h - PAD);
-            grad.addColorStop(0,   color);
-            grad.addColorStop(1,   color);
-            // Extraemos rgba con opacity variable
-            ctx.globalAlpha = 0.18;
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            let started = false;
-            let lastX = PAD, lastY = h - PAD;
+            // ── Recoger puntos válidos consecutivos en tramos ───────────
+            // Cada "tramo" es una secuencia continua de puntos con valor>0
+            // en rango. Los huecos rompen la curva y crean tramos separados.
+            const segs = [];
+            let cur = null;
             for (let i = 0; i < nVals; i++) {
                 const v = vals[i];
-                if (v <= 0 || v < yMin || v > yMax) {
-                    if (started) {
-                        ctx.lineTo(lastX, h - PAD);
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.beginPath();
-                        started = false;
-                    }
-                    continue;
-                }
-                const x = PAD + (w - PAD*2) * (i / denomX);
-                const y = PAD + (h - PAD*2) * (1 - (v - yMin) / range);
-                if (!started) {
-                    ctx.moveTo(x, h - PAD);
-                    ctx.lineTo(x, y);
-                    started = true;
-                } else {
-                    ctx.lineTo(x, y);
-                }
-                lastX = x; lastY = y;
+                if (v <= 0 || v < yMin || v > yMax) { cur = null; continue; }
+                const x = PAD_L + plotW * (i / denomX);
+                const y = PAD_T + plotH * (1 - (v - yMin) / range);
+                if (!cur) { cur = []; segs.push(cur); }
+                cur.push({ x: x, y: y });
             }
-            if (started) {
-                ctx.lineTo(lastX, h - PAD);
-                ctx.closePath();
+            // ── Helper: curva Bezier suave para un tramo ────────────────
+            // Control points cardinales horizontales: mx entre puntos consecutivos,
+            // misma y que los extremos. Da curva orgánica sin overshoots.
+            function _traceSmooth(pts, closeToBase) {
+                if (pts.length === 0) return;
+                ctx.moveTo(pts[0].x, closeToBase ? h - PAD_B : pts[0].y);
+                if (closeToBase) ctx.lineTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) {
+                    const p0 = pts[i - 1];
+                    const p1 = pts[i];
+                    const mx = (p0.x + p1.x) / 2;
+                    ctx.bezierCurveTo(mx, p0.y, mx, p1.y, p1.x, p1.y);
+                }
+                if (closeToBase) {
+                    ctx.lineTo(pts[pts.length - 1].x, h - PAD_B);
+                    ctx.closePath();
+                }
+            }
+            // ── Área con gradient vertical (0.35→0) por cada tramo ─────
+            const grad = ctx.createLinearGradient(0, PAD_T, 0, h - PAD_B);
+            // canvas no soporta color-mix, usamos globalAlpha
+            ctx.globalAlpha = 0.28;
+            ctx.fillStyle = color;
+            for (let s = 0; s < segs.length; s++) {
+                ctx.beginPath();
+                _traceSmooth(segs[s], true);
                 ctx.fill();
             }
-            // Línea principal
+            // ── Línea principal Bezier (stroke 3px) ────────────────────
             ctx.globalAlpha = 0.95;
             ctx.strokeStyle = color;
-            ctx.lineWidth = 1.3;
+            ctx.lineWidth = 3;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
-            ctx.beginPath();
-            started = false;
-            for (let i = 0; i < nVals; i++) {
-                const v = vals[i];
-                if (v <= 0 || v < yMin || v > yMax) { started = false; continue; }
-                const x = PAD + (w - PAD*2) * (i / denomX);
-                const y = PAD + (h - PAD*2) * (1 - (v - yMin) / range);
-                if (!started) { ctx.moveTo(x, y); started = true; }
-                else          { ctx.lineTo(x, y); }
+            for (let s = 0; s < segs.length; s++) {
+                ctx.beginPath();
+                _traceSmooth(segs[s], false);
+                ctx.stroke();
             }
-            ctx.stroke();
             ctx.globalAlpha = 1;
         }
 
         // ── Constructor de bloque biomec (label + chip + canvas) ──────────
         // [p272] Ahora pasa yMin/yMax en vez de minValid.
         // [p283] chartStyle opcional: 'dots' (default) | 'line'.
-        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst, yMin, yMax, chartStyle) {
+        // [v2.30.1-p324] unit opcional (W/spm/cm/ms) para render del eje Y.
+        function _buildBiomecBlock(label, chipHtml, vals, colorVar, isFirst, yMin, yMax, chartStyle, unit) {
             const block = document.createElement('div');
             block.className = 'mr-cbio-block';
             block.style.cssText = 'flex:1 1 0;min-height:0;padding:10px 14px 8px;background:var(--det-bg);display:flex;flex-direction:column;'
@@ -43346,6 +43434,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 cv.dataset.ymin = String(yMin);
                 cv.dataset.ymax = String(yMax);
                 cv.dataset.style = chartStyle || 'dots';
+                cv.dataset.unit = unit || '';
                 chartWrap.appendChild(cv);
             }
             block.appendChild(hdr);
@@ -43375,7 +43464,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             '--power-color',
             true,
             80, 450,
-            'line'
+            'line',
+            'W'
         ));
         _biomecCard.appendChild(_buildBiomecBlock(
             'Cadencia',
@@ -43383,7 +43473,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             cadVals,
             '--cad-color',
             false,
-            60, 220
+            60, 220,
+            undefined,
+            'spm'
         ));
         _biomecCard.appendChild(_buildBiomecBlock(
             'Zancada',
@@ -43391,7 +43483,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             strideValsSmooth,
             '--stride-color',
             false,
-            20, 220
+            20, 220,
+            undefined,
+            'cm'
         ));
         // Ground Contact Time — solo si viene (COROS emitió stance_time).
         if (hasGct) {
@@ -43401,7 +43495,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 gctVals,
                 '--gct-color',
                 false,
-                150, 320
+                150, 320,
+                undefined,
+                'ms'
             ));
         }
 
