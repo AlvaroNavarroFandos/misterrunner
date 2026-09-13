@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p324'; // [v2.30.1-p324] Card 3 (Análisis biomecánico) · gráficas rediseñadas variante C aprobada por Álvaro tras preview (preview_card3_charts.html). Cambios en _drawBiomecCanvas (dots) y _drawBiomecLine (potencia): (1) Paddings asimétricos · PAD antes 6 uniforme → ahora PAD_L 38, PAD_R 8, PAD_T 12, PAD_B 8. El eje Y a la izquierda queda AMPLIO como pidió Álvaro para que las gráficas se vean más planas. (2) Eje Y visible · 3 labels max/med/min con font 700 9px + unidad en la esquina sup-izq (700 7px, apagada). Colores heredados de --det-tm. (3) Grid horizontal · 3 líneas al 5% opacity (top/mid/bottom del plot area). (4) DOTS · radio 0.9→2.6 · añadido outline con --det-bg (borde del color de card) que hace destacar cada dot cuando se solapan · alpha 0.9 mantenido. Aplica a Cadencia (--cad-color azul), Zancada (--stride-color verde), Contacto (--gct-color púrpura). (5) POTENCIA · stroke 1.3→3px · reemplazado el trazado por segmentos (recolectados por tramos válidos consecutivos) con curva Bezier suave · control points cardinales horizontales (mx entre puntos, misma y que los extremos) para curva orgánica sin overshoots · área bajo cada tramo con gradient (alpha 0.28). (6) Label "AVG" flotante junto a línea de media (dcha) en 700 7px alpha 0.7 del color de la métrica. (7) API ampliada: _buildBiomecBlock ahora acepta parámetro `unit` (W/spm/cm/ms), lo guarda en canvas.dataset.unit y lo pasa a los draw helpers para el label del eje Y. Actualizadas las 4 llamadas (Potencia W, Cadencia spm, Zancada cm, Contacto ms). Coherente para Strava y COROS (los bloques sin datos siguen mostrando "Sin datos" — la lógica no cambia).
+            window.__MR_VERSION = 'v2.30.1-p325'; // [v2.30.1-p325] FIX Álvaro tras probar p324: Cadencia/Zancada/GCT quedaron "no pueden estar peor". ROOT CAUSE: rangos Y fijos amplios (Cadencia 60-220, Zancada 20-220, GCT 150-320) mientras que los datos reales están concentrados en franjas estrechas (Cadencia 170-180spm, Zancada 100-115cm, GCT 235-250ms). Los datos quedaban APLASTADOS en una línea horizontal borrosa, y los outliers dispersos (pausas en semáforo) ensuciaban la vista. Además el radio 2.6 + outline creaba efecto halo/masa cuando 600 puntos se solapaban. FIX: (1) Nuevo helper `_biomecAutoRange(vals, absMin, absMax)` que calcula rango dinámico usando p5-p95 (excluye outliers extremos del render pero se conservan en media/máx del chip), con 20% de padding y redondeo a múltiplos de 5/10/20 según magnitud. Sanity check contra los límites absolutos pasados. (2) Aplica auto-rango tanto a `_drawBiomecCanvas` (dots) como a `_drawBiomecLine` (potencia) → todas las gráficas usan el espacio vertical de forma óptima. (3) Dots más finos: radio 2.6→1.8, SIN outline (creaba efecto halo/masa al solaparse), alpha 0.9→0.75 (densidad se lee como intensidad, no como blob). (4) Potencia intacta en estilo (curva Bezier 3px), solo mejora rango. Ahora Cadencia respirará entre ~150-200, Zancada ~85-130, GCT ~200-280 (según datos), con dots definidos y grid al 5%.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -43182,6 +43182,45 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         //   - Grid horizontal sutil (3 líneas al 5% opacity)
         //   - Dots r 0.9→2.6 con outline del color de card (destacan al solaparse)
         //   - Label "AVG" flotante junto a la línea de media (dcha)
+        // [v2.30.1-p325] FIX Álvaro: con rango fijo amplio (Cadencia 60-220,
+        // Zancada 20-220) los datos reales concentrados en una franja estrecha
+        // quedaban aplastados en una línea horizontal borrosa. Los outliers
+        // dispersos (pausas, semáforos) desvirtuaban la vista. Solución:
+        //   1. Auto-rango dinámico basado en p5-p95 (excluye outliers extremos
+        //      del render pero se conservan en media/máx para el chip)
+        //   2. Dots 2.6→1.8 · SIN outline (creaba efecto halo/borroso cuando
+        //      600 puntos se solapaban)
+        //   3. Alpha 0.9→0.75 (densidad se lee como intensidad, no como masa)
+        //
+        // Helper: calcula un rango dinámico "bonito" a partir de valores válidos.
+        // Usa p5-p95 (evita outliers extremos), añade 20% de padding, redondea
+        // a múltiplos de 5/10/20 según magnitud. Limita a los límites absolutos
+        // que vengan por parámetro (sanity check).
+        function _biomecAutoRange(vals, absMin, absMax) {
+            const valid = [];
+            for (let i = 0; i < vals.length; i++) {
+                const v = vals[i];
+                if (v > 0 && v >= absMin && v <= absMax) valid.push(v);
+            }
+            if (valid.length < 5) return [absMin, absMax];
+            valid.sort((a, b) => a - b);
+            const p5 = valid[Math.floor(valid.length * 0.05)];
+            const p95 = valid[Math.floor(valid.length * 0.95)];
+            const spread = Math.max(1, p95 - p5);
+            const pad = Math.max(3, spread * 0.20);
+            let lo = p5 - pad;
+            let hi = p95 + pad;
+            // Redondeo a múltiplos según magnitud
+            const step = spread < 20 ? 5 : (spread < 60 ? 10 : 20);
+            lo = Math.floor(lo / step) * step;
+            hi = Math.ceil(hi / step) * step;
+            // Sanity check contra límites absolutos
+            lo = Math.max(lo, absMin);
+            hi = Math.min(hi, absMax);
+            if (hi - lo < step) hi = lo + step;
+            return [lo, hi];
+        }
+
         function _drawBiomecCanvas(canvas, vals, colorVar, yMin, yMax, unit) {
             let hasAny = false;
             for (let i = 0; i < vals.length; i++) { if (vals[i] > 0) { hasAny = true; break; } }
@@ -43195,25 +43234,27 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const ctx = canvas.getContext('2d');
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#22c55e';
-            const bgColor = (getComputedStyle(canvas).getPropertyValue('--det-bg') || '').trim() || '#0f0f10';
             const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
+            // [p325] Auto-rango: los yMin/yMax pasados son límites absolutos;
+            // el rango REAL de render se calcula del p5-p95 de datos válidos.
+            const [rMin, rMax] = _biomecAutoRange(vals, yMin, yMax);
             // Paddings asimétricos: eje Y amplio a la izquierda
             const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
-            const range = Math.max(0.1, yMax - yMin);
+            const range = Math.max(0.1, rMax - rMin);
             const nVals = vals.length;
             const denomX = Math.max(1, nVals - 1);
             const plotW = w - PAD_L - PAD_R;
             const plotH = h - PAD_T - PAD_B;
             // ── Eje Y: 3 labels (max/med/min) + unidad ──────────────────
-            const yMed = (yMax + yMin) / 2;
+            const yMed = (rMax + rMin) / 2;
             ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
             ctx.textAlign = 'end';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = tmColor;
             ctx.globalAlpha = 0.6;
-            ctx.fillText(String(Math.round(yMax)), PAD_L - 6, PAD_T + 2);
+            ctx.fillText(String(Math.round(rMax)), PAD_L - 6, PAD_T + 2);
             ctx.fillText(String(Math.round(yMed)), PAD_L - 6, PAD_T + plotH / 2);
-            ctx.fillText(String(Math.round(yMin)), PAD_L - 6, PAD_T + plotH - 2);
+            ctx.fillText(String(Math.round(rMin)), PAD_L - 6, PAD_T + plotH - 2);
             // Unidad arriba a la izquierda (más pequeña, más apagada)
             if (unit) {
                 ctx.font = '700 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
@@ -43231,13 +43272,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.moveTo(PAD_L, PAD_T + plotH/2); ctx.lineTo(w - PAD_R, PAD_T + plotH/2);
             ctx.moveTo(PAD_L, PAD_T + plotH); ctx.lineTo(w - PAD_R, PAD_T + plotH);
             ctx.stroke();
-            // Media sobre valores válidos (>0)
+            // Media sobre valores válidos (>0) — se computa sobre TODOS los
+            // válidos (no solo los del rango visible) para coincidir con el chip
             let sum = 0, cnt = 0;
             for (let i = 0; i < nVals; i++) { if (vals[i] > 0) { sum += vals[i]; cnt++; } }
             const avgV = cnt > 0 ? sum / cnt : 0;
             // Línea de media (solo si cae dentro del rango visible) + label AVG
-            if (avgV >= yMin && avgV <= yMax) {
-                const avgY = PAD_T + plotH * (1 - (avgV - yMin) / range);
+            if (avgV >= rMin && avgV <= rMax) {
+                const avgY = PAD_T + plotH * (1 - (avgV - rMin) / range);
                 ctx.strokeStyle = color;
                 ctx.globalAlpha = 0.35;
                 ctx.lineWidth = 0.8;
@@ -43255,20 +43297,20 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 ctx.globalAlpha = 0.7;
                 ctx.fillText('AVG', w - PAD_R - 2, avgY - 1);
             }
-            // Dots: TODOS los puntos válidos, radio 2.6, alpha 0.9, con outline del bg
-            ctx.globalAlpha = 0.9;
+            // [p325] Dots · radio 1.8 (más definido que 0.9 original pero sin
+            // hincharse), SIN outline (creaba efecto masa/halo cuando 600 puntos
+            // se solapaban), alpha 0.75 (densidad se lee como intensidad).
+            // Outliers fuera del rango dinámico simplemente no se pintan.
+            ctx.globalAlpha = 0.75;
             ctx.fillStyle = color;
-            ctx.strokeStyle = bgColor;
-            ctx.lineWidth = 0.6;
             for (let i = 0; i < nVals; i++) {
                 const v = vals[i];
-                if (v <= 0 || v < yMin || v > yMax) continue;
+                if (v <= 0 || v < rMin || v > rMax) continue;
                 const x = PAD_L + plotW * (i / denomX);
-                const y = PAD_T + plotH * (1 - (v - yMin) / range);
+                const y = PAD_T + plotH * (1 - (v - rMin) / range);
                 ctx.beginPath();
-                ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+                ctx.arc(x, y, 1.8, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.stroke();
             }
             ctx.globalAlpha = 1;
         }
@@ -43298,21 +43340,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#3b82f6';
             const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
             const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
-            const range = Math.max(0.1, yMax - yMin);
+            // [p325] Auto-rango también para la línea (misma lógica que dots)
+            const [rMin, rMax] = _biomecAutoRange(vals, yMin, yMax);
+            const range = Math.max(0.1, rMax - rMin);
             const nVals = vals.length;
             const denomX = Math.max(1, nVals - 1);
             const plotW = w - PAD_L - PAD_R;
             const plotH = h - PAD_T - PAD_B;
             // ── Eje Y: 3 labels (max/med/min) + unidad ──────────────────
-            const yMed = (yMax + yMin) / 2;
+            const yMed = (rMax + rMin) / 2;
             ctx.font = '700 9px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
             ctx.textAlign = 'end';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = tmColor;
             ctx.globalAlpha = 0.6;
-            ctx.fillText(String(Math.round(yMax)), PAD_L - 6, PAD_T + 2);
+            ctx.fillText(String(Math.round(rMax)), PAD_L - 6, PAD_T + 2);
             ctx.fillText(String(Math.round(yMed)), PAD_L - 6, PAD_T + plotH / 2);
-            ctx.fillText(String(Math.round(yMin)), PAD_L - 6, PAD_T + plotH - 2);
+            ctx.fillText(String(Math.round(rMin)), PAD_L - 6, PAD_T + plotH - 2);
             if (unit) {
                 ctx.font = '700 7px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
                 ctx.textAlign = 'start';
@@ -43333,8 +43377,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             let sum = 0, cnt = 0;
             for (let i = 0; i < nVals; i++) { if (vals[i] > 0) { sum += vals[i]; cnt++; } }
             const avgV = cnt > 0 ? sum / cnt : 0;
-            if (avgV >= yMin && avgV <= yMax) {
-                const avgY = PAD_T + plotH * (1 - (avgV - yMin) / range);
+            if (avgV >= rMin && avgV <= rMax) {
+                const avgY = PAD_T + plotH * (1 - (avgV - rMin) / range);
                 ctx.strokeStyle = color;
                 ctx.globalAlpha = 0.35;
                 ctx.lineWidth = 0.8;
@@ -43358,9 +43402,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             let cur = null;
             for (let i = 0; i < nVals; i++) {
                 const v = vals[i];
-                if (v <= 0 || v < yMin || v > yMax) { cur = null; continue; }
+                if (v <= 0 || v < rMin || v > rMax) { cur = null; continue; }
                 const x = PAD_L + plotW * (i / denomX);
-                const y = PAD_T + plotH * (1 - (v - yMin) / range);
+                const y = PAD_T + plotH * (1 - (v - rMin) / range);
                 if (!cur) { cur = []; segs.push(cur); }
                 cur.push({ x: x, y: y });
             }
