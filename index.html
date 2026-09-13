@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p321'; // [v2.30.1-p321] Dos cambios: (1) Runner filas · Álvaro pidió "un tamaño más" al texto y al icono SVG para más empaque. Texto 17→19px (28 filas actualizadas via sed sobre el patrón único font-size:17px;font-weight:700;color:var(--tw);letter-spacing:-.3px), SVG 24x24 → 28x28 (27 filas en 3 niveles de indentación distintos) + contenedor del icono 30x30 → 32x32 para acomodar el SVG mayor sin cortar. Aplica a MARCAS PERSONALES, HALL OF FAME, ARMAS, WARM UP, RACE DAY, MI AÑO, ZONAS DE FC/RITMO, LESIONES, CONEXIONES, CONFIGURACIÓN + toda la sub-navegación de config (Perfil, Auto-import, Notificaciones, Apariencia, Backup, Guía, Privacidad, Términos, Exportar, Restaurar) + Developer completo. (2) Sheet Readiness · gráficos VFC nocturna y FC en reposo REDISEÑADOS con variante D del preview (minimalista Apple/Whoop). Cambios en _rdnLineChart(): (a) curva Bezier suave con helper local smoothPath() estilo "monotone cardinal" — control points en x medio de cada segmento con misma y que los extremos, da curva orgánica sin overshoots; (b) SIN dots intermedios en cada dato (antes había un circle por punto); (c) solo un dot grande al final (r=5 con halo r=10) + border del color de card; (d) stroke con gradiente HORIZONTAL izq→dcha (opacity 0.30→0.70→1) que dirige la mirada al presente; (e) área con gradiente vertical más pronunciado (0.30→0.50); (f) SIN texto de valor al final (el número ya está en el header, evita duplicación); (g) padR 46→20 aprovecha el espacio del texto eliminado. La banda del rango normal HRV (o.band) se conserva y también se suaviza con smoothPath para consistencia. Card CARGA · FATIGA · FORMA no se toca (petición explícita Álvaro).
+            window.__MR_VERSION = 'v2.30.1-p322'; // [v2.30.1-p322] Tres cambios: (1) Plan · vista semanal · pill km/min más grande + texto interior también. padding 2/10/2/9 → 4px 12px (simétrico), font-size número 10→13, unit 7.5→9, letter-spacing unit 1.2→1, gap 3→4, radius 6→7. (2) Readiness sparkline Home · Álvaro: no aparecen las barras al día siguiente porque "los datos no persisten". ROOT CAUSE: `_rdnSpark7Html` usaba `day.score` como métrica, pero ese campo SOLO se calcula para HOY vía _rdnCompute(). Los días históricos en `resp.days` solo tienen métricas crudas del backend (hrv_nocturna_ms, fc_reposo, hrv_base_ms) — NUNCA hay `score` por día, por eso el filtro descartaba todos los días históricos aunque estuvieran en cache. FIX: usar `hrv_nocturna_ms` como métrica del sparkline. Mismo mensaje visual (evolución del readiness noche a noche), pero con la señal que sí persiste día a día. Escala dinámica min-max de los 7 días (mn→mx) mapeada a 15%-100% de altura de barra, para amplificar variaciones sutiles. Filtro más laxo: solo días con HRV medida (noches con reloj puesto) — coincide con lo que Álvaro entiende por "días con datos". (3) Confirmación numérica: los 4 números principales de Home (Readiness/Recovery/Forma/Carga) son EXACTAMENTE 26px font-weight:900. Cualquier diferencia visual viene del letter-spacing (-1 en 3 de ellos, -1.2 en Recovery) o del text-shadow/glow diferenciado por estado, no del tamaño.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -54529,9 +54529,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   - borde fino del color del workout (~40-45% alpha)
                     //   - número en negro 10px tabular
                     //   - unit "KM"/"MIN" mini en color del workout (sublabel)
-                    +     `<span style="background:${_isLongTime?'#7c3aed':_typeGrad};color:#fff;border-radius:6px;padding:2px 10px 2px 9px;font-size:10px;font-weight:800;display:inline-flex;align-items:baseline;gap:3px;box-shadow:${_isLongTime?'0 2px 8px rgba(124,58,237,.3)':'0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25)'};">`
+                    // [v2.30.1-p322] Álvaro: pill un poco más grande + texto interior también.
+                    //   padding 2/10/2/9 → 4px 12px (más aire vertical y horizontal, cabeza cuadrada).
+                    //   font-size número 10→13. Unit 7.5→9 · letter-spacing 1.2→1.
+                    +     `<span style="background:${_isLongTime?'#7c3aed':_typeGrad};color:#fff;border-radius:7px;padding:4px 12px;font-size:13px;font-weight:800;display:inline-flex;align-items:baseline;gap:4px;box-shadow:${_isLongTime?'0 2px 8px rgba(124,58,237,.3)':'0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25)'};">`
                     +       `<span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span>`
-                    +       `<span style="font-size:7.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span>`
+                    +       `<span style="font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span>`
                     +     `</span>`
                     +     `${sess.type==='test' && window._mrTestBadge ? window._mrTestBadge('m') : ''}`
                     /* [p229] Pill roja con icono COROS retirada de aquí ·
@@ -80956,6 +80959,17 @@ window.addEventListener('DOMContentLoaded', function() {
             // al spacer vacío (variante C aprobada por Álvaro). Lee del cache
             // localStorage 'mr_coros_readiness' (misma fuente que L34670).
             // Fallback: si no hay datos o < 2 días, se usa el spacer plano.
+            // [v2.30.1-p322] Álvaro: no aparecen las barras al día siguiente.
+            // ROOT CAUSE: usaba `day.score`, pero ese campo SOLO se calcula
+            // para HOY vía _rdnCompute() con la respuesta completa. Los días
+            // históricos en resp.days SOLO tienen métricas crudas (hrv_nocturna_ms,
+            // fc_reposo, hrv_base_ms). Nunca había `score` por día — por eso
+            // el filtro descartaba TODOS los días históricos.
+            // FIX: usar `hrv_nocturna_ms` como métrica del sparkline (misma señal
+            // que sostiene el readiness, más útil visualmente para un runner:
+            // ver la tendencia de la HRV noche a noche). Escala dinámica min-max
+            // del propio conjunto (7 días) para que las variaciones se noten.
+            // Bar height: 15% mínimo (visible) → 100% máximo del rango observado.
             function _rdnSpark7Html() {
                 try {
                     var raw = localStorage.getItem('mr_coros_readiness');
@@ -80968,20 +80982,26 @@ window.addEventListener('DOMContentLoaded', function() {
                         var da = (a && a.date) || '', db = (b && b.date) || '';
                         return da < db ? -1 : (da > db ? 1 : 0);
                     });
-                    // Últimos 7 (hoy es el último)
-                    var last7 = sorted.slice(-7);
-                    if (last7.length < 2) return null;
+                    // Filtrar solo días CON HRV nocturna válida (noche con reloj)
+                    var withData = sorted.filter(function(d) {
+                        var v = parseFloat(d && d.hrv_nocturna_ms);
+                        return isFinite(v) && v > 0;
+                    });
+                    if (withData.length === 0) return null;
+                    // Últimos 7 con datos (no necesariamente consecutivos)
+                    var last7 = withData.slice(-7);
+                    // Rango dinámico min-max de los datos disponibles
+                    var vals = last7.map(function(d) { return parseFloat(d.hrv_nocturna_ms); });
+                    var mn = Math.min.apply(null, vals);
+                    var mx = Math.max.apply(null, vals);
+                    var rng = Math.max(1, mx - mn); // evita división por 0 si todos iguales
                     var html = '<div class="rdn-spark">';
                     for (var i = 0; i < last7.length; i++) {
-                        var s = parseFloat(last7[i] && (last7[i].score || last7[i].readinessScore));
+                        var v = parseFloat(last7[i].hrv_nocturna_ms);
                         var isToday = (i === last7.length - 1);
-                        if (!isFinite(s) || s <= 0) {
-                            // Día sin dato: barra placeholder al 10% en gris
-                            html += '<div class="rdn-spark-bar empty" style="height:10%;"></div>';
-                        } else {
-                            var pct = Math.max(8, Math.min(100, s));
-                            html += '<div class="rdn-spark-bar' + (isToday ? ' today' : '') + '" style="height:' + pct.toFixed(0) + '%;"></div>';
-                        }
+                        // Escala 15%→100% (mínimo 15% para que la barra sea visible)
+                        var pct = 15 + ((v - mn) / rng) * 85;
+                        html += '<div class="rdn-spark-bar' + (isToday ? ' today' : '') + '" style="height:' + pct.toFixed(0) + '%;"></div>';
                     }
                     html += '</div>';
                     return html;
