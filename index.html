@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p322'; // [v2.30.1-p322] Tres cambios: (1) Plan · vista semanal · pill km/min más grande + texto interior también. padding 2/10/2/9 → 4px 12px (simétrico), font-size número 10→13, unit 7.5→9, letter-spacing unit 1.2→1, gap 3→4, radius 6→7. (2) Readiness sparkline Home · Álvaro: no aparecen las barras al día siguiente porque "los datos no persisten". ROOT CAUSE: `_rdnSpark7Html` usaba `day.score` como métrica, pero ese campo SOLO se calcula para HOY vía _rdnCompute(). Los días históricos en `resp.days` solo tienen métricas crudas del backend (hrv_nocturna_ms, fc_reposo, hrv_base_ms) — NUNCA hay `score` por día, por eso el filtro descartaba todos los días históricos aunque estuvieran en cache. FIX: usar `hrv_nocturna_ms` como métrica del sparkline. Mismo mensaje visual (evolución del readiness noche a noche), pero con la señal que sí persiste día a día. Escala dinámica min-max de los 7 días (mn→mx) mapeada a 15%-100% de altura de barra, para amplificar variaciones sutiles. Filtro más laxo: solo días con HRV medida (noches con reloj puesto) — coincide con lo que Álvaro entiende por "días con datos". (3) Confirmación numérica: los 4 números principales de Home (Readiness/Recovery/Forma/Carga) son EXACTAMENTE 26px font-weight:900. Cualquier diferencia visual viene del letter-spacing (-1 en 3 de ellos, -1.2 en Recovery) o del text-shadow/glow diferenciado por estado, no del tamaño.
+            window.__MR_VERSION = 'v2.30.1-p323'; // [v2.30.1-p323] Tres cambios: (1) Plan · vista semanal · reducir aire entre tabs/botones de arriba y el encabezado de semana. #plan-view-content: padding-top 14→8, margin-top 8→4. Ahorro 10px verticales. (2) Readiness · SNAPSHOT DIARIO matinal. Álvaro: quiere una "foto diaria" con VFC + FC reposo + TSB a las 7am entre semana / 8am findes, y que esa foto sea la barra del histórico del sparkline (así ve como se levanta cada día). Implementación: nuevo helper local `_rdnMaybeSnapshot(obj)` en _paintReadiness que, si la hora ≥ minHour (7 o 8 según weekday) y aún no hay entrada de HOY en localStorage 'mr_rdn_daily_history', guarda { date, hrv, fc, tsb, score }. Trunca a 30 entradas. Se dispara en cada paint del readiness → captura automática la primera vez que se abre la app tras la hora umbral. `_rdnSpark7Html` reescrito con dos niveles de prioridad: 1º historial diario (score si está disponible, sino escala dinámica HRV min-max) 2º fallback al cache crudo COROS de p322. Persistencia garantizada — cada mañana quedará capturado el estado en local. (3) Sheet Carga (Home click) LIMPIADO de texto pequeño. Álvaro: "sobra mucho texto, todo lo explicativo va en la (i)". Cambios: (a) Panel (i) `_tlInfoPanelHtml` AMPLIADO con dos nuevas secciones: "Riesgo de lesión · zonas" (0-30/31-55/56-75/76-100) y "Factores del cálculo" con los pesos (ACWR 30% + Volumen 20% + Historial 25% + Physio Drift 15% + Rehab 10%) + nota "sin IA, datos locales". (b) Card ACWR: quitados `mr-acwr-card-zone-sub` (descripción larga zona), `mr-acwr-metric-src` (métrica TRIMP/sRPE/dist) y `degradedBanner`. (c) Injury Risk block: quitado el `mr-injrisk-factor-desc` (texto explicativo bajo cada factor) y `mr-injrisk-factor-weight` (×N% pill inline) + eliminada la `mr-injrisk-legend` (fórmula al final). Quedan visibles solo: score circular + zonas + factores con score y barra + señales activas/positivas.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -34934,6 +34934,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             html +=     '</div>';
             html +=   '</div>';
             // Factores desglose · nueva estructura con SVG icon + data-fz
+            // [v2.30.1-p323] Quitada la desc textual larga de cada factor y el
+            // peso ×N% del label. Info completa está ahora en el panel (i).
             html +=   '<div class="mr-injrisk-factors-title">Factores del cálculo</div>';
             d.factors.forEach(function(f){
                 var fillPct = Math.min(100, Math.max(0, f.score));
@@ -34941,10 +34943,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 var iconSvg = _factorIconMap[f.id] || _factorIconMap['acwr'];
                 html += '<div class="mr-injrisk-factor" data-fz="' + fzLetter + '">';
                 html +=   '<div class="mr-injrisk-factor-icon">' + iconSvg + '</div>';
-                html +=   '<div class="mr-injrisk-factor-lbl">' + f.label + ' <span class="mr-injrisk-factor-weight">\u00d7' + f.weight + '%</span></div>';
+                html +=   '<div class="mr-injrisk-factor-lbl">' + f.label + '</div>';
                 html +=   '<div class="mr-injrisk-factor-value">' + f.value + '</div>';
                 html +=   '<div class="mr-injrisk-factor-bar"><div class="mr-injrisk-factor-bar-fill" style="width:' + fillPct + '%;"></div></div>';
-                html +=   '<div class="mr-injrisk-factor-desc">' + f.desc + '</div>';
                 html += '</div>';
             });
             // Señales activas / positivas · con SVG en título
@@ -34964,10 +34965,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             html +=       '</div>';
             html +=     '</div>';
             html +=   '</div>';
-            // Leyenda fórmula
-            html +=   '<div class="mr-injrisk-legend">';
-            html +=     '<b>Cálculo transparente</b> · Score = <b>30% ACWR</b> + <b>20% Salto Volumen</b> + <b>25% Historial</b> + <b>15% Physio Drift</b> + <b>10% Rehab</b>. Sin IA \u2014 datos locales de la app.';
-            html +=   '</div>';
+            // [v2.30.1-p323] Leyenda de fórmula eliminada (movida al panel (i)
+            // del título). Álvaro: "sobra mucho texto en un primer vistazo".
             html += '</div>';
             return html;
         } catch(e) {
@@ -34991,6 +34990,16 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
           + '<div class="mri-p">Elegimos la mejor métrica disponible según tus datos, por orden: <b>TRIMP</b> (Banister · FC × duración con ponderación exponencial), <b>sRPE</b> (RPE × minutos) o <b>distancia</b> (km). La misma métrica se usa en aguda y crónica para que la ratio sea coherente.</div>'
           + '<div class="mri-h">Cómo se calcula</div>'
           + '<div class="mri-p">Suma toda la carga de los últimos <b>7 días</b> (aguda) y de los últimos <b>28 días</b> (crónica, dividida entre 4 para tenerla en unidades semanales). La ratio aguda/crónica te dice si estás progresando dentro de un margen seguro. Modelo de <b>Gabbett et al. (2016)</b>.</div>'
+          // [v2.30.1-p323] Álvaro pidió mover aquí toda la explicación del
+          // riesgo de lesión que estaba en la card (factores desc, fórmula,
+          // pesos). En la card solo quedan score + zonas + barras + señales.
+          + '<div class="mri-h">Riesgo de lesión · zonas</div>'
+          + '<div class="mri-p"><b>· 0–30 · Óptimo:</b> riesgo bajo. Puedes seguir progresando con la carga actual.<br>'
+          + '<b>· 31–55 · Vigilar:</b> alguna señal se está acumulando. Escucha al cuerpo esta semana.<br>'
+          + '<b>· 56–75 · Atención:</b> varias señales activas. Considera reducir volumen o intensidad.<br>'
+          + '<b>· 76–100 · Alto:</b> alto riesgo. Recomendado deload y valorar consulta.</div>'
+          + '<div class="mri-h">Factores del cálculo</div>'
+          + '<div class="mri-p">El score combina 5 factores con pesos: <b>ACWR (30%)</b> ratio aguda/crónica de Gabbett · <b>Salto de Volumen (20%)</b> incremento km/semana &gt; 10% · <b>Historial (25%)</b> lesiones pasadas y su cronología · <b>Physio Drift (15%)</b> deriva de FC/pace en umbral, indicador de fatiga acumulada · <b>Rehab (10%)</b> cumplimiento de tu plan de recuperación si existe.<br><br>Sin IA · sin recomendaciones opacas · todo se calcula localmente en la app con tus datos.</div>'
           + '</div></div>';
     }
 
@@ -35101,7 +35110,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
 
             // (Explicación completa movida al panel (i) del título — _tlInfoPanelHtml)
 
-            // Render final — panel (i) del título prepend + card ACWR
+            // [v2.30.1-p323] Álvaro pidió limpiar el sheet · quitar todo texto
+            // pequeño explicativo que no aporta en el primer vistazo. Toda la
+            // explicación (zonas, métrica, cálculo, degraded) va en el panel (i).
+            // Aquí queda solo: número + zona label + barra + labels numéricos
+            // + detalles aguda/crónica.
             body.innerHTML =
                 _tlInfoPanelHtml() +
                 '<div class="mr-acwr-card" style="--mr-acwr-c:' + z.c + ';--mr-acwr-pct:' + pct + ';">' +
@@ -35112,7 +35125,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         '<span class="mr-acwr-card-num">' + acwr.ratio.toFixed(2) + '</span>' +
                         '<span class="mr-acwr-card-zone-lbl">' + z.lbl + '</span>' +
                     '</div>' +
-                    '<div class="mr-acwr-card-zone-sub">' + z.sub + '</div>' +
                     '<div class="mr-acwr-bar-wrap">' +
                         '<div class="mr-acwr-bar">' +
                             '<div class="mr-acwr-bar-seg zone-under"></div>' +
@@ -35137,11 +35149,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                             '<div class="mr-acwr-detail-unit">' + unitChronic + '</div>' +
                         '</div>' +
                     '</div>' +
-                    '<div class="mr-acwr-metric-src">' +
-                        '<span class="mr-acwr-metric-src-dot"></span>' +
-                        'Métrica: ' + srcLbl +
-                    '</div>' +
-                    degradedBanner +
                 '</div>';
             // [v2.30.1-p163] Álvaro 7 sep 2026: append bloque premium Injury
             // Prevention Radar debajo de todo el contenido ACWR existente.
@@ -44475,12 +44482,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
            propio para destacar, TODO el conjunto queda dentro de un bloque
            con background y bordes cohesivos. */
         #plan-view-content {
-            padding: 14px 6px 6px !important;
+            /* [v2.30.1-p323] padding-top 14→8 · margin-top 8→4 · Álvaro pidió
+               reducir el aire entre los botones/tabs de arriba y el encabezado
+               de la semana. Ahorro total: 10px verticales. */
+            padding: 8px 6px 6px !important;
             background: var(--card2) !important;
             border: 1px solid var(--border) !important;
             border-radius: 14px !important;
             box-shadow: 0 2px 8px rgba(0,0,0,.05);
-            margin-top: 8px;
+            margin-top: 4px;
             /* [v2.30.1-p296] Fix scroll vista semana. min-content fuerza al
                bloque a medir su contenido real (7 días + sesiones expandidas). */
             min-height: min-content;
@@ -80959,54 +80969,135 @@ window.addEventListener('DOMContentLoaded', function() {
             // al spacer vacío (variante C aprobada por Álvaro). Lee del cache
             // localStorage 'mr_coros_readiness' (misma fuente que L34670).
             // Fallback: si no hay datos o < 2 días, se usa el spacer plano.
-            // [v2.30.1-p322] Álvaro: no aparecen las barras al día siguiente.
-            // ROOT CAUSE: usaba `day.score`, pero ese campo SOLO se calcula
-            // para HOY vía _rdnCompute() con la respuesta completa. Los días
-            // históricos en resp.days SOLO tienen métricas crudas (hrv_nocturna_ms,
-            // fc_reposo, hrv_base_ms). Nunca había `score` por día — por eso
-            // el filtro descartaba TODOS los días históricos.
-            // FIX: usar `hrv_nocturna_ms` como métrica del sparkline (misma señal
-            // que sostiene el readiness, más útil visualmente para un runner:
-            // ver la tendencia de la HRV noche a noche). Escala dinámica min-max
-            // del propio conjunto (7 días) para que las variaciones se noten.
-            // Bar height: 15% mínimo (visible) → 100% máximo del rango observado.
+            // [v2.30.1-p322] Usaba `day.score` pero ese campo solo se calcula
+            // para HOY. Fallback a `hrv_nocturna_ms` como métrica del sparkline.
+            // [v2.30.1-p323] Álvaro pidió snapshot diario matinal (7am entre
+            // semana, 8am findes) que capture HRV + FC + TSB del momento. Esa
+            // "foto diaria" es la fuente PRIMARIA del sparkline (persiste día
+            // a día en localStorage 'mr_rdn_daily_history', máximo 30 días).
+            // Si no hay historial suficiente → fallback a HRV crudo (p322) →
+            // fallback a spacer plano.
+            //
+            // _rdnMaybeSnapshot(obj) · comprueba si toca hacer la foto de hoy:
+            //   - Hora >= 7am entre semana / 8am findes (evita capturar valores
+            //     nocturnos aún no consolidados)
+            //   - No hay ya snapshot con fecha de hoy
+            //   Si ambas condiciones, guarda { date, hrv, fc, tsb, score } en
+            //   el historial. Trunca a 30 entradas más recientes.
+            function _rdnMaybeSnapshot(obj) {
+                try {
+                    var now = new Date();
+                    var hour = now.getHours();
+                    var day = now.getDay(); // 0=dom, 6=sab
+                    var minHour = (day === 0 || day === 6) ? 8 : 7;
+                    if (hour < minHour) return; // demasiado temprano
+                    var todayStr = now.getFullYear() + '-'
+                        + String(now.getMonth()+1).padStart(2,'0') + '-'
+                        + String(now.getDate()).padStart(2,'0');
+                    var raw = localStorage.getItem('mr_rdn_daily_history');
+                    var history = [];
+                    if (raw) {
+                        try { history = JSON.parse(raw) || []; } catch(_) {}
+                        if (!Array.isArray(history)) history = [];
+                    }
+                    // Ya hay snapshot de hoy → no repetir
+                    if (history.some(function(h){ return h && h.date === todayStr; })) return;
+                    // Sacar valores actuales del obj readiness
+                    var hrv = (obj && obj.hrv && obj.hrv.valid && obj.hrv.value != null)
+                        ? Math.round(obj.hrv.value) : null;
+                    var fc = (obj && obj.rhr && obj.rhr.valid && obj.rhr.value != null)
+                        ? Math.round(obj.rhr.value) : null;
+                    var tsb = (window.__mrPMCData && typeof window.__mrPMCData.curTsb === 'number')
+                        ? Math.round(window.__mrPMCData.curTsb) : null;
+                    var scoreVal = (obj && typeof obj.score === 'number') ? obj.score : null;
+                    // Requiere al menos HRV o score para tener sentido
+                    if (hrv == null && scoreVal == null) return;
+                    history.push({ date: todayStr, hrv: hrv, fc: fc, tsb: tsb, score: scoreVal });
+                    // Truncar a 30 días
+                    if (history.length > 30) history = history.slice(-30);
+                    localStorage.setItem('mr_rdn_daily_history', JSON.stringify(history));
+                } catch(_) {}
+            }
+            // _rdnSpark7Html · genera el sparkline de 7 días. Prioridad:
+            //   1º Historial diario (mr_rdn_daily_history) → persiste día a día
+            //   2º Cache crudo COROS (mr_coros_readiness) → fallback si aún
+            //      no hay historial (primera vez del usuario)
             function _rdnSpark7Html() {
                 try {
+                    // ─── PRIORIDAD 1: historial diario snapshot (p323) ───
+                    var rawHist = localStorage.getItem('mr_rdn_daily_history');
+                    if (rawHist) {
+                        var history = null;
+                        try { history = JSON.parse(rawHist); } catch(_) {}
+                        if (Array.isArray(history) && history.length >= 1) {
+                            var sortedH = history.slice().sort(function(a, b) {
+                                return (a.date || '') < (b.date || '') ? -1 : 1;
+                            });
+                            var last7H = sortedH.slice(-7);
+                            // Usar score si TODOS lo tienen · sino usar HRV con escala dinámica
+                            var scores = last7H.map(function(d){ return parseFloat(d && d.score); });
+                            var allScore = scores.every(function(s){ return isFinite(s) && s > 0; });
+                            var htmlH = '<div class="rdn-spark">';
+                            if (allScore) {
+                                for (var i = 0; i < last7H.length; i++) {
+                                    var isToday = (i === last7H.length - 1);
+                                    var pct = Math.max(8, Math.min(100, scores[i]));
+                                    htmlH += '<div class="rdn-spark-bar' + (isToday ? ' today' : '') + '" style="height:' + pct.toFixed(0) + '%;"></div>';
+                                }
+                            } else {
+                                // Escala dinámica HRV min-max
+                                var hrvVals = last7H.map(function(d){ return parseFloat(d && d.hrv); }).filter(function(v){ return isFinite(v) && v > 0; });
+                                if (hrvVals.length === 0) return null;
+                                var mn = Math.min.apply(null, hrvVals);
+                                var mx = Math.max.apply(null, hrvVals);
+                                var rng = Math.max(1, mx - mn);
+                                for (var j = 0; j < last7H.length; j++) {
+                                    var v = parseFloat(last7H[j] && last7H[j].hrv);
+                                    if (!isFinite(v) || v <= 0) continue;
+                                    var isTodayJ = (j === last7H.length - 1);
+                                    var pctJ = 15 + ((v - mn) / rng) * 85;
+                                    htmlH += '<div class="rdn-spark-bar' + (isTodayJ ? ' today' : '') + '" style="height:' + pctJ.toFixed(0) + '%;"></div>';
+                                }
+                            }
+                            htmlH += '</div>';
+                            return htmlH;
+                        }
+                    }
+                    // ─── PRIORIDAD 2: fallback cache crudo COROS (p322) ───
                     var raw = localStorage.getItem('mr_coros_readiness');
                     if (!raw) return null;
                     var obj = JSON.parse(raw);
                     var days = obj && obj.resp && Array.isArray(obj.resp.days) ? obj.resp.days : null;
                     if (!days || days.length === 0) return null;
-                    // Orden ascendente por fecha (backend puede devolver desc)
                     var sorted = days.slice().sort(function(a, b) {
                         var da = (a && a.date) || '', db = (b && b.date) || '';
                         return da < db ? -1 : (da > db ? 1 : 0);
                     });
-                    // Filtrar solo días CON HRV nocturna válida (noche con reloj)
                     var withData = sorted.filter(function(d) {
                         var v = parseFloat(d && d.hrv_nocturna_ms);
                         return isFinite(v) && v > 0;
                     });
                     if (withData.length === 0) return null;
-                    // Últimos 7 con datos (no necesariamente consecutivos)
                     var last7 = withData.slice(-7);
-                    // Rango dinámico min-max de los datos disponibles
                     var vals = last7.map(function(d) { return parseFloat(d.hrv_nocturna_ms); });
-                    var mn = Math.min.apply(null, vals);
-                    var mx = Math.max.apply(null, vals);
-                    var rng = Math.max(1, mx - mn); // evita división por 0 si todos iguales
+                    var mn2 = Math.min.apply(null, vals);
+                    var mx2 = Math.max.apply(null, vals);
+                    var rng2 = Math.max(1, mx2 - mn2);
                     var html = '<div class="rdn-spark">';
-                    for (var i = 0; i < last7.length; i++) {
-                        var v = parseFloat(last7[i].hrv_nocturna_ms);
-                        var isToday = (i === last7.length - 1);
-                        // Escala 15%→100% (mínimo 15% para que la barra sea visible)
-                        var pct = 15 + ((v - mn) / rng) * 85;
-                        html += '<div class="rdn-spark-bar' + (isToday ? ' today' : '') + '" style="height:' + pct.toFixed(0) + '%;"></div>';
+                    for (var k = 0; k < last7.length; k++) {
+                        var vk = parseFloat(last7[k].hrv_nocturna_ms);
+                        var isTodayK = (k === last7.length - 1);
+                        var pctK = 15 + ((vk - mn2) / rng2) * 85;
+                        html += '<div class="rdn-spark-bar' + (isTodayK ? ' today' : '') + '" style="height:' + pctK.toFixed(0) + '%;"></div>';
                     }
                     html += '</div>';
                     return html;
                 } catch(_) { return null; }
             }
+            // [v2.30.1-p323] Intentar snapshot diario ANTES de generar el HTML
+            // del sparkline, para que si es la primera pintura del día ya tenga
+            // la entrada de hoy incluida en el historial.
+            _rdnMaybeSnapshot(obj);
             var sparkHtml = _rdnSpark7Html();
             // [v2.30.1-p320] Fallback: si no hay sparkline, un div flex:1 vacío
             // (spacer) para que la pill quede a la derecha.
