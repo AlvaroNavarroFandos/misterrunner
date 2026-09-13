@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p325'; // [v2.30.1-p325] FIX Álvaro tras probar p324: Cadencia/Zancada/GCT quedaron "no pueden estar peor". ROOT CAUSE: rangos Y fijos amplios (Cadencia 60-220, Zancada 20-220, GCT 150-320) mientras que los datos reales están concentrados en franjas estrechas (Cadencia 170-180spm, Zancada 100-115cm, GCT 235-250ms). Los datos quedaban APLASTADOS en una línea horizontal borrosa, y los outliers dispersos (pausas en semáforo) ensuciaban la vista. Además el radio 2.6 + outline creaba efecto halo/masa cuando 600 puntos se solapaban. FIX: (1) Nuevo helper `_biomecAutoRange(vals, absMin, absMax)` que calcula rango dinámico usando p5-p95 (excluye outliers extremos del render pero se conservan en media/máx del chip), con 20% de padding y redondeo a múltiplos de 5/10/20 según magnitud. Sanity check contra los límites absolutos pasados. (2) Aplica auto-rango tanto a `_drawBiomecCanvas` (dots) como a `_drawBiomecLine` (potencia) → todas las gráficas usan el espacio vertical de forma óptima. (3) Dots más finos: radio 2.6→1.8, SIN outline (creaba efecto halo/masa al solaparse), alpha 0.9→0.75 (densidad se lee como intensidad, no como blob). (4) Potencia intacta en estilo (curva Bezier 3px), solo mejora rango. Ahora Cadencia respirará entre ~150-200, Zancada ~85-130, GCT ~200-280 (según datos), con dots definidos y grid al 5%.
+            window.__MR_VERSION = 'v2.30.1-p326'; // [v2.30.1-p326] REVERSIÓN parcial del auto-rango de p325. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -43235,9 +43235,12 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#22c55e';
             const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
-            // [p325] Auto-rango: los yMin/yMax pasados son límites absolutos;
-            // el rango REAL de render se calcula del p5-p95 de datos válidos.
-            const [rMin, rMax] = _biomecAutoRange(vals, yMin, yMax);
+            // [p326] Reversión auto-rango de p325 · Álvaro: "peor que antes,
+            // solo había que pintar mejor el gráfico con puntos más gordos y ya".
+            // Los rangos fijos amplios (60-220 cadencia, 20-220 zancada, 150-320 GCT)
+            // eran correctos — no había que estrecharlos. Volvemos a los límites
+            // absolutos originales. `_biomecAutoRange` queda declarado pero sin uso.
+            const rMin = yMin, rMax = yMax;
             // Paddings asimétricos: eje Y amplio a la izquierda
             const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
             const range = Math.max(0.1, rMax - rMin);
@@ -43301,7 +43304,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // hincharse), SIN outline (creaba efecto masa/halo cuando 600 puntos
             // se solapaban), alpha 0.75 (densidad se lee como intensidad).
             // Outliers fuera del rango dinámico simplemente no se pintan.
-            ctx.globalAlpha = 0.75;
+            // [p326] Álvaro: puntos un pelín más gordos · 1.8→2.0 · alpha 0.75→0.85.
+            ctx.globalAlpha = 0.85;
             ctx.fillStyle = color;
             for (let i = 0; i < nVals; i++) {
                 const v = vals[i];
@@ -43309,7 +43313,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const x = PAD_L + plotW * (i / denomX);
                 const y = PAD_T + plotH * (1 - (v - rMin) / range);
                 ctx.beginPath();
-                ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+                ctx.arc(x, y, 2.0, 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.globalAlpha = 1;
@@ -43340,8 +43344,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             const color = (getComputedStyle(canvas).getPropertyValue(colorVar) || '').trim() || '#3b82f6';
             const tmColor = (getComputedStyle(canvas).getPropertyValue('--det-tm') || '').trim() || 'rgba(255,255,255,.4)';
             const PAD_L = 38, PAD_R = 8, PAD_T = 12, PAD_B = 8;
-            // [p325] Auto-rango también para la línea (misma lógica que dots)
-            const [rMin, rMax] = _biomecAutoRange(vals, yMin, yMax);
+            // [p326] Reversión auto-rango de p325 · Álvaro: "potencia estaba
+            // perfecta en el anterior deploy" (p324). Vuelve a rango fijo pasado.
+            const rMin = yMin, rMax = yMax;
             const range = Math.max(0.1, rMax - rMin);
             const nVals = vals.length;
             const denomX = Math.max(1, nVals - 1);
