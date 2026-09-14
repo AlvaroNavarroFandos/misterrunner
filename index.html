@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p330'; // [v2.30.1-p330] Bloque "Ritmos objetivo" en widget plan activo Home · fuente más grande sin cambiar altura (Álvaro: "que se vea mejor pero en una sola línea sin aumentar altura del bloque"). Cambios en el hdr colapsable (siempre visible, dispara el toggle): (1) title `.mr-pc-paces-title` 11→13, (2) tg-val "FASE H:MM:SS" `.mr-pc-paces-tg-val` 11→13, (3) tg-lbl "fase" `.mr-pc-paces-tg-lbl` 8→9. Compensaciones para mantener altura idéntica: hdr padding vertical 10→9 (compensa +2px del title) y pill tg padding vertical 3→2 (compensa +2px del val). Todo sigue en 1 línea con el `white-space:nowrap` existente del hdr-l. [v2.30.1-p329] Readiness icono 26→34 (recupera altura 58) + carrusel Home tipo/pill/unit alineados con Plan. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p331'; // [v2.30.1-p331] Paquete rediseño carrusel premium widget plan activo Home (aprobado por Álvaro en 3 previews: preview-carousel eligió E+B, preview-roll eligió cells F, preview-focus eligió opción 2 Gold Brushed). CAMBIOS: (1) `.mr-pc-daycard` rediseño E+B: fondo gradient wash del color del tipo (`--dc-tc` inyectado inline por JS de `_renderCard`) + barra lateral 4px `::before` con gradient del tipo `--dc-tg` + glow 24px alrededor del color + border 1.5px color-mix del tipo con var(--border). Padding-left 13→18 para dar espacio a la barra. Estado `rest` overridea (barra oculta, fondo neutro, sin box-shadow). Estado `past` oculta la barra pero mantiene el gradient sutil. Los defaults `--dc-tc:transparent` en :root de la clase hacen que si el JS no inyecta las vars, la card se ve como neutra. (2) `.mr-pc-rcell` cells F premium: padding vertical 7/0/6→6/0/4 (más compacto). `.mr-pc-rbars` height 7→3 margin-top 1→5 (barra tipo más neta). `.mr-pc-rdot` width 16→22, añadido `box-shadow:0 0 6px currentColor` para el glow del tipo. JS `_rollBarsHtml` (línea ~66995+) inyecta `color:X` junto a `background:X` en cada dot para que currentColor herede al glow. (3) `.mr-pc-roll-focus` Gold Brushed 4px: eliminado `border:5px solid` silver/negro. Ahora usa inset box-shadow (marco 4px `#d4b45a` + highlight superior blanco 3px + shadow inferior negro 3px + ring interior negro 5px + doble glow externo dorado). Approach técnico: background:transparent → el centro NO tapa la cell (bug de previews anteriores resuelto). Dimensiones 58×59→60×61 con top:-1 para dar aire al glow. Compatibilidad tematización carrera (`.mr-pc-card.mr-plan-themed-home .mr-pc-roll-focus { border-color:X !important }`): NO-OP porque el nuevo focus no usa border visual; el gold gana siempre. [v2.30.1-p330] Ritmos objetivo fuente más grande. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -6581,29 +6581,39 @@
 
         /* ── [v6 · Home] Minicalendario RODANTE · foco FIJO central ── */
         .mr-pc-roll-wrap { position: relative; margin: 0 -2px 12px; }
+        /* [v2.30.1-p331] Focus rediseñado a Gold Brushed 4px (opción 2 aprobada
+           por Álvaro en preview-focus). Approach técnico correcto: NO usa
+           `border` (antes: border sólido silver 5px con inset shadows). Ahora
+           usa inset box-shadow que simula el marco dorado 4px + highlight
+           superior tipo "metal pulido" + shadow inferior + inset negro que
+           separa el gold del interior + doble glow externo. El CENTRO queda
+           transparente (background:transparent), así la cell debajo se ve
+           perfectamente. Bug reportado por Álvaro en la preview anterior
+           ("solo veo cuadrados de colores que tapan el día") queda resuelto.
+           Dimensiones 58×59 → 60×61 (+2px cada lado) + top:-1 para dar aire
+           al glow sin descentrar el marco. */
         .mr-pc-roll-focus {
-            position: absolute; top: 0; left: 20%; transform: translateX(-50%);
-            box-sizing: border-box; width: 58px; height: 59px;
-            /* v2.30.1-p73 · border sólido silver metalizado (antes: var(--pc-a) navy/silver).
-               Interior naturalmente transparente por border sólido (idéntico al mecanismo
-               que ya funcionaba). Se añaden inset shadows para simular gradient 3D silver
-               sin recurrir a mask-composite (que descalibraba el sizing).
-               v2.30.1-p86 · Álvaro: en LIGHT mode → navy (var(--pc-a) = #1e3a5f) para
-               coherencia con nav bar / photo dot / track. DARK mantiene el silver
-               (#c8ccd2 en override .dark-mode) porque casa con la paleta dark existente. */
-            border: 5px solid #000000;
-            box-shadow:
-                0 0 0 1.5px rgba(0,0,0,.10),
-                inset 0 2px 0 rgba(255,255,255,.30),
-                inset 0 -2px 0 rgba(0,0,0,.20);
+            position: absolute; top: -1px; left: 20%; transform: translateX(-50%);
+            box-sizing: border-box; width: 60px; height: 61px;
+            background: transparent;
             border-radius: 14px; pointer-events: none; z-index: 2;
+            box-shadow:
+                inset 0 0 0 4px #d4b45a,
+                inset 0 3px 0 rgba(255,255,255,.35),
+                inset 0 -3px 0 rgba(0,0,0,.35),
+                inset 0 0 0 5px rgba(0,0,0,.55),
+                0 0 12px rgba(212,180,90,.4),
+                0 3px 10px rgba(0,0,0,.5);
         }
         body.dark-mode .mr-pc-roll-focus {
-            border-color: #c8ccd2;
+            /* Dark mode idéntico · el gold funciona sobre ambos backgrounds */
             box-shadow:
-                0 0 0 1.5px rgba(0,0,0,.85),
-                inset 0 2px 0 rgba(255,255,255,.35),
-                inset 0 -2px 0 rgba(0,0,0,.35);
+                inset 0 0 0 4px #d4b45a,
+                inset 0 3px 0 rgba(255,255,255,.35),
+                inset 0 -3px 0 rgba(0,0,0,.35),
+                inset 0 0 0 5px rgba(0,0,0,.55),
+                0 0 12px rgba(212,180,90,.4),
+                0 3px 10px rgba(0,0,0,.5);
         }
         /* v2.30.1-p76 · Pill HOY eliminada (no aportaba cuando se seleccionaba otro día
            y no era escalable al cambiar de today). Widget compactado en altura. */
@@ -6619,28 +6629,88 @@
         }
         .mr-pc-roll::-webkit-scrollbar { display: none; }
         .mr-pc-rcell {
+            /* [v2.30.1-p331] Cells F premium (aprobadas por Álvaro):
+               padding vertical más compacto (7/0/6→6/0/4) para dar sitio a
+               la barra de tipo más grande + glow. */
             scroll-snap-align: center; flex: 0 0 auto; width: 46px;
             background: var(--bsoft); border: 1px solid var(--border);
-            border-radius: 10px; padding: 7px 0 6px; text-align: center; cursor: pointer;
+            border-radius: 10px; padding: 6px 0 4px; text-align: center; cursor: pointer;
             transition: opacity .2s ease, background-color .2s, border-color .2s;
         }
         .mr-pc-rcell.past { opacity: .34; }
         .mr-pc-rdn { font-size: 8.5px; font-weight: 800; color: var(--ts); text-transform: uppercase; letter-spacing: .4px; }
         .mr-pc-rnu { font-size: 13px; font-weight: 800; color: var(--tw); line-height: 1; margin-top: 3px; }
-        .mr-pc-rbars { margin-top: 1px; height: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
-        .mr-pc-rdot { width: 16px; height: 3px; border-radius: 2px; }
+        /* [v2.30.1-p331] rbars más compactas (height 7→3, margin-top 1→5)
+           para que la barra tipo destaque como línea neta abajo de la cell. */
+        .mr-pc-rbars { margin-top: 5px; height: 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+        /* [v2.30.1-p331] rdot más largo (16→22) con GLOW del propio color vía
+           currentColor. El JS del rollstrip (líneas ~66925+) inyecta `color:X`
+           junto al `background:X` para que currentColor herede el color del tipo
+           al box-shadow. Da presencia premium a la línea del tipo del entreno
+           en cada día. */
+        .mr-pc-rdot { width: 22px; height: 3px; border-radius: 2px; box-shadow: 0 0 6px currentColor; }
         .mr-pc-rcell.today .mr-pc-rdn, .mr-pc-rcell.today .mr-pc-rnu { color: #86efac; }
         .mr-pc-rcell.sel { opacity: 1; background: var(--pc-a-tint); border-color: var(--pc-a-bd); }
         .mr-pc-rcell.today.sel { border-color: rgba(74,222,128,.5); background: rgba(74,222,128,.12); }
 
-        /* card del día seleccionado */
+        /* [v2.30.1-p331] card del día seleccionado · rediseño E+B (aprobado
+           por Álvaro en preview-carousel: E "gradient wash" + B "barra lateral").
+           Vars --dc-tc (color base del tipo) y --dc-tg (gradient del tipo) las
+           inyecta el JS de _renderCard inline según el tipo del entreno principal
+           del día (run > str > default). En estado 'rest' el JS NO inyecta las
+           vars y se aplican los defaults neutros (mantiene el look actual). */
         .mr-pc-daycard {
-            border-radius: 13px; padding: 13px 14px; position: relative; overflow: hidden;
-            margin-bottom: 0; background: var(--bsoft); border: 1px solid var(--border);
+            --dc-tc: transparent;
+            --dc-tg: transparent;
+            border-radius: 13px;
+            padding: 13px 14px 13px 18px; /* +4 en padding-left por la barra lateral */
+            position: relative; overflow: hidden;
+            margin-bottom: 0;
+            background:
+                linear-gradient(135deg,
+                    color-mix(in srgb, var(--dc-tc) 22%, transparent) 0%,
+                    color-mix(in srgb, var(--dc-tc) 6%, transparent) 55%,
+                    rgba(255,255,255,.02) 100%),
+                var(--bsoft);
+            border: 1.5px solid color-mix(in srgb, var(--dc-tc) 36%, var(--border));
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.14),
+                0 6px 22px rgba(0,0,0,.14),
+                0 0 24px color-mix(in srgb, var(--dc-tc) 26%, transparent);
         }
-        .mr-pc-daycard.today { background: rgba(74,222,128,.09); border-color: rgba(74,222,128,.30); }
+        .mr-pc-daycard::before {
+            content: '';
+            position: absolute; left: 0; top: 0; bottom: 0;
+            width: 4px;
+            background: var(--dc-tg);
+            box-shadow: 0 0 10px color-mix(in srgb, var(--dc-tc) 60%, transparent);
+        }
+        body.dark-mode .mr-pc-daycard {
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.10),
+                0 6px 22px rgba(0,0,0,.32),
+                0 0 24px color-mix(in srgb, var(--dc-tc) 26%, transparent);
+        }
+        /* Estados 'today', 'past' y 'rest' overridean el fondo con los tintes
+           neutros/verdes originales cuando NO hay tipo aplicado (rest sin barra,
+           past sin acento). En today el JS SÍ inyecta --dc-tc y el gradient se
+           mezcla con el tinte verde base — el resultado es coherente. */
+        .mr-pc-daycard.today { background:
+            linear-gradient(135deg,
+                color-mix(in srgb, var(--dc-tc) 22%, transparent) 0%,
+                color-mix(in srgb, var(--dc-tc) 6%, transparent) 55%,
+                rgba(255,255,255,.02) 100%),
+            rgba(74,222,128,.09);
+            border-color: color-mix(in srgb, var(--dc-tc) 36%, rgba(74,222,128,.30));
+        }
         .mr-pc-daycard.past  { background: var(--bsoft); border-color: var(--border); }
-        .mr-pc-daycard.rest  { background: var(--bsoft); border-color: var(--border); }
+        .mr-pc-daycard.past::before  { display: none; }
+        .mr-pc-daycard.rest  {
+            background: var(--bsoft); border-color: var(--border);
+            padding: 13px 14px; /* Sin barra lateral → padding normal */
+            box-shadow: none;
+        }
+        .mr-pc-daycard.rest::before { display: none; }
         .mr-pc-daycard-press { cursor: pointer; transition: transform .12s ease, background-color .12s; }
         .mr-pc-daycard-press:active, .mr-pc-daycard-press.mr-pc-hoy-pressing { transform: scale(.985); }
         .mr-pc-dc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
@@ -66922,16 +66992,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
             }
             const _rollBarsHtml = (_r) => {
-                if (!_r.sessions.length) return '<div class="mr-pc-rdot" style="background:rgba(255,255,255,.15);"></div>';
+                // [v2.30.1-p331] Estilo `background:X;color:X` en cada dot para
+                // que `currentColor` del CSS del `.mr-pc-rdot` herede el color
+                // del tipo y aplique el glow (`box-shadow:0 0 6px currentColor`).
+                // Sin este color inline, currentColor toma el color heredado del
+                // texto de la cell (blanco/gris) y el glow no matchea el fondo.
+                if (!_r.sessions.length) return '<div class="mr-pc-rdot" style="background:rgba(255,255,255,.15);color:rgba(255,255,255,.15);"></div>';
                 const _hasStr = _r.sessions.some(_s => _s.isStrength || _s.type === 'strength');
                 const _run = _r.sessions.filter(_s => !(_s.isStrength || _s.type === 'strength'));
                 let _h = '';
                 if (_run.length) {
                     const _b = _run.reduce((_best,_s)=>{ const _p=_TYPE_PRIORITY[_s.type]!=null?_TYPE_PRIORITY[_s.type]:99; return (!_best||_p<_best._p)?{s:_s,_p:_p}:_best; }, null);
-                    _h += '<div class="mr-pc-rdot" style="background:'+(_TYPE_COL_TL[_b.s.type]||'#fff')+';"></div>';
+                    const _c = _TYPE_COL_TL[_b.s.type]||'#fff';
+                    _h += '<div class="mr-pc-rdot" style="background:'+_c+';color:'+_c+';"></div>';
                 }
-                if (_hasStr) _h += '<div class="mr-pc-rdot" style="background:'+_TYPE_COL_TL.strength+';"></div>';
-                if (!_h) _h = '<div class="mr-pc-rdot" style="background:rgba(255,255,255,.15);"></div>';
+                if (_hasStr) _h += '<div class="mr-pc-rdot" style="background:'+_TYPE_COL_TL.strength+';color:'+_TYPE_COL_TL.strength+';"></div>';
+                if (!_h) _h = '<div class="mr-pc-rdot" style="background:rgba(255,255,255,.15);color:rgba(255,255,255,.15);"></div>';
                 return _h;
             };
             const _rollStripHtml = _rollDays.map((_r,_i) => {
@@ -67153,8 +67229,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         const _str = _r.sessions.find(s => (s.isStrength || s.type === 'strength'));
                         _inner = (_run ? _buildSessionRowHtml(_run, {divider:false}) : '') + (_str ? _buildSessionRowHtml(_str, {divider:!!_run}) : '');
                     }
+                    // [v2.30.1-p331] Inyectar CSS vars --dc-tc / --dc-tg en la
+                    // daycard para el rediseño E+B (gradient wash + barra lateral).
+                    // Prioridad de color: run > strength > default. Ver CSS
+                    // .mr-pc-daycard (línea ~6642+) para el uso de estas vars.
+                    // En estado 'rest' NO inyectamos (mantenemos look neutro).
+                    let _dcVars = '';
+                    if (!_isRest) {
+                        const _DC_TC = { easy:'#22c55e', recovery:'#60a5fa', series:'#ef4444', long:'#a78bfa', race:'#e879f9', strength:'#fbbf24', test:'#22d3ee' };
+                        const _DC_TG = {
+                            easy:     'linear-gradient(135deg,#22c55e 0%,#15803d 100%)',
+                            recovery: 'linear-gradient(135deg,#60a5fa 0%,#2563eb 100%)',
+                            series:   'linear-gradient(135deg,#ef4444 0%,#b91c1c 100%)',
+                            long:     'linear-gradient(135deg,#a78bfa 0%,#6d28d9 100%)',
+                            race:     'linear-gradient(135deg,#e879f9 0%,#a21caf 100%)',
+                            strength: 'linear-gradient(135deg,#fbbf24 0%,#c4881e 100%)',
+                            test:     'linear-gradient(135deg,#22d3ee 0%,#0891b2 100%)'
+                        };
+                        const _prim = _r.sessions.find(s => !(s.isStrength || s.type === 'strength')) || _r.sessions[0];
+                        const _tKey = (_prim && (_prim.isStrength || _prim.type === 'strength')) ? 'strength' : (_prim && _prim.type) || 'easy';
+                        _dcVars = ';--dc-tc:' + (_DC_TC[_tKey] || '#94a3b8') + ';--dc-tg:' + (_DC_TG[_tKey] || 'linear-gradient(135deg,#94a3b8 0%,#475569 100%)');
+                    }
                     _cardHost.innerHTML =
-                        '<div class="mr-pc-daycard '+_stateCls+(_isRest?'':' mr-pc-daycard-press')+'" role="'+(_isRest?'group':'button')+'" style="position:relative;">'
+                        '<div class="mr-pc-daycard '+_stateCls+(_isRest?'':' mr-pc-daycard-press')+'" role="'+(_isRest?'group':'button')+'" style="position:relative'+_dcVars+';">'
                       +   _infoBadgeHtml
                       +   _inner
                       + '</div>';
