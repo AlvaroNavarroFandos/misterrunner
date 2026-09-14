@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p327'; // [v2.30.1-p327] Últimos retoques 14-sep-2026. (1) Card Readiness Home rediseñada: eliminada la accent-bar vertical del glow izquierdo (que estaba desde p300) + eliminado el monigote runner PNG del bucket readiness-icons (recuperado en p316) + añadido icono rayo ⚡ SVG inline a la izquierda (opción A aprobada por Álvaro entre 8 propuestas: rayo, corazón, diana, llama, estrella, sol, curva, check). Nuevo layout: [icono 26px] [Readiness] [SCORE +6px margin-left] [sparkline 7d] [pill]. Icono hereda color del estado vía currentColor + drop-shadow con --rdn-accent-glow para el glow coherente. rw gap 8→10. Confirmado a Álvaro que el sparkline crece día a día automáticamente vía _rdnMaybeSnapshot (7am entresemana / 8am findes) hasta rotar a los 7 días. (2) Minicards unificadas: Runner → Mi año detail (sheet #mya-day-detail) alineado con biblioteca + home-last-activity — placeholder 16→20, título 10→14 letter-spacing 1→-.1 SIN uppercase, km 25→27, unit 11→13, stats 12→14, fecha 9→11. (3) "Sin pill del color que toca" · extendida la regla que quitaba el fondo/padding/border del .mr-type-pill.compact (antes solo en #activities-list) a #home-last-activity y #mya-day-detail. Álvaro había pedido este look en p318-p319 pero solo se aplicó los tamaños de font, no los colores en texto plano. Ahora las tres minicards (biblio + home + Mi año) usan el mismo patrón "sin pill del color que toca" con colores por tipo (easy/recovery/series/long/race/test) en variantes light/dark. REVERSIÓN parcial del auto-rango de p325. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p328'; // [v2.30.1-p328] Card VO2max Runner rediseñada premium sin aumentar altura (opción F aprobada por Álvaro entre 6: A cuadrado 60 num dentro, B círculo, C ring percentil Apple-Health, D número mega 44 sin icono, E icono con sparkline tendencia, F icono ancho con num mega + ml/kg/min dentro). Antes: icono 46×46 con SVG pulmón/aire + número 26px al lado + label VO2 MAX 11px + categoría 11px inline con unidad. Ahora: icono min-width:72 height:60 con gradient del color del estado (más ancho para acomodar 2 dígitos, se expande a 3+ vía padding 0/12), dentro número 30px 900 blanco tabular-nums + `ml/kg/min` 8px letter-spacing:.6 justo debajo. En el centro: label VO2 MAX 19px 900 uppercase color base + categoría (Superior/Excelente/Élite…) 19px 900 color del estado — Álvaro pidió "VO2max igual de grande que Superior". Padding 16/16/14 → 14/16/12 y mb 14 → 10 para compensar el icono más grande y mantener altura ~104px (era ~100px). lungIcon var eliminada (ya no se usa). Efecto press bounce se conserva vía clase mr-vo2-ic. [v2.30.1-p327] Card Readiness Home rediseñada + minicards unificadas (biblio+home+Mi año). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -60336,25 +60336,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             return '<div style="flex:1;height:8px;background:' + z.color + ';border-radius:2px;opacity:' + opacity + ';' + glow + '"></div>';
         }).join('');
 
-        // Icono pulmón/aire blanco sobre fondo de color categoría
-        const lungIcon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--det-tw)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
+        // [v2.30.1-p328] Eliminado lungIcon (SVG pulmón/aire blanco).
+        // Ahora el icono contiene el número VO2max directamente (opción F).
+        // La var --det-tw sigue siendo blanco (#fff) para el número dentro del icono.
 
         card.innerHTML =
-            '<div style="padding:16px 16px 14px;">' +
-                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">' +
-                    // Icono coloreado según categoría con glow suave
-                    '<div class="mr-vo2-ic" style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,' + cat.color + ',' + cat.color + 'cc);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 16px ' + cat.color + '55;">' +
-                        lungIcon +
+            '<div style="padding:14px 16px 12px;">' +
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">' +
+                    // [v2.30.1-p328] Icono cuadrado ancho (opción F aprobada por Álvaro).
+                    // Contiene número VO2max mega (30px, blanco, tabular-nums) + ml/kg/min
+                    // debajo (8px). min-width:72 + padding 0 12 permite que el ancho se
+                    // ajuste al contenido si el número es de 2 dígitos. inset shadow suave
+                    // arriba para el brillo premium; box-shadow del color para el glow.
+                    '<div class="mr-vo2-ic" style="min-width:72px;height:60px;padding:0 12px;border-radius:14px;background:linear-gradient(135deg,' + cat.color + ',' + cat.color + 'cc);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 6px 20px ' + cat.color + '66, inset 0 1px 0 rgba(255,255,255,.18);">' +
+                        '<span style="font-size:30px;font-weight:900;color:#fff;line-height:1;letter-spacing:-1px;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px rgba(0,0,0,.28);">' + vo2 + '</span>' +
+                        '<span style="font-size:8px;font-weight:800;color:rgba(255,255,255,.9);letter-spacing:.6px;margin-top:3px;">ml/kg/min</span>' +
                     '</div>' +
-                    // Centro
+                    // Centro: label VO2 MAX + categoría (ambos 19px 900, uno en color base
+                    // y otro en color de estado). Álvaro: "VO2max igual de grande que Superior".
                     '<div style="flex:1;min-width:0;">' +
-                        // [v5.3] Solo "VO2 MAX" como label (quitado "Capacidad aeróbica")
-                        '<div style="display:flex;align-items:center;gap:7px;"><div style="font-size:11px;color:var(--tw);text-transform:uppercase;letter-spacing:.8px;font-weight:800;">VO2 MAX</div>' + corosChip + '</div>' +
-                        '<div style="display:flex;align-items:baseline;gap:5px;margin-top:3px;flex-wrap:wrap;">' +
-                            '<span style="font-size:26px;font-weight:900;color:' + cat.color + ';line-height:1;letter-spacing:-.5px;">' + vo2 + '</span>' +
-                            '<span style="font-size:10px;color:var(--tm);">ml/kg/min</span>' +
-                            '<span style="font-size:11px;color:' + cat.color + ';font-weight:800;margin-left:2px;">' + cat.label + '</span>' +
+                        '<div style="display:flex;align-items:center;gap:7px;">' +
+                            '<div style="font-size:19px;color:var(--tw);text-transform:uppercase;letter-spacing:-.3px;font-weight:900;line-height:1;">VO2 MAX</div>' + corosChip +
                         '</div>' +
+                        '<div style="font-size:19px;color:' + cat.color + ';font-weight:900;letter-spacing:-.3px;line-height:1;margin-top:5px;">' + cat.label + '</div>' +
                     '</div>' +
                     // Derecha: Top% + cohorte (solo si hay edad)
                     cohortBlock +
