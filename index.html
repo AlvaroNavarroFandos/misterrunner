@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p326'; // [v2.30.1-p326] REVERSIÓN parcial del auto-rango de p325. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p327'; // [v2.30.1-p327] Últimos retoques 14-sep-2026. (1) Card Readiness Home rediseñada: eliminada la accent-bar vertical del glow izquierdo (que estaba desde p300) + eliminado el monigote runner PNG del bucket readiness-icons (recuperado en p316) + añadido icono rayo ⚡ SVG inline a la izquierda (opción A aprobada por Álvaro entre 8 propuestas: rayo, corazón, diana, llama, estrella, sol, curva, check). Nuevo layout: [icono 26px] [Readiness] [SCORE +6px margin-left] [sparkline 7d] [pill]. Icono hereda color del estado vía currentColor + drop-shadow con --rdn-accent-glow para el glow coherente. rw gap 8→10. Confirmado a Álvaro que el sparkline crece día a día automáticamente vía _rdnMaybeSnapshot (7am entresemana / 8am findes) hasta rotar a los 7 días. (2) Minicards unificadas: Runner → Mi año detail (sheet #mya-day-detail) alineado con biblioteca + home-last-activity — placeholder 16→20, título 10→14 letter-spacing 1→-.1 SIN uppercase, km 25→27, unit 11→13, stats 12→14, fecha 9→11. (3) "Sin pill del color que toca" · extendida la regla que quitaba el fondo/padding/border del .mr-type-pill.compact (antes solo en #activities-list) a #home-last-activity y #mya-day-detail. Álvaro había pedido este look en p318-p319 pero solo se aplicó los tamaños de font, no los colores en texto plano. Ahora las tres minicards (biblio + home + Mi año) usan el mismo patrón "sin pill del color que toca" con colores por tipo (easy/recovery/series/long/race/test) en variantes light/dark. REVERSIÓN parcial del auto-rango de p325. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -481,7 +481,9 @@
     #activities-list .mr-lib-title,
     #activities-list .mr-lib-title .mr-type-pill.compact,
     #home-last-activity .mr-lib-title,
-    #home-last-activity .mr-lib-title .mr-type-pill.compact {
+    #home-last-activity .mr-lib-title .mr-type-pill.compact,
+    #mya-day-detail .mr-lib-title,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact {
         letter-spacing: 0 !important;
         /* [v2.30.1-p318] Álvaro: el título sigue saliendo en mayúsculas porque
            .mr-type-pill.compact global (L7594) tiene text-transform:uppercase.
@@ -489,10 +491,20 @@
            con !important porque la clase compact se aplica al pill que envuelve
            el nombre y su text-transform gana la especificidad sin el override.
            [v2.30.1-p319] Extendido al home-last-activity por coherencia entre
-           pestañas (Álvaro pidió mismo look que biblioteca). */
+           pestañas (Álvaro pidió mismo look que biblioteca).
+           [v2.30.1-p327] Extendido a #mya-day-detail (Runner → Mi año) por la
+           misma razón. Ahora las tres minicards (biblio + home + Mi año) usan
+           las mismas reglas de texto. */
         text-transform: none !important;
     }
-    #activities-list .mr-lib-title .mr-type-pill.compact {
+    /* [v2.30.1-p327] Sin pill del color · texto plano coloreado.
+       Antes solo se aplicaba a #activities-list — home-last-activity y Mi año
+       seguían con la caja rectangular del pill compact global. Álvaro pidió
+       "sin pill del color que toca" para las tres minicards, así que se
+       extiende el override a home-last-activity y a #mya-day-detail. */
+    #activities-list .mr-lib-title .mr-type-pill.compact,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact {
         background: transparent !important;
         padding: 0 !important;
         border: none !important;
@@ -507,18 +519,45 @@
         text-shadow: none !important;
         box-shadow: none !important;
     }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-easy     { color: #16a34a !important; }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-recovery { color: #2563eb !important; }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-series   { color: #dc2626 !important; }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-long     { color: #7c3aed !important; }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-race     { color: #d946ef !important; }
-    #activities-list .mr-lib-title .mr-type-pill.compact.type-test     { color: #0891b2 !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-easy     { color: #4ade80 !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-recovery { color: #60a5fa !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-series   { color: #f87171 !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-long     { color: #a78bfa !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-race     { color: #f0abfc !important; }
-    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-test     { color: #22d3ee !important; }
+    /* [v2.30.1-p327] Colores por tipo · extendidos a las tres minicards.
+       Light mode = tonos vivos oscuros para fondo claro; dark mode (más abajo)
+       = tonos suaves brillantes para fondo oscuro. */
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-easy,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-easy,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-easy         { color: #16a34a !important; }
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-recovery,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-recovery,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-recovery     { color: #2563eb !important; }
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-series,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-series,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-series       { color: #dc2626 !important; }
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-long,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-long,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-long         { color: #7c3aed !important; }
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-race,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-race,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-race         { color: #d946ef !important; }
+    #activities-list .mr-lib-title .mr-type-pill.compact.type-test,
+    #home-last-activity .mr-lib-title .mr-type-pill.compact.type-test,
+    #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-test         { color: #0891b2 !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-easy,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-easy,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-easy         { color: #4ade80 !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-recovery,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-recovery,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-recovery     { color: #60a5fa !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-series,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-series,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-series       { color: #f87171 !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-long,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-long,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-long         { color: #a78bfa !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-race,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-race,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-race         { color: #f0abfc !important; }
+    body.dark-mode #activities-list .mr-lib-title .mr-type-pill.compact.type-test,
+    body.dark-mode #home-last-activity .mr-lib-title .mr-type-pill.compact.type-test,
+    body.dark-mode #mya-day-detail .mr-lib-title .mr-type-pill.compact.type-test         { color: #22d3ee !important; }
     #view-runner .mr-rh-wrap,
     #view-runner .mr-coros-card,
     #view-runner .mr-mausoleo-section,
@@ -637,20 +676,34 @@
            exacto. gap 12→10 para dar más aire lateral y evitar que la pill se
            salga por la derecha en móviles estrechos (iPhone SE).
            [v2.30.1-p320] gap 10→8 · con el sparkline añadido entre monigote y
-           pill se necesita más aire para que todo quepa en móviles estrechos. */
+           pill se necesita más aire para que todo quepa en móviles estrechos.
+           [v2.30.1-p327] Eliminados accent-bar y monigote · sustituidos por
+           icono rayo a la izquierda (opción A aprobada por Álvaro). gap 8→10
+           al quitar el monigote hay aire de sobra. Nuevo layout:
+           [icono ⚡ 26px] [Readiness] [SCORE +6px margin-left] [sparkline] [pill] */
         padding: 12px 14px;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
     }
-    .mr-rdn .accent-bar {
-        align-self: stretch;
-        width: 3px;
-        border-radius: 2px;
-        background: linear-gradient(180deg, var(--rdn-accent, #94a3b8), var(--rdn-accent-hi, #cbd5e1));
-        box-shadow: 0 0 8px var(--rdn-accent, #94a3b8);
-        opacity: .9;
+    /* [v2.30.1-p327] Icono rayo a la izquierda · sustituye a la accent-bar +
+       monigote de p320-p326. 26x26 con color del estado (var --rdn-accent)
+       y drop-shadow con --rdn-accent-glow para el glow coherente con Readiness
+       y con el número. currentColor hereda al SVG interior. */
+    .mr-rdn .rdn-icon-lead {
+        width: 26px;
+        height: 26px;
         flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--rdn-accent, var(--tw));
+        filter: drop-shadow(0 0 6px var(--rdn-accent-glow, transparent));
+    }
+    .mr-rdn .rdn-icon-lead svg {
+        width: 100%;
+        height: 100%;
+        display: block;
     }
     .mr-rdn .rdn-title-big {
         font-size: 20px;
@@ -664,7 +717,9 @@
     }
     .mr-rdn .pct-num {
         /* [v2.30.1-p319] 28→26 · Álvaro: los números se ven muy grandes.
-           Ajuste coherente para los 4 números principales de Home. */
+           Ajuste coherente para los 4 números principales de Home.
+           [v2.30.1-p327] margin-left:6px · al quitar la accent-bar el número
+           queda demasiado pegado a "Readiness". +6px lo separa un pelín. */
         font-size: 26px;
         font-weight: 900;
         color: var(--rdn-accent, var(--tw));
@@ -674,6 +729,7 @@
         text-shadow: 0 0 12px var(--rdn-accent-glow, transparent);
         flex-shrink: 0;
         font-family: var(--f);
+        margin-left: 6px;
     }
     .mr-rdn .pill {
         /* [v2.30.1-p314] Pill más grande al liberar espacio de la barra:
@@ -728,27 +784,12 @@
         box-shadow: none;
         opacity: 1;
     }
-    /* [v2.30.1-p316] Monigote runner recuperado tras petición Álvaro.
-       [v2.30.1-p317] Álvaro: no es el SVG genérico, sino los PNGs originales
-       del bucket readiness-icons (muerto/fatiga/regular/listo/optimo). Cambio
-       de SVG a <img> del bucket. Se preserva la sombra del icono con la var
-       --icoshadow ya usada en otros iconos de la app. 34px para clavar altura
-       total 58px (= Recovery) con padding vertical 12+12. */
-    .mr-rdn .rdn-figure {
-        width: 34px;
-        height: 34px;
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .mr-rdn .rdn-figure img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        display: block;
-        filter: var(--icoshadow, drop-shadow(0 2px 3px rgba(0,0,0,.35)));
-    }
+    /* [v2.30.1-p327] Eliminado el monigote runner .rdn-figure (PNGs del
+       bucket readiness-icons: muerto/fatiga/regular/listo/optimo) tras petición
+       Álvaro. Sustituido por el icono rayo a la izquierda (.rdn-icon-lead).
+       El JS de _paintReadiness ya no renderiza figHtml — el bucket
+       readiness-icons se mantiene por si en el futuro se recupera el monigote
+       en otra ubicación (sheet detalle, etc). */
 
     /* ═══════════════════════════════════════════════════════════════════
        v2.30.1-p83 · Card RECOVERY nueva · separada · batería horizontal
@@ -58717,26 +58758,29 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     '<div style="width:100%;display:flex;justify-content:center;">' + _outfit + '</div>' +
                   '</div>' +
                   '<div class="mr-lib-data" style="flex:1;padding:0 12px 0 10px;display:flex;flex-direction:column;justify-content:center;gap:0;min-width:0;">' +
-                    /* [p129] Fila 1: placeholder relative 16px + título absolute bottom:0 (crece hacia arriba a 2 líneas sin empujar el resto) */
-                    '<div style="position:relative;height:16px;">' +
-                      '<div class="mr-lib-title" style="position:absolute;bottom:0;left:0;right:0;font-size:10px;font-weight:800;line-height:1.15;letter-spacing:1px;text-transform:uppercase;opacity:' + ((act && act.type) ? '1' : '.6') + ';font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">' + ((typeof window._mrTypePillHtml === 'function' && act && act.type) ? window._mrTypePillHtml(act.name || '—', act.type, 'compact') : (act.name || '—')) + '</div>' +
+                    /* [p129] Fila 1: placeholder relative + título absolute bottom:0 (crece hacia arriba a 2 líneas sin empujar el resto).
+                       [v2.30.1-p327] Unificado con biblioteca + home-last-activity (p318-p319): título mayúsculas y minúsculas 14px letter-spacing:-.1, placeholder 16→20. La clase global .mr-lib-title override text-transform:none ya aplica gracias a la regla combinada #home-last-activity/#activities-list; para Mi año inline text-transform:none baja al span interno .mr-type-pill.compact. */
+                    '<div style="position:relative;height:20px;">' +
+                      '<div class="mr-lib-title" style="position:absolute;bottom:0;left:0;right:0;font-size:14px;font-weight:800;line-height:1.15;letter-spacing:-.1px;text-transform:none;opacity:' + ((act && act.type) ? '1' : '.6') + ';font-family:var(--f);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">' + ((typeof window._mrTypePillHtml === 'function' && act && act.type) ? window._mrTypePillHtml(act.name || '—', act.type, 'compact') : (act.name || '—')) + '</div>' +
                     '</div>' +
-                    /* [p128] Fila 2 hero km + badge PR a la derecha */
+                    /* [p128] Fila 2 hero km + badge PR a la derecha [v2.30.1-p327] km 25→27, unit 11→13 (biblioteca) */
                     '<div style="display:flex;align-items:center;gap:6px;margin-top:2px;">' +
                       '<div style="display:flex;align-items:baseline;gap:2px;">' +
-                        '<span class="mr-lib-hero-km" style="font-size:25px;font-weight:800;letter-spacing:-1.1px;line-height:1;font-family:var(--f);font-variant-numeric:tabular-nums;">' + _kmTxt + '</span>' +
-                        '<span class="mr-lib-hero-km-unit" style="font-size:11px;font-weight:600;margin-left:3px;font-family:var(--f);">km</span>' +
+                        '<span class="mr-lib-hero-km" style="font-size:27px;font-weight:800;letter-spacing:-1.1px;line-height:1;font-family:var(--f);font-variant-numeric:tabular-nums;">' + _kmTxt + '</span>' +
+                        '<span class="mr-lib-hero-km-unit" style="font-size:13px;font-weight:600;margin-left:3px;font-family:var(--f);">km</span>' +
                       '</div>' +
                       _prBadge +
                     '</div>' +
+                    /* [v2.30.1-p327] stats 12→14 (biblioteca) */
                     '<div style="display:flex;align-items:center;gap:8px;margin-top:-3px;">' +
-                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _dur + '</span>' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:14px;font-family:var(--f);line-height:1;">' + _dur + '</span>' +
                       '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>' +
-                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _pace + '</span>' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:14px;font-family:var(--f);line-height:1;">' + _pace + '</span>' +
                       '<span class="mr-lib-stat-sep" style="font-family:var(--f);opacity:.4;">·</span>' +
-                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:12px;font-family:var(--f);line-height:1;">' + _hrTxt + '</span>' +
+                      '<span class="mr-lib-stat-val" style="font-weight:700;letter-spacing:-.2px;font-size:14px;font-family:var(--f);line-height:1;">' + _hrTxt + '</span>' +
                     '</div>' +
-                    '<div class="mr-lib-date-inline" style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;font-family:var(--f);line-height:1;margin-top:-1px;">' + df + '</div>' +
+                    /* [v2.30.1-p327] fecha 9→11 (biblioteca) */
+                    '<div class="mr-lib-date-inline" style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;font-family:var(--f);line-height:1;margin-top:-1px;">' + df + '</div>' +
                   '</div>' +
                   '<div class="mr-lib-mapcol" style="position:relative;flex:0 0 33%;overflow:hidden;">' +
                     '<canvas id="' + cId + '" width="248" height="290" style="width:100%;height:100%;display:block;"></canvas>' +
@@ -81248,16 +81292,22 @@ window.addEventListener('DOMContentLoaded', function() {
             // (spacer) para que la pill quede a la derecha.
             if (!sparkHtml) sparkHtml = '<div style="flex:1;min-width:8px;"></div>';
             var scoreTxt = (score == null) ? '—' : score;
-            var iconFile = (obj.zone && obj.zone.icon) ? obj.zone.icon : null;
-            var figHtml = iconFile
-                ? '<div class="rdn-figure"><img src="' + _RDN_ICON_BASE + iconFile + '" alt=""></div>'
-                : '<div class="rdn-figure"></div>';
+            // [v2.30.1-p327] Icono rayo (opción A aprobada por Álvaro)
+            // sustituye a la accent-bar y al monigote de p320-p326.
+            // SVG inline en lugar de <img> del bucket → sin latencia de red,
+            // hereda el color del estado vía currentColor, aplica el mismo
+            // glow que el número y el título vía filter drop-shadow.
+            // Path oficial Lucide-style "zap": bolt diagonal cerrado y filled.
+            var iconRayoHtml = '<div class="rdn-icon-lead">' +
+                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+                  '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor" stroke="none"/>' +
+                '</svg>' +
+              '</div>';
             card.innerHTML =
                 '<div class="rw" style="--rdn-accent:' + topA + ';--rdn-accent-hi:' + topB + ';--rdn-accent-glow:' + topAGlow + ';--rdn-tint:' + topATint + ';--rdn-bd:' + topABd + ';">' +
-                  '<div class="accent-bar"></div>' +
+                  iconRayoHtml +
                   '<div class="rdn-title-big">Readiness</div>' +
                   '<div class="pct-num">' + scoreTxt + '</div>' +
-                  figHtml +
                   sparkHtml +
                   '<div class="pill" style="background:' + pillBg + ';color:' + pillTx + ';">' + label + '</div>' +
                 '</div>';
