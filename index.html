@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p338'; // [v2.30.1-p338] Timeline lateral discreto en pestaña Plan · opción C aprobada por Álvaro tras 3 rondas de preview (preview-timeline con 7 variantes A-G, preview-timeline-c con la C mejorada, preview-timeline-c2 con cuadrados centrados + cruz roja + salto). Diseño final: (1) Línea PUNTEADA de fondo 2px muy sutil (`repeating-linear-gradient` con `color-mix(--tw 26%)`) centrada al pixel en `left:10px` del `.mr-plan-days`. Math exacto: line `left:9 width:2` → centro=10, cuadrado normal 10×10 `left:-19` → centro=10, cuadrado HOY 16×16 `left:-22` → centro=10. (2) Línea SÓLIDA verde de PROGRESO encima con SALTO en los skipped: el gradient se construye en `window._mrPlanTLCompute(daysCard)` iterando `.mr-tl-item` con `offsetTop/offsetHeight` reales, insertando un hueco de ±9px alrededor del centro de cada `.mr-tl-skipped` para que la línea verde "salte" sobre el cuadradito con cruz roja. Al llegar a `.mr-tl-today` cierra el verde en el centro exacto del cuadrado gordo y termina. (3) Cuadraditos por día (border-radius:2px) con 4 estados: futuro vacío con borde sutil / .mr-tl-done verde relleno con glow / .mr-tl-skipped CRUZ ROJA GRUESA (Álvaro: "más fuerte para que se vea mejor") con grosor 32-68% (aumentado desde 38-62% de la preview inicial) + rojo `#dc2626` + border rojo con glow rojo, sobre fondo gris translúcido / .mr-tl-today cuadrado gordo 16×16 con doble halo (0 0 0 2px verde + 12px glow + 22px halo suave). (4) Activación via clase `.mr-tl-active` en el `.mr-plan-days` (añade `padding-left:24px` + anula margin-left de todos los hijos). Los items (outerWrap + restRow) llevan clase `.mr-tl-item` + estado. Prioridad de estado: today > skipped > done > futuro. Cálculo del gradient en doble `requestAnimationFrame` tras `container.appendChild(daysCard)` para esperar al layout pintado (offsetTop=0 antes del layout). Colores por modo: `#22c55e` dark / `#16a34a` light. Backup del baseline p337 guardado en `/home/claude/index.p337-backup.html` + `/mnt/user-data/outputs/index.p337-backup.html` por si hay que revertir. Álvaro: "En la pestaña plan tal y como está sin cambiar casi nada podría hacerse un timeline discreto en la parte de la izquierda". [v2.30.1-p337] Minicards C5 + señales activas quitadas. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p339'; // [v2.30.1-p339] 🚨 HOTFIX del timeline lateral p338. Álvaro subió screenshot ("no ha salido bien"): la línea verde aparecía muy corta arriba a la izquierda y los cuadraditos NO se veían. Causa: el `outerWrap` de cada sesión tiene `overflow:hidden` en su style inline (para contener el swipe-delete + border-radius del contenido). Al añadirle `.mr-tl-item` directamente, sus pseudo-elementos `::before` del cuadradito (posicionados con `left:-19px` FUERA del box) quedaban CORTADOS por ese overflow. Fix: envolver el outerWrap en un `tlWrap` externo `div` sin overflow:hidden que lleva las clases `.mr-tl-item` + estado + el `margin:10px 4px`/`3px 4px`. El outerWrap pasa a ser hijo del tlWrap manteniendo TODO su style existente (background, border, box-shadow, z-index) menos el margin (que se mueve al tlWrap). Los restRow no tenían overflow:hidden y siguen funcionando sin wrapper. En `renderPlanWeek`: (a) quitado `margin:10px 4px`/`3px 4px` del `outerWrap.style.cssText`, (b) quitado el `outerWrap.classList.add('mr-tl-item')` + estado, (c) al final del bucle, se crea `tlWrap` que envuelve al outerWrap con las clases y el margin, y se hace `daysCard.appendChild(tlWrap)` en vez del outerWrap directamente. [v2.30.1-p338] Timeline lateral opción C aprobado. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -54806,9 +54806,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 //   opacidad .55 + shadow multicapa intensa del mismo color +
                 //   aire lateral 4px para "salir" del contenedor.
                 if (_isToday) {
-                    outerWrap.style.cssText = `position:relative;overflow:hidden;margin:10px 4px;border-radius:10px;background:var(--card);border:2px solid rgba(${_typeRGB},.55);box-shadow:0 6px 20px rgba(${_typeRGB},.28), 0 2px 6px rgba(${_typeRGB},.20), inset 0 0 0 1px rgba(${_typeRGB},.15);z-index:3;`;
+                    outerWrap.style.cssText = `position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:2px solid rgba(${_typeRGB},.55);box-shadow:0 6px 20px rgba(${_typeRGB},.28), 0 2px 6px rgba(${_typeRGB},.20), inset 0 0 0 1px rgba(${_typeRGB},.15);z-index:3;`;
                 } else {
-                    outerWrap.style.cssText = `position:relative;overflow:hidden;margin:3px 4px;border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);`;
+                    outerWrap.style.cssText = `position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);`;
                 }
                 outerWrap.dataset.sessDate = sess.dateStr;
                 outerWrap.dataset.weekIdx = weekIdx;
@@ -54832,15 +54832,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _isStrengthDone = _isStrengthCard && typeof window._mrIsStrengthDone === 'function'
                     ? window._mrIsStrengthDone(sess.dateStr) : false;
                 const _isCompleted = matched || _isStrengthDone;
-                // [v2.30.1-p338] Marcado para el timeline lateral. Prioridad:
-                //   today > skipped > done > (futuro por defecto = sin clase).
-                // Un día TODAY siempre gana visualmente (cuadrado gordo verde)
-                // aunque también esté completado o saltado — así el usuario
-                // sabe en qué día está sin ambigüedad.
-                outerWrap.classList.add('mr-tl-item');
-                if (_isToday) outerWrap.classList.add('mr-tl-today');
-                else if (_isSkipped) outerWrap.classList.add('mr-tl-skipped');
-                else if (_isCompleted) outerWrap.classList.add('mr-tl-done');
+                // [v2.30.1-p338/p339] Las clases mr-tl-item + estado (today/
+                // skipped/done) NO se ponen al outerWrap porque su
+                // `overflow:hidden` cortaría el cuadradito (::before con
+                // left:-19px, fuera del box). Se aplican al `tlWrap` externo
+                // creado en el appendChild final (sin overflow:hidden).
                 const _cardBg = _isToday
                     ? `linear-gradient(90deg, rgba(${_typeRGB},.15) 0%, rgba(${_typeRGB},.04) 55%, transparent 100%)`
                     : (_isCompleted ? 'rgba(34,197,94,.06)' : (_typeTint || 'var(--card2)'));
@@ -55364,7 +55360,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
 
                 outerWrap.appendChild(card);
-                daysCard.appendChild(outerWrap);
+                // [v2.30.1-p339] Envolver outerWrap en un tlWrap externo que
+                // lleva las clases mr-tl-* + el margin. tlWrap NO tiene
+                // overflow:hidden (a diferencia del outerWrap) → los pseudo-
+                // elementos del cuadradito con `left:-19px` NO se cortan.
+                // Prioridad estado: today > skipped > done > (futuro sin clase).
+                const tlWrap = document.createElement('div');
+                tlWrap.classList.add('mr-tl-item');
+                if (_isToday)          tlWrap.classList.add('mr-tl-today');
+                else if (_isSkipped)   tlWrap.classList.add('mr-tl-skipped');
+                else if (_isCompleted) tlWrap.classList.add('mr-tl-done');
+                tlWrap.style.cssText = 'position:relative;' + (_isToday ? 'margin:10px 4px;' : 'margin:3px 4px;');
+                tlWrap.appendChild(outerWrap);
+                daysCard.appendChild(tlWrap);
             }); // end daySessions.forEach
         }); // end ORDERED_DAYS.forEach
 
