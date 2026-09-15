@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p342'; // [v2.30.1-p342] Rediseño premium vista MES del Plan · Álvaro: "En la pestaña plan, la vista del mes la quiero un poco más premium. Me gusta como estan los dias del calendario el texto y con puntito los completados pero cabeceras meses y tal habria que darle una vuelta y a la semanas que salen al final tambien". Preview con 4 opciones para cabecera + 4 para semanas por carga → Álvaro: "Calendario Mejor un encabezado dorado premium con el mes en texto blanco, numero de km completados/km totales previstos y sesionescompletadas/sesiones y Semanas D pero con barra de B". Preview v2 con mes 14→19px y stats compactadas en una fila (sin labels debajo) → Álvaro: "aprobadisimo". (1) CABECERA DE MES DORADA PREMIUM (`renderPlanMonth` línea 53371+): sustituye el texto plano crimson 12px por una card gradient 135° (`#C9A84C→#a17e2a→#8B6914` a 3 tonos), border-radius 10, margin 14/6/8, padding 9/14/10. Doble box-shadow (glow dorado exterior + inset highlight arriba + inset sombra abajo) + border `rgba(232,199,106,.5)` + overlay pseudo-gradient de brillo superior 14%. Fila superior: mes 19px 900 blanco uppercase letter-spacing 1.4 con doble text-shadow para contraste; año 11px 800 blanco 75% translúcido. Fila inferior compacta: `X/Y km · X/Y sesiones` 11px 900 tabular-nums · el número completado en blanco 100% y `/total` en blanco 65% + unidad 9px en blanco 80%. (2) CÁLCULO KM/SES DEL MES: iteración por `mo.days`, `_mTotSes++` por cada `sessMap[ds2]`, `_mTotKm += sess.dist||0` (excluye strength implícitamente por dist=0). Matched detectado igual que las celdas: `activities.find(a => a.dateStr===ds2 && a.type===sess.type)` → `_mDoneSes++` y `_mDoneKm += actMatch.distKm || sess.dist`. Ambos km redondeados con Math.round. (3) SEMANAS POR CARGA · VARIANTE D+B (línea 53433+): sustituye la row plana (bg bsoft, radius 4, barra 8px+1px radius, pill descarga/normal/carga alta) por una card premium con: (a) borde derecho→izq redondeado 10 sobre var(--card2) con border var(--border), padding 10/12/10/16 (16px left para hueco de la barra); (b) BARRA METÁLICA LATERAL 5px div absoluto con `linear-gradient(90deg, dark→base 40%→light 70%→base 100%)` (mismo patrón joyería reflejo que `.mr-lib-card-inner::before` p337 y `.mr-plan-typebar` p340) + doble inset (highlight top + shadow bottom) + glow externo color-mix 50%; (c) INFO IZQ: fila `Sem N` 11px 900 var(--tw) + fecha 10px 700 var(--tm), barra progreso interior 5px altura sobre bg color-mix 12% con fill del color + glow color-mix 55%; (d) RIGHT: km hero 17px 900 var(--tw) tabular-nums letter-spacing -.6 + unit km 9px 800 var(--tm), tag Descarga/Normal/Carga alta 8px 900 uppercase letter-spacing .7 del color. Helper `_JEWEL` local mapea los 3 pillColors a `{h,d}` (Descarga #60a5fa→#93c5fd/#1e40af, Normal #4ade80→#86efac/#166534, Carga alta #f87171→#fca5a5/#991b1b). (4) NUEVA CLASE CSS `.mr-plan-wkload-row` en el template runtime (línea ~44918): sombra sutil `0 2px 6px .06` en light, sombra profunda `inset highlight + 0 4px 12px .30` en dark (mismo patrón que el resto de cards premium tras p332). Gap entre rows 5→6px. Zero cambios de lógica ni de las celdas de días del calendario (Álvaro las quiere igual, con puntito verde de completados). [v2.30.1-p341] 3 ajustes tras screenshot de aprobación del rediseño Plan p340. Álvaro: "Mola! Vamos a compactar un poquito en altura las cards de cada día para que quede todo un poco más compacto. En la semana de descarga las barras verdes de los completados en la cabecera no se ven casi nada. En Home en el widget de plan activo vamos a poner al bloque del entreno del día seleccionado la barra igual que en plan y en biblioteca por coherencia que creo que la que hay es plana, así perfecto." (1) COMPACTAR ALTURA CARDS DEL PLAN · padding vertical del `.mr-day-header` de `9px 10px 9px 14px` → `7px 10px 7px 14px` (4px menos por card, ~28px menos en la semana). Compactación sutil pero notable en la vista completa. (2) DOTS VERDES DONE EN CABECERA MÁS BRILLANTES · el verde base `#22c55e` se difuminaba sobre el bg azul saturado de la cabecera (baja legibilidad especialmente en semanas con muchos completados). Cambio a `#4ade80` (verde-400 más claro) + glow subido de `0 0 4px rgba(34,197,94,.55)` a `0 0 6px rgba(74,222,128,.85)` (+150% intensidad, +50% radio) + border ring blanco sutil `0 0 0 1px rgba(255,255,255,.25)` para contraste extra. Ahora los dots done resaltan claramente sobre el bg azul. (3) BARRA METÁLICA EN EL BLOQUE DEL DÍA SELECCIONADO DE HOME · el `.mr-pc-daycard::before` (línea ~6693) tenía `background: var(--dc-tg)` que es un gradient 135° "plano" (mismo look que la pill). Ahora reutiliza el look reflejo-joyería de biblioteca/Plan/Mi año SIN necesitar nuevas CSS vars: gradient horizontal 3-tonos generado con `color-mix` sobre `--dc-tc` (oscuro = color-mix con black 40%, base = --dc-tc, claro = color-mix con white 45%) + inset highlight arriba `.35` + inset sombra abajo `.35` + glow externo. Ancho 4→5px (coherente con las otras 3 zonas) y padding-left del daycard de 18→19 (14 + 5). Coherencia visual total ahora entre plan, biblioteca, home last activity, Mi año y widget carrusel Home. [v2.30.1-p340] Rediseño Plan (barra tipo + progreso semanal cabecera). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p343'; // [v2.30.1-p343] Celdas premium del calendario mes · Álvaro: "Genial pero dame preview tambien de los dias del mes mas premium sin cambiar las pills de colores de cada tipo de entreno". Preview con 4 opciones (A actual · B glass sutil · C card metálica · D hyper premium) manteniendo intacta la pill de color del tipo abajo → Álvaro: "C". (1) NUEVA CLASE `.mr-plan-mday` en el template runtime (línea ~44928): background gradient vertical `linear-gradient(180deg, var(--card2) 0%, var(--bsoft) 100%)` en light (efecto card metálica con profundidad de material) / `linear-gradient(180deg, #22252c 0%, #1a1d24 100%)` en dark. Border 1px con var(--border) light / rgba(255,255,255,.12) dark. Border-radius 8→10. Doble inset shadow (highlight arriba `rgba(255,255,255,.7)` + sombra abajo sutil `rgba(0,0,0,.06)` + drop-shadow micro `0 1px 2px .04`) en light, en dark equivalente adaptado con inset highlight `.08` + inset shadow `.35` + drop `.35`. Overflow hidden y position relative se mantienen (necesarios para pill del tipo abajo y dot absolute). Aspect-ratio 1 en la clase (antes inline). (2) ESTADO TODAY (`.mr-plan-mday.today`): sustituye el crimson plano por `linear-gradient(160deg, #a02535 0%, var(--crimson) 55%, #6f1420 100%)` en light / equivalente rosado-crimson en dark con `#e56b7c 0%, #c04256 55%, #8f1a28 100%`. Border 1px `rgba(255,215,190,.35)` cálido rosado. **Cuádruple box-shadow**: inset highlight arriba `.30`, inset sombra abajo `.25`, drop shadow rojo `0 4px 12px rgba(143,26,40,.55)`, ring exterior tinted `0 0 0 1px rgba(143,26,40,.30)`. Text-shadow en número today `0 1px 2px rgba(0,0,0,.40)` para contraste. (3) NÚMERO (`.mr-plan-mday-n`): font-size 12→13, weight 700→800 (900 en today), padding 4/0/0/6 → 5/0/0/7, letter-spacing -.3→-.4, **font-variant-numeric:tabular-nums** para alineación perfecta de dígitos. (4) DOT COMPLETADO (`.mr-plan-mday-dot`): sustituye el punto verde plano `#16a34a` 6x6 por **7x7 con radial-gradient de 3 tonos** `radial-gradient(circle at 30% 30%, #86efac 0%, #22c55e 60%, #15803d 100%)` (efecto joya con reflejo superior-izq). Box-shadow amplificado: ring var(--card2) 1.5px + **glow verde exterior** `0 0 6px rgba(34,197,94,.75)`. En today: ring blanco 1.5px + glow `0 0 7px rgba(74,222,128,.90)` más brillante. (5) SIN CAMBIOS en la pill de color de tipo (Easy verde, Series rojo, Fuerza dorado, Rec azul, Long violeta, Test cian) — Álvaro las quiere idénticas: el block bottom sigue con margin auto/4/4, height 14, border-radius 4, box-shadow inset -1 + drop 1/2. (6) SIN CAMBIOS en la lógica: `matched` sigue detectando por dateStr+type match con activities, `clickHandler` sigue disparando `_mrPlanGoToWeekFromDate`, sess check sin tocar. Consistencia visual con las cards del Plan (post p332 diferenciación dark) y con el resto de la app premium tras p292-p342. [v2.30.1-p342] Rediseño premium vista MES del Plan · Álvaro: "En la pestaña plan, la vista del mes la quiero un poco más premium. Me gusta como estan los dias del calendario el texto y con puntito los completados pero cabeceras meses y tal habria que darle una vuelta y a la semanas que salen al final tambien". Preview con 4 opciones para cabecera + 4 para semanas por carga → Álvaro: "Calendario Mejor un encabezado dorado premium con el mes en texto blanco, numero de km completados/km totales previstos y sesionescompletadas/sesiones y Semanas D pero con barra de B". Preview v2 con mes 14→19px y stats compactadas en una fila (sin labels debajo) → Álvaro: "aprobadisimo". (1) CABECERA DE MES DORADA PREMIUM (`renderPlanMonth` línea 53371+): sustituye el texto plano crimson 12px por una card gradient 135° (`#C9A84C→#a17e2a→#8B6914` a 3 tonos), border-radius 10, margin 14/6/8, padding 9/14/10. Doble box-shadow (glow dorado exterior + inset highlight arriba + inset sombra abajo) + border `rgba(232,199,106,.5)` + overlay pseudo-gradient de brillo superior 14%. Fila superior: mes 19px 900 blanco uppercase letter-spacing 1.4 con doble text-shadow para contraste; año 11px 800 blanco 75% translúcido. Fila inferior compacta: `X/Y km · X/Y sesiones` 11px 900 tabular-nums · el número completado en blanco 100% y `/total` en blanco 65% + unidad 9px en blanco 80%. (2) CÁLCULO KM/SES DEL MES: iteración por `mo.days`, `_mTotSes++` por cada `sessMap[ds2]`, `_mTotKm += sess.dist||0` (excluye strength implícitamente por dist=0). Matched detectado igual que las celdas: `activities.find(a => a.dateStr===ds2 && a.type===sess.type)` → `_mDoneSes++` y `_mDoneKm += actMatch.distKm || sess.dist`. Ambos km redondeados con Math.round. (3) SEMANAS POR CARGA · VARIANTE D+B (línea 53433+): sustituye la row plana (bg bsoft, radius 4, barra 8px+1px radius, pill descarga/normal/carga alta) por una card premium con: (a) borde derecho→izq redondeado 10 sobre var(--card2) con border var(--border), padding 10/12/10/16 (16px left para hueco de la barra); (b) BARRA METÁLICA LATERAL 5px div absoluto con `linear-gradient(90deg, dark→base 40%→light 70%→base 100%)` (mismo patrón joyería reflejo que `.mr-lib-card-inner::before` p337 y `.mr-plan-typebar` p340) + doble inset (highlight top + shadow bottom) + glow externo color-mix 50%; (c) INFO IZQ: fila `Sem N` 11px 900 var(--tw) + fecha 10px 700 var(--tm), barra progreso interior 5px altura sobre bg color-mix 12% con fill del color + glow color-mix 55%; (d) RIGHT: km hero 17px 900 var(--tw) tabular-nums letter-spacing -.6 + unit km 9px 800 var(--tm), tag Descarga/Normal/Carga alta 8px 900 uppercase letter-spacing .7 del color. Helper `_JEWEL` local mapea los 3 pillColors a `{h,d}` (Descarga #60a5fa→#93c5fd/#1e40af, Normal #4ade80→#86efac/#166534, Carga alta #f87171→#fca5a5/#991b1b). (4) NUEVA CLASE CSS `.mr-plan-wkload-row` en el template runtime (línea ~44918): sombra sutil `0 2px 6px .06` en light, sombra profunda `inset highlight + 0 4px 12px .30` en dark (mismo patrón que el resto de cards premium tras p332). Gap entre rows 5→6px. Zero cambios de lógica ni de las celdas de días del calendario (Álvaro las quiere igual, con puntito verde de completados). [v2.30.1-p341] 3 ajustes tras screenshot de aprobación del rediseño Plan p340. Álvaro: "Mola! Vamos a compactar un poquito en altura las cards de cada día para que quede todo un poco más compacto. En la semana de descarga las barras verdes de los completados en la cabecera no se ven casi nada. En Home en el widget de plan activo vamos a poner al bloque del entreno del día seleccionado la barra igual que en plan y en biblioteca por coherencia que creo que la que hay es plana, así perfecto." (1) COMPACTAR ALTURA CARDS DEL PLAN · padding vertical del `.mr-day-header` de `9px 10px 9px 14px` → `7px 10px 7px 14px` (4px menos por card, ~28px menos en la semana). Compactación sutil pero notable en la vista completa. (2) DOTS VERDES DONE EN CABECERA MÁS BRILLANTES · el verde base `#22c55e` se difuminaba sobre el bg azul saturado de la cabecera (baja legibilidad especialmente en semanas con muchos completados). Cambio a `#4ade80` (verde-400 más claro) + glow subido de `0 0 4px rgba(34,197,94,.55)` a `0 0 6px rgba(74,222,128,.85)` (+150% intensidad, +50% radio) + border ring blanco sutil `0 0 0 1px rgba(255,255,255,.25)` para contraste extra. Ahora los dots done resaltan claramente sobre el bg azul. (3) BARRA METÁLICA EN EL BLOQUE DEL DÍA SELECCIONADO DE HOME · el `.mr-pc-daycard::before` (línea ~6693) tenía `background: var(--dc-tg)` que es un gradient 135° "plano" (mismo look que la pill). Ahora reutiliza el look reflejo-joyería de biblioteca/Plan/Mi año SIN necesitar nuevas CSS vars: gradient horizontal 3-tonos generado con `color-mix` sobre `--dc-tc` (oscuro = color-mix con black 40%, base = --dc-tc, claro = color-mix con white 45%) + inset highlight arriba `.35` + inset sombra abajo `.35` + glow externo. Ancho 4→5px (coherente con las otras 3 zonas) y padding-left del daycard de 18→19 (14 + 5). Coherencia visual total ahora entre plan, biblioteca, home last activity, Mi año y widget carrusel Home. [v2.30.1-p340] Rediseño Plan (barra tipo + progreso semanal cabecera). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -44927,6 +44927,80 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 inset 0 1px 0 rgba(255,255,255,.05),
                 0 4px 12px rgba(0,0,0,.30);
         }
+        /* [v2.30.1-p343] Celdas premium del calendario mes · variante C
+           (card metalica) aprobada por Alvaro. Gradient vertical card2->bsoft
+           + border pulido + doble inset shadow (highlight arriba + sombra
+           abajo). Today con gradient diagonal crimson 160deg + inset + ring
+           exterior tinted + drop shadow rojo. Dot completado como joya con
+           radial-gradient 3 tonos verdes + glow. Sin cambios a las pills
+           de color de tipo (Alvaro las quiere igual). */
+        .mr-plan-mday {
+            aspect-ratio: 1;
+            background: linear-gradient(180deg, var(--card2) 0%, var(--bsoft) 100%);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.7),
+                inset 0 -1px 0 rgba(0,0,0,.06),
+                0 1px 2px rgba(0,0,0,.04);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+        body.dark-mode .mr-plan-mday {
+            background: linear-gradient(180deg, #22252c 0%, #1a1d24 100%);
+            border-color: rgba(255,255,255,.12);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.08),
+                inset 0 -1px 0 rgba(0,0,0,.35),
+                0 1px 3px rgba(0,0,0,.35);
+        }
+        .mr-plan-mday.today {
+            background: linear-gradient(160deg, #a02535 0%, var(--crimson) 55%, #6f1420 100%);
+            color: #fff;
+            border-color: rgba(255,215,190,.35);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.30),
+                inset 0 -1px 0 rgba(0,0,0,.25),
+                0 4px 12px rgba(143,26,40,.55),
+                0 0 0 1px rgba(143,26,40,.30);
+        }
+        body.dark-mode .mr-plan-mday.today {
+            background: linear-gradient(160deg, #e56b7c 0%, #c04256 55%, #8f1a28 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.25),
+                inset 0 -1px 0 rgba(0,0,0,.30),
+                0 4px 14px rgba(226,89,106,.50);
+        }
+        .mr-plan-mday-n {
+            font-size: 13px;
+            font-weight: 800;
+            color: var(--tw);
+            padding: 5px 0 0 7px;
+            line-height: 1;
+            letter-spacing: -.4px;
+            font-variant-numeric: tabular-nums;
+        }
+        .mr-plan-mday.today .mr-plan-mday-n {
+            color: #fff;
+            font-weight: 900;
+            text-shadow: 0 1px 2px rgba(0,0,0,.40);
+        }
+        .mr-plan-mday-dot {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #86efac 0%, #22c55e 60%, #15803d 100%);
+            box-shadow: 0 0 0 1.5px var(--card2), 0 0 6px rgba(34,197,94,.75);
+            z-index: 2;
+        }
+        .mr-plan-mday.today .mr-plan-mday-dot {
+            box-shadow: 0 0 0 1.5px #fff, 0 0 7px rgba(74,222,128,.90);
+        }
         `;
         document.head.appendChild(s);
     })();
@@ -53441,21 +53515,19 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const matched = sess && activities.some(a=>a.dateStr===ds2&&a.type===sess.type);
                 const typeCol = sess ? (TYPE_COLOR_PLAN[sess.type]||'#888') : 'transparent';
                 const typeLbl = sess ? (TYPE_LABEL_SHORT[sess.type] || sess.type) : '';
-                const bgColor  = isToday?'var(--crimson)':'var(--bsoft)';
-                const textColor= isToday?'#fff':'var(--tw)';
-                const border   = isToday?'1px solid transparent':'1px solid transparent';
+                // [v2.30.1-p343] Celda premium C · clase .mr-plan-mday con
+                // gradient vertical + doble inset shadow + today con gradient
+                // diagonal. Pill del tipo (bloque abajo) sin tocar — Alvaro.
                 // Bloque tipo (nombre del tipo abajo) — solo si hay sesión
                 const blockHTML = sess
                     ? `<div style="margin:auto 4px 4px;height:14px;border-radius:4px;background:${typeCol};color:#fff;font-size:8px;font-weight:900;letter-spacing:.5px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -1px 0 rgba(0,0,0,.15),0 1px 2px rgba(0,0,0,.10);white-space:nowrap;overflow:hidden;">${typeLbl}</div>`
                     : '';
-                // Dot verde en esquina sup-der si matched (completado)
-                const matchedDot = matched
-                    ? `<div style="position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:#16a34a;box-shadow:0 0 0 1.5px ${isToday?'#fff':'var(--card2)'};z-index:2;"></div>`
-                    : '';
+                // Dot verde en esquina sup-der si matched (completado) · joya radial
+                const matchedDot = matched ? `<div class="mr-plan-mday-dot"></div>` : '';
                 const clickHandler = sess ? `onclick="if(window._mrPlanGoToWeekFromDate)_mrPlanGoToWeekFromDate('${ds2}')"` : '';
-                html2 += `<div style="aspect-ratio:1;background:${bgColor};border-radius:8px;border:${border};cursor:${sess?'pointer':'default'};display:flex;flex-direction:column;overflow:hidden;position:relative;" ${clickHandler}>
+                html2 += `<div class="mr-plan-mday${isToday?' today':''}" style="cursor:${sess?'pointer':'default'};" ${clickHandler}>
                     ${matchedDot}
-                    <div style="font-size:12px;font-weight:${isToday?900:700};color:${textColor};padding:4px 0 0 6px;line-height:1;letter-spacing:-.3px;">${dayNum}</div>
+                    <div class="mr-plan-mday-n">${dayNum}</div>
                     ${blockHTML}
                 </div>`;
                 dayNum++;
