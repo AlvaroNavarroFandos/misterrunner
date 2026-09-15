@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p341'; // [v2.30.1-p341] 3 ajustes tras screenshot de aprobación del rediseño Plan p340. Álvaro: "Mola! Vamos a compactar un poquito en altura las cards de cada día para que quede todo un poco más compacto. En la semana de descarga las barras verdes de los completados en la cabecera no se ven casi nada. En Home en el widget de plan activo vamos a poner al bloque del entreno del día seleccionado la barra igual que en plan y en biblioteca por coherencia que creo que la que hay es plana, así perfecto." (1) COMPACTAR ALTURA CARDS DEL PLAN · padding vertical del `.mr-day-header` de `9px 10px 9px 14px` → `7px 10px 7px 14px` (4px menos por card, ~28px menos en la semana). Compactación sutil pero notable en la vista completa. (2) DOTS VERDES DONE EN CABECERA MÁS BRILLANTES · el verde base `#22c55e` se difuminaba sobre el bg azul saturado de la cabecera (baja legibilidad especialmente en semanas con muchos completados). Cambio a `#4ade80` (verde-400 más claro) + glow subido de `0 0 4px rgba(34,197,94,.55)` a `0 0 6px rgba(74,222,128,.85)` (+150% intensidad, +50% radio) + border ring blanco sutil `0 0 0 1px rgba(255,255,255,.25)` para contraste extra. Ahora los dots done resaltan claramente sobre el bg azul. (3) BARRA METÁLICA EN EL BLOQUE DEL DÍA SELECCIONADO DE HOME · el `.mr-pc-daycard::before` (línea ~6693) tenía `background: var(--dc-tg)` que es un gradient 135° "plano" (mismo look que la pill). Ahora reutiliza el look reflejo-joyería de biblioteca/Plan/Mi año SIN necesitar nuevas CSS vars: gradient horizontal 3-tonos generado con `color-mix` sobre `--dc-tc` (oscuro = color-mix con black 40%, base = --dc-tc, claro = color-mix con white 45%) + inset highlight arriba `.35` + inset sombra abajo `.35` + glow externo. Ancho 4→5px (coherente con las otras 3 zonas) y padding-left del daycard de 18→19 (14 + 5). Coherencia visual total ahora entre plan, biblioteca, home last activity, Mi año y widget carrusel Home. [v2.30.1-p340] Rediseño Plan (barra tipo + progreso semanal cabecera). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p342'; // [v2.30.1-p342] Rediseño premium vista MES del Plan · Álvaro: "En la pestaña plan, la vista del mes la quiero un poco más premium. Me gusta como estan los dias del calendario el texto y con puntito los completados pero cabeceras meses y tal habria que darle una vuelta y a la semanas que salen al final tambien". Preview con 4 opciones para cabecera + 4 para semanas por carga → Álvaro: "Calendario Mejor un encabezado dorado premium con el mes en texto blanco, numero de km completados/km totales previstos y sesionescompletadas/sesiones y Semanas D pero con barra de B". Preview v2 con mes 14→19px y stats compactadas en una fila (sin labels debajo) → Álvaro: "aprobadisimo". (1) CABECERA DE MES DORADA PREMIUM (`renderPlanMonth` línea 53371+): sustituye el texto plano crimson 12px por una card gradient 135° (`#C9A84C→#a17e2a→#8B6914` a 3 tonos), border-radius 10, margin 14/6/8, padding 9/14/10. Doble box-shadow (glow dorado exterior + inset highlight arriba + inset sombra abajo) + border `rgba(232,199,106,.5)` + overlay pseudo-gradient de brillo superior 14%. Fila superior: mes 19px 900 blanco uppercase letter-spacing 1.4 con doble text-shadow para contraste; año 11px 800 blanco 75% translúcido. Fila inferior compacta: `X/Y km · X/Y sesiones` 11px 900 tabular-nums · el número completado en blanco 100% y `/total` en blanco 65% + unidad 9px en blanco 80%. (2) CÁLCULO KM/SES DEL MES: iteración por `mo.days`, `_mTotSes++` por cada `sessMap[ds2]`, `_mTotKm += sess.dist||0` (excluye strength implícitamente por dist=0). Matched detectado igual que las celdas: `activities.find(a => a.dateStr===ds2 && a.type===sess.type)` → `_mDoneSes++` y `_mDoneKm += actMatch.distKm || sess.dist`. Ambos km redondeados con Math.round. (3) SEMANAS POR CARGA · VARIANTE D+B (línea 53433+): sustituye la row plana (bg bsoft, radius 4, barra 8px+1px radius, pill descarga/normal/carga alta) por una card premium con: (a) borde derecho→izq redondeado 10 sobre var(--card2) con border var(--border), padding 10/12/10/16 (16px left para hueco de la barra); (b) BARRA METÁLICA LATERAL 5px div absoluto con `linear-gradient(90deg, dark→base 40%→light 70%→base 100%)` (mismo patrón joyería reflejo que `.mr-lib-card-inner::before` p337 y `.mr-plan-typebar` p340) + doble inset (highlight top + shadow bottom) + glow externo color-mix 50%; (c) INFO IZQ: fila `Sem N` 11px 900 var(--tw) + fecha 10px 700 var(--tm), barra progreso interior 5px altura sobre bg color-mix 12% con fill del color + glow color-mix 55%; (d) RIGHT: km hero 17px 900 var(--tw) tabular-nums letter-spacing -.6 + unit km 9px 800 var(--tm), tag Descarga/Normal/Carga alta 8px 900 uppercase letter-spacing .7 del color. Helper `_JEWEL` local mapea los 3 pillColors a `{h,d}` (Descarga #60a5fa→#93c5fd/#1e40af, Normal #4ade80→#86efac/#166534, Carga alta #f87171→#fca5a5/#991b1b). (4) NUEVA CLASE CSS `.mr-plan-wkload-row` en el template runtime (línea ~44918): sombra sutil `0 2px 6px .06` en light, sombra profunda `inset highlight + 0 4px 12px .30` en dark (mismo patrón que el resto de cards premium tras p332). Gap entre rows 5→6px. Zero cambios de lógica ni de las celdas de días del calendario (Álvaro las quiere igual, con puntito verde de completados). [v2.30.1-p341] 3 ajustes tras screenshot de aprobación del rediseño Plan p340. Álvaro: "Mola! Vamos a compactar un poquito en altura las cards de cada día para que quede todo un poco más compacto. En la semana de descarga las barras verdes de los completados en la cabecera no se ven casi nada. En Home en el widget de plan activo vamos a poner al bloque del entreno del día seleccionado la barra igual que en plan y en biblioteca por coherencia que creo que la que hay es plana, así perfecto." (1) COMPACTAR ALTURA CARDS DEL PLAN · padding vertical del `.mr-day-header` de `9px 10px 9px 14px` → `7px 10px 7px 14px` (4px menos por card, ~28px menos en la semana). Compactación sutil pero notable en la vista completa. (2) DOTS VERDES DONE EN CABECERA MÁS BRILLANTES · el verde base `#22c55e` se difuminaba sobre el bg azul saturado de la cabecera (baja legibilidad especialmente en semanas con muchos completados). Cambio a `#4ade80` (verde-400 más claro) + glow subido de `0 0 4px rgba(34,197,94,.55)` a `0 0 6px rgba(74,222,128,.85)` (+150% intensidad, +50% radio) + border ring blanco sutil `0 0 0 1px rgba(255,255,255,.25)` para contraste extra. Ahora los dots done resaltan claramente sobre el bg azul. (3) BARRA METÁLICA EN EL BLOQUE DEL DÍA SELECCIONADO DE HOME · el `.mr-pc-daycard::before` (línea ~6693) tenía `background: var(--dc-tg)` que es un gradient 135° "plano" (mismo look que la pill). Ahora reutiliza el look reflejo-joyería de biblioteca/Plan/Mi año SIN necesitar nuevas CSS vars: gradient horizontal 3-tonos generado con `color-mix` sobre `--dc-tc` (oscuro = color-mix con black 40%, base = --dc-tc, claro = color-mix con white 45%) + inset highlight arriba `.35` + inset sombra abajo `.35` + glow externo. Ancho 4→5px (coherente con las otras 3 zonas) y padding-left del daycard de 18→19 (14 + 5). Coherencia visual total ahora entre plan, biblioteca, home last activity, Mi año y widget carrusel Home. [v2.30.1-p340] Rediseño Plan (barra tipo + progreso semanal cabecera). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -44915,6 +44915,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             box-shadow: 0 0 8px rgba(255,255,255,.7), 0 0 0 2px rgba(255,255,255,.32);
             height: 10px;
         }
+        /* [v2.30.1-p342] Row semana por carga · variante D + barra metalica B
+           aprobada por Alvaro. Adaptativa por tema: shadow sutil en light,
+           inset highlight + shadow marcada en dark (mismo patron que
+           .mr-lib-card-inner y otras cards premium). */
+        .mr-plan-wkload-row {
+            box-shadow: 0 2px 6px rgba(0,0,0,.06);
+        }
+        body.dark-mode .mr-plan-wkload-row {
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.05),
+                0 4px 12px rgba(0,0,0,.30);
+        }
         `;
         document.head.appendChild(s);
     })();
@@ -53369,8 +53381,44 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         }
 
         Object.values(months).forEach(mo => {
-            const mName = new Date(mo.year,mo.month,1).toLocaleDateString('es-ES',{month:'long',year:'numeric'});
-            html2 += `<div style="padding:14px 14px 4px;"><div style="font-size:12px;font-weight:800;color:var(--crimson);text-transform:uppercase;letter-spacing:1.4px;margin-bottom:12px;">${mName}</div>`;
+            const mName = new Date(mo.year,mo.month,1).toLocaleDateString('es-ES',{month:'long'});
+            const mYear = mo.year;
+
+            // [v2.30.1-p342] Cabecera dorada premium: mes 19px blanco + año 11px
+            // translucido + stats compactas en una fila (km completados/km totales,
+            // sesiones completadas/sesiones totales) del mes.
+            // Km: excluye strength (dist=0). Sesiones: cuenta todas las del mes.
+            // Completada = existe activity del mismo type en ese dateStr (mismo
+            // criterio que `matched` de las celdas del calendario).
+            let _mTotKm = 0, _mDoneKm = 0, _mTotSes = 0, _mDoneSes = 0;
+            mo.days.forEach(function(ds2){
+                const _s = sessMap[ds2];
+                if (!_s) return;
+                _mTotSes++;
+                _mTotKm += (_s.dist || 0);
+                const _actMatch = activities.find(function(a){ return a.dateStr===ds2 && a.type===_s.type; });
+                if (_actMatch) {
+                    _mDoneSes++;
+                    _mDoneKm += (_actMatch.distKm || _s.dist || 0);
+                }
+            });
+            const _mTotKmR  = Math.round(_mTotKm);
+            const _mDoneKmR = Math.round(_mDoneKm);
+
+            html2 += `<div style="margin:14px 6px 8px;padding:9px 14px 10px;border-radius:10px;background:linear-gradient(135deg,#C9A84C 0%,#a17e2a 50%,#8B6914 100%);color:#fff;box-shadow:0 4px 14px rgba(196,136,30,.42),inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(0,0,0,.15);border:1px solid rgba(232,199,106,.5);position:relative;overflow:hidden;">
+                <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.14) 0%,transparent 45%);pointer-events:none;"></div>
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;position:relative;z-index:1;line-height:1;">
+                    <div style="font-size:19px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:1.4px;line-height:1;text-shadow:0 2px 4px rgba(0,0,0,.35),0 1px 0 rgba(0,0,0,.15);">${mName}</div>
+                    <div style="font-size:11px;font-weight:800;color:rgba(255,255,255,.75);letter-spacing:1.6px;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.20);">${mYear}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:5px;position:relative;z-index:1;font-size:11px;font-weight:800;color:#fff;letter-spacing:.4px;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px rgba(0,0,0,.20);line-height:1;">
+                    <span>${_mDoneKmR}<span style="color:rgba(255,255,255,.65);font-weight:700;">/${_mTotKmR}</span><span style="color:rgba(255,255,255,.80);font-size:9px;font-weight:800;margin-left:3px;letter-spacing:.5px;text-transform:uppercase;">km</span></span>
+                    <span style="color:rgba(255,255,255,.45);font-weight:700;">·</span>
+                    <span>${_mDoneSes}<span style="color:rgba(255,255,255,.65);font-weight:700;">/${_mTotSes}</span><span style="color:rgba(255,255,255,.80);font-size:9px;font-weight:800;margin-left:3px;letter-spacing:.5px;text-transform:uppercase;">sesiones</span></span>
+                </div>
+            </div>`;
+
+            html2 += `<div style="padding:0 14px 4px;">`;
 
             // Day-of-week headers
             html2 += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px;">`;
@@ -53415,25 +53463,42 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             html2 += '</div></div>';
         });
 
-        // v2.30.1-p42 · Barras semanas por carga · coherencia con app:
-        // pill row cuadrada (border-radius 8→4), barra más gruesa (4→8px) y
-        // cuadrada (border-radius 2→1), label estado en pill cuadrada con
-        // background tinted + border del color en lugar de solo texto.
-        html2 += `<div style="padding:14px;"><div style="font-size:11px;font-weight:800;color:var(--tw);margin-bottom:10px;text-transform:uppercase;letter-spacing:1.2px;">Semanas por carga</div><div style="display:flex;flex-direction:column;gap:5px;">`;
+        // [v2.30.1-p342] Rediseño premium Semanas por carga · variante D + barra
+        // metalica B aprobada por Alvaro. Cada row es una card con:
+        //   - Barra metalica lateral 5px (reflejo joyeria) del color de la carga
+        //     — mismo patron que .mr-lib-card-inner::before (p337) y .mr-plan-typebar (p340)
+        //   - Info izq: Sem N + fecha + barra progreso interior 5px
+        //   - Right: km hero 17px + tag Descarga/Normal/Carga alta 8px
+        // Sombra adaptativa via .mr-plan-wkload-row (sutil light / marcada dark).
+        const _JEWEL = {
+            '#60a5fa': {h:'#93c5fd', d:'#1e40af'},  // Descarga (azul)
+            '#4ade80': {h:'#86efac', d:'#166534'},  // Normal (verde)
+            '#f87171': {h:'#fca5a5', d:'#991b1b'}   // Carga alta (rojo)
+        };
+        html2 += `<div style="padding:14px;"><div style="font-size:11px;font-weight:800;color:var(--tw);margin-bottom:10px;text-transform:uppercase;letter-spacing:1.2px;">Semanas por carga</div><div style="display:flex;flex-direction:column;gap:6px;">`;
         weekLoads.forEach(({wk,km})=>{
             const isRecovery = wk.phase==='taper' || km < avgLoad*0.75;
             const isHard = km > avgLoad*1.15;
             const pillColor = isRecovery?'#60a5fa':isHard?'#f87171':'#4ade80';
             const pillLabel = isRecovery?'Descarga':isHard?'Carga alta':'Normal';
+            const jc = _JEWEL[pillColor] || {h:pillColor,d:pillColor};
             const startDate = new Date(wk.weekStart+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short'});
             const pct = Math.min(100,Math.round(km/Math.max(...weekLoads.map(w=>w.km),1)*100));
-            html2 += `<div style="display:flex;align-items:center;gap:9px;padding:7px 10px;background:var(--bsoft);border-radius:4px;">
-                <div style="font-size:10px;color:var(--ts);min-width:66px;font-weight:600;">Sem ${wk.n} · ${startDate}</div>
-                <div style="flex:1;height:8px;background:var(--border);border-radius:1px;overflow:hidden;">
-                    <div style="width:${pct}%;height:100%;background:${pillColor};border-radius:1px;"></div>
+            html2 += `<div class="mr-plan-wkload-row" style="position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;background:var(--card2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+                <div style="position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(90deg,${jc.d} 0%,${pillColor} 40%,${jc.h} 70%,${pillColor} 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(0,0,0,.35),0 0 10px color-mix(in srgb,${pillColor} 50%,transparent);pointer-events:none;"></div>
+                <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px;">
+                        <div style="font-size:11px;font-weight:900;color:var(--tw);">Sem ${wk.n}</div>
+                        <div style="font-size:10px;color:var(--tm);font-weight:700;">${startDate}</div>
+                    </div>
+                    <div style="height:5px;background:color-mix(in srgb,${pillColor} 12%,var(--border));border-radius:3px;overflow:hidden;">
+                        <div style="width:${pct}%;height:100%;background:${pillColor};border-radius:3px;box-shadow:0 0 4px color-mix(in srgb,${pillColor} 55%,transparent);"></div>
+                    </div>
                 </div>
-                <div style="font-size:11px;color:${pillColor};font-weight:800;min-width:44px;text-align:right;font-variant-numeric:tabular-nums;">${km.toFixed(0)}km</div>
-                <div style="font-size:8.5px;color:${pillColor};font-weight:900;min-width:64px;text-align:center;text-transform:uppercase;letter-spacing:.6px;background:${pillColor}1a;border:1px solid ${pillColor}55;border-radius:3px;padding:3px 4px;">${pillLabel}</div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;line-height:1;flex-shrink:0;">
+                    <div style="font-size:17px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.6px;">${km.toFixed(0)}<span style="font-size:9px;font-weight:800;color:var(--tm);letter-spacing:.4px;margin-left:2px;">km</span></div>
+                    <div style="font-size:8px;font-weight:900;color:${pillColor};text-transform:uppercase;letter-spacing:.7px;">${pillLabel}</div>
+                </div>
             </div>`;
         });
         html2 += '</div></div>';
