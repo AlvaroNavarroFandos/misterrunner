@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p340'; // [v2.30.1-p340] Rediseño de la pestaña Plan · 2 cambios aprobados por Álvaro tras `preview-plan` con 6 enfoques (A sin cambios, B barra metálica, C fondo tinta, D progreso en cabecera, E grupos por bloques, F cuadradito dentro). Álvaro: "B por coherencia con biblioteca y home pero cabecera D". (1) BARRA VERTICAL METÁLICA DEL TIPO en cada card del Plan (opción B) · misma barra 5px metálica que ya usan las minicards de biblioteca + home last activity + Mi año (opción C5 aprobada en p337). Reutiliza el helper `window._libTypebarStyle(type)` que devuelve las CSS vars `--tb-c/-h/-d` con los 3 tonos del tipo. Nueva clase `.mr-plan-typebar` aplicada al `outerWrap` de cada sesión con `padding-left:5px` y `::before` con el gradient horizontal reflejo joyería (oscuro→base→claro→base). Reglas CSS en el template runtime (línea ~44833). El día HOY conserva su border 2px del color del tipo + box-shadow; la barra metálica interior refuerza sin conflicto. (2) PROGRESO SEMANAL COMPACTO en la cabecera (opción D · "lo más compacta posible") · una fila EXTRA al final del `hCard.innerHTML` con 7 rectángulos delgados (6px de alto, 4px de gap, sin labels) representando cada día L M X J V S D. Estados: `.done` verde relleno con glow / `.skipped` ROJO SÓLIDO (Álvaro: "en vez de cruz rojo y ya está" → no cruz, solo color rojo saturado `#dc2626`) / `.today` blanco gordo 10px con doble glow / futuro vacío con borde sutil sobre el bg azul. Cálculo del estado por día ANTES del `hCard.innerHTML` iterando `_ORDERED_HDR = [1,2,3,4,5,6,0]`: today > skipped (alguna sesión con `s.skipped`) > done (todas sesiones matched/strengthDone) > vacío. Se guarda en `_weekProgress[]` y se genera el HTML como string `_progressHtml` que se interpola en el template. Backup baseline p337 en `/home/claude/index.p337-backup.html` + `/mnt/user-data/outputs/index.p337-backup.html`. Salto de versión p337→p340 · p338 (timeline lateral con overflow bug) y p339 (hotfix con wrapper) fueron intentos fallidos revertidos por Álvaro ("no ha salido bien") — evito reusar esos números para no confundir con archivos anteriores. [v2.30.1-p337] Minicards C5 metálica + señales activas quitadas. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p341'; // [v2.30.1-p341] 3 ajustes tras screenshot de aprobación del rediseño Plan p340. Álvaro: "Mola! Vamos a compactar un poquito en altura las cards de cada día para que quede todo un poco más compacto. En la semana de descarga las barras verdes de los completados en la cabecera no se ven casi nada. En Home en el widget de plan activo vamos a poner al bloque del entreno del día seleccionado la barra igual que en plan y en biblioteca por coherencia que creo que la que hay es plana, así perfecto." (1) COMPACTAR ALTURA CARDS DEL PLAN · padding vertical del `.mr-day-header` de `9px 10px 9px 14px` → `7px 10px 7px 14px` (4px menos por card, ~28px menos en la semana). Compactación sutil pero notable en la vista completa. (2) DOTS VERDES DONE EN CABECERA MÁS BRILLANTES · el verde base `#22c55e` se difuminaba sobre el bg azul saturado de la cabecera (baja legibilidad especialmente en semanas con muchos completados). Cambio a `#4ade80` (verde-400 más claro) + glow subido de `0 0 4px rgba(34,197,94,.55)` a `0 0 6px rgba(74,222,128,.85)` (+150% intensidad, +50% radio) + border ring blanco sutil `0 0 0 1px rgba(255,255,255,.25)` para contraste extra. Ahora los dots done resaltan claramente sobre el bg azul. (3) BARRA METÁLICA EN EL BLOQUE DEL DÍA SELECCIONADO DE HOME · el `.mr-pc-daycard::before` (línea ~6693) tenía `background: var(--dc-tg)` que es un gradient 135° "plano" (mismo look que la pill). Ahora reutiliza el look reflejo-joyería de biblioteca/Plan/Mi año SIN necesitar nuevas CSS vars: gradient horizontal 3-tonos generado con `color-mix` sobre `--dc-tc` (oscuro = color-mix con black 40%, base = --dc-tc, claro = color-mix con white 45%) + inset highlight arriba `.35` + inset sombra abajo `.35` + glow externo. Ancho 4→5px (coherente con las otras 3 zonas) y padding-left del daycard de 18→19 (14 + 5). Coherencia visual total ahora entre plan, biblioteca, home last activity, Mi año y widget carrusel Home. [v2.30.1-p340] Rediseño Plan (barra tipo + progreso semanal cabecera). Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -6675,7 +6675,7 @@
             --dc-tc: transparent;
             --dc-tg: transparent;
             border-radius: 13px;
-            padding: 13px 14px 13px 18px; /* +4 en padding-left por la barra lateral */
+            padding: 13px 14px 13px 19px; /* +5 en padding-left por la barra lateral metálica */
             position: relative; overflow: hidden;
             margin-bottom: 0;
             background:
@@ -6690,12 +6690,31 @@
                 0 6px 22px rgba(0,0,0,.14),
                 0 0 24px color-mix(in srgb, var(--dc-tc) 26%, transparent);
         }
+        /* [v2.30.1-p341] Barra metálica del tipo · Álvaro: "en Home en el
+           widget de plan activo vamos a poner al bloque del entreno del día
+           seleccionado la barra igual que en plan y en biblioteca por
+           coherencia · la que hay es plana". La barra anterior era `var(--dc-tg)`
+           (gradient 135° plano). Ahora usa el mismo gradient horizontal
+           reflejo-joyería que biblioteca/Plan pero SIN necesitar nuevas CSS
+           vars: 3 tonos generados con `color-mix` sobre `--dc-tc`:
+             oscuro = color-mix(--dc-tc, black 40%)
+             base   = --dc-tc
+             claro  = color-mix(--dc-tc, white 45%)
+           Ancho 4→5px + inset highlights arriba/sombra abajo + glow externo. */
         .mr-pc-daycard::before {
             content: '';
             position: absolute; left: 0; top: 0; bottom: 0;
-            width: 4px;
-            background: var(--dc-tg);
-            box-shadow: 0 0 10px color-mix(in srgb, var(--dc-tc) 60%, transparent);
+            width: 5px;
+            background: linear-gradient(90deg,
+                color-mix(in srgb, var(--dc-tc), black 40%) 0%,
+                var(--dc-tc) 40%,
+                color-mix(in srgb, var(--dc-tc), white 45%) 70%,
+                var(--dc-tc) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.35),
+                inset 0 -1px 0 rgba(0,0,0,.35),
+                0 0 10px color-mix(in srgb, var(--dc-tc) 50%, transparent);
+            pointer-events: none;
         }
         body.dark-mode .mr-pc-daycard {
             box-shadow:
@@ -44881,9 +44900,9 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             box-sizing: border-box;
         }
         .mr-plan-progress-dot.done {
-            background: #22c55e;
-            border-color: #22c55e;
-            box-shadow: 0 0 4px rgba(34,197,94,.55);
+            background: #4ade80;
+            border-color: #4ade80;
+            box-shadow: 0 0 6px rgba(74,222,128,.85), 0 0 0 1px rgba(255,255,255,.25);
         }
         .mr-plan-progress-dot.skipped {
             background: #dc2626;
@@ -54931,7 +54950,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     : '';
 
                 const _msHTML = _msBuild(sess, _isStrengthCard);
-                let html = _todaySidebar + _checkBadge + `<div class="mr-day-header" style="display:flex;align-items:center;padding:9px 10px 9px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
+                let html = _todaySidebar + _checkBadge + `<div class="mr-day-header" style="display:flex;align-items:center;padding:7px 10px 7px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
                     + _dateHTML
                     // [P.Plan Coherencia] Estructura columna con 2 filas fijas:
                     //   Fila 1: tipo label + pill km (horizontal)
