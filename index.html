@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p339'; // [v2.30.1-p339] 🚨 HOTFIX del timeline lateral p338. Álvaro subió screenshot ("no ha salido bien"): la línea verde aparecía muy corta arriba a la izquierda y los cuadraditos NO se veían. Causa: el `outerWrap` de cada sesión tiene `overflow:hidden` en su style inline (para contener el swipe-delete + border-radius del contenido). Al añadirle `.mr-tl-item` directamente, sus pseudo-elementos `::before` del cuadradito (posicionados con `left:-19px` FUERA del box) quedaban CORTADOS por ese overflow. Fix: envolver el outerWrap en un `tlWrap` externo `div` sin overflow:hidden que lleva las clases `.mr-tl-item` + estado + el `margin:10px 4px`/`3px 4px`. El outerWrap pasa a ser hijo del tlWrap manteniendo TODO su style existente (background, border, box-shadow, z-index) menos el margin (que se mueve al tlWrap). Los restRow no tenían overflow:hidden y siguen funcionando sin wrapper. En `renderPlanWeek`: (a) quitado `margin:10px 4px`/`3px 4px` del `outerWrap.style.cssText`, (b) quitado el `outerWrap.classList.add('mr-tl-item')` + estado, (c) al final del bucle, se crea `tlWrap` que envuelve al outerWrap con las clases y el margin, y se hace `daysCard.appendChild(tlWrap)` en vez del outerWrap directamente. [v2.30.1-p338] Timeline lateral opción C aprobado. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
+            window.__MR_VERSION = 'v2.30.1-p340'; // [v2.30.1-p340] Rediseño de la pestaña Plan · 2 cambios aprobados por Álvaro tras `preview-plan` con 6 enfoques (A sin cambios, B barra metálica, C fondo tinta, D progreso en cabecera, E grupos por bloques, F cuadradito dentro). Álvaro: "B por coherencia con biblioteca y home pero cabecera D". (1) BARRA VERTICAL METÁLICA DEL TIPO en cada card del Plan (opción B) · misma barra 5px metálica que ya usan las minicards de biblioteca + home last activity + Mi año (opción C5 aprobada en p337). Reutiliza el helper `window._libTypebarStyle(type)` que devuelve las CSS vars `--tb-c/-h/-d` con los 3 tonos del tipo. Nueva clase `.mr-plan-typebar` aplicada al `outerWrap` de cada sesión con `padding-left:5px` y `::before` con el gradient horizontal reflejo joyería (oscuro→base→claro→base). Reglas CSS en el template runtime (línea ~44833). El día HOY conserva su border 2px del color del tipo + box-shadow; la barra metálica interior refuerza sin conflicto. (2) PROGRESO SEMANAL COMPACTO en la cabecera (opción D · "lo más compacta posible") · una fila EXTRA al final del `hCard.innerHTML` con 7 rectángulos delgados (6px de alto, 4px de gap, sin labels) representando cada día L M X J V S D. Estados: `.done` verde relleno con glow / `.skipped` ROJO SÓLIDO (Álvaro: "en vez de cruz rojo y ya está" → no cruz, solo color rojo saturado `#dc2626`) / `.today` blanco gordo 10px con doble glow / futuro vacío con borde sutil sobre el bg azul. Cálculo del estado por día ANTES del `hCard.innerHTML` iterando `_ORDERED_HDR = [1,2,3,4,5,6,0]`: today > skipped (alguna sesión con `s.skipped`) > done (todas sesiones matched/strengthDone) > vacío. Se guarda en `_weekProgress[]` y se genera el HTML como string `_progressHtml` que se interpola en el template. Backup baseline p337 en `/home/claude/index.p337-backup.html` + `/mnt/user-data/outputs/index.p337-backup.html`. Salto de versión p337→p340 · p338 (timeline lateral con overflow bug) y p339 (hotfix con wrapper) fueron intentos fallidos revertidos por Álvaro ("no ha salido bien") — evito reusar esos números para no confundir con archivos anteriores. [v2.30.1-p337] Minicards C5 metálica + señales activas quitadas. Álvaro: "peor que antes, potencia estaba perfecta en el anterior deploy (p324), cadencia zancada y contacto estaban bien solo había que pintar mejor el gráfico con puntos más gordos y ya". Diagnóstico: el problema NO era el rango (los fijos 60-220 cadencia, 20-220 zancada, 150-320 GCT, 80-450 potencia funcionaban bien) — era solo el radio de los dots (0.9 original demasiado fino, 2.6 con outline de p324 demasiado hinchado, 1.8 sin outline de p325 quedaba delgado). FIX: (1) `_biomecAutoRange` deja de usarse (queda declarado por si en el futuro lo necesitamos, sin llamadas activas). Ambas funciones _drawBiomecCanvas y _drawBiomecLine vuelven a `rMin=yMin, rMax=yMax` (rango fijo pasado por parámetro). Potencia vuelve al rango 80-450 con curva Bezier 3px de p324 (que Álvaro dijo estaba PERFECTA). (2) Dots un pelín más gordos: radio 1.8→2.0 y alpha 0.75→0.85 · sin outline (evita halo). Punto justo entre el original (0.9r) y el p324 hinchado (2.6r + outline). (3) Se mantiene todo lo bueno de p324: eje Y amplio a la izq con 3 labels + unidad, grid horizontal sutil, label AVG flotante.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -44823,130 +44823,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             -webkit-overflow-scrolling: touch;
         }
         .plan-day-row:last-child { border-bottom:none; }
-        /* ═══════════════════════════════════════════════════════════════
-           [v2.30.1-p338] TIMELINE LATERAL DISCRETO · pestaña Plan.
-           Opción C (dashed + progreso + estados) aprobada por Álvaro tras
-           3 previews (preview-timeline, preview-timeline-c, preview-timeline-c2).
-           Diseño:
-             · Línea de fondo punteada 2px (dashed sutil via repeating gradient)
-             · Línea sólida verde de PROGRESO encima con SALTO en los skipped
-             · Cuadraditos por día (border-radius 2px):
-                 futuro:  vacío, borde sutil
-                 done:    verde relleno + glow
-                 skipped: cruz roja GRUESA (32-68% grosor) + border rojo + glow
-                 today:   cuadrado gordo 16×16 verde con doble halo
-             · Línea centrada al pixel en left:10px del '.mr-plan-days'
-           Se activa via clase '.mr-tl-active' en el '.mr-plan-days'.
-           Los items (outerWrap + restRow) llevan '.mr-tl-item' + clase de
-           estado (.mr-tl-today / .mr-tl-done / .mr-tl-skipped). Sin clase
-           = día futuro (cuadradito vacío).
-           El gradient de progreso se calcula en JS ('window._mrPlanTLCompute')
-           con offsetTop/offsetHeight reales de cada item y se inyecta como
-           CSS var '--tl-grad' en el '.mr-plan-days'. Se recalcula tras
-           'container.appendChild(daysCard)' via requestAnimationFrame.
-           ═══════════════════════════════════════════════════════════════ */
-        .mr-plan-days.mr-tl-active {
-            padding-left: 24px;
-            position: relative;
-        }
-        /* Anular margin-left horizontal (outerWrap tenía margin:3px 4px) para
-           que los items queden pegados al padding-left del container. Los
-           cuadraditos se posicionan relativos a los items con left:-19px/-22px. */
-        .mr-plan-days.mr-tl-active > * {
-            margin-left: 0 !important;
-            margin-right: 4px;
-        }
-        /* Línea PUNTEADA de fondo · centrada en 10px (left:9 + width:2 → centro=10) */
-        .mr-plan-days.mr-tl-active::before {
-            content: '';
-            position: absolute;
-            left: 9px; top: 14px; bottom: 14px;
-            width: 2px;
-            background-image: repeating-linear-gradient(
-                to bottom,
-                color-mix(in srgb, var(--tw) 26%, transparent) 0 4px,
-                transparent 4px 8px
-            );
-            z-index: 1;
-            pointer-events: none;
-        }
-        /* Línea SÓLIDA verde de PROGRESO · consume --tl-grad calculado en JS.
-           El propio gradient se genera con los stops verdes/transparent alrededor
-           de los skipped para que la línea SALTE sobre ellos y llegue al HOY. */
-        .mr-plan-days.mr-tl-active::after {
-            content: '';
-            position: absolute;
-            left: 8px; top: 14px; bottom: 14px;
-            width: 4px;
-            background: var(--tl-grad, transparent);
-            box-shadow: 0 0 8px rgba(34,197,94,.5);
-            border-radius: 2px;
-            z-index: 2;
-            pointer-events: none;
-        }
-        body:not(.dark-mode) .mr-plan-days.mr-tl-active::after {
-            box-shadow: 0 0 6px rgba(22,163,74,.4);
-        }
-        /* Cuadradito POR DEFECTO (futuro) · centrado en línea (left:-19 width:10 → centro=10) */
-        .mr-plan-days.mr-tl-active .mr-tl-item::before {
-            content: '';
-            position: absolute;
-            left: -19px; top: 50%; transform: translateY(-50%);
-            width: 10px; height: 10px; border-radius: 2px;
-            background: var(--page);
-            border: 1.5px solid color-mix(in srgb, var(--tw) 30%, transparent);
-            z-index: 3;
-            box-sizing: border-box;
-            pointer-events: none;
-        }
-        /* DONE · verde relleno + glow */
-        .mr-plan-days.mr-tl-active .mr-tl-item.mr-tl-done::before {
-            background: #22c55e;
-            border: 1.5px solid #22c55e;
-            box-shadow: 0 0 8px rgba(34,197,94,.6);
-        }
-        body:not(.dark-mode) .mr-plan-days.mr-tl-active .mr-tl-item.mr-tl-done::before {
-            background: #16a34a;
-            border-color: #16a34a;
-            box-shadow: 0 0 6px rgba(22,163,74,.45);
-        }
-        /* SKIPPED · CRUZ ROJA FUERTE (Álvaro: "más fuerte para que se vea mejor").
-           Grosor 32-68% (aumentado desde 38-62% de la preview inicial) →
-           líneas más gruesas · rojo #dc2626 más saturado · border rojo con
-           glow rojo. Fondo gris translúcido para que la cruz destaque. */
-        .mr-plan-days.mr-tl-active .mr-tl-item.mr-tl-skipped::before {
-            background:
-                linear-gradient(45deg,
-                    transparent 0 32%,
-                    #dc2626 32% 68%,
-                    transparent 68% 100%),
-                linear-gradient(-45deg,
-                    transparent 0 32%,
-                    #dc2626 32% 68%,
-                    transparent 68% 100%),
-                rgba(107,114,128,.35);
-            border: 1.5px solid rgba(220,38,38,.55);
-            box-shadow: 0 0 6px rgba(220,38,38,.5);
-        }
-        /* TODAY · CUADRADO GORDO 16×16 verde con doble halo (Álvaro: "punto gordo") */
-        .mr-plan-days.mr-tl-active .mr-tl-item.mr-tl-today::before {
-            width: 16px; height: 16px;
-            left: -22px;
-            border-radius: 3px;
-            background: #22c55e;
-            border: 3px solid var(--card);
-            box-shadow:
-                0 0 0 2px #22c55e,
-                0 0 12px rgba(34,197,94,.7),
-                0 0 22px rgba(34,197,94,.35);
-        }
-        body:not(.dark-mode) .mr-plan-days.mr-tl-active .mr-tl-item.mr-tl-today::before {
-            background: #16a34a;
-            box-shadow:
-                0 0 0 2px #16a34a,
-                0 0 10px rgba(22,163,74,.6),
-                0 0 18px rgba(22,163,74,.35);
-        }
         .plan-day-label { font-size:9px; text-transform:uppercase; letter-spacing:.8px; color:var(--tm); min-width:20px; padding-top:2px; }
         .plan-session-chip { flex:1; }
         .plan-session-chip .psc-type { font-size:11px; font-weight:700; color:var(--tw); }
@@ -44955,6 +44831,71 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         .plan-rest-label { font-size:11px; color:var(--tm); font-style:italic; }
         .plan-match-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:3px; }
         .eval-score-badge { font-size:18px; font-weight:800; font-family:var(--f); }
+        /* [v2.30.1-p340] Barra vertical metálica del tipo en cada card del Plan.
+           Opción B aprobada por Álvaro tras preview-plan · coherente con las
+           minicards de biblioteca (opción C5 metálica p337) y home last activity.
+           Usa las CSS vars --tb-c/-h/-d inyectadas via window._libTypebarStyle(type).
+           Activa con la clase .mr-plan-typebar en el outerWrap. Padding-left:5px
+           para dar aire a la barra 5px sin pisar el contenido interno de la card. */
+        .mr-plan-typebar {
+            padding-left: 5px !important;
+        }
+        .mr-plan-typebar::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 5px;
+            background: linear-gradient(90deg,
+                var(--tb-d, #64748b) 0%,
+                var(--tb-c, #94a3b8) 40%,
+                var(--tb-h, #cbd5e1) 70%,
+                var(--tb-c, #94a3b8) 100%);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.35),
+                inset 0 -1px 0 rgba(0,0,0,.35),
+                0 0 8px color-mix(in srgb, var(--tb-c, #94a3b8) 45%, transparent);
+            z-index: 3;
+            pointer-events: none;
+        }
+        /* [v2.30.1-p340] PROGRESO SEMANAL COMPACTO dentro de la cabecera azul.
+           Opción D aprobada por Álvaro · "lo más compacta posible" · una fila
+           extra con 7 rectángulos delgados (uno por día L M X J V S D), sin
+           labels. Estados:
+             done    → verde relleno
+             skipped → rojo SÓLIDO (Álvaro: "en vez de cruz rojo y ya está")
+             today   → blanco gordo con doble glow (10px vs 6px del resto)
+             future  → vacío con borde sutil sobre el bg azul de la cabecera */
+        .mr-plan-progress {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+            padding: 0 2px;
+            align-items: center;
+        }
+        .mr-plan-progress-dot {
+            flex: 1;
+            height: 6px;
+            border-radius: 2px;
+            background: rgba(255,255,255,.14);
+            border: 1px solid rgba(255,255,255,.20);
+            box-sizing: border-box;
+        }
+        .mr-plan-progress-dot.done {
+            background: #22c55e;
+            border-color: #22c55e;
+            box-shadow: 0 0 4px rgba(34,197,94,.55);
+        }
+        .mr-plan-progress-dot.skipped {
+            background: #dc2626;
+            border-color: #dc2626;
+            box-shadow: 0 0 4px rgba(220,38,38,.55);
+        }
+        .mr-plan-progress-dot.today {
+            background: #fff;
+            border-color: #fff;
+            box-shadow: 0 0 8px rgba(255,255,255,.7), 0 0 0 2px rgba(255,255,255,.32);
+            height: 10px;
+        }
         `;
         document.head.appendChild(s);
     })();
@@ -54519,6 +54460,43 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ? `<div style="text-align:center;font-size:9.5px;font-weight:900;color:rgba(255,255,255,.75);letter-spacing:1.2px;text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 8px;">${_planNameStr}</div>`
             : '';
 
+        // [v2.30.1-p340] Calcular estado por día (L M X J V S D) para la fila
+        // compacta de progreso semanal en la cabecera. Estados:
+        //   today  → HOY (siempre gana visualmente)
+        //   skipped → alguna sesión del día con sess.skipped=true
+        //   done   → todas las sesiones del día están matched/strengthDone
+        //             y es día PASADO (no hoy)
+        //   ''     → futuro / rest sin datos (dot vacío por defecto)
+        var _weekProgress = [];
+        var _ORDERED_HDR = [1,2,3,4,5,6,0]; // L M X J V S D
+        var _todayHdr = localDateStr(new Date());
+        _ORDERED_HDR.forEach(function(_dow) {
+            var _d = new Date(wk.weekStart + 'T00:00:00');
+            var _off = ((_dow - _d.getDay()) + 7) % 7;
+            _d.setDate(_d.getDate() + _off);
+            var _ds = localDateStr(_d);
+            var _isTd = _ds === _todayHdr;
+            var _isPastHdr = _ds < _todayHdr && !_isTd;
+            var _ss = sessMap[_ds] || [];
+            var _state = '';
+            if (_isTd) {
+                _state = 'today';
+            } else if (_ss.some(function(s){ return s.skipped; })) {
+                _state = 'skipped';
+            } else if (_isPastHdr && _ss.length > 0 && _ss.every(function(s){
+                var _isStr = !!(s.isStrength || s.type === 'strength');
+                return _isStr
+                    ? (typeof window._mrIsStrengthDone === 'function' && window._mrIsStrengthDone(_ds))
+                    : !!findMatched(s);
+            })) {
+                _state = 'done';
+            }
+            _weekProgress.push(_state);
+        });
+        var _progressHtml = '<div class="mr-plan-progress" aria-hidden="true">'
+            + _weekProgress.map(function(s){ return '<div class="mr-plan-progress-dot' + (s ? ' ' + s : '') + '"></div>'; }).join('')
+            + '</div>';
+
         hCard.innerHTML =
             // Línea top blanca translúcida (highlight sutil)
             `<div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);pointer-events:none;"></div>
@@ -54546,7 +54524,8 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 <div style="display:flex;align-items:center;flex-shrink:0;opacity:${_hasNext?'.75':'.20'};transition:opacity .2s;position:relative;" aria-hidden="true">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
                 </div>
-            </div>`;
+            </div>
+            ${_progressHtml}`;
 
         // ── Swipe horizontal para cambiar semana ───────────────────────
         // Touch tracking + visual drag con tope elástico cuando no hay semana
@@ -54658,9 +54637,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // [v6 P.Plan] Card contenedor único con filas comprimidas, divider entre días,
         // tap-toggle para expandir detalle. Fuerza apilada bajo running con sangría.
         const daysCard = document.createElement('div');
-        // [v2.30.1-p338] Activa el timeline lateral (línea punteada + progreso
-        // + cuadraditos por día). Reglas CSS en `.mr-plan-days.mr-tl-active`.
-        daysCard.className = 'mr-plan-days mr-tl-active';
+        daysCard.className = 'mr-plan-days';
         daysCard.style.cssText = 'background:transparent;padding:0 0 4px;touch-action:pan-y;';
 
         // [FASE 6 prep · Plan premium] Barra superior con gradiente del color
@@ -54702,11 +54679,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     ? 'background:linear-gradient(90deg, rgba(148,163,184,.14) 0%, rgba(148,163,184,.04) 55%, transparent 100%);'
                     : '';
                 restRow.style.cssText = `padding:8px 12px 8px 14px;font-size:10.5px;color:var(--tm);font-style:italic;letter-spacing:.3px;position:relative;${_restBg}${_restNotLast?'border-bottom:1px solid var(--border);':''}`;
-                // [v2.30.1-p338] Marcado para el timeline lateral. Los rest
-                // days solo pueden estar en estado today o futuro (no hay done/
-                // skipped en descanso).
-                restRow.classList.add('mr-tl-item');
-                if (_isToday) restRow.classList.add('mr-tl-today');
                 // [Plan HOY V4] sidebar 5px verde con glow si es HOY, resto 3px var(--border) sutil
                 const _restSideStyle = _isToday
                     ? 'position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,#94a3b8 0%,#64748b 100%);box-shadow:0 0 8px rgba(148,163,184,.35);'
@@ -54806,9 +54778,18 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 //   opacidad .55 + shadow multicapa intensa del mismo color +
                 //   aire lateral 4px para "salir" del contenedor.
                 if (_isToday) {
-                    outerWrap.style.cssText = `position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:2px solid rgba(${_typeRGB},.55);box-shadow:0 6px 20px rgba(${_typeRGB},.28), 0 2px 6px rgba(${_typeRGB},.20), inset 0 0 0 1px rgba(${_typeRGB},.15);z-index:3;`;
+                    outerWrap.style.cssText = `position:relative;overflow:hidden;margin:10px 4px;border-radius:10px;background:var(--card);border:2px solid rgba(${_typeRGB},.55);box-shadow:0 6px 20px rgba(${_typeRGB},.28), 0 2px 6px rgba(${_typeRGB},.20), inset 0 0 0 1px rgba(${_typeRGB},.15);z-index:3;`;
                 } else {
-                    outerWrap.style.cssText = `position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);`;
+                    outerWrap.style.cssText = `position:relative;overflow:hidden;margin:3px 4px;border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);`;
+                }
+                // [v2.30.1-p340] Barra vertical metálica del tipo (opción B
+                // aprobada por Álvaro tras preview-plan). Reutiliza el helper
+                // window._libTypebarStyle(type) creado en p337 para las
+                // minicards de biblioteca — mismo look coherente entre plan,
+                // home last activity, biblioteca y Mi año.
+                outerWrap.classList.add('mr-plan-typebar');
+                if (typeof window._libTypebarStyle === 'function' && sess.type) {
+                    outerWrap.style.cssText += window._libTypebarStyle(sess.type);
                 }
                 outerWrap.dataset.sessDate = sess.dateStr;
                 outerWrap.dataset.weekIdx = weekIdx;
@@ -54832,11 +54813,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _isStrengthDone = _isStrengthCard && typeof window._mrIsStrengthDone === 'function'
                     ? window._mrIsStrengthDone(sess.dateStr) : false;
                 const _isCompleted = matched || _isStrengthDone;
-                // [v2.30.1-p338/p339] Las clases mr-tl-item + estado (today/
-                // skipped/done) NO se ponen al outerWrap porque su
-                // `overflow:hidden` cortaría el cuadradito (::before con
-                // left:-19px, fuera del box). Se aplican al `tlWrap` externo
-                // creado en el appendChild final (sin overflow:hidden).
                 const _cardBg = _isToday
                     ? `linear-gradient(90deg, rgba(${_typeRGB},.15) 0%, rgba(${_typeRGB},.04) 55%, transparent 100%)`
                     : (_isCompleted ? 'rgba(34,197,94,.06)' : (_typeTint || 'var(--card2)'));
@@ -55360,19 +55336,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
 
                 outerWrap.appendChild(card);
-                // [v2.30.1-p339] Envolver outerWrap en un tlWrap externo que
-                // lleva las clases mr-tl-* + el margin. tlWrap NO tiene
-                // overflow:hidden (a diferencia del outerWrap) → los pseudo-
-                // elementos del cuadradito con `left:-19px` NO se cortan.
-                // Prioridad estado: today > skipped > done > (futuro sin clase).
-                const tlWrap = document.createElement('div');
-                tlWrap.classList.add('mr-tl-item');
-                if (_isToday)          tlWrap.classList.add('mr-tl-today');
-                else if (_isSkipped)   tlWrap.classList.add('mr-tl-skipped');
-                else if (_isCompleted) tlWrap.classList.add('mr-tl-done');
-                tlWrap.style.cssText = 'position:relative;' + (_isToday ? 'margin:10px 4px;' : 'margin:3px 4px;');
-                tlWrap.appendChild(outerWrap);
-                daysCard.appendChild(tlWrap);
+                daysCard.appendChild(outerWrap);
             }); // end daySessions.forEach
         }); // end ORDERED_DAYS.forEach
 
@@ -55388,16 +55352,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         _attachWeekSwipeTo(daysCard, _wkSwipeGroup);
 
         container.appendChild(daysCard);
-        // [v2.30.1-p338] Calcular gradient de progreso del timeline con las
-        // posiciones REALES de los items (via offsetTop/offsetHeight). Se hace
-        // en rAF porque hasta que el layout no está pintado, offsetTop es 0.
-        // Doble rAF para atrapar cualquier reflow tras el appendChild final
-        // (el CSS del `mr-tl-active` cambia el padding-left → reflow).
-        requestAnimationFrame(function(){
-            requestAnimationFrame(function(){
-                try { if (typeof window._mrPlanTLCompute === 'function') window._mrPlanTLCompute(daysCard); } catch(_){}
-            });
-        });
 
         // [Plan · Scroll fix v2] Colchón inferior explícito. El padding-bottom
         // del .view calcula desde nav-h + safe-area, pero en iOS PWA a veces
@@ -63520,90 +63474,6 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         card.style.display = 'flex';
     }
     try { window._mrRenderTrainingLoadCard = _mrRenderTrainingLoadCard; window._mrRepaintTrainingLoadCard = _mrRepaintTrainingLoadCard; } catch(_){}
-
-    // [v2.30.1-p338] Timeline lateral del Plan · calcula el gradient de
-    // progreso con las posiciones reales de cada `.mr-tl-item` dentro del
-    // `.mr-plan-days.mr-tl-active`. Se llama tras `container.appendChild(
-    // daysCard)` en renderPlanWeek via doble requestAnimationFrame para
-    // esperar al layout pintado (los offsetTop son 0 antes del layout).
-    // Algoritmo:
-    //  1. Recorre los items en orden (top→bottom).
-    //  2. Empieza gradient con verde en 0%.
-    //  3. Por cada .mr-tl-skipped: inserta un hueco de ±3px alrededor del
-    //     centro del cuadradito con cruz → la línea verde "salta".
-    //  4. Al encontrar .mr-tl-today: cierra la línea verde exactamente en
-    //     el centro del cuadradito HOY y termina en transparent.
-    //  5. Si no hay TODAY (semana pasada/futura), la línea llega al final
-    //     como verde (histórico completo) o transparent (nada completado).
-    // Los items .mr-tl-done no aportan stops — el verde continúa naturalmente.
-    // Colores por modo: #22c55e (dark) / #16a34a (light).
-    window._mrPlanTLCompute = function(daysCard) {
-        if (!daysCard || !daysCard.classList.contains('mr-tl-active')) return;
-        var items = daysCard.querySelectorAll('.mr-tl-item');
-        if (!items.length) { daysCard.style.setProperty('--tl-grad', 'transparent'); return; }
-        var TL_TOP = 14, TL_BOTTOM_INSET = 14;
-        var totalH = daysCard.offsetHeight;
-        var tlHeight = totalH - TL_TOP - TL_BOTTOM_INSET;
-        if (tlHeight <= 0) { daysCard.style.setProperty('--tl-grad', 'transparent'); return; }
-        var isLight = !document.body.classList.contains('dark-mode');
-        var GREEN = isLight ? '#16a34a' : '#22c55e';
-        var GAP_PX = 9;  // hueco alrededor del skipped/today (px)
-        var gapPct = (GAP_PX / tlHeight) * 100;
-
-        function pctFor(el) {
-            var c = el.offsetTop + el.offsetHeight / 2 - TL_TOP;
-            return Math.max(0, Math.min(100, (c / tlHeight) * 100));
-        }
-
-        var stops = [GREEN + ' 0%'];  // arrancamos con verde
-        var greenActive = true;
-        var reachedToday = false;
-
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i];
-            var p = pctFor(it);
-            if (it.classList.contains('mr-tl-today')) {
-                // Verde hasta el centro del TODAY, luego transparent para siempre
-                stops.push(GREEN + ' ' + p.toFixed(2) + '%');
-                stops.push('transparent ' + p.toFixed(2) + '%');
-                stops.push('transparent 100%');
-                reachedToday = true;
-                break;
-            }
-            if (it.classList.contains('mr-tl-skipped')) {
-                // Hueco alrededor del skipped: verde-transparent-transparent-verde
-                var pLeft  = Math.max(0, p - gapPct);
-                var pRight = Math.min(100, p + gapPct);
-                stops.push(GREEN + ' ' + pLeft.toFixed(2) + '%');
-                stops.push('transparent ' + pLeft.toFixed(2) + '%');
-                stops.push('transparent ' + pRight.toFixed(2) + '%');
-                stops.push(GREEN + ' ' + pRight.toFixed(2) + '%');
-                continue;
-            }
-            // .mr-tl-done y futuro: no aportan stops (el verde continúa por defecto)
-        }
-
-        if (!reachedToday) {
-            // No hay TODAY visible en esta semana. Determinamos si es semana
-            // pasada (todo done) o futura (ningún done) para decidir cierre.
-            var hasDone = false, hasFuture = false;
-            for (var j = 0; j < items.length; j++) {
-                if (items[j].classList.contains('mr-tl-done')) hasDone = true;
-                else if (!items[j].classList.contains('mr-tl-skipped')) hasFuture = true;
-            }
-            if (hasDone && !hasFuture) {
-                // Todo hecho: verde hasta el final
-                stops.push(GREEN + ' 100%');
-            } else {
-                // Nada hecho aún o semana futura: no pintar progreso
-                daysCard.style.setProperty('--tl-grad', 'transparent');
-                return;
-            }
-        }
-
-        var grad = 'linear-gradient(180deg, ' + stops.join(', ') + ')';
-        daysCard.style.setProperty('--tl-grad', grad);
-    };
 
     // ── [v2.30.1-p35] ÚLTIMO ENTRENO — mini-card en Home ────────────
     // Copia el HTML de la card de biblioteca (mismo diseño mr-lib-card) y lo
