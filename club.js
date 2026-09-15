@@ -6774,6 +6774,20 @@ function _openPRsSheet(userId, displayName, isSelf) {
             '  0%   { transform: rotate(0deg); }',
             '  100% { transform: rotate(360deg); }',
             '}',
+            /* [v2.30.1-p349] Variante C aprobada por Alvaro: gradient vertical
+               material + doble box-shadow adaptativa por tema (sutil light,
+               marcada dark). La barra metalica lateral 5px joyeria se aplica
+               inline con color-mix (no requiere clase). */
+            '.mr-prs-row-c {',
+            '  background: linear-gradient(180deg, var(--card2) 0%, var(--card) 100%) !important;',
+            '  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 2px 6px rgba(0,0,0,.06) !important;',
+            '  border-radius: 12px !important;',
+            '  overflow: hidden;',
+            '}',
+            'body.dark-mode .mr-prs-row-c {',
+            '  background: linear-gradient(180deg, #22252c 0%, #181b21 100%) !important;',
+            '  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.35) !important;',
+            '}',
         ].join('\n');
         document.head.appendChild(animStyle);
     }
@@ -7181,22 +7195,46 @@ function _buildPRGridCard(type, rec, isDark) {
     var isMilestone = (typeof type === 'string') && (type.indexOf('km_') === 0 || type.indexOf('streak_') === 0);
 
     // ── Row container ────────────────────────────────────────────────
+    // [v2.30.1-p349] Variante C aprobada por Alvaro: gradient vertical
+    // card2->card (material premium) + border-left implicito por barra
+    // metalica ::after de la accent-bar + shadow adaptativa por tema
+    // via clase .mr-prs-row-c (definida en animStyle). Padding-left
+    // 10->15 para el hueco de la barra 5px joyeria.
     var row = document.createElement('div');
     row.style.cssText = [
         'position:relative','display:flex','align-items:stretch','gap:12px',
-        'padding:8px 12px 8px 10px',
+        'padding:9px 12px 9px 15px',
         'background:' + (marked ? 'var(--card)' : (isDark ? 'rgba(255,255,255,.03)' : 'var(--bsoft)')),
         'border:1px solid var(--border)',
         'border-radius:12px',
+        'overflow:hidden',
         'min-width:0',
         'transition:transform .15s ease, box-shadow .15s ease',
-        marked ? 'cursor:pointer' : 'cursor:default',
-        marked ? 'box-shadow:0 1px 3px rgba(0,0,0,.05), 0 0 0 1px rgba(0,0,0,.04)' : ''
+        marked ? 'cursor:pointer' : 'cursor:default'
     ].filter(Boolean).join(';');
+    if (marked) row.classList.add('mr-prs-row-c');
 
-    // Accent bar vertical (color del tier) — identidad visual a la izquierda
+    // Accent bar vertical — [v2.30.1-p349] barra metalica joyeria 5px del
+    // color del tier (mismo patron reflejo que biblioteca/plan/carrusel
+    // Home). Gradient horizontal 4-tonos generado con color-mix sobre el
+    // accentCol (sin depender de un mapeo estatico de tonos por tier) +
+    // doble inset shadow (highlight top + sombra bottom) + glow externo.
+    // position:absolute edge-to-edge para no afectar al flex layout ni
+    // requerir overflow:hidden en el row cuando no esta marcado.
     var accentBar = document.createElement('div');
-    accentBar.style.cssText = 'flex-shrink:0;width:3px;border-radius:3px;background:' + accentCol + ';margin:4px 0;' + (marked ? '' : 'opacity:.35;');
+    accentBar.style.cssText = [
+        'position:absolute','left:0','top:0','bottom:0','width:5px',
+        'background:linear-gradient(90deg,'
+            + 'color-mix(in srgb, ' + accentCol + ', black 40%) 0%,'
+            + accentCol + ' 40%,'
+            + 'color-mix(in srgb, ' + accentCol + ', white 40%) 70%,'
+            + accentCol + ' 100%)',
+        'box-shadow:inset 0 1px 0 rgba(255,255,255,.35),'
+            + 'inset 0 -1px 0 rgba(0,0,0,.35),'
+            + '0 0 10px color-mix(in srgb, ' + accentCol + ' 50%, transparent)',
+        'pointer-events:none','z-index:1',
+        marked ? '' : 'opacity:.35'
+    ].filter(Boolean).join(';');
     row.appendChild(accentBar);
 
     // ── Medalla + RIBBON superpuesto ────────────────────────────────
@@ -7231,8 +7269,10 @@ function _buildPRGridCard(type, rec, isDark) {
     info.appendChild(lblEl);
 
     // Valor · XL con tabular-nums y letter-spacing negativo para elegancia
+    // [v2.30.1-p349] Variante C: 19->20px, weight 800->900, letter-spacing
+    // -.6 -> -.7 (mas peso y densidad visual).
     var valEl = document.createElement('div');
-    valEl.style.cssText = 'font-size:19px;font-weight:800;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.6px;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;';
+    valEl.style.cssText = 'font-size:20px;font-weight:900;color:' + (marked ? 'var(--tw)' : 'var(--tm)') + ';letter-spacing:-.7px;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;';
     if (marked && typeof window._formatRecordValue === 'function') {
         valEl.textContent = window._formatRecordValue(type, rec.value);
     } else if (isMilestone && typeof window._formatRecordValue === 'function') {
@@ -7245,9 +7285,12 @@ function _buildPRGridCard(type, rec, isDark) {
     row.appendChild(info);
 
     // ── Pill derecha (fecha dorada / "Sin marcar" / "Sin desbloquear") ─
+    // [v2.30.1-p349] Variante C: pill marked con gradient dorado vertical
+    // (.22 -> .10) + border mas marcado (.42) + radius 999 -> 8 (esquinas
+    // suaves) + inset highlight arriba. Pill unmarked se mantiene igual.
     var pill = document.createElement('div');
     if (marked && rec.activity_datestr) {
-        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:5px 10px;border-radius:999px;background:rgba(196,136,30,.14);border:1px solid rgba(196,136,30,.32);font-size:9.5px;font-weight:800;color:var(--gold,#c4881e);letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;';
+        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:6px 12px;border-radius:8px;background:linear-gradient(180deg,rgba(232,181,78,.22) 0%,rgba(196,136,30,.10) 100%);border:1px solid rgba(232,181,78,.42);font-size:9.5px;font-weight:900;color:var(--gold,#c4881e);letter-spacing:.6px;text-transform:uppercase;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.30);';
         pill.textContent = _prsPrettyDate(rec.activity_datestr);
     } else {
         pill.style.cssText = 'flex-shrink:0;align-self:center;padding:5px 10px;border-radius:999px;background:transparent;border:1px solid var(--border);font-size:9.5px;font-weight:700;color:var(--tm);letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;opacity:.85;';
