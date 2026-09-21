@@ -8791,100 +8791,15 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     if (!isOwn && userId) { (function(_id,_un,_ua){uNT.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
     uNW.appendChild(uNT);
     if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8.5px;font-weight:900;color:#3c2c08;background:linear-gradient(135deg,#FFE9A5,#C9A84C 50%,#8A6E1F);border-radius:5px;padding:2px 6px;letter-spacing:.3px;box-shadow:0 1px 3px rgba(201,168,76,.35), inset 0 1px 0 rgba(255,255,255,.4);'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
-    // Chip plateado "🔒 Crew" — sólo si el post pertenece a un crew (privado).
-    // Sirve como recordatorio visual del contexto cuando navegamos por el feed del crew.
-    // Si conozco el nombre del crew (porque soy miembro), lo mostramos; si no, "Crew" genérico.
-    if (post.crew_id) {
-        var crewName = '';
-        if (typeof getMyCrews === 'function') {
-            var mine = getMyCrews().find(function(c){ return c.id === post.crew_id; });
-            if (mine) crewName = mine.name || '';
-        }
-        var cChip = document.createElement('span');
-        cChip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;'
-            + 'font-size:8.5px;font-weight:800;color:#fff;'
-            + 'background:var(--silver-grad);'
-            + 'border-radius:4px;padding:2px 6px;letter-spacing:.2px;'
-            + 'text-shadow:0 1px 1px rgba(0,0,0,.18);'
-            + 'box-shadow:inset 0 -1px 2px rgba(0,0,0,.18),0 1px 2px rgba(80,85,92,.25);'
-            + 'max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        cChip.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
-            + '<span>' + (crewName ? crewName.toUpperCase() : 'CREW') + '</span>';
-        uNW.appendChild(cChip);
-    }
-    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:' + _postMuted + ';margin-top:3px;font-weight:600;'; uDt.textContent = dateStr;
-    uInfo.appendChild(uNW); uInfo.appendChild(uDt);
-
-    // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
-    // Both are stored inside act_data: shoeName / shoeColor (set when the activity was created),
-    // and watch (stamped on the post when published).
-    var shoeName = act.shoeName || '';
-    var shoeColor = act.shoeColor || '';
-    // Watch: prefer the one stamped on the post (act_data.watch). If not present,
-    // try the author's current profile watch (loaded via the profiles join, may be undefined).
-    // For OWN posts published before the watch-stamping change, fall back to the user's local
-    // profileData.watch so the user always sees their own watch in their feed.
-    // Last-resort fallback: read the visible watch field in the profile UI.
-    var watchName = act.watch || (profile && profile.watch) || '';
-    if (!watchName && isOwn) {
-        if (typeof profileData !== 'undefined' && profileData.watch) {
-            watchName = profileData.watch;
-        } else {
-            var _wd = document.getElementById('watch-display');
-            if (_wd && _wd.textContent && _wd.textContent.trim() && _wd.textContent.trim() !== '—') {
-                watchName = _wd.textContent.trim();
-            }
-        }
-    }
-    if (shoeName || watchName) {
-        var gearRow = document.createElement('div');
-        gearRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:3px;';
-        if (shoeName) {
-            var shChip = document.createElement('span');
-            shChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:500;';
-            // Colored shoe icon (tinted with shoeColor if available)
-            var shoeStroke = shoeColor || _postMutedLight;
-            shChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + shoeStroke + '" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;opacity:.85;"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + shoeName + '</span>';
-            gearRow.appendChild(shChip);
-        }
-        if (watchName) {
-            var wChip = document.createElement('span');
-            wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:500;';
-            // Smartwatch icon (rectangle with strap nubs + small inner display)
-            wChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _postMutedLight + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.85;"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="' + _postMutedLight + '" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
-            gearRow.appendChild(wChip);
-        }
-        uInfo.appendChild(gearRow);
-    }
-
-    hdr.appendChild(uInfo);
-    var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
-    var metaStack = document.createElement('div'); metaStack.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;';
-    // Weather emoji (si la actividad tiene clima registrado por Open-Meteo)
-    // Solo el icono — la temperatura se omite a propósito por fiabilidad.
-    var _wEmoji = (typeof window._weatherEmoji === 'function') ? window._weatherEmoji(act.weather) : '';
-    if (_wEmoji) {
-        var wxEl = document.createElement('div');
-        wxEl.style.cssText = 'font-size:15px;line-height:1;';
-        wxEl.title = (act.weather && act.weather.condition) ? act.weather.condition : '';
-        wxEl.textContent = _wEmoji;
-        metaStack.appendChild(wxEl);
-    }
-    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:10.5px;color:' + _postMutedLight + ';font-weight:700;'; agoEl.textContent = ago;
-    metaStack.appendChild(agoEl);
-    rightCol.appendChild(metaStack);
-    if (!isOwn && userId && mutualSet.has(userId)) {
-        var dmBtn = document.createElement('button');
-        dmBtn.style.cssText = 'background:none;border:1.5px solid ' + _postBorder + ';border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
-        dmBtn.title = 'Mensaje privado';
-        dmBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
-        (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
-        rightCol.appendChild(dmBtn);
-    }
+    // [v2.30.1-p416] Papelera al lado del nombre y del badge TÚ (Álvaro:
+    // "Al lado del nombre y de la pill de tú vamos a poner la papelera").
+    // Antes vivía en rightCol junto a weather+ago; ahora se mueve a la fila
+    // del nombre para que la derecha quede libre para clima/temp/ago.
     if (isOwn) {
         var delBtn = document.createElement('button');
-        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.5;padding:2px;display:flex;align-items:center;justify-content:center;';
-        delBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.55;padding:2px;margin-left:2px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+        delBtn.title = 'Eliminar publicación';
+        delBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
         (function(_pid, _card) {
             delBtn.onclick = function() {
                 var exMod = document.getElementById('del-post-modal'); if (exMod) exMod.remove();
@@ -8912,7 +8827,115 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
                 };
             };
         })(post.id, card);
-        rightCol.appendChild(delBtn);
+        uNW.appendChild(delBtn);
+    }
+    // Chip plateado "🔒 Crew" — sólo si el post pertenece a un crew (privado).
+    // Sirve como recordatorio visual del contexto cuando navegamos por el feed del crew.
+    // Si conozco el nombre del crew (porque soy miembro), lo mostramos; si no, "Crew" genérico.
+    if (post.crew_id) {
+        var crewName = '';
+        if (typeof getMyCrews === 'function') {
+            var mine = getMyCrews().find(function(c){ return c.id === post.crew_id; });
+            if (mine) crewName = mine.name || '';
+        }
+        var cChip = document.createElement('span');
+        cChip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;'
+            + 'font-size:8.5px;font-weight:800;color:#fff;'
+            + 'background:var(--silver-grad);'
+            + 'border-radius:4px;padding:2px 6px;letter-spacing:.2px;'
+            + 'text-shadow:0 1px 1px rgba(0,0,0,.18);'
+            + 'box-shadow:inset 0 -1px 2px rgba(0,0,0,.18),0 1px 2px rgba(80,85,92,.25);'
+            + 'max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        cChip.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+            + '<span>' + (crewName ? crewName.toUpperCase() : 'CREW') + '</span>';
+        uNW.appendChild(cChip);
+    }
+    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:' + _postMuted + ';margin-top:3px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
+    var uDtDate = document.createElement('span'); uDtDate.textContent = dateStr; uDt.appendChild(uDtDate);
+    uInfo.appendChild(uNW); uInfo.appendChild(uDt);
+
+    // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
+    // Both are stored inside act_data: shoeName / shoeColor (set when the activity was created),
+    // and watch (stamped on the post when published).
+    var shoeName = act.shoeName || '';
+    var shoeColor = act.shoeColor || '';
+    // Watch: prefer the one stamped on the post (act_data.watch). If not present,
+    // try the author's current profile watch (loaded via the profiles join, may be undefined).
+    // For OWN posts published before the watch-stamping change, fall back to the user's local
+    // profileData.watch so the user always sees their own watch in their feed.
+    // Last-resort fallback: read the visible watch field in the profile UI.
+    var watchName = act.watch || (profile && profile.watch) || '';
+    if (!watchName && isOwn) {
+        if (typeof profileData !== 'undefined' && profileData.watch) {
+            watchName = profileData.watch;
+        } else {
+            var _wd = document.getElementById('watch-display');
+            if (_wd && _wd.textContent && _wd.textContent.trim() && _wd.textContent.trim() !== '—') {
+                watchName = _wd.textContent.trim();
+            }
+        }
+    }
+    // [v2.30.1-p416] Reloj (icono + nombre) va JUNTO a la fecha en la fila 2 (uDt),
+    // no en gearRow separado — Álvaro: "El reloj y nombre del reloj lo ponemos justo
+    // a la derecha de la fecha". Así la fila 3 queda solo para la zapatilla en una línea.
+    if (watchName) {
+        var wChip = document.createElement('span');
+        wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:' + _postMuted + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:600;';
+        wChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.85;"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="' + _postMuted + '" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
+        uDt.appendChild(wChip);
+    }
+    // [v2.30.1-p416] shoeRow — SOLO nombre de la zapatilla, SIN icono (Álvaro:
+    // "vamos a quitar el icono de la zapatilla antes del nombre de la zapatilla").
+    // Sin el reloj compitiendo por espacio, la zapatilla larga cabe en una línea.
+    if (shoeName) {
+        var shoeRow = document.createElement('div');
+        shoeRow.style.cssText = 'margin-top:3px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;font-weight:500;';
+        shoeRow.textContent = shoeName;
+        uInfo.appendChild(shoeRow);
+    }
+
+    hdr.appendChild(uInfo);
+    // [v2.30.1-p416] rightCol: solo weather emoji + temperatura + ago (Álvaro:
+    // "el trozo de la derecha lo dejamos para el clima y la fecha o tiempo que hace
+    // desde que se ha publicado. Podría salir la temperatura por ahi tambien").
+    // Papelera y dm btn se mueven fuera de rightCol — papelera va en la fila del nombre
+    // (uNW) para posts propios, dm sigue disponible pero movido tras la temperatura.
+    var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;';
+    // Weather emoji + temperatura (act.avgTemp del reloj tiene prioridad sobre act.weather.tempC de Open-Meteo)
+    var _wEmoji = (typeof window._weatherEmoji === 'function') ? window._weatherEmoji(act.weather) : '';
+    var _tempC = null;
+    if (act && typeof act.avgTemp === 'number' && isFinite(act.avgTemp) && act.avgTemp !== 0) {
+        _tempC = Math.round(act.avgTemp);
+    } else if (act && act.weather && typeof act.weather.tempC === 'number' && isFinite(act.weather.tempC)) {
+        _tempC = Math.round(act.weather.tempC);
+    }
+    if (_wEmoji || _tempC != null) {
+        var wxRow = document.createElement('div');
+        wxRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
+        if (_wEmoji) {
+            var wxEl = document.createElement('span');
+            wxEl.style.cssText = 'font-size:15px;line-height:1;';
+            wxEl.title = (act.weather && act.weather.condition) ? act.weather.condition : '';
+            wxEl.textContent = _wEmoji;
+            wxRow.appendChild(wxEl);
+        }
+        if (_tempC != null) {
+            var tEl = document.createElement('span');
+            tEl.style.cssText = 'font-size:12px;font-weight:800;color:' + _postFg + ';line-height:1;letter-spacing:-.2px;';
+            tEl.textContent = _tempC + '°';
+            wxRow.appendChild(tEl);
+        }
+        rightCol.appendChild(wxRow);
+    }
+    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:10.5px;color:' + _postMutedLight + ';font-weight:700;'; agoEl.textContent = ago;
+    rightCol.appendChild(agoEl);
+    if (!isOwn && userId && mutualSet.has(userId)) {
+        var dmBtn = document.createElement('button');
+        dmBtn.style.cssText = 'background:none;border:1.5px solid ' + _postBorder + ';border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-top:2px;';
+        dmBtn.title = 'Mensaje privado';
+        dmBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
+        (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
+        rightCol.appendChild(dmBtn);
     }
     hdr.appendChild(rightCol);
     card.appendChild(hdr);
@@ -9354,11 +9377,22 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     });
     card.appendChild(sg);
 
-    /* Reactions */
+    /* Reactions + comments toggle unificados en UNA SOLA FILA (p416) */
     var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 14px;border-top:1px solid ' + _postBorder + ';flex-shrink:0;'; card.appendChild(dv2);
-    card.appendChild(_renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis));
-    /* Comments section */
-    card.appendChild(_renderCommentsSection(post.id, myId, profile));
+    // [v2.30.1-p416] Álvaro pidió "Toda la parte de abajo de los emojis de reaccion y los
+    // comentarios hay que ajustarla y que sea mas visual y premium sin aumentar la altura
+    // del post en ningun caso". Estrategia: unificar reactions + toggle comentarios en
+    // UNA sola fila. Se elimina el divider entre reactions y toggle + el toggle ancho
+    // completo separado → gana ~35px verticales. Emojis premium en dorado para mine.
+    var _reactBar = _renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis);
+    var _cmtSection = _renderCommentsSection(post.id, myId, profile);
+    var _cmtToggle = _cmtSection.querySelector('button');
+    if (_cmtToggle) {
+        // Chip toggle ya trae margin-left:auto → se empuja a la dcha del reactBar (los emojis van a la izq con flex:1).
+        _reactBar.appendChild(_cmtToggle);
+    }
+    card.appendChild(_reactBar);
+    card.appendChild(_cmtSection);
     return card;
 }
 
@@ -9366,19 +9400,29 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
 // Collapsible comments under each post. Loads count first (cheap), expands to show full list.
 // Stores in Supabase `post_comments` table. Graceful fallback if table missing.
 function _renderCommentsSection(postId, myId, ownerProfile) {
+    // [v2.30.1-p416] Wrap SIN border-top (antes tenía uno con var(--bsoft)).
+    // La separación visual la maneja el body colapsable (border-top solo cuando expanded).
+    // El toggle button ahora está ESTILIZADO como chip para poder inyectarlo al final del
+    // reactionBar en una sola fila unificada (el flow del post lo mueve tras renderizar).
     var wrap = document.createElement('div');
     wrap.id = 'cmt-wrap-' + postId;
-    wrap.style.cssText = 'border-top:1px solid var(--bsoft);flex-shrink:0;';
+    wrap.style.cssText = 'flex-shrink:0;';
 
-    // Toggle button row
+    var _isDark = document.body.classList.contains('dark-mode');
+    var _muted = _isDark ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.45)';
+    var _mutedLight = _isDark ? 'rgba(255,255,255,.4)' : 'rgba(0,0,0,.35)';
+    var _fg = _isDark ? '#f5f5f7' : '#111114';
+    var _border = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+
+    // Toggle chip — se moverá al reactionBar desde el flow del post (margin-left:auto lo empuja a la dcha)
     var toggle = document.createElement('button');
-    toggle.style.cssText = 'width:100%;background:none;border:none;padding:8px 13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-family:var(--f);';
-    toggle.innerHTML = '<span style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ts);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '">Comentarios</span></span><svg id="cmt-chev-' + postId + '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2" stroke-linecap="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>';
+    toggle.style.cssText = 'background:none;border:none;padding:4px 10px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
+    toggle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11.5px;color:' + _muted + ';font-weight:700;letter-spacing:-.1px;">Comentarios</span><svg id="cmt-chev-' + postId + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _mutedLight + '" stroke-width="2.2" stroke-linecap="round" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>';
 
-    // Collapsible body
+    // Collapsible body — border-top se aplica dinámicamente cuando expanded
     var body = document.createElement('div');
     body.id = 'cmt-body-' + postId;
-    body.style.cssText = 'display:none;padding:0 15px 12px;';
+    body.style.cssText = 'display:none;padding:8px 15px 12px;';
     body.innerHTML = '<div id="cmt-list-' + postId + '" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px;"></div>';
 
     // Estado de "respondiendo a..."
@@ -9387,7 +9431,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     // Chip "Respondiendo a @usuario · ✕" — aparece encima del input
     var replyChip = document.createElement('div');
     replyChip.id = 'cmt-replychip-' + postId;
-    replyChip.style.cssText = 'display:none;align-items:center;gap:8px;padding:6px 10px;margin-bottom:6px;background:var(--bsoft);border-left:3px solid var(--crimson);border-radius:0 8px 8px 0;font-size:11.5px;color:var(--ts);';
+    replyChip.style.cssText = 'display:none;align-items:center;gap:8px;padding:6px 10px;margin-bottom:6px;background:' + (_isDark?'rgba(255,255,255,.05)':'rgba(0,0,0,.04)') + ';border-left:3px solid #C9A84C;border-radius:0 8px 8px 0;font-size:11.5px;color:' + _muted + ';';
     body.appendChild(replyChip);
 
     // Input row
@@ -9397,11 +9441,13 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     ta.placeholder = 'Escribe un comentario...';
     ta.rows = 1;
     ta.maxLength = 500;
-    ta.style.cssText = 'flex:1;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:8px 12px;font-family:var(--f);font-size:13px;color:var(--tw);outline:none;resize:none;max-height:80px;line-height:1.35;';
+    ta.style.cssText = 'flex:1;background:' + (_isDark?'rgba(255,255,255,.04)':'rgba(0,0,0,.03)') + ';border:1px solid ' + _border + ';border-radius:18px;padding:8px 14px;font-family:var(--f);font-size:13px;color:' + _fg + ';outline:none;resize:none;max-height:80px;line-height:1.35;transition:border-color .15s;';
+    ta.onfocus = function() { this.style.borderColor = 'rgba(201,168,76,.5)'; };
+    ta.onblur = function() { this.style.borderColor = _border; };
     ta.oninput = function() { this.style.height='auto'; this.style.height=Math.min(this.scrollHeight, 80)+'px'; };
     var sendBtn = document.createElement('button');
-    sendBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
+    sendBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#FFE9A5,#C9A84C 50%,#8A6E1F);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(201,168,76,.35), inset 0 1px 0 rgba(255,255,255,.4);';
+    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3c2c08" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
     inputRow.appendChild(ta); inputRow.appendChild(sendBtn);
     body.appendChild(inputRow);
 
@@ -9717,6 +9763,11 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     toggle.onclick = function() {
         expanded = !expanded;
         body.style.display = expanded ? 'block' : 'none';
+        // [v2.30.1-p416] Divider border-top solo cuando el body está expanded — así el chip
+        // toggle inline dentro del reactBar no tiene línea colgando cuando está cerrado.
+        body.style.borderTop = expanded ? ('1px solid ' + _border) : 'none';
+        // Feedback visual en el chip: background dorado sutil cuando abierto
+        toggle.style.background = expanded ? (_isDark ? 'rgba(232,181,78,.10)' : 'rgba(201,168,76,.08)') : 'none';
         var chev = document.getElementById('cmt-chev-' + postId);
         if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0)';
         if (expanded && !loaded) {
@@ -9784,16 +9835,23 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
     // crewEmojis: array opcional de 5 emojis personalizados del crew (si el post pertenece a un crew con custom_emojis).
     var DEFAULT_EMOJIS = ['❤️','💪','🔥','🐐','🐢'];
     var EMOJIS = (Array.isArray(crewEmojis) && crewEmojis.length === 5) ? crewEmojis.slice() : DEFAULT_EMOJIS;
+    // [v2.30.1-p416] Paleta post local (border-top se sobrescribe desde el flow del post con _postBorder).
+    var _isDark = document.body.classList.contains('dark-mode');
+    var _fg = _isDark ? '#f5f5f7' : '#111114';
+    var _muted = _isDark ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.45)';
+    var _mineBg = 'linear-gradient(135deg,rgba(232,181,78,.18),rgba(196,136,30,.08))';
+    var _mineRing = 'rgba(232,181,78,.5)';
+    var _mineText = _isDark ? '#e8b54e' : '#a08028';
     var bar = document.createElement('div');
     bar.id = 'rxbar-' + postId;
-    bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 13px 9px;flex-wrap:nowrap;border-top:1px solid var(--bsoft);';
-    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
+    bar.style.cssText = 'display:flex;align-items:center;gap:5px;padding:6px 14px 7px;flex-wrap:nowrap;';
+    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:4px;flex:1;';
     EMOJIS.forEach(function(em) {
         var users = (reactions || []).filter(function(r) { return r.emoji === em; }).map(function(r) { return r.user_id; });
         var iMine = users.indexOf(myId) >= 0;
         var btn = document.createElement('button');
-        btn.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:99px;border:1.5px solid ' + (iMine?'var(--crimson)':'var(--border)') + ';background:' + (iMine?'var(--crim-lt)':'var(--card2)') + ';cursor:pointer;transition:all .15s;font-size:14px;flex-shrink:0;';
-        btn.innerHTML = em + (users.length ? '<span style="font-size:11px;font-weight:700;color:' + (iMine?'var(--crimson)':'var(--ts)') + ';">' + users.length + '</span>' : '');
+        btn.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:8px;border:none;background:' + (iMine?_mineBg:'transparent') + ';cursor:pointer;transition:all .15s;font-size:16px;flex-shrink:0;line-height:1;' + (iMine?'box-shadow:inset 0 0 0 1.5px '+_mineRing+', 0 1px 4px rgba(201,168,76,.18);':'');
+        btn.innerHTML = em + (users.length ? '<span style="font-size:10.5px;font-weight:800;color:' + (iMine?_mineText:_muted) + ';letter-spacing:-.1px;">' + users.length + '</span>' : '');
         (function(_em, _pid, _iMine, _reactions, _bar, _btn) {
             _btn.onclick = function() {
                 if (!myId) return;
