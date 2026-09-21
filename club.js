@@ -8759,25 +8759,38 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     var hasP = !!(post.photo_url);
 
     var card = document.createElement('div');
-    // [v8.x — V5 Editorial] Card sin border, sombra tabaco cálida, esquinas más
-    // redondeadas. Se siente como una pieza de magazine de fotografía sobre el cream.
-    card.style.cssText = 'background:var(--card);border-radius:22px;overflow:hidden;margin-bottom:12px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;box-shadow:0 8px 24px rgba(101,67,33,.16), 0 2px 6px rgba(74,49,24,.18);';
+    /* [v2.30.1-p415] Rediseño premium post Club — Opción B aprobada por
+       Álvaro tras preview de 3 variantes: "Vamos con la B". Card blanca
+       light / #17191d dark que destaca sobre el bg crimson del feed
+       (antes usaba var(--card) que en el scope #club-view estaba
+       reemplazado a rgba blanca translúcida y el post se fundía con el
+       fondo crimson). El scope crimson de p407 sigue aplicando al Club
+       en general, solo el POST tiene su propio color explícito. Paleta
+       computada una vez por card para respetar dark mode dinámico. */
+    var _isDark = document.body.classList.contains('dark-mode');
+    var _postBg = _isDark ? '#17191d' : '#ffffff';
+    var _postFg = _isDark ? '#f5f7fa' : '#0f172a';
+    var _postMuted = _isDark ? 'rgba(245,247,250,.6)' : 'rgba(15,23,42,.6)';
+    var _postMutedLight = _isDark ? 'rgba(245,247,250,.45)' : 'rgba(15,23,42,.5)';
+    var _postBorder = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+    var _postRxBg = _isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)';
+    card.style.cssText = 'background:' + _postBg + ';color:' + _postFg + ';border-radius:22px;overflow:hidden;margin-bottom:12px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;box-shadow:0 8px 24px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.15);';
 
     /* Header */
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 13px 9px;flex-shrink:0;';
+    hdr.style.cssText = 'display:flex;align-items:center;gap:11px;padding:12px 14px 10px;flex-shrink:0;';
     var av = document.createElement('div');
-    av.style.cssText = 'width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--crimson),#c0243a);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;';
+    av.style.cssText = 'width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#8f1a28,#c0243a);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;box-shadow:0 2px 8px rgba(143,26,40,.3), inset 0 1px 0 rgba(255,255,255,.2);';
     if (avatarUrl) { var avImg = document.createElement('img'); avImg.src = avatarUrl; avImg.loading = 'lazy'; avImg.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(avImg); }
     else av.textContent = (user[0] || '?').toUpperCase();
     if (!isOwn && userId) { av.style.cursor='pointer'; (function(_id,_un,_ua){av.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
     hdr.appendChild(av);
     var uInfo = document.createElement('div'); uInfo.style.cssText = 'flex:1;min-width:0;';
     var uNW = document.createElement('div'); uNW.style.cssText = 'display:flex;align-items:center;gap:6px;';
-    var uNT = document.createElement('span'); uNT.style.cssText = 'font-size:14px;font-weight:700;color:var(--tw);' + (!isOwn&&userId?'cursor:pointer;':''); uNT.textContent = user;
+    var uNT = document.createElement('span'); uNT.style.cssText = 'font-size:14.5px;font-weight:800;color:' + _postFg + ';letter-spacing:-.1px;' + (!isOwn&&userId?'cursor:pointer;':''); uNT.textContent = user;
     if (!isOwn && userId) { (function(_id,_un,_ua){uNT.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
     uNW.appendChild(uNT);
-    if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8px;font-weight:700;color:var(--gold);background:var(--gold-lt);border:1px solid var(--gold-bd);border-radius:4px;padding:1px 5px;'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
+    if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8.5px;font-weight:900;color:#3c2c08;background:linear-gradient(135deg,#FFE9A5,#C9A84C 50%,#8A6E1F);border-radius:5px;padding:2px 6px;letter-spacing:.3px;box-shadow:0 1px 3px rgba(201,168,76,.35), inset 0 1px 0 rgba(255,255,255,.4);'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
     // Chip plateado "🔒 Crew" — sólo si el post pertenece a un crew (privado).
     // Sirve como recordatorio visual del contexto cuando navegamos por el feed del crew.
     // Si conozco el nombre del crew (porque soy miembro), lo mostramos; si no, "Crew" genérico.
@@ -8799,7 +8812,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             + '<span>' + (crewName ? crewName.toUpperCase() : 'CREW') + '</span>';
         uNW.appendChild(cChip);
     }
-    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:var(--tm);margin-top:2px;'; uDt.textContent = dateStr;
+    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:' + _postMuted + ';margin-top:3px;font-weight:600;'; uDt.textContent = dateStr;
     uInfo.appendChild(uNW); uInfo.appendChild(uDt);
 
     // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
@@ -8825,20 +8838,20 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
     if (shoeName || watchName) {
         var gearRow = document.createElement('div');
-        gearRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;';
+        gearRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:3px;';
         if (shoeName) {
             var shChip = document.createElement('span');
-            shChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            shChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:500;';
             // Colored shoe icon (tinted with shoeColor if available)
-            var shoeStroke = shoeColor || 'var(--tm)';
-            shChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + shoeStroke + '" stroke-width="1.8" stroke-linecap="round"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + shoeName + '</span>';
+            var shoeStroke = shoeColor || _postMutedLight;
+            shChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + shoeStroke + '" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;opacity:.85;"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + shoeName + '</span>';
             gearRow.appendChild(shChip);
         }
         if (watchName) {
             var wChip = document.createElement('span');
-            wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:500;';
             // Smartwatch icon (rectangle with strap nubs + small inner display)
-            wChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="var(--tm)" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
+            wChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _postMutedLight + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.85;"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="' + _postMutedLight + '" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
             gearRow.appendChild(wChip);
         }
         uInfo.appendChild(gearRow);
@@ -8846,30 +8859,32 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
 
     hdr.appendChild(uInfo);
     var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
+    var metaStack = document.createElement('div'); metaStack.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;';
     // Weather emoji (si la actividad tiene clima registrado por Open-Meteo)
     // Solo el icono — la temperatura se omite a propósito por fiabilidad.
     var _wEmoji = (typeof window._weatherEmoji === 'function') ? window._weatherEmoji(act.weather) : '';
     if (_wEmoji) {
         var wxEl = document.createElement('div');
-        wxEl.style.cssText = 'font-size:14px;line-height:1;';
+        wxEl.style.cssText = 'font-size:15px;line-height:1;';
         wxEl.title = (act.weather && act.weather.condition) ? act.weather.condition : '';
         wxEl.textContent = _wEmoji;
-        rightCol.appendChild(wxEl);
+        metaStack.appendChild(wxEl);
     }
-    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:11px;color:var(--tm);'; agoEl.textContent = ago;
-    rightCol.appendChild(agoEl);
+    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:10.5px;color:' + _postMutedLight + ';font-weight:700;'; agoEl.textContent = ago;
+    metaStack.appendChild(agoEl);
+    rightCol.appendChild(metaStack);
     if (!isOwn && userId && mutualSet.has(userId)) {
         var dmBtn = document.createElement('button');
-        dmBtn.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        dmBtn.style.cssText = 'background:none;border:1.5px solid ' + _postBorder + ';border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
         dmBtn.title = 'Mensaje privado';
-        dmBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
+        dmBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
         (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
         rightCol.appendChild(dmBtn);
     }
     if (isOwn) {
         var delBtn = document.createElement('button');
-        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.45;';
-        delBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.5;padding:2px;display:flex;align-items:center;justify-content:center;';
+        delBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>';
         (function(_pid, _card) {
             delBtn.onclick = function() {
                 var exMod = document.getElementById('del-post-modal'); if (exMod) exMod.remove();
@@ -9245,14 +9260,17 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             }
             mw.appendChild(medalWrap);
         }
-        card.appendChild(mw);
+        var mediaWrap = document.createElement('div');
+        mediaWrap.style.cssText = 'padding:0 12px;flex-shrink:0;';
+        mediaWrap.appendChild(mw);
+        card.appendChild(mediaWrap);
     }
 
     /* Name + type */
     var nameRow = document.createElement('div');
-    nameRow.style.cssText = 'padding:10px 13px 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-shrink:0;';
-    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:18px;font-weight:800;color:var(--tw);letter-spacing:-.3px;line-height:1.2;flex:1;'; nmEl.textContent = act.name || tl;
-    var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-top:4px;';
+    nameRow.style.cssText = 'padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;';
+    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:19px;font-weight:800;color:' + _postFg + ';letter-spacing:-.4px;line-height:1.15;flex:1;'; nmEl.textContent = act.name || tl;
+    var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;';
     // PB badge (own posts only — we don't have remote marcas)
     if (isOwn) {
         var pbLabel = _detectPB(act);
@@ -9264,7 +9282,8 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             rightBadges.appendChild(pbBadge);
         }
     }
-    var tbEl = document.createElement('div'); tbEl.style.cssText = 'font-size:10px;font-weight:700;padding:4px 10px;border-radius:99px;background:' + tc + '22;color:' + tc + ';border:1px solid ' + tc + '44;'; tbEl.textContent = tl;
+    var tbEl = document.createElement('div'); tbEl.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;padding:5px 11px 5px 8px;border-radius:6px;background:' + tc + ';color:#fff;letter-spacing:.2px;white-space:nowrap;box-shadow:0 1px 3px ' + tc + '66, inset 0 1px 0 rgba(255,255,255,.25);';
+    tbEl.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 0 6px rgba(255,255,255,.6);flex-shrink:0;"></span>' + tl;
     rightBadges.appendChild(tbEl);
     nameRow.appendChild(nmEl); nameRow.appendChild(rightBadges); card.appendChild(nameRow);
 
@@ -9307,10 +9326,10 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
 
     /* Divider */
-    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv1);
+    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 14px;border-top:1px solid ' + _postBorder + ';flex-shrink:0;'; card.appendChild(dv1);
 
     /* Stats */
-    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:8px 6px 7px;flex-shrink:0;';
+    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:12px 6px 10px;flex-shrink:0;';
     var statCells;
     if (act.type === 'heatmap' && act.heatmapStats) {
         var hs = act.heatmapStats;
@@ -9330,13 +9349,13 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
     statCells.forEach(function(s) {
         var cell = document.createElement('div'); cell.style.cssText = 'text-align:center;padding:2px;';
-        cell.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--tw);line-height:1.1;font-variant-numeric:tabular-nums;">' + s.v + '</div><div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-top:2px;">' + s.u + '</div>';
+        cell.innerHTML = '<div style="font-size:18px;font-weight:900;color:' + _postFg + ';line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:-.5px;">' + s.v + '</div><div style="font-size:9px;color:' + _postMuted + ';text-transform:uppercase;letter-spacing:.9px;margin-top:3px;font-weight:700;">' + s.u + '</div>';
         sg.appendChild(cell);
     });
     card.appendChild(sg);
 
     /* Reactions */
-    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv2);
+    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 14px;border-top:1px solid ' + _postBorder + ';flex-shrink:0;'; card.appendChild(dv2);
     card.appendChild(_renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis));
     /* Comments section */
     card.appendChild(_renderCommentsSection(post.id, myId, profile));
