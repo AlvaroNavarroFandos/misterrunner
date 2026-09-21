@@ -9438,6 +9438,10 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     toggle.style.cssText = 'background:none;border:none;padding:4px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
     toggle.title = 'Comentarios';
     toggle.setAttribute('aria-label', 'Comentarios');
+    // [v2.30.1-p420] data-role para que _renderReactionBar pueda preservar el chip al re-renderizar
+    // el bar tras una reacción (chip vive en el bar tras la unificación p416, pero el re-render
+    // recursivo del bar tras reacción lo perdía → bug detectado por Álvaro tras p419).
+    toggle.setAttribute('data-role', 'cmt-toggle');
     toggle.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11px;color:' + _muted + ';font-weight:800;letter-spacing:-.1px;line-height:1;"></span>';
 
     // Collapsible body — border-top se aplica dinámicamente cuando expanded
@@ -9891,6 +9895,14 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
                     ? (_reactions||[]).filter(function(r) { return !(r.user_id===myId && r.emoji===_em); })
                     : (_reactions||[]).concat([{user_id:myId, emoji:_em, post_id:_pid}]);
                 var newBar = _renderReactionBar(_pid, newReactions, myId, undefined, crewEmojis);
+                // [v2.30.1-p420] BUG CRÍTICO: el chip Comentarios se añade al reactBar en el flow
+                // del post TRAS el render inicial (unificación 1 sola fila p416). Al re-renderizar
+                // el bar tras reaccionar, el nuevo bar viene SIN chip y el replaceChild lo pierde.
+                // Fix: preservar el chip del bar viejo movíéndolo al nuevo ANTES de replaceChild.
+                // Node.appendChild al mover un elemento preserva event listeners y estado interno
+                // (el closure del onclick del chip sigue funcionando con expanded, loaded, etc).
+                var _oldChip = _bar.querySelector('[data-role="cmt-toggle"]');
+                if (_oldChip) newBar.appendChild(_oldChip);
                 _bar.parentNode && _bar.parentNode.replaceChild(newBar, _bar);
                 if (_iMine) {
                     window._sbClient.from('reactions').delete().eq('post_id',_pid).eq('user_id',myId).eq('emoji',_em).then(() => {});
