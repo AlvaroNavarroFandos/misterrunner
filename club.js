@@ -5130,10 +5130,32 @@ function pickPublishDestinations(opts) {
             sheet.appendChild(confirmBtn);
             bk.appendChild(sheet);
             document.body.appendChild(bk);
+            /* [v2.30.1-p412] DOBLE RAF (patrón openSheet index.html L28110)
+               en vez del RAF simple previo. Safari colapsaba el appendChild
+               con opacity:0 inline + el requestAnimationFrame(() => opacity:1)
+               en el mismo frame, dejando el bk en opacity 0 → invisible pese
+               a estar en DOM. Álvaro tras p410-p411: "cuando le doy a share
+               y compartir en el club ya no me salen las opciones que salian
+               antes de darle a publicar, habia un sheet que salia para
+               compartir en el club global, en el crew o etiquetar a gente".
+               El sheet se creaba y appendía pero nunca se animaba a visible;
+               el flow del share caía al fallback {toPublic:true, crewIds:[]}
+               vía el catch del try del caller y publicaba directo sin sheet.
+               Safeguard adicional con setTimeout 120ms que fuerza los estilos
+               finales por si el doble RAF también falla (edge-case en devices
+               muy cargados). */
             requestAnimationFrame(function() {
-                bk.style.opacity = '1';
-                sheet.style.transform = 'translateY(0)';
+                requestAnimationFrame(function() {
+                    bk.style.opacity = '1';
+                    sheet.style.transform = 'translateY(0)';
+                });
             });
+            setTimeout(function() {
+                if (bk.style.opacity !== '1') bk.style.opacity = '1';
+                if (sheet.style.transform !== 'translateY(0px)' && sheet.style.transform !== 'translateY(0)') {
+                    sheet.style.transform = 'translateY(0)';
+                }
+            }, 120);
         });
     });
 }
@@ -9026,9 +9048,17 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
                hacer tap sobre él → openMapZoomModal navegable con
                records+shoeColor. Fallback al canvas + drawTrack si
                MapLibre falla o el helper del index no está cargado. */
-            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;border-radius:12px;';
+            /* [v2.30.1-p412] Retoques visuales tras carrusel p411: (1) gap
+               foto/mapa 6→8 (más separación entre los dos slides); (2)
+               border-radius 8→6 (menos round, "un poquito de round en
+               ambos lados y ya pero el mismo round para todo" — el
+               overflow:hidden del contenedor recorta ambos slides al mismo
+               radio 6 en las 4 esquinas). Quitados margin/width lateral
+               que había residual del intermedio p411, ahora edge-to-edge
+               dentro del post como el resto del media block. */
+            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;border-radius:6px;';
             var scroller = document.createElement('div');
-            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:2px;';
+            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:8px;';
             // Ocultar scrollbar
             if (!document.getElementById('_mrCarStyle')) {
                 var _hideScroll = document.createElement('style');
