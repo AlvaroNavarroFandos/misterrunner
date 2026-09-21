@@ -9432,10 +9432,13 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     // palabra "Comentarios" (patrón Instagram/Twitter). Antes ocupaba ~130px con "Comentarios (N)"
     // y desaparecía del viewport cuando los emojis tenían counts. Ahora ~55px worst case.
     // Título accesible via title/aria-label — el icono chat es universalmente reconocible.
-    toggle.style.cssText = 'background:none;border:none;padding:5px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
+    // [v2.30.1-p419] Chevron eliminado. Redundante — el bg dorado sutil que aparece al abrirse ya
+    // da feedback de open/close. Instagram/Twitter tampoco usan chevron en su chip de comentarios.
+    // Ganancia adicional: ~17px por chip → chip max ~49px con count "99".
+    toggle.style.cssText = 'background:none;border:none;padding:4px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
     toggle.title = 'Comentarios';
     toggle.setAttribute('aria-label', 'Comentarios');
-    toggle.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11px;color:' + _muted + ';font-weight:800;letter-spacing:-.1px;line-height:1;"></span><svg id="cmt-chev-' + postId + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _mutedLight + '" stroke-width="2.2" stroke-linecap="round" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>';
+    toggle.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11px;color:' + _muted + ';font-weight:800;letter-spacing:-.1px;line-height:1;"></span>';
 
     // Collapsible body — border-top se aplica dinámicamente cuando expanded
     var body = document.createElement('div');
@@ -9787,8 +9790,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         body.style.borderTop = expanded ? ('1px solid ' + _border) : 'none';
         // Feedback visual en el chip: background dorado sutil cuando abierto
         toggle.style.background = expanded ? (_isDark ? 'rgba(232,181,78,.10)' : 'rgba(201,168,76,.08)') : 'none';
-        var chev = document.getElementById('cmt-chev-' + postId);
-        if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0)';
+        // [v2.30.1-p419] Chevron eliminado — no más rotate. El bg dorado sutil es el único feedback visual.
         if (expanded && !loaded) {
             loaded = true;
             loadComments();
@@ -9865,8 +9867,13 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
     bar.id = 'rxbar-' + postId;
     // [v2.30.1-p418] Bar padding lateral 14 → 10 y gap 5 → 3 para dar más espacio al chip
     // Comentarios cuando TODOS los emojis tienen count (Álvaro capturas: chip desaparecía).
-    bar.style.cssText = 'display:flex;align-items:center;gap:3px;padding:6px 10px 7px;flex-wrap:nowrap;';
-    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;';
+    // [v2.30.1-p419] Padding lateral 10 → 12 para dar margen visual del borde derecho
+    // (Álvaro: "hay que moverlo hacia la izquierda, sino pasa exactamente lo mismo que esta
+    // pegado al borde derecho y al reaccionar algo ya se va y desaparece"). overflow:hidden
+    // en emWrap como safety-net: si en algún caso extremo (5 counts multi-dígito) los emojis
+    // desbordan, se cropean ANTES que el chip Comentarios desaparezca.
+    bar.style.cssText = 'display:flex;align-items:center;gap:3px;padding:6px 12px 7px;flex-wrap:nowrap;';
+    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;overflow:hidden;';
     EMOJIS.forEach(function(em) {
         var users = (reactions || []).filter(function(r) { return r.emoji === em; }).map(function(r) { return r.user_id; });
         var iMine = users.indexOf(myId) >= 0;
