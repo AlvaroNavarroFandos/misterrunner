@@ -9428,8 +9428,14 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
 
     // Toggle chip — se moverá al reactionBar desde el flow del post (margin-left:auto lo empuja a la dcha)
     var toggle = document.createElement('button');
-    toggle.style.cssText = 'background:none;border:none;padding:4px 10px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
-    toggle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11.5px;color:' + _muted + ';font-weight:700;letter-spacing:-.1px;">Comentarios</span><svg id="cmt-chev-' + postId + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _mutedLight + '" stroke-width="2.2" stroke-linecap="round" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>';
+    // [v2.30.1-p418] Chip Comentarios: solo icono message + count (si N>0) + chevron, sin
+    // palabra "Comentarios" (patrón Instagram/Twitter). Antes ocupaba ~130px con "Comentarios (N)"
+    // y desaparecía del viewport cuando los emojis tenían counts. Ahora ~55px worst case.
+    // Título accesible via title/aria-label — el icono chat es universalmente reconocible.
+    toggle.style.cssText = 'background:none;border:none;padding:5px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
+    toggle.title = 'Comentarios';
+    toggle.setAttribute('aria-label', 'Comentarios');
+    toggle.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11px;color:' + _muted + ';font-weight:800;letter-spacing:-.1px;line-height:1;"></span><svg id="cmt-chev-' + postId + '" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _mutedLight + '" stroke-width="2.2" stroke-linecap="round" style="transition:transform .2s;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg>';
 
     // Collapsible body — border-top se aplica dinámicamente cuando expanded
     var body = document.createElement('div');
@@ -9752,8 +9758,9 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     }
 
     function updateCount(n) {
+        // [v2.30.1-p418] Solo el número (o vacío) — el icono chat del chip ya identifica "Comentarios".
         var lbl = document.getElementById('cmt-label-' + postId);
-        if (lbl) lbl.textContent = n > 0 ? 'Comentarios (' + n + ')' : 'Comentarios';
+        if (lbl) lbl.textContent = n > 0 ? String(n) : '';
     }
 
     // Initial count fetch (light, head-only) — solo comentarios raíz
@@ -9856,14 +9863,16 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
     var _mineText = _isDark ? '#e8b54e' : '#a08028';
     var bar = document.createElement('div');
     bar.id = 'rxbar-' + postId;
-    bar.style.cssText = 'display:flex;align-items:center;gap:5px;padding:6px 14px 7px;flex-wrap:nowrap;';
-    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:4px;flex:1;';
+    // [v2.30.1-p418] Bar padding lateral 14 → 10 y gap 5 → 3 para dar más espacio al chip
+    // Comentarios cuando TODOS los emojis tienen count (Álvaro capturas: chip desaparecía).
+    bar.style.cssText = 'display:flex;align-items:center;gap:3px;padding:6px 10px 7px;flex-wrap:nowrap;';
+    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;';
     EMOJIS.forEach(function(em) {
         var users = (reactions || []).filter(function(r) { return r.emoji === em; }).map(function(r) { return r.user_id; });
         var iMine = users.indexOf(myId) >= 0;
         var btn = document.createElement('button');
-        btn.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:8px;border:none;background:' + (iMine?_mineBg:'transparent') + ';cursor:pointer;transition:all .15s;font-size:16px;flex-shrink:0;line-height:1;' + (iMine?'box-shadow:inset 0 0 0 1.5px '+_mineRing+', 0 1px 4px rgba(201,168,76,.18);':'');
-        btn.innerHTML = em + (users.length ? '<span style="font-size:10.5px;font-weight:800;color:' + (iMine?_mineText:_muted) + ';letter-spacing:-.1px;">' + users.length + '</span>' : '');
+        btn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 7px;border-radius:8px;border:none;background:' + (iMine?_mineBg:'transparent') + ';cursor:pointer;transition:all .15s;font-size:15.5px;flex-shrink:0;line-height:1;' + (iMine?'box-shadow:inset 0 0 0 1.5px '+_mineRing+', 0 1px 4px rgba(201,168,76,.18);':'');
+        btn.innerHTML = em + (users.length ? '<span style="font-size:10px;font-weight:800;color:' + (iMine?_mineText:_muted) + ';letter-spacing:-.1px;">' + users.length + '</span>' : '');
         (function(_em, _pid, _iMine, _reactions, _bar, _btn) {
             _btn.onclick = function() {
                 if (!myId) return;
