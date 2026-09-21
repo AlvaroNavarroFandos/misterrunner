@@ -8747,8 +8747,13 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         var dh = Math.floor(act.durationSec/3600), dm = Math.floor((act.durationSec%3600)/60), ds = act.durationSec%60;
         dur = dh > 0 ? dh + ':' + String(dm).padStart(2,'0') + ':' + String(ds).padStart(2,'0') : dm + ':' + String(ds).padStart(2,'0');
     }
-    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera',heatmap:'🔥 Heatmap'};
-    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',heatmap:'#e8a825'};
+    // [v2.30.1-p417] TCOL/TLAB antes solo cubrían easy/recovery/series/long/race/heatmap.
+    // Un post con act.type='test' caía al fallback '#aaa' (gris) + 'test' (minúscula sin traducir).
+    // Álvaro captura post.jpg: pill "test" en gris minúscula → debe ser cian "Test".
+    // Añadidos: test (cian #06b6d4, mismo color en TYPE_COLOR L34701, TYPE_COLOR_PLAN L54108, etc),
+    // strength (dorado #fbbf24), tempo/threshold/fartlek por completitud.
+    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera',heatmap:'🔥 Heatmap',test:'Test',strength:'Fuerza',tempo:'Tempo',threshold:'Umbral',fartlek:'Fartlek'};
+    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',heatmap:'#e8a825',test:'#06b6d4',strength:'#fbbf24',tempo:'#f59e0b',threshold:'#ef4444',fartlek:'#a78bfa'};
     var tl = TLAB[act.type] || act.type || 'Actividad';
     var tc = TCOL[act.type] || '#aaa';
     var diff = Date.now() - new Date(post.created_at).getTime();
@@ -9408,11 +9413,18 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     wrap.id = 'cmt-wrap-' + postId;
     wrap.style.cssText = 'flex-shrink:0;';
 
+    // [v2.30.1-p417] Paleta post local ampliada con _postBg + _avBg para escapar del scope crimson
+    // en el comment row. Antes: row.style.background = 'var(--bg)' → crimson en scope Club (Álvaro
+    // captura post.jpg: comentario propio salía con fondo rojo intenso "como recorte"). Ahora usa
+    // _postBg (blanco light / oscuro dark, mismo que la card p415). Avatar placeholder pasa de
+    // var(--crimson) a _avBg neutro. delBtn stroke pasa de var(--crimson) a _muted.
     var _isDark = document.body.classList.contains('dark-mode');
+    var _postBg = _isDark ? '#17191d' : '#ffffff';
     var _muted = _isDark ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.45)';
     var _mutedLight = _isDark ? 'rgba(255,255,255,.4)' : 'rgba(0,0,0,.35)';
     var _fg = _isDark ? '#f5f5f7' : '#111114';
     var _border = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
+    var _avBg = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
 
     // Toggle chip — se moverá al reactionBar desde el flow del post (margin-left:auto lo empuja a la dcha)
     var toggle = document.createElement('button');
@@ -9545,7 +9557,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         if (!listEl) return;
         var grouped = groupComments(comments);
         if (!grouped.roots.length) {
-            listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
+            listEl.innerHTML = '<div style="font-size:11px;color:' + _mutedLight + ';padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
             return;
         }
         listEl.innerHTML = '';
@@ -9622,12 +9634,12 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         wrapRow.appendChild(replyBg);
 
         var row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;background:var(--bg);transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;background:' + _postBg + ';transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
 
         // Avatar — más pequeño si es respuesta
         var avSize = isReply ? 22 : 28;
         var avc = document.createElement('div');
-        avc.style.cssText = 'width:'+avSize+'px;height:'+avSize+'px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:'+(isReply?10:12)+'px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;cursor:' + (isMine?'default':'pointer') + ';';
+        avc.style.cssText = 'width:'+avSize+'px;height:'+avSize+'px;border-radius:50%;background:' + _avBg + ';display:flex;align-items:center;justify-content:center;font-size:'+(isReply?10:12)+'px;font-weight:700;color:' + _fg + ';flex-shrink:0;overflow:hidden;cursor:' + (isMine?'default':'pointer') + ';';
         if (avUrl) { var ai = document.createElement('img'); ai.src = avUrl; ai.style.cssText = 'width:100%;height:100%;object-fit:cover;'; avc.appendChild(ai); }
         else avc.textContent = (un[0]||'?').toUpperCase();
         if (!isMine && c.user_id) {
@@ -9639,13 +9651,13 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         var header = document.createElement('div');
         header.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-bottom:1px;';
         var nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'font-size:11.5px;font-weight:800;color:var(--tw);' + (!isMine && c.user_id ? 'cursor:pointer;' : '');
+        nameSpan.style.cssText = 'font-size:11.5px;font-weight:800;color:' + _fg + ';' + (!isMine && c.user_id ? 'cursor:pointer;' : '');
         nameSpan.textContent = un;
         if (!isMine && c.user_id) {
             (function(_id,_un,_ua){ nameSpan.onclick = function(){ openUserProfile(_id,_un,_ua); }; })(c.user_id, un, avUrl);
         }
         var dateSpan = document.createElement('span');
-        dateSpan.style.cssText = 'font-size:10px;color:var(--tm);flex-shrink:0;';
+        dateSpan.style.cssText = 'font-size:10px;color:' + _muted + ';flex-shrink:0;';
         var d = Date.now() - new Date(c.created_at).getTime();
         var mm = Math.floor(d/60000);
         dateSpan.textContent = mm < 1 ? 'ahora' : mm < 60 ? mm+'m' : mm < 1440 ? Math.floor(mm/60)+'h' : Math.floor(mm/1440)+'d';
@@ -9653,7 +9665,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         if (isMine) {
             var delBtn = document.createElement('button');
             delBtn.style.cssText = 'margin-left:auto;background:none;border:none;cursor:pointer;padding:0;opacity:.5;';
-            delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
             (function(_cid){
                 delBtn.onclick = async function() {
                     if (!confirm('¿Eliminar este comentario?' + (isReply ? '' : '\n\nSi tiene respuestas, también se eliminarán.'))) return;
@@ -9667,7 +9679,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
             header.appendChild(delBtn);
         }
         var textEl = document.createElement('div');
-        textEl.style.cssText = 'font-size:13px;color:var(--tw);line-height:1.35;white-space:pre-wrap;word-break:break-word;';
+        textEl.style.cssText = 'font-size:13px;color:' + _fg + ';line-height:1.35;white-space:pre-wrap;word-break:break-word;';
         textEl.textContent = c.content;
         bubble.appendChild(header); bubble.appendChild(textEl);
 
