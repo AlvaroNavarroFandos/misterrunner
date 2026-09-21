@@ -6100,7 +6100,9 @@ async function openHeatmap(userId, displayName) {
     // ── Crear overlay ────────────────────────────────────────
     var ov = document.createElement('div');
     ov.id = 'heatmap-overlay';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;animation:_hmFade .22s ease-out;';
+    // [v2.30.1-p421] Overlay bg de rgba(0,0,0,.85) → crimson denso, coherente con el
+    // feed del club (Álvaro: "cuando lo abrimos debería salir crimpson y no blanco").
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(66,15,20,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;animation:_hmFade .22s ease-out;';
     if (!document.getElementById('_hmFadeStyle')) {
         var st = document.createElement('style');
         st.id = '_hmFadeStyle';
@@ -6116,19 +6118,23 @@ async function openHeatmap(userId, displayName) {
 
     // Contenedor central (la "tarjeta")
     var card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border:1.5px solid var(--gold-bd);border-radius:18px;padding:14px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.55);';
+    // [v2.30.1-p421] Card interior: bg crimson gradient (era var(--card) blanco/oscuro)
+    // Border dorado se mantiene para el toque premium. Coherente con la paleta del feed.
+    card.style.cssText = 'background:linear-gradient(180deg,#7a1620 0%,#5e0e18 100%);border:1.5px solid var(--gold-bd);border-radius:18px;padding:14px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);';
 
     // Header (título + botón cerrar)
     var hdr = document.createElement('div');
     hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
     var title = document.createElement('div');
-    title.innerHTML = '<div style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:.3px;">🔥 HEATMAP'
+    // [v2.30.1-p421] Texto blanco sobre crimson (era var(--tw) que en scope Club queda mal)
+    title.innerHTML = '<div style="font-size:13px;font-weight:800;color:#fff;letter-spacing:.3px;text-shadow:0 1px 2px rgba(0,0,0,.4);">🔥 HEATMAP'
                     + (isMe ? '' : ' · ' + (displayName || 'Runner').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'))
                     + '</div>'
-                    + '<div style="margin-top:2px;font-size:10px;color:var(--tm);font-weight:600;">Últimos <span id="hm-days">30</span> días · <span id="hm-count">…</span></div>';
+                    + '<div style="margin-top:2px;font-size:10px;color:rgba(255,255,255,.72);font-weight:600;">Últimos <span id="hm-days">30</span> días · <span id="hm-count">…</span></div>';
     var closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    // [v2.30.1-p421] closeBtn adaptado al fondo crimson: bg translúcido blanco, border translúcido.
+    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
     closeBtn.onclick = function() {
         ov.style.animation = '_hmFade .16s ease-out reverse';
         setTimeout(function() { ov.remove(); }, 150);
@@ -6136,15 +6142,30 @@ async function openHeatmap(userId, displayName) {
     hdr.appendChild(title);
     hdr.appendChild(closeBtn);
 
-    // Canvas
+    // [v2.30.1-p421] Mapa REAL con MapLibre (Álvaro: "el interior no se toca a no ser que
+    // ahora podamos ponerle mapa real en vez de fondo azul oscuro, lo hacemos o es un jaleo?").
+    // Contenedor visible con MapLibre. El canvas 640x640 original se mantiene con display:none
+    // para preservar el flujo intacto del download/share (canvas.toDataURL + canvas.toBlob).
+    // El pintado del canvas oculto sigue haciéndose exactamente como antes — así el PNG que se
+    // sube al Club sigue siendo el look dorado sobre azul oscuro que reconoce el post del feed.
+    var mapWrap = document.createElement('div');
+    mapWrap.id = 'hm-map-wrap';
+    mapWrap.style.cssText = 'position:relative;width:100%;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#0a0f1c;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);';
+    var mapDiv = document.createElement('div');
+    mapDiv.id = 'hm-map';
+    mapDiv.style.cssText = 'position:absolute;inset:0;';
+    mapWrap.appendChild(mapDiv);
+
+    // Canvas OCULTO — sigue siendo la fuente para dl/share (mismo pintado, sin cambios de lógica)
     var canvas = document.createElement('canvas');
-    canvas.width = 640; canvas.height = 640; // alta resolución para Retina
-    canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
+    canvas.width = 640; canvas.height = 640;
+    canvas.style.cssText = 'display:none;';
 
     // Footer info
     var footer = document.createElement('div');
     footer.id = 'hm-footer';
-    footer.style.cssText = 'margin-top:10px;font-size:10px;color:var(--tm);text-align:center;line-height:1.6;';
+    // [v2.30.1-p421] footer color adaptado al bg crimson (era var(--tm))
+    footer.style.cssText = 'margin-top:10px;font-size:10px;color:rgba(255,255,255,.72);text-align:center;line-height:1.6;';
     footer.textContent = 'Cargando rutas…';
 
     // Action row: download + share (sólo se muestran cuando hay tracks)
@@ -6160,7 +6181,8 @@ async function openHeatmap(userId, displayName) {
     var shBtn = document.createElement('button');
     shBtn.id = 'hm-sh-btn';
     shBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span style="margin-left:6px;">Compartir</span>';
-    shBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--tw);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    // [v2.30.1-p421] Adaptado al bg crimson: bg translúcido blanco + texto blanco
+    shBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
 
     actionsRow.appendChild(dlBtn);
     actionsRow.appendChild(shBtn);
@@ -6171,11 +6193,15 @@ async function openHeatmap(userId, displayName) {
         clubBtn = document.createElement('button');
         clubBtn.id = 'hm-club-btn';
         clubBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="margin-left:6px;">Al Club</span>';
-        clubBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:var(--bg);color:var(--gold);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        // [v2.30.1-p421] Adaptado al bg crimson: bg dorado translúcido + texto dorado claro
+        clubBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:rgba(196,136,30,.15);color:#f4d989;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
         actionsRow.appendChild(clubBtn);
     }
 
     card.appendChild(hdr);
+    // [v2.30.1-p421] mapWrap (MapLibre visible) + canvas oculto (para dl/share) — coexisten:
+    // el mapa se ve, el canvas se usa como fuente PNG para descargar y compartir.
+    card.appendChild(mapWrap);
     card.appendChild(canvas);
     card.appendChild(footer);
     card.appendChild(actionsRow);
@@ -6717,11 +6743,115 @@ async function openHeatmap(userId, displayName) {
 
     // ── Footer info (debajo del canvas, en el modal) ──────────
     var kmStr = (Math.round(totalKm * 10) / 10).toFixed(1);
-    var zonasInfo = (nClusters > 1) ? (' · <b style="color:var(--tw);font-weight:800;">' + nClusters + '</b> zonas') : '';
-    footer.innerHTML = '<b style="color:var(--tw);font-weight:800;">' + kmStr + ' km</b> recorridos · '
-                     + '<b style="color:var(--tw);font-weight:800;">' + nRutas + '</b> ' + (nRutas === 1 ? 'ruta' : 'rutas')
+    // [v2.30.1-p421] colores adaptados al bg crimson (era var(--tw) blanco/oscuro)
+    var zonasInfo = (nClusters > 1) ? (' · <b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + nClusters + '</b> zonas') : '';
+    footer.innerHTML = '<b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + kmStr + ' km</b> recorridos · '
+                     + '<b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + nRutas + '</b> ' + (nRutas === 1 ? 'ruta' : 'rutas')
                      + zonasInfo
                      + (isMe ? '' : '<br><span style="opacity:.7;">Solo se muestran rutas publicadas al Club</span>');
+
+    // [v2.30.1-p421] Mapa REAL MapLibre detrás — visualización. El canvas oculto arriba
+    // ya se ha pintado con todos los tracks (fuente para dl/share, sin cambios). Ahora
+    // inicializamos MapLibre en mapDiv con streets de fondo y los mismos tracks encima
+    // como polylines doradas. fitBounds a la bounding box combinada de todos los tracks.
+    // Si maplibregl no está cargado o falla, el canvas oculto se muestra revirtiendo
+    // el display:none (fallback graceful — el look "azul con rutas doradas" original).
+    try {
+        if (typeof maplibregl !== 'undefined' && typeof window._mrCurrentMapStyle === 'function' && tracks.length > 0) {
+            // Calcular bounds combinados de todos los tracks
+            var minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+            tracks.forEach(function(tr) {
+                tr.forEach(function(p) {
+                    if (p.lat < minLat) minLat = p.lat;
+                    if (p.lat > maxLat) maxLat = p.lat;
+                    if (p.lon < minLon) minLon = p.lon;
+                    if (p.lon > maxLon) maxLon = p.lon;
+                });
+            });
+            var hmMap = new maplibregl.Map({
+                container: mapDiv,
+                style: window._mrCurrentMapStyle(),
+                interactive: true,
+                attributionControl: false,
+                dragPan: true,
+                dragRotate: false,
+                boxZoom: false,
+                touchZoomRotate: true,
+                touchPitch: false,
+                doubleClickZoom: true,
+                scrollZoom: true,
+                keyboard: false,
+                pitchWithRotate: false,
+                fadeDuration: 120
+            });
+            hmMap.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+            hmMap.on('load', function() {
+                // Añadir cada track como source + layer independiente con estilo dorado
+                tracks.forEach(function(tr, idx) {
+                    var coords = tr.map(function(p) { return [p.lon, p.lat]; });
+                    if (coords.length < 2) return;
+                    var srcId = 'hm-track-' + idx;
+                    var casingId = 'hm-track-casing-' + idx;
+                    var lineId = 'hm-track-line-' + idx;
+                    hmMap.addSource(srcId, {
+                        type: 'geojson',
+                        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }
+                    });
+                    // Casing sutil para contraste con el tile street
+                    hmMap.addLayer({
+                        id: casingId,
+                        type: 'line',
+                        source: srcId,
+                        layout: { 'line-cap': 'round', 'line-join': 'round' },
+                        paint: {
+                            'line-color': '#3d2810',
+                            'line-width': 4.5,
+                            'line-opacity': 0.55
+                        }
+                    });
+                    // Track dorado premium
+                    hmMap.addLayer({
+                        id: lineId,
+                        type: 'line',
+                        source: srcId,
+                        layout: { 'line-cap': 'round', 'line-join': 'round' },
+                        paint: {
+                            'line-color': '#e8b54e',
+                            'line-width': 3,
+                            'line-opacity': 0.92
+                        }
+                    });
+                });
+                // fitBounds con padding
+                if (isFinite(minLat) && isFinite(maxLat) && isFinite(minLon) && isFinite(maxLon)) {
+                    try {
+                        hmMap.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 32, duration: 400, maxZoom: 15 });
+                    } catch (_) {}
+                }
+            });
+            // Cleanup al cerrar el overlay
+            var _origOnclick = ov.onclick;
+            ov.onclick = function(e) {
+                if (e.target === ov) {
+                    try { hmMap.remove(); } catch (_) {}
+                }
+                return _origOnclick.call(this, e);
+            };
+            var _origCloseOnclick = closeBtn.onclick;
+            closeBtn.onclick = function() {
+                try { hmMap.remove(); } catch (_) {}
+                return _origCloseOnclick.call(this);
+            };
+        } else {
+            // Fallback graceful: mostrar el canvas si MapLibre no está disponible
+            canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
+            mapWrap.style.display = 'none';
+        }
+    } catch (e) {
+        console.warn('[Heatmap] MapLibre init falló, fallback a canvas:', e);
+        canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
+        mapWrap.style.display = 'none';
+    }
 }
 window.openHeatmap = openHeatmap;
 
@@ -9182,14 +9312,27 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
                 });
             })(post, mapImgUrl, post.photo_url, mapMount, cvCar);
         } else if (hasP) {
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
-            var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
-            ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
-            mw.appendChild(ph);
-            var gb = document.createElement('div');
-            gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
-            mw.appendChild(gb);
-            (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            // [v2.30.1-p421] Rama especial para posts type='heatmap' — la imagen del canvas
+            // del heatmap es 640x640 (cuadrada) y con object-fit:cover en 220px altura se
+            // cropeaba a la banda central. Álvaro captura: "al compartir el heatmap al club
+            // mira como sale la imagen cortada, hay que arreglarlo". Fix: aspect-ratio 1:1
+            // + object-fit:contain para que se vea entera. Bg _postBg neutro por si acaso.
+            if (act.type === 'heatmap') {
+                mw.style.cssText = 'position:relative;width:100%;aspect-ratio:1/1;background:' + _postBg + ';overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+                var phH = document.createElement('img'); phH.src = post.photo_url; phH.loading = 'lazy';
+                phH.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;';
+                mw.appendChild(phH);
+                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            } else {
+                mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+                var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
+                ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
+                mw.appendChild(ph);
+                var gb = document.createElement('div');
+                gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
+                mw.appendChild(gb);
+                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            }
         } else {
             /* [v2.30.1-p414] Rama "solo track" (sin foto) — MapLibre real
                inline igual que la rama hasP && hasT de p411. Álvaro:
