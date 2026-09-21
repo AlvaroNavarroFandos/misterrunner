@@ -9148,15 +9148,62 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             mw.appendChild(gb);
             (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
-            // Solo track
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
+            /* [v2.30.1-p414] Rama "solo track" (sin foto) — MapLibre real
+               inline igual que la rama hasP && hasT de p411. Álvaro:
+               "acabo de publicar y debería salir el mapa centrado y no el
+               recorte de imagen que salia antes que es lo que sigue
+               saliendo y mola mas el mapa tal cual se publique o no una
+               imagen el mapa siempre como mapa". Antes esta rama pintaba
+               un canvas 100% width con drawTrack o el _mapImg PNG estático
+               vía _renderPostMap → track fucsia sobre fondo blanco muy
+               feo. Ahora monta MapLibre con opts.interactive:false (no
+               captura gestos del scroll vertical del feed) y tap abre
+               openMapZoomModal navegable con dragPan/pinch zoom. Canvas
+               fallback con id "club-map-<post.id>" mantenido debajo por
+               compat con _renderPostMap para posts antiguos sin records.
+               border-radius:6 coherente con la rama foto+mapa. */
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#eef1f5;overflow:hidden;flex-shrink:0;border-radius:6px;cursor:zoom-in;';
+            var mapMountOnly = document.createElement('div');
+            mapMountOnly.id = 'club-map-mount-' + post.id;
+            mapMountOnly.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+            mw.appendChild(mapMountOnly);
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
-            if (mapImgUrl) {
-                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
-            }
+            (function(_post, _mapUrl, _mount, _cv){
+                var _ad = _post && _post.act_data;
+                var _recs = _ad && _ad.records;
+                var _shoe = _ad && _ad.shoeColor;
+                mw.onclick = function() {
+                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
+                        window.openMapZoomModal({ records: _recs, shoeColor: _shoe || null });
+                        return;
+                    }
+                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
+                };
+                requestAnimationFrame(function() {
+                    if (typeof window._mrBuildRunMap === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
+                        try {
+                            var _handle = window._mrBuildRunMap(_mount, _recs, _shoe || null, {
+                                interactive: false,
+                                partialInteractive: false,
+                                onReady: function() {
+                                    if (_cv && _cv.parentNode) _cv.style.display = 'none';
+                                },
+                                onFail: function() {
+                                    if (_cv && typeof window.drawTrack === 'function') {
+                                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
+                                    }
+                                }
+                            });
+                            _post._mrMapHandle = _handle;
+                        } catch(_){}
+                    } else if (_cv && Array.isArray(_recs) && _recs.length >= 2 && typeof window.drawTrack === 'function') {
+                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
+                    }
+                });
+            })(post, mapImgUrl, mapMountOnly, cvFull);
         }
         // PR overlay: medalla flotante en esquina superior derecha del media.
         // - 1 PR  → medalla específica del tipo (10K, HM, M, etc.)
