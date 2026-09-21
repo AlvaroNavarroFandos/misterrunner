@@ -6801,28 +6801,31 @@ async function openHeatmap(userId, displayName) {
                         type: 'geojson',
                         data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }
                     });
-                    // Casing sutil para contraste con el tile street
+                    // [v2.30.1-p422] Fuego acumulativo: casing crimson oscuro
+                    // (coherente con el bg del overlay) + track fuego naranja rojo.
+                    // Cuando múltiples tracks pasan por el mismo sitio la opacity
+                    // acumula creando zonas más "calientes".
                     hmMap.addLayer({
                         id: casingId,
                         type: 'line',
                         source: srcId,
                         layout: { 'line-cap': 'round', 'line-join': 'round' },
                         paint: {
-                            'line-color': '#3d2810',
+                            'line-color': '#5e0e18',
                             'line-width': 4.5,
-                            'line-opacity': 0.55
+                            'line-opacity': 0.45
                         }
                     });
-                    // Track dorado premium
+                    // Track FUEGO premium (naranja rojo intenso)
                     hmMap.addLayer({
                         id: lineId,
                         type: 'line',
                         source: srcId,
                         layout: { 'line-cap': 'round', 'line-join': 'round' },
                         paint: {
-                            'line-color': '#e8b54e',
-                            'line-width': 3,
-                            'line-opacity': 0.92
+                            'line-color': '#ff6b1a',
+                            'line-width': 3.2,
+                            'line-opacity': 0.85
                         }
                     });
                 });
