@@ -5130,32 +5130,10 @@ function pickPublishDestinations(opts) {
             sheet.appendChild(confirmBtn);
             bk.appendChild(sheet);
             document.body.appendChild(bk);
-            /* [v2.30.1-p412] DOBLE RAF (patrón openSheet index.html L28110)
-               en vez del RAF simple previo. Safari colapsaba el appendChild
-               con opacity:0 inline + el requestAnimationFrame(() => opacity:1)
-               en el mismo frame, dejando el bk en opacity 0 → invisible pese
-               a estar en DOM. Álvaro tras p410-p411: "cuando le doy a share
-               y compartir en el club ya no me salen las opciones que salian
-               antes de darle a publicar, habia un sheet que salia para
-               compartir en el club global, en el crew o etiquetar a gente".
-               El sheet se creaba y appendía pero nunca se animaba a visible;
-               el flow del share caía al fallback {toPublic:true, crewIds:[]}
-               vía el catch del try del caller y publicaba directo sin sheet.
-               Safeguard adicional con setTimeout 120ms que fuerza los estilos
-               finales por si el doble RAF también falla (edge-case en devices
-               muy cargados). */
             requestAnimationFrame(function() {
-                requestAnimationFrame(function() {
-                    bk.style.opacity = '1';
-                    sheet.style.transform = 'translateY(0)';
-                });
+                bk.style.opacity = '1';
+                sheet.style.transform = 'translateY(0)';
             });
-            setTimeout(function() {
-                if (bk.style.opacity !== '1') bk.style.opacity = '1';
-                if (sheet.style.transform !== 'translateY(0px)' && sheet.style.transform !== 'translateY(0)') {
-                    sheet.style.transform = 'translateY(0)';
-                }
-            }, 120);
         });
     });
 }
@@ -5895,13 +5873,7 @@ function _refreshClubTabStyles() {
     var tRecs  = document.getElementById('club-tab-records');
     if (!tAll || !tFol || !tCrews) return;
     // [FASE 8 polish] Pill premium con fondo sólido cuando activo
-    // [v2.30.1-p410] Para ti / Siguiendo → BRONCE (Álvaro: "vamos a
-    //   diferenciarla un poco mas solo de para ti o siguiendo que crews en
-    //   silver y records en gold cuando estan activas se ven muy bien").
-    //   El crimson activo (previo) se fundía con el bg crimson del Club
-    //   post p406. Bronce completa la trilogía metálica bronze/silver/gold
-    //   y contrasta bien sobre el bg crimson.
-    // - Para ti / Siguiendo → fondo bronce, texto blanco
+    // - Para ti / Siguiendo → fondo crimson, texto blanco
     // - Crews → fondo silver, texto blanco (mantiene identidad plateada)
     // - [FASE 7] Récords → fondo gold, texto cobre oscuro
     var base = 'flex:1;height:36px;border:none;border-radius:10px;background:transparent;'
@@ -5909,17 +5881,17 @@ function _refreshClubTabStyles() {
              + 'transition:background .22s ease, color .22s ease, box-shadow .22s ease, transform .15s ease;'
              + 'position:relative;margin:0 2px;';
     var inactive  = 'color:var(--tm);font-weight:700;';
-    var activeBrz = 'color:#fff;font-weight:900;'
-                  + 'background:linear-gradient(135deg, #d18a4a 0%, #a35a1e 50%, #6f3810 100%);'
-                  + 'box-shadow:0 2px 8px rgba(163,90,30,.50), inset 0 1px 0 rgba(255,255,255,.30);';
+    var activeRed = 'color:#fff;font-weight:900;'
+                  + 'background:linear-gradient(135deg, #a32130 0%, #8f1a28 50%, #6f0f1a 100%);'
+                  + 'box-shadow:0 2px 8px rgba(143,26,40,.35), inset 0 1px 0 rgba(255,255,255,.18);';
     var activeSil = 'color:#fff;font-weight:900;'
                   + 'background:linear-gradient(135deg, #9aa3ad 0%, #7a838c 50%, #5d646c 100%);'
                   + 'box-shadow:0 2px 8px rgba(122,131,140,.45), inset 0 1px 0 rgba(255,255,255,.25);';
     var activeGld = 'color:#3C2C08;font-weight:900;'
                   + 'background:linear-gradient(135deg, #FFE9A5 0%, #C9A84C 50%, #8A6E1F 100%);'
                   + 'box-shadow:0 2px 8px rgba(201,168,76,.45), inset 0 1px 0 rgba(255,255,255,.4);';
-    tAll.style.cssText   = base + (mode === 'all'       ? activeBrz : inactive);
-    tFol.style.cssText   = base + (mode === 'following' ? activeBrz : inactive);
+    tAll.style.cssText   = base + (mode === 'all'       ? activeRed : inactive);
+    tFol.style.cssText   = base + (mode === 'following' ? activeRed : inactive);
     tCrews.style.cssText = base + (mode === 'crews'     ? activeSil : inactive);
     if (tRecs) tRecs.style.cssText = base + (mode === 'records' ? activeGld : inactive);
     // Badge de invitaciones pendientes (si hay)
@@ -6100,9 +6072,7 @@ async function openHeatmap(userId, displayName) {
     // ── Crear overlay ────────────────────────────────────────
     var ov = document.createElement('div');
     ov.id = 'heatmap-overlay';
-    // [v2.30.1-p421] Overlay bg de rgba(0,0,0,.85) → crimson denso, coherente con el
-    // feed del club (Álvaro: "cuando lo abrimos debería salir crimpson y no blanco").
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(66,15,20,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;animation:_hmFade .22s ease-out;';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;animation:_hmFade .22s ease-out;';
     if (!document.getElementById('_hmFadeStyle')) {
         var st = document.createElement('style');
         st.id = '_hmFadeStyle';
@@ -6118,23 +6088,19 @@ async function openHeatmap(userId, displayName) {
 
     // Contenedor central (la "tarjeta")
     var card = document.createElement('div');
-    // [v2.30.1-p421] Card interior: bg crimson gradient (era var(--card) blanco/oscuro)
-    // Border dorado se mantiene para el toque premium. Coherente con la paleta del feed.
-    card.style.cssText = 'background:linear-gradient(180deg,#7a1620 0%,#5e0e18 100%);border:1.5px solid var(--gold-bd);border-radius:18px;padding:14px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);';
+    card.style.cssText = 'background:var(--card);border:1.5px solid var(--gold-bd);border-radius:18px;padding:14px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.55);';
 
     // Header (título + botón cerrar)
     var hdr = document.createElement('div');
     hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
     var title = document.createElement('div');
-    // [v2.30.1-p421] Texto blanco sobre crimson (era var(--tw) que en scope Club queda mal)
-    title.innerHTML = '<div style="font-size:13px;font-weight:800;color:#fff;letter-spacing:.3px;text-shadow:0 1px 2px rgba(0,0,0,.4);">🔥 HEATMAP'
+    title.innerHTML = '<div style="font-size:13px;font-weight:800;color:var(--tw);letter-spacing:.3px;">🔥 HEATMAP'
                     + (isMe ? '' : ' · ' + (displayName || 'Runner').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;'))
                     + '</div>'
-                    + '<div style="margin-top:2px;font-size:10px;color:rgba(255,255,255,.72);font-weight:600;">Últimos <span id="hm-days">30</span> días · <span id="hm-count">…</span></div>';
+                    + '<div style="margin-top:2px;font-size:10px;color:var(--tm);font-weight:600;">Últimos <span id="hm-days">30</span> días · <span id="hm-count">…</span></div>';
     var closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    // [v2.30.1-p421] closeBtn adaptado al fondo crimson: bg translúcido blanco, border translúcido.
-    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tw)" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.style.cssText = 'width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
     closeBtn.onclick = function() {
         ov.style.animation = '_hmFade .16s ease-out reverse';
         setTimeout(function() { ov.remove(); }, 150);
@@ -6142,30 +6108,15 @@ async function openHeatmap(userId, displayName) {
     hdr.appendChild(title);
     hdr.appendChild(closeBtn);
 
-    // [v2.30.1-p421] Mapa REAL con MapLibre (Álvaro: "el interior no se toca a no ser que
-    // ahora podamos ponerle mapa real en vez de fondo azul oscuro, lo hacemos o es un jaleo?").
-    // Contenedor visible con MapLibre. El canvas 640x640 original se mantiene con display:none
-    // para preservar el flujo intacto del download/share (canvas.toDataURL + canvas.toBlob).
-    // El pintado del canvas oculto sigue haciéndose exactamente como antes — así el PNG que se
-    // sube al Club sigue siendo el look dorado sobre azul oscuro que reconoce el post del feed.
-    var mapWrap = document.createElement('div');
-    mapWrap.id = 'hm-map-wrap';
-    mapWrap.style.cssText = 'position:relative;width:100%;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#0a0f1c;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);';
-    var mapDiv = document.createElement('div');
-    mapDiv.id = 'hm-map';
-    mapDiv.style.cssText = 'position:absolute;inset:0;';
-    mapWrap.appendChild(mapDiv);
-
-    // Canvas OCULTO — sigue siendo la fuente para dl/share (mismo pintado, sin cambios de lógica)
+    // Canvas
     var canvas = document.createElement('canvas');
-    canvas.width = 640; canvas.height = 640;
-    canvas.style.cssText = 'display:none;';
+    canvas.width = 640; canvas.height = 640; // alta resolución para Retina
+    canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
 
     // Footer info
     var footer = document.createElement('div');
     footer.id = 'hm-footer';
-    // [v2.30.1-p421] footer color adaptado al bg crimson (era var(--tm))
-    footer.style.cssText = 'margin-top:10px;font-size:10px;color:rgba(255,255,255,.72);text-align:center;line-height:1.6;';
+    footer.style.cssText = 'margin-top:10px;font-size:10px;color:var(--tm);text-align:center;line-height:1.6;';
     footer.textContent = 'Cargando rutas…';
 
     // Action row: download + share (sólo se muestran cuando hay tracks)
@@ -6181,8 +6132,7 @@ async function openHeatmap(userId, displayName) {
     var shBtn = document.createElement('button');
     shBtn.id = 'hm-sh-btn';
     shBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span style="margin-left:6px;">Compartir</span>';
-    // [v2.30.1-p421] Adaptado al bg crimson: bg translúcido blanco + texto blanco
-    shBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    shBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--tw);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
 
     actionsRow.appendChild(dlBtn);
     actionsRow.appendChild(shBtn);
@@ -6193,15 +6143,11 @@ async function openHeatmap(userId, displayName) {
         clubBtn = document.createElement('button');
         clubBtn.id = 'hm-club-btn';
         clubBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span style="margin-left:6px;">Al Club</span>';
-        // [v2.30.1-p421] Adaptado al bg crimson: bg dorado translúcido + texto dorado claro
-        clubBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:rgba(196,136,30,.15);color:#f4d989;font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        clubBtn.style.cssText = 'flex:1;max-width:160px;height:38px;border-radius:10px;border:1.5px solid var(--gold-bd);background:var(--bg);color:var(--gold);font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.4px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
         actionsRow.appendChild(clubBtn);
     }
 
     card.appendChild(hdr);
-    // [v2.30.1-p421] mapWrap (MapLibre visible) + canvas oculto (para dl/share) — coexisten:
-    // el mapa se ve, el canvas se usa como fuente PNG para descargar y compartir.
-    card.appendChild(mapWrap);
     card.appendChild(canvas);
     card.appendChild(footer);
     card.appendChild(actionsRow);
@@ -6582,10 +6528,17 @@ async function openHeatmap(userId, displayName) {
         ctx.clip();
         ctx.globalCompositeOperation = 'lighter';
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        // [v2.30.1-p399] Heatmap A · Fuego acumulativo. Álvaro: "jugando con los
+        // colores del fuego depende de las veces que se haya pasado por cada sitio".
+        // Los 3 pases mantienen additive blending ('lighter' L6529) — donde múltiples
+        // tracks se cruzan, la opacity acumula visualmente creando zonas más
+        // "calientes" (rojo → naranja → amarillo → blanco casi) sin necesidad de
+        // calcular densidad por overlap. Halo naranja rojo amplio, núcleo amarillo
+        // claro caliente.
         var passes = [
-            { color: 'rgba(232,168,37,0.18)', w: 8 },
-            { color: 'rgba(255,180,80,0.42)', w: 2.4 },
-            { color: 'rgba(255,240,220,0.55)', w: 0.9 }
+            { color: 'rgba(255,69,0,0.22)',   w: 8 },    // halo exterior naranja rojo
+            { color: 'rgba(255,140,50,0.55)', w: 2.4 },  // medio naranja intenso
+            { color: 'rgba(255,230,150,0.85)', w: 0.9 }  // núcleo amarillo caliente
         ];
         passes.forEach(function(p) {
             ctx.strokeStyle = p.color; ctx.lineWidth = p.w;
@@ -6743,115 +6696,11 @@ async function openHeatmap(userId, displayName) {
 
     // ── Footer info (debajo del canvas, en el modal) ──────────
     var kmStr = (Math.round(totalKm * 10) / 10).toFixed(1);
-    // [v2.30.1-p421] colores adaptados al bg crimson (era var(--tw) blanco/oscuro)
-    var zonasInfo = (nClusters > 1) ? (' · <b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + nClusters + '</b> zonas') : '';
-    footer.innerHTML = '<b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + kmStr + ' km</b> recorridos · '
-                     + '<b style="color:#fff;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.3);">' + nRutas + '</b> ' + (nRutas === 1 ? 'ruta' : 'rutas')
+    var zonasInfo = (nClusters > 1) ? (' · <b style="color:var(--tw);font-weight:800;">' + nClusters + '</b> zonas') : '';
+    footer.innerHTML = '<b style="color:var(--tw);font-weight:800;">' + kmStr + ' km</b> recorridos · '
+                     + '<b style="color:var(--tw);font-weight:800;">' + nRutas + '</b> ' + (nRutas === 1 ? 'ruta' : 'rutas')
                      + zonasInfo
                      + (isMe ? '' : '<br><span style="opacity:.7;">Solo se muestran rutas publicadas al Club</span>');
-
-    // [v2.30.1-p421] Mapa REAL MapLibre detrás — visualización. El canvas oculto arriba
-    // ya se ha pintado con todos los tracks (fuente para dl/share, sin cambios). Ahora
-    // inicializamos MapLibre en mapDiv con streets de fondo y los mismos tracks encima
-    // como polylines doradas. fitBounds a la bounding box combinada de todos los tracks.
-    // Si maplibregl no está cargado o falla, el canvas oculto se muestra revirtiendo
-    // el display:none (fallback graceful — el look "azul con rutas doradas" original).
-    try {
-        if (typeof maplibregl !== 'undefined' && typeof window._mrCurrentMapStyle === 'function' && tracks.length > 0) {
-            // Calcular bounds combinados de todos los tracks
-            var minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-            tracks.forEach(function(tr) {
-                tr.forEach(function(p) {
-                    if (p.lat < minLat) minLat = p.lat;
-                    if (p.lat > maxLat) maxLat = p.lat;
-                    if (p.lon < minLon) minLon = p.lon;
-                    if (p.lon > maxLon) maxLon = p.lon;
-                });
-            });
-            var hmMap = new maplibregl.Map({
-                container: mapDiv,
-                style: window._mrCurrentMapStyle(),
-                interactive: true,
-                attributionControl: false,
-                dragPan: true,
-                dragRotate: false,
-                boxZoom: false,
-                touchZoomRotate: true,
-                touchPitch: false,
-                doubleClickZoom: true,
-                scrollZoom: true,
-                keyboard: false,
-                pitchWithRotate: false,
-                fadeDuration: 120
-            });
-            hmMap.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-            hmMap.on('load', function() {
-                // Añadir cada track como source + layer independiente con estilo dorado
-                tracks.forEach(function(tr, idx) {
-                    var coords = tr.map(function(p) { return [p.lon, p.lat]; });
-                    if (coords.length < 2) return;
-                    var srcId = 'hm-track-' + idx;
-                    var casingId = 'hm-track-casing-' + idx;
-                    var lineId = 'hm-track-line-' + idx;
-                    hmMap.addSource(srcId, {
-                        type: 'geojson',
-                        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }
-                    });
-                    // Casing sutil para contraste con el tile street
-                    hmMap.addLayer({
-                        id: casingId,
-                        type: 'line',
-                        source: srcId,
-                        layout: { 'line-cap': 'round', 'line-join': 'round' },
-                        paint: {
-                            'line-color': '#3d2810',
-                            'line-width': 4.5,
-                            'line-opacity': 0.55
-                        }
-                    });
-                    // Track dorado premium
-                    hmMap.addLayer({
-                        id: lineId,
-                        type: 'line',
-                        source: srcId,
-                        layout: { 'line-cap': 'round', 'line-join': 'round' },
-                        paint: {
-                            'line-color': '#e8b54e',
-                            'line-width': 3,
-                            'line-opacity': 0.92
-                        }
-                    });
-                });
-                // fitBounds con padding
-                if (isFinite(minLat) && isFinite(maxLat) && isFinite(minLon) && isFinite(maxLon)) {
-                    try {
-                        hmMap.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 32, duration: 400, maxZoom: 15 });
-                    } catch (_) {}
-                }
-            });
-            // Cleanup al cerrar el overlay
-            var _origOnclick = ov.onclick;
-            ov.onclick = function(e) {
-                if (e.target === ov) {
-                    try { hmMap.remove(); } catch (_) {}
-                }
-                return _origOnclick.call(this, e);
-            };
-            var _origCloseOnclick = closeBtn.onclick;
-            closeBtn.onclick = function() {
-                try { hmMap.remove(); } catch (_) {}
-                return _origCloseOnclick.call(this);
-            };
-        } else {
-            // Fallback graceful: mostrar el canvas si MapLibre no está disponible
-            canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
-            mapWrap.style.display = 'none';
-        }
-    } catch (e) {
-        console.warn('[Heatmap] MapLibre init falló, fallback a canvas:', e);
-        canvas.style.cssText = 'width:100%;aspect-ratio:1/1;border-radius:12px;background:#0a0f1c;display:block;';
-        mapWrap.style.display = 'none';
-    }
 }
 window.openHeatmap = openHeatmap;
 
@@ -7579,7 +7428,6 @@ async function openClubActivity() {
     var myId = session.user.id;
 
     var ov = document.createElement('div');
-    ov.id = 'club-activity-view'; /* [v2.30.1-p409] id para scope crimson CSS · sin este id el selector por z-index no matcheaba porque el navegador normaliza style inline */
     ov.style.cssText = 'position:fixed;inset:0;z-index:20010;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);';
 
     // ── Cabecera estilo CLUB ──────────────────────────────────────
@@ -7888,8 +7736,31 @@ async function openUserProfile(userId, username, avatarUrl) {
     hdr.appendChild(topRow);
 
     // ─── HERO CARD premium dorada ─────────────────────────────────────
+    // [v2.30.1-p399] Cabecera B · Cinta dorada joyería 4px superior. Álvaro
+    // aprobó B: card blanca de siempre + cinta metálica joyería con reflejo
+    // 4 tonos (#8A6E1F→#C9A84C→#FFE9A5→#C9A84C→#8A6E1F), mismo lenguaje que
+    // las barras metálicas de biblio/plan/marcas. Border dorado subido de
+    // gold-bd .25 → rgba(196,136,30,.30) más marcado, halo mantenido y shadow
+    // dorado más pronunciado (glow .12 vs .08 anterior). Sin aumentar altura.
+    var _isDarkHero = document.body.classList.contains('dark-mode');
     var hero = document.createElement('div');
-    hero.style.cssText = 'background:linear-gradient(135deg,var(--card) 0%,var(--surface) 100%);border:1px solid var(--gold-bd);border-radius:16px;padding:12px 12px 10px;position:relative;overflow:hidden;';
+    hero.style.cssText = 'background:linear-gradient(135deg,var(--card) 0%,var(--surface) 100%);'
+                      + 'border:1px solid rgba(196,136,30,' + (_isDarkHero ? '.30' : '.30') + ');'
+                      + 'border-radius:16px;padding:12px 12px 10px;position:relative;overflow:hidden;'
+                      + 'box-shadow:inset 0 0 0 1px rgba(' + (_isDarkHero ? '232,181,78,.10' : '196,136,30,.12') + '),'
+                      + '0 8px 28px rgba(196,136,30,' + (_isDarkHero ? '.14' : '.12') + '),'
+                      + '0 2px 8px rgba(0,0,0,' + (_isDarkHero ? '.35' : '.06') + ');';
+
+    // Cinta metálica joyería dorada 4px superior (reflejo 4 tonos)
+    var goldStrip = document.createElement('div');
+    goldStrip.setAttribute('aria-hidden', 'true');
+    goldStrip.style.cssText = 'position:absolute;left:0;right:0;top:0;height:4px;'
+                            + 'background:linear-gradient(90deg,#8A6E1F 0%,#C9A84C 25%,#FFE9A5 50%,#C9A84C 75%,#8A6E1F 100%);'
+                            + 'box-shadow:inset 0 1px 0 rgba(255,255,255,.5),'
+                            + 'inset 0 -1px 0 rgba(0,0,0,.20),'
+                            + '0 1px 4px rgba(196,136,30,.5);'
+                            + 'z-index:3;pointer-events:none;';
+    hero.appendChild(goldStrip);
 
     // Halo radial decorativo
     var halo = document.createElement('div');
@@ -7978,23 +7849,41 @@ async function openUserProfile(userId, username, avatarUrl) {
     divider.style.cssText = 'height:1px;background:var(--gold-bd);margin:10px 0 9px;opacity:.5;position:relative;z-index:1;';
     hero.appendChild(divider);
 
-    // Row 2: stats grandes con separadores verticales
+    // [v2.30.1-p399] Row 2 · Stats con look del botón Wall dorado (gradient
+    // #c4881e→#e8a825) + texto negro en light, blanco en dark. Álvaro: "los
+    // stats solo los stats como el boton de wall que te paso pero texto
+    // blanco en vez de negro en dark". Cada stat es una pill dorada
+    // independiente con inset highlight superior + shadow inferior premium.
+    // Se eliminan los separadores verticales (ya no hacen falta con las
+    // pills separadas por gap).
+    var _statFg = _isDarkHero ? '#fff' : '#000';
+    var _statSub = _isDarkHero ? 'rgba(255,255,255,.80)' : 'rgba(0,0,0,.65)';
+    var _statTs  = _isDarkHero ? '0 1px 1px rgba(0,0,0,.35)' : '0 1px 0 rgba(255,255,255,.30)';
+    var _statBg  = 'linear-gradient(135deg,#c4881e,#e8a825)';
+    var _statShadow = 'inset 0 1px 0 rgba(255,255,255,.40),'
+                    + 'inset 0 -1px 0 rgba(0,0,0,.20),'
+                    + '0 2px 6px rgba(196,136,30,.30)';
+    var _pillStyle = 'flex:1;text-align:center;background:' + _statBg + ';'
+                   + 'border:1px solid rgba(0,0,0,.18);border-radius:9px;'
+                   + 'padding:6px 4px;box-shadow:' + _statShadow + ';';
+    var _numStyle = 'font-size:14px;font-weight:900;color:' + _statFg + ';'
+                  + 'line-height:1;text-shadow:' + _statTs + ';';
+    var _lblStyle = 'font-size:9.5px;color:' + _statSub + ';font-weight:800;'
+                  + 'margin-top:2px;text-transform:uppercase;letter-spacing:.4px;';
     var row2 = document.createElement('div');
-    row2.style.cssText = 'display:flex;align-items:center;gap:8px;position:relative;z-index:1;';
+    row2.style.cssText = 'display:flex;align-items:stretch;gap:6px;position:relative;z-index:1;';
     row2.innerHTML = ''
-        + '<div style="flex:1;text-align:center;">'
-        +   '<div style="font-size:14px;font-weight:900;color:var(--tw);line-height:1;"><span id="up-posts">—</span></div>'
-        +   '<div style="font-size:9.5px;color:var(--tm);font-weight:600;margin-top:2px;text-transform:uppercase;letter-spacing:.4px;">Posts</div>'
+        + '<div style="' + _pillStyle + '">'
+        +   '<div style="' + _numStyle + '"><span id="up-posts">—</span></div>'
+        +   '<div style="' + _lblStyle + '">Posts</div>'
         + '</div>'
-        + '<div style="width:1px;height:22px;background:var(--gold-bd);opacity:.4;flex-shrink:0;"></div>'
-        + '<div style="flex:1;text-align:center;">'
-        +   '<div style="font-size:14px;font-weight:900;color:var(--tw);line-height:1;"><span id="up-followers">—</span></div>'
-        +   '<div style="font-size:9.5px;color:var(--tm);font-weight:600;margin-top:2px;text-transform:uppercase;letter-spacing:.4px;">Seguidores</div>'
+        + '<div style="' + _pillStyle + '">'
+        +   '<div style="' + _numStyle + '"><span id="up-followers">—</span></div>'
+        +   '<div style="' + _lblStyle + '">Seguidores</div>'
         + '</div>'
-        + '<div style="width:1px;height:22px;background:var(--gold-bd);opacity:.4;flex-shrink:0;"></div>'
-        + '<div style="flex:1;text-align:center;">'
-        +   '<div style="font-size:14px;font-weight:900;color:var(--tw);line-height:1;"><span id="up-following">—</span></div>'
-        +   '<div style="font-size:9.5px;color:var(--tm);font-weight:600;margin-top:2px;text-transform:uppercase;letter-spacing:.4px;">Siguiendo</div>'
+        + '<div style="' + _pillStyle + '">'
+        +   '<div style="' + _numStyle + '"><span id="up-following">—</span></div>'
+        +   '<div style="' + _lblStyle + '">Siguiendo</div>'
         + '</div>';
     hero.appendChild(row2);
 
@@ -8877,13 +8766,8 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         var dh = Math.floor(act.durationSec/3600), dm = Math.floor((act.durationSec%3600)/60), ds = act.durationSec%60;
         dur = dh > 0 ? dh + ':' + String(dm).padStart(2,'0') + ':' + String(ds).padStart(2,'0') : dm + ':' + String(ds).padStart(2,'0');
     }
-    // [v2.30.1-p417] TCOL/TLAB antes solo cubrían easy/recovery/series/long/race/heatmap.
-    // Un post con act.type='test' caía al fallback '#aaa' (gris) + 'test' (minúscula sin traducir).
-    // Álvaro captura post.jpg: pill "test" en gris minúscula → debe ser cian "Test".
-    // Añadidos: test (cian #06b6d4, mismo color en TYPE_COLOR L34701, TYPE_COLOR_PLAN L54108, etc),
-    // strength (dorado #fbbf24), tempo/threshold/fartlek por completitud.
-    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera',heatmap:'🔥 Heatmap',test:'Test',strength:'Fuerza',tempo:'Tempo',threshold:'Umbral',fartlek:'Fartlek'};
-    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',heatmap:'#e8a825',test:'#06b6d4',strength:'#fbbf24',tempo:'#f59e0b',threshold:'#ef4444',fartlek:'#a78bfa'};
+    var TLAB = {easy:'Easy Run',recovery:'Recovery',series:'Series',long:'Long Run',race:'Carrera',heatmap:'🔥 Heatmap'};
+    var TCOL = {easy:'#4ade80',recovery:'#60a5fa',series:'#f87171',long:'#7c3aed',race:'#e879f9',heatmap:'#e8a825'};
     var tl = TLAB[act.type] || act.type || 'Actividad';
     var tc = TCOL[act.type] || '#aaa';
     var diff = Date.now() - new Date(post.created_at).getTime();
@@ -8894,47 +8778,117 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     var hasP = !!(post.photo_url);
 
     var card = document.createElement('div');
-    /* [v2.30.1-p415] Rediseño premium post Club — Opción B aprobada por
-       Álvaro tras preview de 3 variantes: "Vamos con la B". Card blanca
-       light / #17191d dark que destaca sobre el bg crimson del feed
-       (antes usaba var(--card) que en el scope #club-view estaba
-       reemplazado a rgba blanca translúcida y el post se fundía con el
-       fondo crimson). El scope crimson de p407 sigue aplicando al Club
-       en general, solo el POST tiene su propio color explícito. Paleta
-       computada una vez por card para respetar dark mode dinámico. */
-    var _isDark = document.body.classList.contains('dark-mode');
-    var _postBg = _isDark ? '#17191d' : '#ffffff';
-    var _postFg = _isDark ? '#f5f7fa' : '#0f172a';
-    var _postMuted = _isDark ? 'rgba(245,247,250,.6)' : 'rgba(15,23,42,.6)';
-    var _postMutedLight = _isDark ? 'rgba(245,247,250,.45)' : 'rgba(15,23,42,.5)';
-    var _postBorder = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
-    var _postRxBg = _isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)';
-    card.style.cssText = 'background:' + _postBg + ';color:' + _postFg + ';border-radius:22px;overflow:hidden;margin-bottom:12px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;box-shadow:0 8px 24px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.15);';
+    // [v8.x — V5 Editorial] Card sin border, sombra tabaco cálida, esquinas más
+    // redondeadas. Se siente como una pieza de magazine de fotografía sobre el cream.
+    card.style.cssText = 'background:var(--card);border-radius:22px;overflow:hidden;margin-bottom:12px;display:flex;flex-direction:column;width:100%;flex-shrink:0;min-height:0;box-sizing:border-box;box-shadow:0 8px 24px rgba(101,67,33,.16), 0 2px 6px rgba(74,49,24,.18);';
 
     /* Header */
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;gap:11px;padding:12px 14px 10px;flex-shrink:0;';
+    hdr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 13px 9px;flex-shrink:0;';
     var av = document.createElement('div');
-    av.style.cssText = 'width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#8f1a28,#c0243a);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;box-shadow:0 2px 8px rgba(143,26,40,.3), inset 0 1px 0 rgba(255,255,255,.2);';
+    av.style.cssText = 'width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--crimson),#c0243a);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;';
     if (avatarUrl) { var avImg = document.createElement('img'); avImg.src = avatarUrl; avImg.loading = 'lazy'; avImg.style.cssText = 'width:100%;height:100%;object-fit:cover;'; av.appendChild(avImg); }
     else av.textContent = (user[0] || '?').toUpperCase();
     if (!isOwn && userId) { av.style.cursor='pointer'; (function(_id,_un,_ua){av.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
     hdr.appendChild(av);
     var uInfo = document.createElement('div'); uInfo.style.cssText = 'flex:1;min-width:0;';
     var uNW = document.createElement('div'); uNW.style.cssText = 'display:flex;align-items:center;gap:6px;';
-    var uNT = document.createElement('span'); uNT.style.cssText = 'font-size:14.5px;font-weight:800;color:' + _postFg + ';letter-spacing:-.1px;' + (!isOwn&&userId?'cursor:pointer;':''); uNT.textContent = user;
+    var uNT = document.createElement('span'); uNT.style.cssText = 'font-size:14px;font-weight:700;color:var(--tw);' + (!isOwn&&userId?'cursor:pointer;':''); uNT.textContent = user;
     if (!isOwn && userId) { (function(_id,_un,_ua){uNT.onclick=function(){openUserProfile(_id,_un,_ua);};})(userId,user,avatarUrl); }
     uNW.appendChild(uNT);
-    if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8.5px;font-weight:900;color:#3c2c08;background:linear-gradient(135deg,#FFE9A5,#C9A84C 50%,#8A6E1F);border-radius:5px;padding:2px 6px;letter-spacing:.3px;box-shadow:0 1px 3px rgba(201,168,76,.35), inset 0 1px 0 rgba(255,255,255,.4);'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
-    // [v2.30.1-p416] Papelera al lado del nombre y del badge TÚ (Álvaro:
-    // "Al lado del nombre y de la pill de tú vamos a poner la papelera").
-    // Antes vivía en rightCol junto a weather+ago; ahora se mueve a la fila
-    // del nombre para que la derecha quede libre para clima/temp/ago.
+    if (isOwn) { var ob = document.createElement('span'); ob.style.cssText = 'font-size:8px;font-weight:700;color:var(--gold);background:var(--gold-lt);border:1px solid var(--gold-bd);border-radius:4px;padding:1px 5px;'; ob.textContent = 'TÚ'; uNW.appendChild(ob); }
+    // Chip plateado "🔒 Crew" — sólo si el post pertenece a un crew (privado).
+    // Sirve como recordatorio visual del contexto cuando navegamos por el feed del crew.
+    // Si conozco el nombre del crew (porque soy miembro), lo mostramos; si no, "Crew" genérico.
+    if (post.crew_id) {
+        var crewName = '';
+        if (typeof getMyCrews === 'function') {
+            var mine = getMyCrews().find(function(c){ return c.id === post.crew_id; });
+            if (mine) crewName = mine.name || '';
+        }
+        var cChip = document.createElement('span');
+        cChip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;'
+            + 'font-size:8.5px;font-weight:800;color:#fff;'
+            + 'background:var(--silver-grad);'
+            + 'border-radius:4px;padding:2px 6px;letter-spacing:.2px;'
+            + 'text-shadow:0 1px 1px rgba(0,0,0,.18);'
+            + 'box-shadow:inset 0 -1px 2px rgba(0,0,0,.18),0 1px 2px rgba(80,85,92,.25);'
+            + 'max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        cChip.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+            + '<span>' + (crewName ? crewName.toUpperCase() : 'CREW') + '</span>';
+        uNW.appendChild(cChip);
+    }
+    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:var(--tm);margin-top:2px;'; uDt.textContent = dateStr;
+    uInfo.appendChild(uNW); uInfo.appendChild(uDt);
+
+    // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
+    // Both are stored inside act_data: shoeName / shoeColor (set when the activity was created),
+    // and watch (stamped on the post when published).
+    var shoeName = act.shoeName || '';
+    var shoeColor = act.shoeColor || '';
+    // Watch: prefer the one stamped on the post (act_data.watch). If not present,
+    // try the author's current profile watch (loaded via the profiles join, may be undefined).
+    // For OWN posts published before the watch-stamping change, fall back to the user's local
+    // profileData.watch so the user always sees their own watch in their feed.
+    // Last-resort fallback: read the visible watch field in the profile UI.
+    var watchName = act.watch || (profile && profile.watch) || '';
+    if (!watchName && isOwn) {
+        if (typeof profileData !== 'undefined' && profileData.watch) {
+            watchName = profileData.watch;
+        } else {
+            var _wd = document.getElementById('watch-display');
+            if (_wd && _wd.textContent && _wd.textContent.trim() && _wd.textContent.trim() !== '—') {
+                watchName = _wd.textContent.trim();
+            }
+        }
+    }
+    if (shoeName || watchName) {
+        var gearRow = document.createElement('div');
+        gearRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;';
+        if (shoeName) {
+            var shChip = document.createElement('span');
+            shChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            // Colored shoe icon (tinted with shoeColor if available)
+            var shoeStroke = shoeColor || 'var(--tm)';
+            shChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + shoeStroke + '" stroke-width="1.8" stroke-linecap="round"><path d="M2 18h20M6 18l1-6h10l1 6"/><path d="M9 12l1-4h4l1 4"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + shoeName + '</span>';
+            gearRow.appendChild(shChip);
+        }
+        if (watchName) {
+            var wChip = document.createElement('span');
+            wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;';
+            // Smartwatch icon (rectangle with strap nubs + small inner display)
+            wChip.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="var(--tm)" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
+            gearRow.appendChild(wChip);
+        }
+        uInfo.appendChild(gearRow);
+    }
+
+    hdr.appendChild(uInfo);
+    var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;align-items:center;gap:8px;flex-shrink:0;';
+    // Weather emoji (si la actividad tiene clima registrado por Open-Meteo)
+    // Solo el icono — la temperatura se omite a propósito por fiabilidad.
+    var _wEmoji = (typeof window._weatherEmoji === 'function') ? window._weatherEmoji(act.weather) : '';
+    if (_wEmoji) {
+        var wxEl = document.createElement('div');
+        wxEl.style.cssText = 'font-size:14px;line-height:1;';
+        wxEl.title = (act.weather && act.weather.condition) ? act.weather.condition : '';
+        wxEl.textContent = _wEmoji;
+        rightCol.appendChild(wxEl);
+    }
+    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:11px;color:var(--tm);'; agoEl.textContent = ago;
+    rightCol.appendChild(agoEl);
+    if (!isOwn && userId && mutualSet.has(userId)) {
+        var dmBtn = document.createElement('button');
+        dmBtn.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+        dmBtn.title = 'Mensaje privado';
+        dmBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
+        (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
+        rightCol.appendChild(dmBtn);
+    }
     if (isOwn) {
         var delBtn = document.createElement('button');
-        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.55;padding:2px;margin-left:2px;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
-        delBtn.title = 'Eliminar publicación';
-        delBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+        delBtn.style.cssText = 'background:none;border:none;cursor:pointer;opacity:.45;';
+        delBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>';
         (function(_pid, _card) {
             delBtn.onclick = function() {
                 var exMod = document.getElementById('del-post-modal'); if (exMod) exMod.remove();
@@ -8962,115 +8916,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
                 };
             };
         })(post.id, card);
-        uNW.appendChild(delBtn);
-    }
-    // Chip plateado "🔒 Crew" — sólo si el post pertenece a un crew (privado).
-    // Sirve como recordatorio visual del contexto cuando navegamos por el feed del crew.
-    // Si conozco el nombre del crew (porque soy miembro), lo mostramos; si no, "Crew" genérico.
-    if (post.crew_id) {
-        var crewName = '';
-        if (typeof getMyCrews === 'function') {
-            var mine = getMyCrews().find(function(c){ return c.id === post.crew_id; });
-            if (mine) crewName = mine.name || '';
-        }
-        var cChip = document.createElement('span');
-        cChip.style.cssText = 'display:inline-flex;align-items:center;gap:3px;'
-            + 'font-size:8.5px;font-weight:800;color:#fff;'
-            + 'background:var(--silver-grad);'
-            + 'border-radius:4px;padding:2px 6px;letter-spacing:.2px;'
-            + 'text-shadow:0 1px 1px rgba(0,0,0,.18);'
-            + 'box-shadow:inset 0 -1px 2px rgba(0,0,0,.18),0 1px 2px rgba(80,85,92,.25);'
-            + 'max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        cChip.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
-            + '<span>' + (crewName ? crewName.toUpperCase() : 'CREW') + '</span>';
-        uNW.appendChild(cChip);
-    }
-    var uDt = document.createElement('div'); uDt.style.cssText = 'font-size:11px;color:' + _postMuted + ';margin-top:3px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
-    var uDtDate = document.createElement('span'); uDtDate.textContent = dateStr; uDt.appendChild(uDtDate);
-    uInfo.appendChild(uNW); uInfo.appendChild(uDt);
-
-    // Gear row (shoes + watch) — only shown if the user has any equipment recorded for this activity.
-    // Both are stored inside act_data: shoeName / shoeColor (set when the activity was created),
-    // and watch (stamped on the post when published).
-    var shoeName = act.shoeName || '';
-    var shoeColor = act.shoeColor || '';
-    // Watch: prefer the one stamped on the post (act_data.watch). If not present,
-    // try the author's current profile watch (loaded via the profiles join, may be undefined).
-    // For OWN posts published before the watch-stamping change, fall back to the user's local
-    // profileData.watch so the user always sees their own watch in their feed.
-    // Last-resort fallback: read the visible watch field in the profile UI.
-    var watchName = act.watch || (profile && profile.watch) || '';
-    if (!watchName && isOwn) {
-        if (typeof profileData !== 'undefined' && profileData.watch) {
-            watchName = profileData.watch;
-        } else {
-            var _wd = document.getElementById('watch-display');
-            if (_wd && _wd.textContent && _wd.textContent.trim() && _wd.textContent.trim() !== '—') {
-                watchName = _wd.textContent.trim();
-            }
-        }
-    }
-    // [v2.30.1-p416] Reloj (icono + nombre) va JUNTO a la fecha en la fila 2 (uDt),
-    // no en gearRow separado — Álvaro: "El reloj y nombre del reloj lo ponemos justo
-    // a la derecha de la fecha". Así la fila 3 queda solo para la zapatilla en una línea.
-    if (watchName) {
-        var wChip = document.createElement('span');
-        wChip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;color:' + _postMuted + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;line-height:1.2;font-weight:600;';
-        wChip.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.85;"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 6V3h6v3M9 18v3h6v-3"/><circle cx="12" cy="12" r="1.5" fill="' + _postMuted + '" stroke="none"/></svg><span style="overflow:hidden;text-overflow:ellipsis;">' + watchName + '</span>';
-        uDt.appendChild(wChip);
-    }
-    // [v2.30.1-p416] shoeRow — SOLO nombre de la zapatilla, SIN icono (Álvaro:
-    // "vamos a quitar el icono de la zapatilla antes del nombre de la zapatilla").
-    // Sin el reloj compitiendo por espacio, la zapatilla larga cabe en una línea.
-    if (shoeName) {
-        var shoeRow = document.createElement('div');
-        shoeRow.style.cssText = 'margin-top:3px;font-size:10.5px;color:' + _postMutedLight + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;font-weight:500;';
-        shoeRow.textContent = shoeName;
-        uInfo.appendChild(shoeRow);
-    }
-
-    hdr.appendChild(uInfo);
-    // [v2.30.1-p416] rightCol: solo weather emoji + temperatura + ago (Álvaro:
-    // "el trozo de la derecha lo dejamos para el clima y la fecha o tiempo que hace
-    // desde que se ha publicado. Podría salir la temperatura por ahi tambien").
-    // Papelera y dm btn se mueven fuera de rightCol — papelera va en la fila del nombre
-    // (uNW) para posts propios, dm sigue disponible pero movido tras la temperatura.
-    var rightCol = document.createElement('div'); rightCol.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;';
-    // Weather emoji + temperatura (act.avgTemp del reloj tiene prioridad sobre act.weather.tempC de Open-Meteo)
-    var _wEmoji = (typeof window._weatherEmoji === 'function') ? window._weatherEmoji(act.weather) : '';
-    var _tempC = null;
-    if (act && typeof act.avgTemp === 'number' && isFinite(act.avgTemp) && act.avgTemp !== 0) {
-        _tempC = Math.round(act.avgTemp);
-    } else if (act && act.weather && typeof act.weather.tempC === 'number' && isFinite(act.weather.tempC)) {
-        _tempC = Math.round(act.weather.tempC);
-    }
-    if (_wEmoji || _tempC != null) {
-        var wxRow = document.createElement('div');
-        wxRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
-        if (_wEmoji) {
-            var wxEl = document.createElement('span');
-            wxEl.style.cssText = 'font-size:15px;line-height:1;';
-            wxEl.title = (act.weather && act.weather.condition) ? act.weather.condition : '';
-            wxEl.textContent = _wEmoji;
-            wxRow.appendChild(wxEl);
-        }
-        if (_tempC != null) {
-            var tEl = document.createElement('span');
-            tEl.style.cssText = 'font-size:12px;font-weight:800;color:' + _postFg + ';line-height:1;letter-spacing:-.2px;';
-            tEl.textContent = _tempC + '°';
-            wxRow.appendChild(tEl);
-        }
-        rightCol.appendChild(wxRow);
-    }
-    var agoEl = document.createElement('div'); agoEl.style.cssText = 'font-size:10.5px;color:' + _postMutedLight + ';font-weight:700;'; agoEl.textContent = ago;
-    rightCol.appendChild(agoEl);
-    if (!isOwn && userId && mutualSet.has(userId)) {
-        var dmBtn = document.createElement('button');
-        dmBtn.style.cssText = 'background:none;border:1.5px solid ' + _postBorder + ';border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-top:2px;';
-        dmBtn.title = 'Mensaje privado';
-        dmBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="' + _postMuted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
-        (function(_uid, _un, _ua) { dmBtn.onclick = function() { openChat(_uid, _un, _ua); }; })(userId, user, avatarUrl);
-        rightCol.appendChild(dmBtn);
+        rightCol.appendChild(delBtn);
     }
     hdr.appendChild(rightCol);
     card.appendChild(hdr);
@@ -9196,200 +9042,58 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         }
 
         if (hasP && hasT) {
-            /* [v2.30.1-p411] Layout Strava INVERSO deslizable. Álvaro:
-               "debería salir la imagen a la izquierda como está que se ve
-               entera y el resto de anchura deberia ser del mapa que se
-               vería la mitad con una minima separacion entre la foto y el
-               mapa y si deslizamos se vería el mapa entero ... el mapa
-               real ya listo para interactuar al cliclar".
-               Estructura: contenedor 100% width con border-radius y
-               overflow:hidden. Dentro un scroller horizontal con:
-                 · Slide FOTO (izq) — flex:0 0 auto, height:100%, width
-                   automático según aspect-ratio de la img (vertical → ~50%
-                   del ancho, horizontal → 100%). object-fit:contain para
-                   verse entera sin cortar (letterbox transparente).
-                   scroll-snap-align:start → snap inicial pega la foto al
-                   borde izq y el mapa asoma a la derecha.
-                 · Slide MAPA (dcha) — flex:0 0 100%, height:100%,
-                   scroll-snap-align:end. Cuando la foto es vertical, en
-                   el snap start se ve la foto entera + trozo del mapa al
-                   lado; al deslizar → snap end, mapa entero visible y foto
-                   fuera de vista. Cuando la foto es horizontal (100%
-                   ancho), el mapa no se ve hasta deslizar.
-               El MAPA es MapLibre INLINE (interactive:false para no
-               capturar gestos del scroll-snap ni del propio feed). Al
-               hacer tap sobre él → openMapZoomModal navegable con
-               records+shoeColor. Fallback al canvas + drawTrack si
-               MapLibre falla o el helper del index no está cargado. */
-            /* [v2.30.1-p412] Retoques visuales tras carrusel p411: (1) gap
-               foto/mapa 6→8 (más separación entre los dos slides); (2)
-               border-radius 8→6 (menos round, "un poquito de round en
-               ambos lados y ya pero el mismo round para todo" — el
-               overflow:hidden del contenedor recorta ambos slides al mismo
-               radio 6 en las 4 esquinas). Quitados margin/width lateral
-               que había residual del intermedio p411, ahora edge-to-edge
-               dentro del post como el resto del media block. */
-            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;border-radius:6px;';
+            // Carrusel horizontal con snap → foto y mapa en slides separados
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
             var scroller = document.createElement('div');
-            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:8px;';
+            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
             // Ocultar scrollbar
+            var _hideScroll = document.createElement('style');
             if (!document.getElementById('_mrCarStyle')) {
-                var _hideScroll = document.createElement('style');
                 _hideScroll.id = '_mrCarStyle';
                 _hideScroll.textContent = '._mrCar::-webkit-scrollbar{display:none;}';
                 document.head.appendChild(_hideScroll);
             }
             scroller.classList.add('_mrCar');
-            // Slide FOTO — ancho natural según aspect-ratio (contain), entera
-            var slidePhoto = document.createElement('div');
-            slidePhoto.style.cssText = 'flex:0 0 auto;position:relative;height:100%;overflow:hidden;cursor:zoom-in;background:transparent;scroll-snap-align:start;display:flex;align-items:center;justify-content:center;';
-            var phCar = document.createElement('img');
-            phCar.src = post.photo_url; phCar.loading = 'lazy';
-            phCar.style.cssText = 'max-width:100%;height:100%;width:auto;object-fit:contain;display:block;';
-            slidePhoto.appendChild(phCar);
-            (function(_url){ slidePhoto.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-            // Slide MAPA — 100% del contenedor, snap-align:end para que al deslizar se vea entero
-            var slideMap = document.createElement('div');
-            slideMap.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;background:#eef1f5;scroll-snap-align:end;cursor:zoom-in;';
-            // Container donde MapLibre monta el canvas WebGL
-            var mapMount = document.createElement('div');
-            mapMount.id = 'club-map-mount-' + post.id;
-            mapMount.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
-            slideMap.appendChild(mapMount);
-            // Canvas fallback (por si MapLibre no está disponible o records vacíos)
-            // Mantiene el id 'club-map-<post.id>' que la lógica externa (_renderPostMap
-            // en L7936/7956/8511 desde otros callers) busca para pintar con drawTrack.
-            var cvCar = document.createElement('canvas');
-            cvCar.id = 'club-map-' + post.id;
-            cvCar.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
-            slideMap.appendChild(cvCar);
+            var slidePhoto = _buildSlidePhoto();
+            var slideMap = _buildSlideCanvas();
             scroller.appendChild(slidePhoto);
             scroller.appendChild(slideMap);
             mw.appendChild(scroller);
-            /* Montar el MapLibre inline con interactive:false para que el
-               scroll horizontal del carrusel siga funcionando (si el mapa
-               fuera interactivo, capturaría el gesto de swipe y no
-               llegaría al scroller). Diferido con requestAnimationFrame
-               para asegurar que el div ya está en DOM y tiene dimensiones
-               (MapLibre necesita clientWidth/Height al montarse). */
-            (function(_post, _mapUrl, _photoUrl, _mount, _cv){
-                var _ad = _post && _post.act_data;
-                var _recs = _ad && _ad.records;
-                var _shoe = _ad && _ad.shoeColor;
-                function _openInteractive() {
-                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
-                        window.openMapZoomModal({ records: _recs, shoeColor: _shoe || null });
-                        return;
-                    }
-                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
-                    else if (_photoUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_photoUrl);
-                }
-                slideMap.onclick = _openInteractive;
-                // Montaje MapLibre inline (preview real interactivo al tap)
-                requestAnimationFrame(function() {
-                    if (typeof window._mrBuildRunMap === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
-                        try {
-                            var _handle = window._mrBuildRunMap(_mount, _recs, _shoe || null, {
-                                interactive: false,
-                                partialInteractive: false,
-                                onReady: function() {
-                                    // Mapa listo → ocultar el canvas fallback
-                                    if (_cv && _cv.parentNode) _cv.style.display = 'none';
-                                },
-                                onFail: function() {
-                                    // Sin MapLibre → dejar el canvas fallback visible con drawTrack
-                                    if (_cv && typeof window.drawTrack === 'function') {
-                                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
-                                    }
-                                }
-                            });
-                            _post._mrMapHandle = _handle;
-                        } catch(_){}
-                    } else if (_cv && Array.isArray(_recs) && _recs.length >= 2 && typeof window.drawTrack === 'function') {
-                        // Sin _mrBuildRunMap → canvas + drawTrack directo
-                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
-                    }
-                });
-            })(post, mapImgUrl, post.photo_url, mapMount, cvCar);
+            // Dots indicadores estilo Strava
+            var dots = document.createElement('div');
+            dots.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:4px 8px;background:rgba(0,0,0,.35);border-radius:999px;pointer-events:none;z-index:2;';
+            var dot1 = document.createElement('div');
+            dot1.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#fff;transition:opacity .2s;';
+            var dot2 = document.createElement('div');
+            dot2.style.cssText = 'width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);transition:opacity .2s;';
+            dots.appendChild(dot1); dots.appendChild(dot2);
+            mw.appendChild(dots);
+            // Actualizar dots al scrollear
+            scroller.addEventListener('scroll', function() {
+                var half = scroller.scrollWidth / 2;
+                var isSecond = scroller.scrollLeft > half * 0.45;
+                dot1.style.background = isSecond ? 'rgba(255,255,255,.45)' : '#fff';
+                dot2.style.background = isSecond ? '#fff' : 'rgba(255,255,255,.45)';
+            }, { passive: true });
         } else if (hasP) {
-            // [v2.30.1-p421] Rama especial para posts type='heatmap' — la imagen del canvas
-            // del heatmap es 640x640 (cuadrada) y con object-fit:cover en 220px altura se
-            // cropeaba a la banda central. Álvaro captura: "al compartir el heatmap al club
-            // mira como sale la imagen cortada, hay que arreglarlo". Fix: aspect-ratio 1:1
-            // + object-fit:contain para que se vea entera. Bg _postBg neutro por si acaso.
-            if (act.type === 'heatmap') {
-                mw.style.cssText = 'position:relative;width:100%;aspect-ratio:1/1;background:' + _postBg + ';overflow:hidden;flex-shrink:0;cursor:zoom-in;';
-                var phH = document.createElement('img'); phH.src = post.photo_url; phH.loading = 'lazy';
-                phH.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;';
-                mw.appendChild(phH);
-                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-            } else {
-                mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
-                var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
-                ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
-                mw.appendChild(ph);
-                var gb = document.createElement('div');
-                gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
-                mw.appendChild(gb);
-                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-            }
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
+            var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
+            ph.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
+            mw.appendChild(ph);
+            var gb = document.createElement('div');
+            gb.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(to top,rgba(0,0,0,.5),transparent);pointer-events:none;';
+            mw.appendChild(gb);
+            (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
         } else {
-            /* [v2.30.1-p414] Rama "solo track" (sin foto) — MapLibre real
-               inline igual que la rama hasP && hasT de p411. Álvaro:
-               "acabo de publicar y debería salir el mapa centrado y no el
-               recorte de imagen que salia antes que es lo que sigue
-               saliendo y mola mas el mapa tal cual se publique o no una
-               imagen el mapa siempre como mapa". Antes esta rama pintaba
-               un canvas 100% width con drawTrack o el _mapImg PNG estático
-               vía _renderPostMap → track fucsia sobre fondo blanco muy
-               feo. Ahora monta MapLibre con opts.interactive:false (no
-               captura gestos del scroll vertical del feed) y tap abre
-               openMapZoomModal navegable con dragPan/pinch zoom. Canvas
-               fallback con id "club-map-<post.id>" mantenido debajo por
-               compat con _renderPostMap para posts antiguos sin records.
-               border-radius:6 coherente con la rama foto+mapa. */
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#eef1f5;overflow:hidden;flex-shrink:0;border-radius:6px;cursor:zoom-in;';
-            var mapMountOnly = document.createElement('div');
-            mapMountOnly.id = 'club-map-mount-' + post.id;
-            mapMountOnly.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
-            mw.appendChild(mapMountOnly);
+            // Solo track
+            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
             var cvFull = document.createElement('canvas');
             cvFull.id = 'club-map-' + post.id;
             cvFull.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
             mw.appendChild(cvFull);
-            (function(_post, _mapUrl, _mount, _cv){
-                var _ad = _post && _post.act_data;
-                var _recs = _ad && _ad.records;
-                var _shoe = _ad && _ad.shoeColor;
-                mw.onclick = function() {
-                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
-                        window.openMapZoomModal({ records: _recs, shoeColor: _shoe || null });
-                        return;
-                    }
-                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
-                };
-                requestAnimationFrame(function() {
-                    if (typeof window._mrBuildRunMap === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
-                        try {
-                            var _handle = window._mrBuildRunMap(_mount, _recs, _shoe || null, {
-                                interactive: false,
-                                partialInteractive: false,
-                                onReady: function() {
-                                    if (_cv && _cv.parentNode) _cv.style.display = 'none';
-                                },
-                                onFail: function() {
-                                    if (_cv && typeof window.drawTrack === 'function') {
-                                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
-                                    }
-                                }
-                            });
-                            _post._mrMapHandle = _handle;
-                        } catch(_){}
-                    } else if (_cv && Array.isArray(_recs) && _recs.length >= 2 && typeof window.drawTrack === 'function') {
-                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
-                    }
-                });
-            })(post, mapImgUrl, mapMountOnly, cvFull);
+            if (mapImgUrl) {
+                (function(_url){ mw.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
+            }
         }
         // PR overlay: medalla flotante en esquina superior derecha del media.
         // - 1 PR  → medalla específica del tipo (10K, HM, M, etc.)
@@ -9431,17 +9135,14 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             }
             mw.appendChild(medalWrap);
         }
-        var mediaWrap = document.createElement('div');
-        mediaWrap.style.cssText = 'padding:0 12px;flex-shrink:0;';
-        mediaWrap.appendChild(mw);
-        card.appendChild(mediaWrap);
+        card.appendChild(mw);
     }
 
     /* Name + type */
     var nameRow = document.createElement('div');
-    nameRow.style.cssText = 'padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;';
-    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:19px;font-weight:800;color:' + _postFg + ';letter-spacing:-.4px;line-height:1.15;flex:1;'; nmEl.textContent = act.name || tl;
-    var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;';
+    nameRow.style.cssText = 'padding:10px 13px 6px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-shrink:0;';
+    var nmEl = document.createElement('div'); nmEl.style.cssText = 'font-size:18px;font-weight:800;color:var(--tw);letter-spacing:-.3px;line-height:1.2;flex:1;'; nmEl.textContent = act.name || tl;
+    var rightBadges = document.createElement('div'); rightBadges.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-top:4px;';
     // PB badge (own posts only — we don't have remote marcas)
     if (isOwn) {
         var pbLabel = _detectPB(act);
@@ -9453,8 +9154,7 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
             rightBadges.appendChild(pbBadge);
         }
     }
-    var tbEl = document.createElement('div'); tbEl.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;padding:5px 11px 5px 8px;border-radius:6px;background:' + tc + ';color:#fff;letter-spacing:.2px;white-space:nowrap;box-shadow:0 1px 3px ' + tc + '66, inset 0 1px 0 rgba(255,255,255,.25);';
-    tbEl.innerHTML = '<span style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 0 6px rgba(255,255,255,.6);flex-shrink:0;"></span>' + tl;
+    var tbEl = document.createElement('div'); tbEl.style.cssText = 'font-size:10px;font-weight:700;padding:4px 10px;border-radius:99px;background:' + tc + '22;color:' + tc + ';border:1px solid ' + tc + '44;'; tbEl.textContent = tl;
     rightBadges.appendChild(tbEl);
     nameRow.appendChild(nmEl); nameRow.appendChild(rightBadges); card.appendChild(nameRow);
 
@@ -9497,10 +9197,10 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
 
     /* Divider */
-    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 14px;border-top:1px solid ' + _postBorder + ';flex-shrink:0;'; card.appendChild(dv1);
+    var dv1 = document.createElement('div'); dv1.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv1);
 
     /* Stats */
-    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:12px 6px 10px;flex-shrink:0;';
+    var sg = document.createElement('div'); sg.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);padding:8px 6px 7px;flex-shrink:0;';
     var statCells;
     if (act.type === 'heatmap' && act.heatmapStats) {
         var hs = act.heatmapStats;
@@ -9520,27 +9220,16 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
     }
     statCells.forEach(function(s) {
         var cell = document.createElement('div'); cell.style.cssText = 'text-align:center;padding:2px;';
-        cell.innerHTML = '<div style="font-size:18px;font-weight:900;color:' + _postFg + ';line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:-.5px;">' + s.v + '</div><div style="font-size:9px;color:' + _postMuted + ';text-transform:uppercase;letter-spacing:.9px;margin-top:3px;font-weight:700;">' + s.u + '</div>';
+        cell.innerHTML = '<div style="font-size:16px;font-weight:800;color:var(--tw);line-height:1.1;font-variant-numeric:tabular-nums;">' + s.v + '</div><div style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;margin-top:2px;">' + s.u + '</div>';
         sg.appendChild(cell);
     });
     card.appendChild(sg);
 
-    /* Reactions + comments toggle unificados en UNA SOLA FILA (p416) */
-    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 14px;border-top:1px solid ' + _postBorder + ';flex-shrink:0;'; card.appendChild(dv2);
-    // [v2.30.1-p416] Álvaro pidió "Toda la parte de abajo de los emojis de reaccion y los
-    // comentarios hay que ajustarla y que sea mas visual y premium sin aumentar la altura
-    // del post en ningun caso". Estrategia: unificar reactions + toggle comentarios en
-    // UNA sola fila. Se elimina el divider entre reactions y toggle + el toggle ancho
-    // completo separado → gana ~35px verticales. Emojis premium en dorado para mine.
-    var _reactBar = _renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis);
-    var _cmtSection = _renderCommentsSection(post.id, myId, profile);
-    var _cmtToggle = _cmtSection.querySelector('button');
-    if (_cmtToggle) {
-        // Chip toggle ya trae margin-left:auto → se empuja a la dcha del reactBar (los emojis van a la izq con flex:1).
-        _reactBar.appendChild(_cmtToggle);
-    }
-    card.appendChild(_reactBar);
-    card.appendChild(_cmtSection);
+    /* Reactions */
+    var dv2 = document.createElement('div'); dv2.style.cssText = 'margin:0 13px;border-top:1px solid var(--border);flex-shrink:0;'; card.appendChild(dv2);
+    card.appendChild(_renderReactionBar(post.id, reactions, myId, act.shoeName || '', crewEmojis));
+    /* Comments section */
+    card.appendChild(_renderCommentsSection(post.id, myId, profile));
     return card;
 }
 
@@ -9548,49 +9237,19 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
 // Collapsible comments under each post. Loads count first (cheap), expands to show full list.
 // Stores in Supabase `post_comments` table. Graceful fallback if table missing.
 function _renderCommentsSection(postId, myId, ownerProfile) {
-    // [v2.30.1-p416] Wrap SIN border-top (antes tenía uno con var(--bsoft)).
-    // La separación visual la maneja el body colapsable (border-top solo cuando expanded).
-    // El toggle button ahora está ESTILIZADO como chip para poder inyectarlo al final del
-    // reactionBar en una sola fila unificada (el flow del post lo mueve tras renderizar).
     var wrap = document.createElement('div');
     wrap.id = 'cmt-wrap-' + postId;
-    wrap.style.cssText = 'flex-shrink:0;';
+    wrap.style.cssText = 'border-top:1px solid var(--bsoft);flex-shrink:0;';
 
-    // [v2.30.1-p417] Paleta post local ampliada con _postBg + _avBg para escapar del scope crimson
-    // en el comment row. Antes: row.style.background = 'var(--bg)' → crimson en scope Club (Álvaro
-    // captura post.jpg: comentario propio salía con fondo rojo intenso "como recorte"). Ahora usa
-    // _postBg (blanco light / oscuro dark, mismo que la card p415). Avatar placeholder pasa de
-    // var(--crimson) a _avBg neutro. delBtn stroke pasa de var(--crimson) a _muted.
-    var _isDark = document.body.classList.contains('dark-mode');
-    var _postBg = _isDark ? '#17191d' : '#ffffff';
-    var _muted = _isDark ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.45)';
-    var _mutedLight = _isDark ? 'rgba(255,255,255,.4)' : 'rgba(0,0,0,.35)';
-    var _fg = _isDark ? '#f5f5f7' : '#111114';
-    var _border = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.08)';
-    var _avBg = _isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
-
-    // Toggle chip — se moverá al reactionBar desde el flow del post (margin-left:auto lo empuja a la dcha)
+    // Toggle button row
     var toggle = document.createElement('button');
-    // [v2.30.1-p418] Chip Comentarios: solo icono message + count (si N>0) + chevron, sin
-    // palabra "Comentarios" (patrón Instagram/Twitter). Antes ocupaba ~130px con "Comentarios (N)"
-    // y desaparecía del viewport cuando los emojis tenían counts. Ahora ~55px worst case.
-    // Título accesible via title/aria-label — el icono chat es universalmente reconocible.
-    // [v2.30.1-p419] Chevron eliminado. Redundante — el bg dorado sutil que aparece al abrirse ya
-    // da feedback de open/close. Instagram/Twitter tampoco usan chevron en su chip de comentarios.
-    // Ganancia adicional: ~17px por chip → chip max ~49px con count "99".
-    toggle.style.cssText = 'background:none;border:none;padding:4px 8px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--f);margin-left:auto;flex-shrink:0;transition:background .15s;';
-    toggle.title = 'Comentarios';
-    toggle.setAttribute('aria-label', 'Comentarios');
-    // [v2.30.1-p420] data-role para que _renderReactionBar pueda preservar el chip al re-renderizar
-    // el bar tras una reacción (chip vive en el bar tras la unificación p416, pero el re-render
-    // recursivo del bar tras reacción lo perdía → bug detectado por Álvaro tras p419).
-    toggle.setAttribute('data-role', 'cmt-toggle');
-    toggle.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '" style="font-size:11px;color:' + _muted + ';font-weight:800;letter-spacing:-.1px;line-height:1;"></span>';
+    toggle.style.cssText = 'width:100%;background:none;border:none;padding:8px 13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-family:var(--f);';
+    toggle.innerHTML = '<span style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ts);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ts)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="cmt-label-' + postId + '">Comentarios</span></span><svg id="cmt-chev-' + postId + '" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--tm)" stroke-width="2" stroke-linecap="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg>';
 
-    // Collapsible body — border-top se aplica dinámicamente cuando expanded
+    // Collapsible body
     var body = document.createElement('div');
     body.id = 'cmt-body-' + postId;
-    body.style.cssText = 'display:none;padding:8px 15px 12px;';
+    body.style.cssText = 'display:none;padding:0 15px 12px;';
     body.innerHTML = '<div id="cmt-list-' + postId + '" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px;"></div>';
 
     // Estado de "respondiendo a..."
@@ -9599,7 +9258,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     // Chip "Respondiendo a @usuario · ✕" — aparece encima del input
     var replyChip = document.createElement('div');
     replyChip.id = 'cmt-replychip-' + postId;
-    replyChip.style.cssText = 'display:none;align-items:center;gap:8px;padding:6px 10px;margin-bottom:6px;background:' + (_isDark?'rgba(255,255,255,.05)':'rgba(0,0,0,.04)') + ';border-left:3px solid #C9A84C;border-radius:0 8px 8px 0;font-size:11.5px;color:' + _muted + ';';
+    replyChip.style.cssText = 'display:none;align-items:center;gap:8px;padding:6px 10px;margin-bottom:6px;background:var(--bsoft);border-left:3px solid var(--crimson);border-radius:0 8px 8px 0;font-size:11.5px;color:var(--ts);';
     body.appendChild(replyChip);
 
     // Input row
@@ -9609,13 +9268,11 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     ta.placeholder = 'Escribe un comentario...';
     ta.rows = 1;
     ta.maxLength = 500;
-    ta.style.cssText = 'flex:1;background:' + (_isDark?'rgba(255,255,255,.04)':'rgba(0,0,0,.03)') + ';border:1px solid ' + _border + ';border-radius:18px;padding:8px 14px;font-family:var(--f);font-size:13px;color:' + _fg + ';outline:none;resize:none;max-height:80px;line-height:1.35;transition:border-color .15s;';
-    ta.onfocus = function() { this.style.borderColor = 'rgba(201,168,76,.5)'; };
-    ta.onblur = function() { this.style.borderColor = _border; };
+    ta.style.cssText = 'flex:1;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:8px 12px;font-family:var(--f);font-size:13px;color:var(--tw);outline:none;resize:none;max-height:80px;line-height:1.35;';
     ta.oninput = function() { this.style.height='auto'; this.style.height=Math.min(this.scrollHeight, 80)+'px'; };
     var sendBtn = document.createElement('button');
-    sendBtn.style.cssText = 'width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#FFE9A5,#C9A84C 50%,#8A6E1F);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(201,168,76,.35), inset 0 1px 0 rgba(255,255,255,.4);';
-    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3c2c08" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
+    sendBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#c4881e,#e8a825);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;';
+    sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
     inputRow.appendChild(ta); inputRow.appendChild(sendBtn);
     body.appendChild(inputRow);
 
@@ -9713,7 +9370,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         if (!listEl) return;
         var grouped = groupComments(comments);
         if (!grouped.roots.length) {
-            listEl.innerHTML = '<div style="font-size:11px;color:' + _mutedLight + ';padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
+            listEl.innerHTML = '<div style="font-size:11px;color:var(--tm);padding:4px 0;font-style:italic;">Sé el primero en comentar.</div>';
             return;
         }
         listEl.innerHTML = '';
@@ -9790,12 +9447,12 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         wrapRow.appendChild(replyBg);
 
         var row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;background:' + _postBg + ';transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;background:var(--bg);transform:translateX(0);transition:transform .25s cubic-bezier(.25,.46,.45,.94);will-change:transform;';
 
         // Avatar — más pequeño si es respuesta
         var avSize = isReply ? 22 : 28;
         var avc = document.createElement('div');
-        avc.style.cssText = 'width:'+avSize+'px;height:'+avSize+'px;border-radius:50%;background:' + _avBg + ';display:flex;align-items:center;justify-content:center;font-size:'+(isReply?10:12)+'px;font-weight:700;color:' + _fg + ';flex-shrink:0;overflow:hidden;cursor:' + (isMine?'default':'pointer') + ';';
+        avc.style.cssText = 'width:'+avSize+'px;height:'+avSize+'px;border-radius:50%;background:var(--crimson);display:flex;align-items:center;justify-content:center;font-size:'+(isReply?10:12)+'px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden;cursor:' + (isMine?'default':'pointer') + ';';
         if (avUrl) { var ai = document.createElement('img'); ai.src = avUrl; ai.style.cssText = 'width:100%;height:100%;object-fit:cover;'; avc.appendChild(ai); }
         else avc.textContent = (un[0]||'?').toUpperCase();
         if (!isMine && c.user_id) {
@@ -9807,13 +9464,13 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         var header = document.createElement('div');
         header.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-bottom:1px;';
         var nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'font-size:11.5px;font-weight:800;color:' + _fg + ';' + (!isMine && c.user_id ? 'cursor:pointer;' : '');
+        nameSpan.style.cssText = 'font-size:11.5px;font-weight:800;color:var(--tw);' + (!isMine && c.user_id ? 'cursor:pointer;' : '');
         nameSpan.textContent = un;
         if (!isMine && c.user_id) {
             (function(_id,_un,_ua){ nameSpan.onclick = function(){ openUserProfile(_id,_un,_ua); }; })(c.user_id, un, avUrl);
         }
         var dateSpan = document.createElement('span');
-        dateSpan.style.cssText = 'font-size:10px;color:' + _muted + ';flex-shrink:0;';
+        dateSpan.style.cssText = 'font-size:10px;color:var(--tm);flex-shrink:0;';
         var d = Date.now() - new Date(c.created_at).getTime();
         var mm = Math.floor(d/60000);
         dateSpan.textContent = mm < 1 ? 'ahora' : mm < 60 ? mm+'m' : mm < 1440 ? Math.floor(mm/60)+'h' : Math.floor(mm/1440)+'d';
@@ -9821,7 +9478,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
         if (isMine) {
             var delBtn = document.createElement('button');
             delBtn.style.cssText = 'margin-left:auto;background:none;border:none;cursor:pointer;padding:0;opacity:.5;';
-            delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + _muted + '" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
             (function(_cid){
                 delBtn.onclick = async function() {
                     if (!confirm('¿Eliminar este comentario?' + (isReply ? '' : '\n\nSi tiene respuestas, también se eliminarán.'))) return;
@@ -9835,7 +9492,7 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
             header.appendChild(delBtn);
         }
         var textEl = document.createElement('div');
-        textEl.style.cssText = 'font-size:13px;color:' + _fg + ';line-height:1.35;white-space:pre-wrap;word-break:break-word;';
+        textEl.style.cssText = 'font-size:13px;color:var(--tw);line-height:1.35;white-space:pre-wrap;word-break:break-word;';
         textEl.textContent = c.content;
         bubble.appendChild(header); bubble.appendChild(textEl);
 
@@ -9908,9 +9565,8 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     }
 
     function updateCount(n) {
-        // [v2.30.1-p418] Solo el número (o vacío) — el icono chat del chip ya identifica "Comentarios".
         var lbl = document.getElementById('cmt-label-' + postId);
-        if (lbl) lbl.textContent = n > 0 ? String(n) : '';
+        if (lbl) lbl.textContent = n > 0 ? 'Comentarios (' + n + ')' : 'Comentarios';
     }
 
     // Initial count fetch (light, head-only) — solo comentarios raíz
@@ -9932,12 +9588,8 @@ function _renderCommentsSection(postId, myId, ownerProfile) {
     toggle.onclick = function() {
         expanded = !expanded;
         body.style.display = expanded ? 'block' : 'none';
-        // [v2.30.1-p416] Divider border-top solo cuando el body está expanded — así el chip
-        // toggle inline dentro del reactBar no tiene línea colgando cuando está cerrado.
-        body.style.borderTop = expanded ? ('1px solid ' + _border) : 'none';
-        // Feedback visual en el chip: background dorado sutil cuando abierto
-        toggle.style.background = expanded ? (_isDark ? 'rgba(232,181,78,.10)' : 'rgba(201,168,76,.08)') : 'none';
-        // [v2.30.1-p419] Chevron eliminado — no más rotate. El bg dorado sutil es el único feedback visual.
+        var chev = document.getElementById('cmt-chev-' + postId);
+        if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0)';
         if (expanded && !loaded) {
             loaded = true;
             loadComments();
@@ -10003,30 +9655,16 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
     // crewEmojis: array opcional de 5 emojis personalizados del crew (si el post pertenece a un crew con custom_emojis).
     var DEFAULT_EMOJIS = ['❤️','💪','🔥','🐐','🐢'];
     var EMOJIS = (Array.isArray(crewEmojis) && crewEmojis.length === 5) ? crewEmojis.slice() : DEFAULT_EMOJIS;
-    // [v2.30.1-p416] Paleta post local (border-top se sobrescribe desde el flow del post con _postBorder).
-    var _isDark = document.body.classList.contains('dark-mode');
-    var _fg = _isDark ? '#f5f5f7' : '#111114';
-    var _muted = _isDark ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.45)';
-    var _mineBg = 'linear-gradient(135deg,rgba(232,181,78,.18),rgba(196,136,30,.08))';
-    var _mineRing = 'rgba(232,181,78,.5)';
-    var _mineText = _isDark ? '#e8b54e' : '#a08028';
     var bar = document.createElement('div');
     bar.id = 'rxbar-' + postId;
-    // [v2.30.1-p418] Bar padding lateral 14 → 10 y gap 5 → 3 para dar más espacio al chip
-    // Comentarios cuando TODOS los emojis tienen count (Álvaro capturas: chip desaparecía).
-    // [v2.30.1-p419] Padding lateral 10 → 12 para dar margen visual del borde derecho
-    // (Álvaro: "hay que moverlo hacia la izquierda, sino pasa exactamente lo mismo que esta
-    // pegado al borde derecho y al reaccionar algo ya se va y desaparece"). overflow:hidden
-    // en emWrap como safety-net: si en algún caso extremo (5 counts multi-dígito) los emojis
-    // desbordan, se cropean ANTES que el chip Comentarios desaparezca.
-    bar.style.cssText = 'display:flex;align-items:center;gap:3px;padding:6px 12px 7px;flex-wrap:nowrap;';
-    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;overflow:hidden;';
+    bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 13px 9px;flex-wrap:nowrap;border-top:1px solid var(--bsoft);';
+    var emWrap = document.createElement('div'); emWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
     EMOJIS.forEach(function(em) {
         var users = (reactions || []).filter(function(r) { return r.emoji === em; }).map(function(r) { return r.user_id; });
         var iMine = users.indexOf(myId) >= 0;
         var btn = document.createElement('button');
-        btn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 7px;border-radius:8px;border:none;background:' + (iMine?_mineBg:'transparent') + ';cursor:pointer;transition:all .15s;font-size:15.5px;flex-shrink:0;line-height:1;' + (iMine?'box-shadow:inset 0 0 0 1.5px '+_mineRing+', 0 1px 4px rgba(201,168,76,.18);':'');
-        btn.innerHTML = em + (users.length ? '<span style="font-size:10px;font-weight:800;color:' + (iMine?_mineText:_muted) + ';letter-spacing:-.1px;">' + users.length + '</span>' : '');
+        btn.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:99px;border:1.5px solid ' + (iMine?'var(--crimson)':'var(--border)') + ';background:' + (iMine?'var(--crim-lt)':'var(--card2)') + ';cursor:pointer;transition:all .15s;font-size:14px;flex-shrink:0;';
+        btn.innerHTML = em + (users.length ? '<span style="font-size:11px;font-weight:700;color:' + (iMine?'var(--crimson)':'var(--ts)') + ';">' + users.length + '</span>' : '');
         (function(_em, _pid, _iMine, _reactions, _bar, _btn) {
             _btn.onclick = function() {
                 if (!myId) return;
@@ -10038,14 +9676,6 @@ function _renderReactionBar(postId, reactions, myId, shoeName, crewEmojis) {
                     ? (_reactions||[]).filter(function(r) { return !(r.user_id===myId && r.emoji===_em); })
                     : (_reactions||[]).concat([{user_id:myId, emoji:_em, post_id:_pid}]);
                 var newBar = _renderReactionBar(_pid, newReactions, myId, undefined, crewEmojis);
-                // [v2.30.1-p420] BUG CRÍTICO: el chip Comentarios se añade al reactBar en el flow
-                // del post TRAS el render inicial (unificación 1 sola fila p416). Al re-renderizar
-                // el bar tras reaccionar, el nuevo bar viene SIN chip y el replaceChild lo pierde.
-                // Fix: preservar el chip del bar viejo movíéndolo al nuevo ANTES de replaceChild.
-                // Node.appendChild al mover un elemento preserva event listeners y estado interno
-                // (el closure del onclick del chip sigue funcionando con expanded, loaded, etc).
-                var _oldChip = _bar.querySelector('[data-role="cmt-toggle"]');
-                if (_oldChip) newBar.appendChild(_oldChip);
                 _bar.parentNode && _bar.parentNode.replaceChild(newBar, _bar);
                 if (_iMine) {
                     window._sbClient.from('reactions').delete().eq('post_id',_pid).eq('user_id',myId).eq('emoji',_em).then(() => {});
@@ -11193,12 +10823,7 @@ function _appendBubble(msg, isMine, otherId) {
     var wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isMine?'flex-end':'flex-start') + ';margin-bottom:2px;';
     var bubble = document.createElement('div');
-    /* [v2.30.1-p409] burbuja enviada (isMine) pasa de navy #0d2b55 a crimson #8f1a28
-       por coherencia con la sección Club premium. Álvaro: "los de la derecha azules
-       si que queria ponerlos crimpson por coherencia". El override CSS anterior
-       falló porque el navegador normaliza style inline (#0d2b55 → rgb(13,43,85))
-       y el selector [style*="#0d2b55"] no matcheaba. Cambio directo aquí. */
-    var bgColor = isMine ? '#8f1a28' : (isDark ? '#2c2c2e' : '#e9e9eb');
+    var bgColor = isMine ? '#0d2b55' : (isDark ? '#2c2c2e' : '#e9e9eb');
     var textColor = isMine ? '#fff' : (isDark ? '#fff' : '#000');
     var radius = isMine ? '18px 18px 4px 18px' : '18px 18px 18px 4px';
     bubble.style.cssText = 'max-width:72%;padding:9px 14px;border-radius:' + radius + ';background:' + bgColor + ';color:' + textColor + ';font-size:15px;line-height:1.45;word-break:break-word;';
