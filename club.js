@@ -9001,97 +9001,113 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         }
 
         if (hasP && hasT) {
-            /* [v2.30.1-p410] Vuelta al carrusel scroll-snap tras probar p409
-               side-by-side. Álvaro: "el mapa y la imagen o imagenes sean como
-               un carrusel que se vea deslizando horizontalmente dentro de ese
-               trozo del post". Cada slide 100% width con scroll-snap-type:x
-               mandatory. Dots indicadores debajo (estilo Strava).
-               MEJORA CLAVE en el slide del mapa: si el post tiene _mapImg
-               (imagen PNG de alta calidad 1200x800 generada al compartir con
-               window._mrMapSnapshotDataURL), usar directamente <img> con
-               object-fit:cover — track grueso y calidad de calles nítida.
-               Solo se cae al canvas dinámico + drawTrack si NO hay _mapImg
-               (posts antiguos pre-p87 sin snapshot). La foto también entera
-               con object-fit:contain (letterbox transparente muestra el
-               crimson del post). */
-            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;';
+            /* [v2.30.1-p411] Layout Strava INVERSO deslizable. Álvaro:
+               "debería salir la imagen a la izquierda como está que se ve
+               entera y el resto de anchura deberia ser del mapa que se
+               vería la mitad con una minima separacion entre la foto y el
+               mapa y si deslizamos se vería el mapa entero ... el mapa
+               real ya listo para interactuar al cliclar".
+               Estructura: contenedor 100% width con border-radius y
+               overflow:hidden. Dentro un scroller horizontal con:
+                 · Slide FOTO (izq) — flex:0 0 auto, height:100%, width
+                   automático según aspect-ratio de la img (vertical → ~50%
+                   del ancho, horizontal → 100%). object-fit:contain para
+                   verse entera sin cortar (letterbox transparente).
+                   scroll-snap-align:start → snap inicial pega la foto al
+                   borde izq y el mapa asoma a la derecha.
+                 · Slide MAPA (dcha) — flex:0 0 100%, height:100%,
+                   scroll-snap-align:end. Cuando la foto es vertical, en
+                   el snap start se ve la foto entera + trozo del mapa al
+                   lado; al deslizar → snap end, mapa entero visible y foto
+                   fuera de vista. Cuando la foto es horizontal (100%
+                   ancho), el mapa no se ve hasta deslizar.
+               El MAPA es MapLibre INLINE (interactive:false para no
+               capturar gestos del scroll-snap ni del propio feed). Al
+               hacer tap sobre él → openMapZoomModal navegable con
+               records+shoeColor. Fallback al canvas + drawTrack si
+               MapLibre falla o el helper del index no está cargado. */
+            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;border-radius:12px;';
             var scroller = document.createElement('div');
-            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
+            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:2px;';
             // Ocultar scrollbar
-            var _hideScroll = document.createElement('style');
             if (!document.getElementById('_mrCarStyle')) {
+                var _hideScroll = document.createElement('style');
                 _hideScroll.id = '_mrCarStyle';
                 _hideScroll.textContent = '._mrCar::-webkit-scrollbar{display:none;}';
                 document.head.appendChild(_hideScroll);
             }
             scroller.classList.add('_mrCar');
-            // Slide FOTO — object-fit:contain, entera con letterbox transparente
+            // Slide FOTO — ancho natural según aspect-ratio (contain), entera
             var slidePhoto = document.createElement('div');
-            slidePhoto.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;cursor:zoom-in;background:transparent;scroll-snap-align:start;display:flex;align-items:center;justify-content:center;';
+            slidePhoto.style.cssText = 'flex:0 0 auto;position:relative;height:100%;overflow:hidden;cursor:zoom-in;background:transparent;scroll-snap-align:start;display:flex;align-items:center;justify-content:center;';
             var phCar = document.createElement('img');
             phCar.src = post.photo_url; phCar.loading = 'lazy';
-            phCar.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
+            phCar.style.cssText = 'max-width:100%;height:100%;width:auto;object-fit:contain;display:block;';
             slidePhoto.appendChild(phCar);
             (function(_url){ slidePhoto.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-            // Slide MAPA — img directo si hay _mapImg (calidad), canvas fallback
+            // Slide MAPA — 100% del contenedor, snap-align:end para que al deslizar se vea entero
             var slideMap = document.createElement('div');
-            slideMap.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;background:transparent;scroll-snap-align:start;cursor:zoom-in;';
-            if (mapImgUrl) {
-                // Post con _mapImg (imagen de alta calidad 1200×800 ya con track grueso)
-                var mapImgEl = document.createElement('img');
-                mapImgEl.src = mapImgUrl;
-                mapImgEl.loading = 'lazy';
-                mapImgEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;';
-                slideMap.appendChild(mapImgEl);
-            } else {
-                // Fallback para posts antiguos sin _mapImg → canvas dinámico + drawTrack
-                var cvCar = document.createElement('canvas');
-                cvCar.id = 'club-map-' + post.id;
-                cvCar.style.cssText = 'width:100%;height:100%;display:block;';
-                slideMap.appendChild(cvCar);
-            }
-            /* [v2.30.1-p410] Click en el mapa → abrir el mapa REAL INTERACTIVO
-               (mismo MapLibre navegable que la Card 1 del visor de actividad),
-               no la imagen estática. Álvaro: "si pinchamos en el mapa en vez
-               de la imagen vamos a pasar directamente el mismo mapa real que
-               hay en la card 1 de activdad". post.act_data ya tiene records
-               (usado por _mrMapSnapshotDataURL al compartir) + shoeColor. Si
-               por lo que sea faltan records (post viejo malformado) o el
-               helper del index no está cargado → fallback a lightbox de la
-               imagen o de la foto. */
-            (function(_post, _mapUrl, _photoUrl){
-                slideMap.onclick = function() {
-                    var _ad = _post && _post.act_data;
-                    var _recs = _ad && _ad.records;
-                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
-                        window.openMapZoomModal({ records: _recs, shoeColor: _ad.shoeColor || null });
-                        return;
-                    }
-                    // Fallback: si no hay records o el helper del visor no está disponible,
-                    // caemos al zoom de la imagen (mapa estático) o de la foto.
-                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
-                    else if (_photoUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_photoUrl);
-                };
-            })(post, mapImgUrl, post.photo_url);
+            slideMap.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;background:#eef1f5;scroll-snap-align:end;cursor:zoom-in;';
+            // Container donde MapLibre monta el canvas WebGL
+            var mapMount = document.createElement('div');
+            mapMount.id = 'club-map-mount-' + post.id;
+            mapMount.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+            slideMap.appendChild(mapMount);
+            // Canvas fallback (por si MapLibre no está disponible o records vacíos)
+            // Mantiene el id 'club-map-<post.id>' que la lógica externa (_renderPostMap
+            // en L7936/7956/8511 desde otros callers) busca para pintar con drawTrack.
+            var cvCar = document.createElement('canvas');
+            cvCar.id = 'club-map-' + post.id;
+            cvCar.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
+            slideMap.appendChild(cvCar);
             scroller.appendChild(slidePhoto);
             scroller.appendChild(slideMap);
             mw.appendChild(scroller);
-            // Dots indicadores estilo Strava (2 dots — foto/mapa)
-            var dots = document.createElement('div');
-            dots.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:4px 8px;background:rgba(0,0,0,.35);border-radius:999px;pointer-events:none;z-index:2;';
-            var dot1 = document.createElement('div');
-            dot1.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#fff;transition:opacity .2s;';
-            var dot2 = document.createElement('div');
-            dot2.style.cssText = 'width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);transition:opacity .2s;';
-            dots.appendChild(dot1); dots.appendChild(dot2);
-            mw.appendChild(dots);
-            // Actualizar dots al scrollear
-            scroller.addEventListener('scroll', function() {
-                var half = scroller.scrollWidth / 2;
-                var isSecond = scroller.scrollLeft > half * 0.45;
-                dot1.style.background = isSecond ? 'rgba(255,255,255,.45)' : '#fff';
-                dot2.style.background = isSecond ? '#fff' : 'rgba(255,255,255,.45)';
-            }, { passive: true });
+            /* Montar el MapLibre inline con interactive:false para que el
+               scroll horizontal del carrusel siga funcionando (si el mapa
+               fuera interactivo, capturaría el gesto de swipe y no
+               llegaría al scroller). Diferido con requestAnimationFrame
+               para asegurar que el div ya está en DOM y tiene dimensiones
+               (MapLibre necesita clientWidth/Height al montarse). */
+            (function(_post, _mapUrl, _photoUrl, _mount, _cv){
+                var _ad = _post && _post.act_data;
+                var _recs = _ad && _ad.records;
+                var _shoe = _ad && _ad.shoeColor;
+                function _openInteractive() {
+                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
+                        window.openMapZoomModal({ records: _recs, shoeColor: _shoe || null });
+                        return;
+                    }
+                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
+                    else if (_photoUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_photoUrl);
+                }
+                slideMap.onclick = _openInteractive;
+                // Montaje MapLibre inline (preview real interactivo al tap)
+                requestAnimationFrame(function() {
+                    if (typeof window._mrBuildRunMap === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
+                        try {
+                            var _handle = window._mrBuildRunMap(_mount, _recs, _shoe || null, {
+                                interactive: false,
+                                partialInteractive: false,
+                                onReady: function() {
+                                    // Mapa listo → ocultar el canvas fallback
+                                    if (_cv && _cv.parentNode) _cv.style.display = 'none';
+                                },
+                                onFail: function() {
+                                    // Sin MapLibre → dejar el canvas fallback visible con drawTrack
+                                    if (_cv && typeof window.drawTrack === 'function') {
+                                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
+                                    }
+                                }
+                            });
+                            _post._mrMapHandle = _handle;
+                        } catch(_){}
+                    } else if (_cv && Array.isArray(_recs) && _recs.length >= 2 && typeof window.drawTrack === 'function') {
+                        // Sin _mrBuildRunMap → canvas + drawTrack directo
+                        try { window.drawTrack(_cv, _recs, _shoe || null); } catch(_){}
+                    }
+                });
+            })(post, mapImgUrl, post.photo_url, mapMount, cvCar);
         } else if (hasP) {
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
