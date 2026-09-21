@@ -7421,6 +7421,7 @@ async function openClubActivity() {
     var myId = session.user.id;
 
     var ov = document.createElement('div');
+    ov.id = 'club-activity-view'; /* [v2.30.1-p409] id para scope crimson CSS · sin este id el selector por z-index no matcheaba porque el navegador normaliza style inline */
     ov.style.cssText = 'position:fixed;inset:0;z-index:20010;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);';
 
     // ── Cabecera estilo CLUB ──────────────────────────────────────
@@ -8994,39 +8995,37 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         }
 
         if (hasP && hasT) {
-            // Carrusel horizontal con snap → foto y mapa en slides separados
-            mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;';
-            var scroller = document.createElement('div');
-            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
-            // Ocultar scrollbar
-            var _hideScroll = document.createElement('style');
-            if (!document.getElementById('_mrCarStyle')) {
-                _hideScroll.id = '_mrCarStyle';
-                _hideScroll.textContent = '._mrCar::-webkit-scrollbar{display:none;}';
-                document.head.appendChild(_hideScroll);
+            /* [v2.30.1-p409] Layout Strava side-by-side: mapa + foto ambos visibles
+               a la vez sin scroll ni carrusel. Álvaro: "quiero que se vea la foto
+               entera sin tener que clicar en ella, igual que lo que te he pasado
+               de strava". Reemplaza el carrusel scroll-snap anterior (que solo
+               mostraba un slide a la vez y requería deslizar). Grid 2 columnas
+               50/50, gap 2px sutil. Foto con object-fit:contain para verse entera
+               (letterbox si aspect ratio no cuadra con el slot). Ambos slots
+               clicables individualmente → abren zoom del elemento pulsado. */
+            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;display:grid;grid-template-columns:1fr 1fr;gap:2px;';
+            // Slot mapa (izq)
+            var mapSlot = document.createElement('div');
+            mapSlot.style.cssText = 'position:relative;height:100%;background:transparent;overflow:hidden;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
+            var cvGrid = document.createElement('canvas');
+            cvGrid.id = 'club-map-' + post.id;
+            cvGrid.style.cssText = 'width:100%;height:100%;display:block;';
+            mapSlot.appendChild(cvGrid);
+            if (mapImgUrl) {
+                (function(_url){ mapSlot.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
             }
-            scroller.classList.add('_mrCar');
-            var slidePhoto = _buildSlidePhoto();
-            var slideMap = _buildSlideCanvas();
-            scroller.appendChild(slidePhoto);
-            scroller.appendChild(slideMap);
-            mw.appendChild(scroller);
-            // Dots indicadores estilo Strava
-            var dots = document.createElement('div');
-            dots.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:4px 8px;background:rgba(0,0,0,.35);border-radius:999px;pointer-events:none;z-index:2;';
-            var dot1 = document.createElement('div');
-            dot1.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#fff;transition:opacity .2s;';
-            var dot2 = document.createElement('div');
-            dot2.style.cssText = 'width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);transition:opacity .2s;';
-            dots.appendChild(dot1); dots.appendChild(dot2);
-            mw.appendChild(dots);
-            // Actualizar dots al scrollear
-            scroller.addEventListener('scroll', function() {
-                var half = scroller.scrollWidth / 2;
-                var isSecond = scroller.scrollLeft > half * 0.45;
-                dot1.style.background = isSecond ? 'rgba(255,255,255,.45)' : '#fff';
-                dot2.style.background = isSecond ? '#fff' : 'rgba(255,255,255,.45)';
-            }, { passive: true });
+            // Slot foto (dcha) — object-fit:contain para verse entera
+            var photoSlot = document.createElement('div');
+            photoSlot.style.cssText = 'position:relative;height:100%;background:transparent;overflow:hidden;cursor:zoom-in;display:flex;align-items:center;justify-content:center;';
+            var phGrid = document.createElement('img');
+            phGrid.src = post.photo_url; phGrid.loading = 'lazy';
+            phGrid.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
+            photoSlot.appendChild(phGrid);
+            (function(_url){ photoSlot.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+
+            mw.appendChild(mapSlot);
+            mw.appendChild(photoSlot);
+            // Sin dots ni scroll — layout side-by-side, ambos visibles simultáneamente
         } else if (hasP) {
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
@@ -10775,7 +10774,12 @@ function _appendBubble(msg, isMine, otherId) {
     var wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isMine?'flex-end':'flex-start') + ';margin-bottom:2px;';
     var bubble = document.createElement('div');
-    var bgColor = isMine ? '#0d2b55' : (isDark ? '#2c2c2e' : '#e9e9eb');
+    /* [v2.30.1-p409] burbuja enviada (isMine) pasa de navy #0d2b55 a crimson #8f1a28
+       por coherencia con la sección Club premium. Álvaro: "los de la derecha azules
+       si que queria ponerlos crimpson por coherencia". El override CSS anterior
+       falló porque el navegador normaliza style inline (#0d2b55 → rgb(13,43,85))
+       y el selector [style*="#0d2b55"] no matcheaba. Cambio directo aquí. */
+    var bgColor = isMine ? '#8f1a28' : (isDark ? '#2c2c2e' : '#e9e9eb');
     var textColor = isMine ? '#fff' : (isDark ? '#fff' : '#000');
     var radius = isMine ? '18px 18px 4px 18px' : '18px 18px 18px 4px';
     bubble.style.cssText = 'max-width:72%;padding:9px 14px;border-radius:' + radius + ';background:' + bgColor + ';color:' + textColor + ';font-size:15px;line-height:1.45;word-break:break-word;';
