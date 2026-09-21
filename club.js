@@ -5873,7 +5873,13 @@ function _refreshClubTabStyles() {
     var tRecs  = document.getElementById('club-tab-records');
     if (!tAll || !tFol || !tCrews) return;
     // [FASE 8 polish] Pill premium con fondo sólido cuando activo
-    // - Para ti / Siguiendo → fondo crimson, texto blanco
+    // [v2.30.1-p410] Para ti / Siguiendo → BRONCE (Álvaro: "vamos a
+    //   diferenciarla un poco mas solo de para ti o siguiendo que crews en
+    //   silver y records en gold cuando estan activas se ven muy bien").
+    //   El crimson activo (previo) se fundía con el bg crimson del Club
+    //   post p406. Bronce completa la trilogía metálica bronze/silver/gold
+    //   y contrasta bien sobre el bg crimson.
+    // - Para ti / Siguiendo → fondo bronce, texto blanco
     // - Crews → fondo silver, texto blanco (mantiene identidad plateada)
     // - [FASE 7] Récords → fondo gold, texto cobre oscuro
     var base = 'flex:1;height:36px;border:none;border-radius:10px;background:transparent;'
@@ -5881,17 +5887,17 @@ function _refreshClubTabStyles() {
              + 'transition:background .22s ease, color .22s ease, box-shadow .22s ease, transform .15s ease;'
              + 'position:relative;margin:0 2px;';
     var inactive  = 'color:var(--tm);font-weight:700;';
-    var activeRed = 'color:#fff;font-weight:900;'
-                  + 'background:linear-gradient(135deg, #a32130 0%, #8f1a28 50%, #6f0f1a 100%);'
-                  + 'box-shadow:0 2px 8px rgba(143,26,40,.35), inset 0 1px 0 rgba(255,255,255,.18);';
+    var activeBrz = 'color:#fff;font-weight:900;'
+                  + 'background:linear-gradient(135deg, #d18a4a 0%, #a35a1e 50%, #6f3810 100%);'
+                  + 'box-shadow:0 2px 8px rgba(163,90,30,.50), inset 0 1px 0 rgba(255,255,255,.30);';
     var activeSil = 'color:#fff;font-weight:900;'
                   + 'background:linear-gradient(135deg, #9aa3ad 0%, #7a838c 50%, #5d646c 100%);'
                   + 'box-shadow:0 2px 8px rgba(122,131,140,.45), inset 0 1px 0 rgba(255,255,255,.25);';
     var activeGld = 'color:#3C2C08;font-weight:900;'
                   + 'background:linear-gradient(135deg, #FFE9A5 0%, #C9A84C 50%, #8A6E1F 100%);'
                   + 'box-shadow:0 2px 8px rgba(201,168,76,.45), inset 0 1px 0 rgba(255,255,255,.4);';
-    tAll.style.cssText   = base + (mode === 'all'       ? activeRed : inactive);
-    tFol.style.cssText   = base + (mode === 'following' ? activeRed : inactive);
+    tAll.style.cssText   = base + (mode === 'all'       ? activeBrz : inactive);
+    tFol.style.cssText   = base + (mode === 'following' ? activeBrz : inactive);
     tCrews.style.cssText = base + (mode === 'crews'     ? activeSil : inactive);
     if (tRecs) tRecs.style.cssText = base + (mode === 'records' ? activeGld : inactive);
     // Badge de invitaciones pendientes (si hay)
@@ -8995,37 +9001,97 @@ function _buildClubCard(post, myId, mutualSet, crewEmojis, taggedProfilesMap) {
         }
 
         if (hasP && hasT) {
-            /* [v2.30.1-p409] Layout Strava side-by-side: mapa + foto ambos visibles
-               a la vez sin scroll ni carrusel. Álvaro: "quiero que se vea la foto
-               entera sin tener que clicar en ella, igual que lo que te he pasado
-               de strava". Reemplaza el carrusel scroll-snap anterior (que solo
-               mostraba un slide a la vez y requería deslizar). Grid 2 columnas
-               50/50, gap 2px sutil. Foto con object-fit:contain para verse entera
-               (letterbox si aspect ratio no cuadra con el slot). Ambos slots
-               clicables individualmente → abren zoom del elemento pulsado. */
-            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;display:grid;grid-template-columns:1fr 1fr;gap:2px;';
-            // Slot mapa (izq)
-            var mapSlot = document.createElement('div');
-            mapSlot.style.cssText = 'position:relative;height:100%;background:transparent;overflow:hidden;' + (mapImgUrl ? 'cursor:zoom-in;' : '');
-            var cvGrid = document.createElement('canvas');
-            cvGrid.id = 'club-map-' + post.id;
-            cvGrid.style.cssText = 'width:100%;height:100%;display:block;';
-            mapSlot.appendChild(cvGrid);
-            if (mapImgUrl) {
-                (function(_url){ mapSlot.onclick = function() { _openPhotoZoom(_url); }; })(mapImgUrl);
+            /* [v2.30.1-p410] Vuelta al carrusel scroll-snap tras probar p409
+               side-by-side. Álvaro: "el mapa y la imagen o imagenes sean como
+               un carrusel que se vea deslizando horizontalmente dentro de ese
+               trozo del post". Cada slide 100% width con scroll-snap-type:x
+               mandatory. Dots indicadores debajo (estilo Strava).
+               MEJORA CLAVE en el slide del mapa: si el post tiene _mapImg
+               (imagen PNG de alta calidad 1200x800 generada al compartir con
+               window._mrMapSnapshotDataURL), usar directamente <img> con
+               object-fit:cover — track grueso y calidad de calles nítida.
+               Solo se cae al canvas dinámico + drawTrack si NO hay _mapImg
+               (posts antiguos pre-p87 sin snapshot). La foto también entera
+               con object-fit:contain (letterbox transparente muestra el
+               crimson del post). */
+            mw.style.cssText = 'position:relative;width:100%;height:240px;background:transparent;overflow:hidden;flex-shrink:0;';
+            var scroller = document.createElement('div');
+            scroller.style.cssText = 'display:flex;width:100%;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;';
+            // Ocultar scrollbar
+            var _hideScroll = document.createElement('style');
+            if (!document.getElementById('_mrCarStyle')) {
+                _hideScroll.id = '_mrCarStyle';
+                _hideScroll.textContent = '._mrCar::-webkit-scrollbar{display:none;}';
+                document.head.appendChild(_hideScroll);
             }
-            // Slot foto (dcha) — object-fit:contain para verse entera
-            var photoSlot = document.createElement('div');
-            photoSlot.style.cssText = 'position:relative;height:100%;background:transparent;overflow:hidden;cursor:zoom-in;display:flex;align-items:center;justify-content:center;';
-            var phGrid = document.createElement('img');
-            phGrid.src = post.photo_url; phGrid.loading = 'lazy';
-            phGrid.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
-            photoSlot.appendChild(phGrid);
-            (function(_url){ photoSlot.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
-
-            mw.appendChild(mapSlot);
-            mw.appendChild(photoSlot);
-            // Sin dots ni scroll — layout side-by-side, ambos visibles simultáneamente
+            scroller.classList.add('_mrCar');
+            // Slide FOTO — object-fit:contain, entera con letterbox transparente
+            var slidePhoto = document.createElement('div');
+            slidePhoto.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;cursor:zoom-in;background:transparent;scroll-snap-align:start;display:flex;align-items:center;justify-content:center;';
+            var phCar = document.createElement('img');
+            phCar.src = post.photo_url; phCar.loading = 'lazy';
+            phCar.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;';
+            slidePhoto.appendChild(phCar);
+            (function(_url){ slidePhoto.onclick = function() { _openPhotoZoom(_url); }; })(post.photo_url);
+            // Slide MAPA — img directo si hay _mapImg (calidad), canvas fallback
+            var slideMap = document.createElement('div');
+            slideMap.style.cssText = 'flex:0 0 100%;position:relative;height:100%;overflow:hidden;background:transparent;scroll-snap-align:start;cursor:zoom-in;';
+            if (mapImgUrl) {
+                // Post con _mapImg (imagen de alta calidad 1200×800 ya con track grueso)
+                var mapImgEl = document.createElement('img');
+                mapImgEl.src = mapImgUrl;
+                mapImgEl.loading = 'lazy';
+                mapImgEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;';
+                slideMap.appendChild(mapImgEl);
+            } else {
+                // Fallback para posts antiguos sin _mapImg → canvas dinámico + drawTrack
+                var cvCar = document.createElement('canvas');
+                cvCar.id = 'club-map-' + post.id;
+                cvCar.style.cssText = 'width:100%;height:100%;display:block;';
+                slideMap.appendChild(cvCar);
+            }
+            /* [v2.30.1-p410] Click en el mapa → abrir el mapa REAL INTERACTIVO
+               (mismo MapLibre navegable que la Card 1 del visor de actividad),
+               no la imagen estática. Álvaro: "si pinchamos en el mapa en vez
+               de la imagen vamos a pasar directamente el mismo mapa real que
+               hay en la card 1 de activdad". post.act_data ya tiene records
+               (usado por _mrMapSnapshotDataURL al compartir) + shoeColor. Si
+               por lo que sea faltan records (post viejo malformado) o el
+               helper del index no está cargado → fallback a lightbox de la
+               imagen o de la foto. */
+            (function(_post, _mapUrl, _photoUrl){
+                slideMap.onclick = function() {
+                    var _ad = _post && _post.act_data;
+                    var _recs = _ad && _ad.records;
+                    if (typeof window.openMapZoomModal === 'function' && Array.isArray(_recs) && _recs.length >= 2) {
+                        window.openMapZoomModal({ records: _recs, shoeColor: _ad.shoeColor || null });
+                        return;
+                    }
+                    // Fallback: si no hay records o el helper del visor no está disponible,
+                    // caemos al zoom de la imagen (mapa estático) o de la foto.
+                    if (_mapUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_mapUrl);
+                    else if (_photoUrl && typeof _openPhotoZoom === 'function') _openPhotoZoom(_photoUrl);
+                };
+            })(post, mapImgUrl, post.photo_url);
+            scroller.appendChild(slidePhoto);
+            scroller.appendChild(slideMap);
+            mw.appendChild(scroller);
+            // Dots indicadores estilo Strava (2 dots — foto/mapa)
+            var dots = document.createElement('div');
+            dots.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:4px 8px;background:rgba(0,0,0,.35);border-radius:999px;pointer-events:none;z-index:2;';
+            var dot1 = document.createElement('div');
+            dot1.style.cssText = 'width:6px;height:6px;border-radius:50%;background:#fff;transition:opacity .2s;';
+            var dot2 = document.createElement('div');
+            dot2.style.cssText = 'width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);transition:opacity .2s;';
+            dots.appendChild(dot1); dots.appendChild(dot2);
+            mw.appendChild(dots);
+            // Actualizar dots al scrollear
+            scroller.addEventListener('scroll', function() {
+                var half = scroller.scrollWidth / 2;
+                var isSecond = scroller.scrollLeft > half * 0.45;
+                dot1.style.background = isSecond ? 'rgba(255,255,255,.45)' : '#fff';
+                dot2.style.background = isSecond ? '#fff' : 'rgba(255,255,255,.45)';
+            }, { passive: true });
         } else if (hasP) {
             mw.style.cssText = 'position:relative;width:100%;height:220px;background:#0d1520;overflow:hidden;flex-shrink:0;cursor:zoom-in;';
             var ph = document.createElement('img'); ph.src = post.photo_url; ph.loading = 'lazy';
