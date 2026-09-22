@@ -5633,17 +5633,18 @@ async function toggleClubBoard(opts) {
         innerShadow: 'inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(0,0,0,.20)',
         outerShadow: '0 4px 14px rgba(80,85,92,.30)'
     } : {
-        // [v2.30.1-p425] Wall board Club · naranja premium coherente con el
-        // botón Wall p422. Álvaro: "el wall que se abre lo podríamos poner
-        // con el mismo naranja de fondo que el del botón wall?". Gradient
-        // 135° 4-tonos con el mismo espíritu del botón (#f97316→#ea580c→
-        // #c2410c) ampliado para el panel más grande con vuelta al naranja
-        // arriba-dcha, dando profundidad. Border ámbar oscuro y glow naranja.
-        bg: 'linear-gradient(135deg, #fb923c 0%, #f97316 25%, #ea580c 55%, #c2410c 85%, #fb923c 100%)',
+        // [v2.30.1-p425.2] Wall board Club · gris stone P2 (stone cálido).
+        // Álvaro: "vamos a cambiar el naranja del boton de wall y del fondo
+        // del muro por un gris estilo muro de piedra". Elegida P2 tras
+        // preview con 3 opciones (P1 slate frío · P2 stone cálido · P3
+        // pizarra oscura). Gradient 135° 5-tonos con el mismo espíritu que
+        // el naranja p425 pero en paleta stone (#a8a29e → #78716c → #57534e
+        // → #44403c → #a8a29e). Piedra caliza natural, cálida y orgánica.
+        bg: 'linear-gradient(135deg, #a8a29e 0%, #78716c 25%, #57534e 55%, #44403c 85%, #a8a29e 100%)',
         bgOverlay: 'linear-gradient(180deg, rgba(255,255,255,.22) 0%, transparent 30%, transparent 70%, rgba(0,0,0,.24) 100%)',
-        borderColor: 'rgba(194,65,12,.70)',
-        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.24)',
-        outerShadow: '0 4px 14px rgba(234,88,12,.35)'
+        borderColor: 'rgba(68,64,60,.70)',
+        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(0,0,0,.28)',
+        outerShadow: '0 4px 14px rgba(68,64,60,.35)'
     };
     panel.style.cssText = "flex-shrink:0;max-height:0;opacity:0;overflow:hidden;"
         + "transition:max-height .35s ease,opacity .25s ease,margin-bottom .25s ease;"
@@ -5665,8 +5666,8 @@ async function toggleClubBoard(opts) {
         // Glow del color correspondiente para reforzar el contexto visual
         btn2.style.boxShadow = crewId
             ? 'inset 0 -2px 4px rgba(0,0,0,.18),0 0 0 3px rgba(138,143,150,.32),0 2px 8px rgba(80,85,92,.4)'
-            : /* [v2.30.1-p425] glow naranja coherente con el bg del panel */
-              'inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(0,0,0,.25),0 0 0 3px rgba(249,115,22,.30),0 2px 8px rgba(234,88,12,.45)';
+            : /* [v2.30.1-p425.2] glow stone P2 coherente con el bg del panel */
+              'inset 0 1px 0 rgba(255,255,255,.30),inset 0 -1px 0 rgba(0,0,0,.25),0 0 0 3px rgba(120,113,108,.32),0 2px 8px rgba(68,64,60,.45)';
     }
     // Render real
     try {
