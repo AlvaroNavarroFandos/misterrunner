@@ -5628,12 +5628,17 @@ async function toggleClubBoard(opts) {
         innerShadow: 'inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(0,0,0,.20)',
         outerShadow: '0 4px 14px rgba(80,85,92,.30)'
     } : {
-        // Dorado premium (gold gradient)
-        bg: 'linear-gradient(135deg, #e8a825 0%, #c4881e 35%, #8b6210 65%, #e8a825 100%)',
-        bgOverlay: 'linear-gradient(180deg, rgba(255,255,255,.20) 0%, transparent 30%, transparent 70%, rgba(0,0,0,.22) 100%)',
-        borderColor: 'rgba(143,98,16,.65)',
-        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.22)',
-        outerShadow: '0 4px 14px rgba(196,136,30,.30)'
+        // [v2.30.1-p425] Wall board Club · naranja premium coherente con el
+        // botón Wall p422. Álvaro: "el wall que se abre lo podríamos poner
+        // con el mismo naranja de fondo que el del botón wall?". Gradient
+        // 135° 4-tonos con el mismo espíritu del botón (#f97316→#ea580c→
+        // #c2410c) ampliado para el panel más grande con vuelta al naranja
+        // arriba-dcha, dando profundidad. Border ámbar oscuro y glow naranja.
+        bg: 'linear-gradient(135deg, #fb923c 0%, #f97316 25%, #ea580c 55%, #c2410c 85%, #fb923c 100%)',
+        bgOverlay: 'linear-gradient(180deg, rgba(255,255,255,.22) 0%, transparent 30%, transparent 70%, rgba(0,0,0,.24) 100%)',
+        borderColor: 'rgba(194,65,12,.70)',
+        innerShadow: 'inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.24)',
+        outerShadow: '0 4px 14px rgba(234,88,12,.35)'
     };
     panel.style.cssText = "flex-shrink:0;max-height:0;opacity:0;overflow:hidden;"
         + "transition:max-height .35s ease,opacity .25s ease,margin-bottom .25s ease;"
@@ -5655,7 +5660,8 @@ async function toggleClubBoard(opts) {
         // Glow del color correspondiente para reforzar el contexto visual
         btn2.style.boxShadow = crewId
             ? 'inset 0 -2px 4px rgba(0,0,0,.18),0 0 0 3px rgba(138,143,150,.32),0 2px 8px rgba(80,85,92,.4)'
-            : '0 0 0 3px rgba(196,136,30,.25)';
+            : /* [v2.30.1-p425] glow naranja coherente con el bg del panel */
+              'inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(0,0,0,.25),0 0 0 3px rgba(249,115,22,.30),0 2px 8px rgba(234,88,12,.45)';
     }
     // Render real
     try {
@@ -6582,14 +6588,18 @@ async function openHeatmap(userId, displayName) {
         ctx.clip();
         ctx.globalCompositeOperation = 'lighter';
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        // [v2.30.1-p422] Heatmap · Fuego acumulativo. Los 3 pases mantienen
-        // additive blending ('lighter' arriba) → donde múltiples tracks se cruzan
-        // las opacities suman visualmente creando zonas más "calientes" (rojo →
-        // naranja → amarillo → blanco casi). Sin cambio de mecanismo.
+        // [v2.30.1-p425] Heatmap · Rojo potente acumulativo. Álvaro: "el color
+        // de los tracks del heatmap lo vamos a poner rojo potente que se vea
+        // bien en dark y light". Se mantiene el mecanismo p422 (3 pases con
+        // additive blending 'lighter') pero la paleta pasa de fuego naranja a
+        // rojos puros. Donde múltiples tracks se cruzan las opacities suman:
+        // rojo oscuro → rojo puro → rosa brillante en las zonas más frecuentadas.
+        // Contrasta con calidad tanto sobre el mapa OSM light (calles amarillentas)
+        // como sobre el mapa dark (fondo oscuro).
         var passes = [
-            { color: 'rgba(255,69,0,0.22)',   w: 8 },    // halo exterior naranja rojo
-            { color: 'rgba(255,140,50,0.55)', w: 2.4 },  // medio naranja intenso
-            { color: 'rgba(255,230,150,0.85)', w: 0.9 }  // núcleo amarillo caliente
+            { color: 'rgba(185,28,28,0.28)',   w: 8 },    // halo exterior rojo profundo (red 700)
+            { color: 'rgba(220,38,38,0.62)',   w: 2.4 },  // medio rojo puro saturado (red 600)
+            { color: 'rgba(254,202,202,0.88)', w: 0.9 }   // núcleo rosa pálido brillante (red 200)
         ];
         passes.forEach(function(p) {
             ctx.strokeStyle = p.color; ctx.lineWidth = p.w;
@@ -6801,31 +6811,34 @@ async function openHeatmap(userId, displayName) {
                         type: 'geojson',
                         data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} }
                     });
-                    // [v2.30.1-p422] Fuego acumulativo: casing crimson oscuro
-                    // (coherente con el bg del overlay) + track fuego naranja rojo.
-                    // Cuando múltiples tracks pasan por el mismo sitio la opacity
-                    // acumula creando zonas más "calientes".
+                    // [v2.30.1-p425] Rojo potente acumulativo. Álvaro: "rojo
+                    // potente que se vea bien en dark y light". Casing pasa de
+                    // crimson translúcido a rojo casi negro (#450a0a, red 950)
+                    // opaco para forzar contorno oscuro que separa el track de
+                    // las calles OSM (base amarillenta light / gris dark). La
+                    // line pasa de naranja fuego a rojo puro saturado (#dc2626,
+                    // red 600) — máxima señal en ambos modos.
                     hmMap.addLayer({
                         id: casingId,
                         type: 'line',
                         source: srcId,
                         layout: { 'line-cap': 'round', 'line-join': 'round' },
                         paint: {
-                            'line-color': '#5e0e18',
+                            'line-color': '#450a0a',
                             'line-width': 4.5,
-                            'line-opacity': 0.45
+                            'line-opacity': 0.60
                         }
                     });
-                    // Track FUEGO premium (naranja rojo intenso)
+                    // Track ROJO POTENTE premium (rojo 600 saturado señal)
                     hmMap.addLayer({
                         id: lineId,
                         type: 'line',
                         source: srcId,
                         layout: { 'line-cap': 'round', 'line-join': 'round' },
                         paint: {
-                            'line-color': '#ff6b1a',
+                            'line-color': '#dc2626',
                             'line-width': 3.2,
-                            'line-opacity': 0.85
+                            'line-opacity': 0.90
                         }
                     });
                 });
