@@ -5527,6 +5527,11 @@ function openClub() {
     var _bb = document.getElementById('club-board-btn');
     if (_bb) _bb.style.boxShadow = '';
     v.style.display = 'flex';
+    // [v2.30.1-p425.1] Fix bandera cabecera Club · aplicar country-XX cada vez
+    // que se abre Club. Sin este hook, si el user abre Club antes de que corra
+    // algún hidratador de perfil que dispare _mrApplyRunnerFlagTheme, el
+    // #club-hero se queda sin la clase .country-XX y la bandera no aparece.
+    try { if (typeof window._mrApplyRunnerFlagTheme === 'function') window._mrApplyRunnerFlagTheme(); } catch(_){}
     requestAnimationFrame(function() { requestAnimationFrame(function() { v.style.transform = 'translateY(0)'; }); });
     // Aplicar estilos de las pestañas (Para ti / Siguiendo / Crews / Récords) según estado guardado
     if (typeof _refreshClubTabStyles === 'function') _refreshClubTabStyles();

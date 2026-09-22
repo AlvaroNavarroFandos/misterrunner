@@ -64809,8 +64809,23 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         try {
             var wrap  = document.querySelector('.mr-rh-wrap');
             var flagEl = document.getElementById('runner-flag-display');
-            if (!flagEl) return;
-            var emoji = (flagEl.textContent || '').trim();
+            // [v2.30.1-p425.1] Fix bandera Club · leer emoji con cascada:
+            // (1) #runner-flag-display.textContent si tiene emoji válido de país
+            // (2) window.profileData.flag si el DOM aún no está hidratado
+            // (3) '' → no aplica clases (fondo neutro)
+            // Sin la cascada, si _mrApplyRunnerFlagTheme corría antes de que
+            // el hidratador de Supabase actualizase el textContent (default 🏃),
+            // el emoji leído no matcheaba FLAG_MAP y no se aplicaba country-XX
+            // ni al Runner wrap ni al Club hero.
+            var emoji = '';
+            if (flagEl) emoji = (flagEl.textContent || '').trim();
+            if (!emoji || emoji === '🏃') {
+                try {
+                    if (window.profileData && window.profileData.flag) {
+                        emoji = String(window.profileData.flag).trim();
+                    }
+                } catch(_){}
+            }
             // Mapa emoji → { country, treatment }
             //   outline: banderas cálidas (rojo/amarillo/verde suave sin blanco puro)
             //   pill:    banderas con banda blanca o negra puras (necesitan panel)
