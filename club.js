@@ -8271,27 +8271,15 @@ async function _loadClubHeaderStats() {
                 avEl.textContent = (profileData.name||'?')[0].toUpperCase();
             }
             unEl.textContent = profileData.name || '—';
-            // Bio: always visible. Render via the shared helper (handles placeholder).
-            // Click anywhere on the bio (filled or empty) → inline edit.
-            var bioEl = document.getElementById('club-hdr-bio');
-            if (bioEl) {
-                // First, render from local data (instant)
-                _renderClubHeaderBio(bioEl, profileData.bio);
-                // Then try to pull the latest bio from Supabase (catches up if user
-                // edited it from another device). Silently no-op if column missing.
-                (async function() {
-                    try {
-                        var { data: prof, error } = await sb.from('profiles').select('bio').eq('id', myId).single();
-                        if (!error && prof && typeof prof.bio === 'string') {
-                            if ((prof.bio || '').trim() !== (profileData.bio || '').trim()) {
-                                profileData.bio = prof.bio || '';
-                                _renderClubHeaderBio(bioEl, profileData.bio);
-                                if (typeof saveAppState === 'function') { try { saveAppState(); } catch(e) {} }
-                            }
-                        }
-                    } catch(e) { /* column missing or offline — ignore */ }
-                })();
-            }
+            // [v2.30.1-p424] Bio eliminada de la cabecera user Club. El div
+            // #club-hdr-bio fue eliminado del HTML (index.html L81656+). El bloque
+            // de hidratación se retira. Los helpers _renderClubHeaderBio /
+            // _editClubBio / _saveBioToSupabase quedan declarados más abajo (L8369+
+            // y L8434+) por si algún día se recupera la feature. Sin consumers
+            // activos ahora mismo, son código muerto inofensivo.
+            // Bloque previo (bio hidratación + fetch Supabase con _renderClubHeaderBio)
+            // vivía aquí desde el p422; eliminado en p424 a petición de Álvaro
+            // ("eliminar la bio y la opción de ponerla").
         }
         // Posts count
         var { count: postCount } = await sb.from('club_posts').select('id', {count:'exact',head:true}).eq('user_id', myId);
