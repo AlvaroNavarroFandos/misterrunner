@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p425.24'; // [v2.30.1-p425.24] Mapcol de +6px a +10px tras aprobar p425.23 pero seguir viendo track algo cortado. Álvaro: "aun le falta un poquito de margen para no cortarse a la derecha, dale un poquito mas por favor". Cambio quirúrgico de 1 valor CSS en el override L4795 (bloque compuesto #activities-list + #home-last-activity + #mya-day-detail): flex:0 0 calc(33% + 6px) → flex:0 0 calc(33% + 10px). +4px extra sobre p425.23 (10px total desde p425.22 baseline). El canvas ocupa el 100% del mapcol → gana 4px más de área útil para pintar → el track con translateX(8px) de p425.22 tiene ahora 2px de margen visual entre su borde derecho y el borde del mapcol (10 - 8 = 2px de aire). Los stats a la derecha se comprimen 10px totales (2.7% del viewport móvil ~366px, imperceptible). El gradient bg del mapcol (var(--tb-d) 0 12px, transparent|#ffffff 12px de p425.20) sigue estirado sin problema al nuevo ancho — la barra 12px sigue en izquierda, el resto sigue transparent/#ffffff. Zero cambios en (a) transform:translateX(8px) del canvas p425.22, (b) pill IA left:16px p425.21, (c) gradient inner p425.20, (d) ::before barra 7px p425.13, (e) renderers _mrLibRenderOne / home-last-activity / _myaSelectDay (mismos, el CSS !important sigue pisando el inline), (f) layout C invertido p350 altura 98px, (g) resto del sistema. Aplicación cliente-only, se ve al recargar. Zero cambios en JS. Sube solo index.html.
+            window.__MR_VERSION = 'v2.30.1-p425.25'; // [v2.30.1-p425.25] Dos frentes coordinados tras p425.24. Álvaro: "sigue cortandose un poquito muy poco pero queda feo, o ajustamos al nuevo tamaño o le damos un par de px o tres mas, aunque igual queda muy pegado a los stats no se, un pelin mas de grosor al minitrack tambien le vamos a dar, que se vea mas premium". FRENTE 1 · MAPCOL +3PX EXTRA (10→13px total) · un solo cambio CSS en el override L4795: flex:0 0 calc(33% + 10px) → calc(33% + 13px). Con translateX(8px) del canvas p425.22 = 5px de aire real entre borde derecho del track y borde del mapcol (era 2px en p425.24 → subida a 5px = +150% margen visual). Los stats se comprimen 13px totales (~3.5% del viewport móvil ~366px) — pelín visible pero aceptable para eliminar el corte definitivamente sin quedar demasiado pegados como temía Álvaro (5px de aire = escala visual notable). FRENTE 2 · MINITRACK MÁS GRUESO (drawTrackForLibrary L40960) — mismo lenguaje pedido "un pelin" pero "más premium". Dos cambios en la función que dibuja los tracks de las 3 minicards unificadas: (a) Aura (halo) lineWidth 9 → 11 (+22%) — el halo neón/oscuro que envuelve el track con alpha .25 sigue destacando sobre el fondo pero con más peso visual. (b) Track principal lineWidth 4.0 → 5.0 (+25%) — la línea protagonista amarillo neón dark / negro puro light gana grosor sin llegar al look "cartoon" (5px es medida premium coherente con COROS oficial y Strava). Ratio aura/track = 11/5 = 2.2x, preservado el look del sistema (era 2.25x en p178, casi idéntico). Historial evolutivo: p178 pasó de aura 6/track 2.4 (original) → aura 7.5/track 3.0 → aura 9/track 4.0 (grosores actuales) → ahora p425.25 aura 11/track 5.0. Compatible con canvas 33% del inner del mapcol (~120px en viewport 366px + 13px extra p425.25 = ~133px), un track de 5px = 3.8% del ancho → no oclusivo. Los dots de inicio (verde #22c55e) y fin (rojo #ef4444) con radio 3.5px se mantienen (proporción coherente con track más grueso — un poco más pequeños relativamente pero visibles). Zero cambios en (a) transform:translateX(8px) canvas p425.22, (b) pill IA left:16px p425.21, (c) gradient bg del mapcol p425.20, (d) ::before barra 7px p425.13, (e) renderers _mrLibRenderOne / home-last-activity / _myaSelectDay (mismos, el CSS !important sigue pisando el inline y drawTrackForLibrary sigue llamada igual), (f) layout C invertido p350, (g) resto del sistema (fondo mapa gradient, halo dorado, badges photo/PR/IA/date, todos intactos). Aplicación cliente-only, se ve al recargar. Zero cambios en JS de layout. Sube solo index.html.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -4794,7 +4794,7 @@
     #activities-list .mr-lib-card .mr-lib-mapcol,
     #home-last-activity .mr-lib-card .mr-lib-mapcol,
     #mya-day-detail .mr-lib-card .mr-lib-mapcol {
-        flex: 0 0 calc(33% + 10px) !important; /* [v2.30.1-p425.24] +10 en vez de +6 · Álvaro tras p425.23: "aun le falta un poquito de margen para no cortarse a la derecha" · +4px extra sobre p425.23 · el canvas gana 4px más de área útil sin comprimir sensiblemente los stats (10px total = ~2.7% del viewport 366px) */
+        flex: 0 0 calc(33% + 13px) !important; /* [v2.30.1-p425.25] +13 sobre baseline (era +10 en p425.24) · Álvaro tras p425.24: "sigue cortandose un poquito muy poco pero queda feo, ajustamos al nuevo tamaño o le damos un par de px o tres mas" · +3px extra (13 total) → con translateX(8px) del canvas = 5px de aire real entre borde derecho del track y borde del mapcol · stats se comprimen 13px totales (~3.5% viewport 366px) — pelín visible pero aceptable para eliminar el corte definitivamente */
     }
     /* [Light Apple] Pill km en dark mode: bg blanco para que la distancia (texto navy) se lea.
        En light no aplica: mantiene el inline style rgba(13,21,32,.06) sobre card blanca. */
@@ -41021,9 +41021,10 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             // solo da el brillo característico tipo "GPS app premium".
             // [Sesión Track V4] +25% grosor (aura 6→7.5, track 2.4→3.0) para look
             // más consistente y premium en la mini card. Ratio aura/track mantenido 2.5x.
+            // [v2.30.1-p425.25] Aura 9→11 y track 4.0→5.0 (+22% y +25%) · Álvaro: "un pelin mas de grosor al minitrack tambien le vamos a dar, que se vea mas premium" · ratio aura/track = 2.2x preservado (era 2.25x) · con mapcol +13 de p425.25 hay espacio de sobra sin cortar
             ctx.strokeStyle = trackColor;
             ctx.globalAlpha = 0.25;
-            ctx.lineWidth = 9;
+            ctx.lineWidth = 11;
             ctx.beginPath();
             ctx.moveTo(xy[0].x, xy[0].y);
             for (let i = 1; i < xy.length; i++) ctx.lineTo(xy[i].x, xy[i].y);
@@ -41031,7 +41032,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             ctx.globalAlpha = 1;
             // Track principal
             ctx.strokeStyle = trackColor;
-            ctx.lineWidth = 4.0;
+            ctx.lineWidth = 5.0;
             ctx.beginPath();
             ctx.moveTo(xy[0].x, xy[0].y);
             for (let i = 1; i < xy.length; i++) ctx.lineTo(xy[i].x, xy[i].y);
