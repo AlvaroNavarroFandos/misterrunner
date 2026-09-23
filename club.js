@@ -6958,19 +6958,23 @@ function _openPRsSheet(userId, displayName, isSelf) {
             '  0%   { transform: rotate(0deg); }',
             '  100% { transform: rotate(360deg); }',
             '}',
-            /* [v2.30.1-p349] Variante C aprobada por Alvaro: gradient vertical
-               material + doble box-shadow adaptativa por tema (sutil light,
-               marcada dark). La barra metalica lateral 5px joyeria se aplica
-               inline con color-mix (no requiere clase). */
+            /* [v2.30.1-p425.28] APLANADO row card. Álvaro: "aplanamos las
+               barras quitando el efecto y lo dejamos niquelado". Fuera
+               gradient vertical card2 → card (light) y #22252c → #181b21
+               (dark). Background plano var(--card) light / #1e2126 dark
+               (media entre los antiguos 22/18 para no bailar tono). Fuera
+               triple box-shadow (inset highlight + inset dark + drop
+               ambiental). El border grueso 2px .28/.22 se aplica inline en
+               el row (L~7392) para consistencia con Runner. */
             '.mr-prs-row-c {',
-            '  background: linear-gradient(180deg, var(--card2) 0%, var(--card) 100%) !important;',
-            '  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 2px 6px rgba(0,0,0,.06) !important;',
+            '  background: var(--card) !important;',
+            '  box-shadow: none !important;',
             '  border-radius: 12px !important;',
             '  overflow: hidden;',
             '}',
             'body.dark-mode .mr-prs-row-c {',
-            '  background: linear-gradient(180deg, #22252c 0%, #181b21 100%) !important;',
-            '  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.35) !important;',
+            '  background: #1e2126 !important;',
+            '  box-shadow: none !important;',
             '}',
         ].join('\n');
         document.head.appendChild(animStyle);
@@ -6995,7 +6999,16 @@ function _openPRsSheet(userId, displayName, isSelf) {
     // ── Cabecera premium (Opción A · silver gradient + línea decorativa dorada) ─
     // Wrapper coherente con banner KPI biblioteca (mismo lenguaje visual)
     var hdrWrap = document.createElement('div');
-    hdrWrap.style.cssText = 'position:relative;margin:0 14px 12px;border-radius:16px;padding:14px;background:' + (isDark ? 'linear-gradient(135deg, #1c1c1f 0%, #26262a 50%, #1c1c1f 100%)' : 'linear-gradient(135deg, #fafafa 0%, #e8e8ed 50%, #fafafa 100%)') + ';border:1px solid var(--border);overflow:hidden;flex-shrink:0;';
+    // [v2.30.1-p425.28] APLANADO cabecera sheet Mis récords. Álvaro:
+    // "Igual que en el resto de la app, quitamos profundidad y sombras,
+    // contorno que se vea bien a cada Marca y a la cabecera". Fuera
+    // linear-gradient(135deg, silver material) → var(--card) plano.
+    // Border 1px var(--border) sutil → 2px .28/.22 grueso (mismo patron
+    // Runner p425.22 aplanado). La cinta dorada superior hdrAccent
+    // (linea decorativa 2px con fade) queda INTACTA — es identidad
+    // (mismo criterio que .mr-rh-wrap::before joyeria preservada en
+    // cabecera Runner). El trofeo XL se aplana justo debajo.
+    hdrWrap.style.cssText = 'position:relative;margin:0 14px 12px;border-radius:16px;padding:14px;background:var(--card);border:2px solid ' + (isDark ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.28)') + ';overflow:hidden;flex-shrink:0;';
     // Línea decorativa dorada superior (2px, fade a los lados)
     var hdrAccent = document.createElement('div');
     hdrAccent.style.cssText = 'position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg, transparent, #c4881e 30%, #f5d97a 50%, #c4881e 70%, transparent);';
@@ -7006,7 +7019,11 @@ function _openPRsSheet(userId, displayName, isSelf) {
 
     // Icono trofeo XL 52px con radial gradient premium
     var icon = document.createElement('div');
-    icon.style.cssText = 'flex-shrink:0;width:52px;height:52px;border-radius:13px;background:radial-gradient(circle at 30% 30%, #f5d97a, #c4881e 60%, #8a5a11);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -6px 12px rgba(0,0,0,.25), 0 4px 10px rgba(196,136,30,.35);';
+    // [v2.30.1-p425.28] APLANADO trofeo XL. Fuera radial-gradient
+    // (f5d97a → c4881e → 8a5a11) → dorado #c4881e plano sólido.
+    // Fuera doble box-shadow (inset 0 -6px 12px oscuro + 0 4px 10px glow).
+    // El blanco del stroke SVG del trofeo mantiene contraste sobre dorado plano.
+    icon.style.cssText = 'flex-shrink:0;width:52px;height:52px;border-radius:13px;background:#c4881e;display:flex;align-items:center;justify-content:center;';
     icon.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3C2C08" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M5 4H4v2a3 3 0 0 0 3 3"/><path d="M19 4h1v2a3 3 0 0 1-3 3"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="8" y1="20" x2="16" y2="20"/></svg>';
     hdr.appendChild(icon);
 
@@ -7389,7 +7406,10 @@ function _buildPRGridCard(type, rec, isDark) {
         'position:relative','display:flex','align-items:stretch','gap:12px',
         'padding:9px 12px 9px 15px',
         'background:' + (marked ? 'var(--card)' : (isDark ? 'rgba(255,255,255,.03)' : 'var(--bsoft)')),
-        'border:1px solid var(--border)',
+        // [v2.30.1-p425.28] Border grueso 2px .28/.22 grueso — mismo patron
+        // Runner aplanado p425.22. Antes: 1px var(--border) que era casi
+        // invisible. Aplica marked y unmarked por igual (el fondo diferencia).
+        'border:2px solid ' + (isDark ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.28)'),
         'border-radius:12px',
         'overflow:hidden',
         'min-width:0',
@@ -7398,24 +7418,19 @@ function _buildPRGridCard(type, rec, isDark) {
     ].filter(Boolean).join(';');
     if (marked) row.classList.add('mr-prs-row-c');
 
-    // Accent bar vertical — [v2.30.1-p349] barra metalica joyeria 5px del
-    // color del tier (mismo patron reflejo que biblioteca/plan/carrusel
-    // Home). Gradient horizontal 4-tonos generado con color-mix sobre el
-    // accentCol (sin depender de un mapeo estatico de tonos por tier) +
-    // doble inset shadow (highlight top + sombra bottom) + glow externo.
-    // position:absolute edge-to-edge para no afectar al flex layout ni
-    // requerir overflow:hidden en el row cuando no esta marcado.
+    // Accent bar vertical — [v2.30.1-p425.28] APLANADO barra metálica 5px.
+    // Álvaro: "aplanamos las barras quitando el efecto y lo dejamos
+    // niquelado". Fuera linear-gradient horizontal 4-tonos color-mix
+    // (dark → medium → light → medium) → color plano sólido del tier.
+    // Fuera triple box-shadow (inset highlight top + inset dark bottom +
+    // outer glow rgba). Width 5px INTACTO (identidad barra joyería, mismo
+    // criterio que el aplanado de las 3 minicards biblio/home-last/Mi año
+    // a plano oscuro grueso 7px en p425.13). position:absolute edge-to-edge
+    // sin cambios — layout intacto.
     var accentBar = document.createElement('div');
     accentBar.style.cssText = [
         'position:absolute','left:0','top:0','bottom:0','width:5px',
-        'background:linear-gradient(90deg,'
-            + 'color-mix(in srgb, ' + accentCol + ', black 40%) 0%,'
-            + accentCol + ' 40%,'
-            + 'color-mix(in srgb, ' + accentCol + ', white 40%) 70%,'
-            + accentCol + ' 100%)',
-        'box-shadow:inset 0 1px 0 rgba(255,255,255,.35),'
-            + 'inset 0 -1px 0 rgba(0,0,0,.35),'
-            + '0 0 10px color-mix(in srgb, ' + accentCol + ' 50%, transparent)',
+        'background:' + accentCol,
         'pointer-events:none','z-index:1',
         marked ? '' : 'opacity:.35'
     ].filter(Boolean).join(';');
@@ -7474,7 +7489,11 @@ function _buildPRGridCard(type, rec, isDark) {
     // suaves) + inset highlight arriba. Pill unmarked se mantiene igual.
     var pill = document.createElement('div');
     if (marked && rec.activity_datestr) {
-        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:6px 12px;border-radius:8px;background:linear-gradient(180deg,rgba(232,181,78,.22) 0%,rgba(196,136,30,.10) 100%);border:1px solid rgba(232,181,78,.42);font-size:9.5px;font-weight:900;color:var(--gold,#c4881e);letter-spacing:.6px;text-transform:uppercase;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.30);';
+        // [v2.30.1-p425.28] APLANADO pill dorada. Fuera gradient vertical
+        // (.22 → .10) → plano rgba(232,181,78,.16) medio. Border 1px .42
+        // sutil → 1.5px .55 marcado (más contorno visible, patron Runner).
+        // Fuera inset highlight blanco .30. Texto dorado y fecha intactos.
+        pill.style.cssText = 'flex-shrink:0;align-self:center;padding:6px 12px;border-radius:8px;background:rgba(232,181,78,.16);border:1.5px solid rgba(196,136,30,.55);font-size:9.5px;font-weight:900;color:var(--gold,#c4881e);letter-spacing:.6px;text-transform:uppercase;white-space:nowrap;';
         pill.textContent = _prsPrettyDate(rec.activity_datestr);
     } else {
         pill.style.cssText = 'flex-shrink:0;align-self:center;padding:5px 10px;border-radius:999px;background:transparent;border:1px solid var(--border);font-size:9.5px;font-weight:700;color:var(--tm);letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;opacity:.85;';
