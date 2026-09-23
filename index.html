@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p425.25'; // [v2.30.1-p425.25] Dos frentes coordinados tras p425.24. Álvaro: "sigue cortandose un poquito muy poco pero queda feo, o ajustamos al nuevo tamaño o le damos un par de px o tres mas, aunque igual queda muy pegado a los stats no se, un pelin mas de grosor al minitrack tambien le vamos a dar, que se vea mas premium". FRENTE 1 · MAPCOL +3PX EXTRA (10→13px total) · un solo cambio CSS en el override L4795: flex:0 0 calc(33% + 10px) → calc(33% + 13px). Con translateX(8px) del canvas p425.22 = 5px de aire real entre borde derecho del track y borde del mapcol (era 2px en p425.24 → subida a 5px = +150% margen visual). Los stats se comprimen 13px totales (~3.5% del viewport móvil ~366px) — pelín visible pero aceptable para eliminar el corte definitivamente sin quedar demasiado pegados como temía Álvaro (5px de aire = escala visual notable). FRENTE 2 · MINITRACK MÁS GRUESO (drawTrackForLibrary L40960) — mismo lenguaje pedido "un pelin" pero "más premium". Dos cambios en la función que dibuja los tracks de las 3 minicards unificadas: (a) Aura (halo) lineWidth 9 → 11 (+22%) — el halo neón/oscuro que envuelve el track con alpha .25 sigue destacando sobre el fondo pero con más peso visual. (b) Track principal lineWidth 4.0 → 5.0 (+25%) — la línea protagonista amarillo neón dark / negro puro light gana grosor sin llegar al look "cartoon" (5px es medida premium coherente con COROS oficial y Strava). Ratio aura/track = 11/5 = 2.2x, preservado el look del sistema (era 2.25x en p178, casi idéntico). Historial evolutivo: p178 pasó de aura 6/track 2.4 (original) → aura 7.5/track 3.0 → aura 9/track 4.0 (grosores actuales) → ahora p425.25 aura 11/track 5.0. Compatible con canvas 33% del inner del mapcol (~120px en viewport 366px + 13px extra p425.25 = ~133px), un track de 5px = 3.8% del ancho → no oclusivo. Los dots de inicio (verde #22c55e) y fin (rojo #ef4444) con radio 3.5px se mantienen (proporción coherente con track más grueso — un poco más pequeños relativamente pero visibles). Zero cambios en (a) transform:translateX(8px) canvas p425.22, (b) pill IA left:16px p425.21, (c) gradient bg del mapcol p425.20, (d) ::before barra 7px p425.13, (e) renderers _mrLibRenderOne / home-last-activity / _myaSelectDay (mismos, el CSS !important sigue pisando el inline y drawTrackForLibrary sigue llamada igual), (f) layout C invertido p350, (g) resto del sistema (fondo mapa gradient, halo dorado, badges photo/PR/IA/date, todos intactos). Aplicación cliente-only, se ve al recargar. Zero cambios en JS de layout. Sube solo index.html.
+            window.__MR_VERSION = 'v2.30.1-p425.26'; // [v2.30.1-p425.26] Dos frentes coordinados. Álvaro tras p425.25: "se sigue viendo cortado el minitrack. En Runner, en algun momento ha desaparecido de repente la fila que habia de Race Day revisa que no vuelva a pasar que me he dado un susto de muerte aunque ya está bien". FRENTE 1 · TRACK PAD ASIMÉTRICO en drawTrackForLibrary L40976+ · fix DEFINITIVO del corte del track por la derecha. Diagnóstico completo: el canvas HTML del mini-track tiene width=248 height=290 (px internos fijos, hardcoded en 3 renderers L40580/L60132/L64822) y se escala vía CSS a width:100% del mapcol (~133px en móvil 366px tras mapcol +13 de p425.25). Escala px_internos→pantalla = 133/248 = ~0.54x. drawTrackForLibrary tenía pad=12 simétrico → los puntos GPS se distribuían de x=12 a x=W-12=236 en px internos → escala pantalla = 6.4 a 126.6px. Tras translateX(8px) del canvas (p425.22) → 14.4 a 134.6px. Con mapcol width=133 y overflow:hidden → los últimos 1.6px del track y ~4.6px del halo (lineWidth=11 = radio 5.5px internos = 3px pantalla) se recortan por la derecha. Reproducible en tests horizontales largos como los que Álvaro capturó (Afternoon Run 10.01, Long run crazy Coros 26.01, Afternoon Run 12.01, y el 75 violeta con track complejo). Iteraciones fallidas p425.23/24/25 (ampliar mapcol de +6 a +10 a +13px) llegaron al límite de compresión aceptable de los stats sin resolver del todo. FIX quirúrgico: pad ASIMÉTRICO. padL=12 (preserva la zona de la barra metálica del gradient bg 12px p425.20 — el track no se pinta encima de la barra), padR=30 (da margen extra al lado derecho donde el translateX empuja hacia el borde). Nueva fórmula: scale=Math.min((W-padL-padR)/dLon, (H-2*pad)/dLat), offX=padL+(W-padL-padR-dLon*scale)/2. Los puntos GPS ahora se distribuyen hasta x=248-30=218 en canvas = ~117 en pantalla, tras translateX(8) = ~125, con halo hasta ~128, dentro del mapcol (133) con 5px de aire real por la derecha. Track visualmente centrado dentro del área útil sin corte. Compatible con TODOS los shapes de track (horizontal largo, vertical, cuadrado) — scale se calcula con el nuevo ancho útil y offX centra respetando el rango [padL, W-padR]. Aplicable a las 3 minicards unificadas (biblio + home-last-activity + Mi año) que llaman a drawTrackForLibrary. Grosor track 5/11 de p425.25 preservado. FRENTE 2 · RACE DAY DEFENSIVO L65196+ · fix "susto de muerte" Álvaro. La fila #row-raceday desapareció temporalmente en Runner. CAUSA RAÍZ: _raceDayRefreshRow() llama a _rdGetActivePlan() y si devuelve null (race condition en boot antes de hidratar activePlan, hidratación tardía desde Supabase tras SIGNED_IN, tab-switch que dispara refresh antes de que localStorage responda, tras webhook Strava que resetea temporalmente estructuras), entonces _raceDayIsEligible() → false → row.style.display='none' → fila desaparece hasta el próximo trigger (renderHome o siguiente cambio). Ya había un setTimeout defensivo de 800ms en L65260 pero no cubre todos los casos edge. FIX endurecido: si _rdGetActivePlan devuelve null Y localStorage tiene 'mr_plan' grabado (indicio claro de que existe un plan aunque el fetch temporal falle), PRESERVAR el estado visual actual (return sin tocar display). Solo ocultar si REALMENTE no hay plan (localStorage también vacío). Log en consola con 'possible race condition' para diagnóstico futuro si vuelve a pasar. Zero cambios en el flow normal: si hay plan válido en memoria, se calcula eligibilidad como antes con _raceDayIsEligible que chequea planDist ∈ {half, marathon, marathon_intermediate, marathon_xl} o goal ∈ {m, hm}. Álvaro tiene plan Maratón Valencia 6 dic 2026 → eligible=true garantizado. Zero cambios en HTML de la fila L14275 ni en el sheet raceday-sheet ni en toda la infraestructura Race Day (openRaceDaySheet, _raceDayIsEligible, _raceDayRenderLoaded, _raceDayHandleGpxFile, etc.). Solo se endurece _raceDayRefreshRow para no tocar el DOM cuando la ausencia de plan es probable race condition. Aplicación cliente-only. Zero cambios en resto del sistema. Sube solo index.html.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -40975,9 +40975,21 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         const minLon = Math.min(...lons), maxLon = Math.max(...lons);
         const dLat = Math.max(maxLat - minLat, 0.0001);
         const dLon = Math.max(maxLon - minLon, 0.0001);
+        // [v2.30.1-p425.26] Pad ASIMÉTRICO: izq=12 preserva zona de la barra
+        // metálica (12px del gradient bg del mapcol p425.20), dcha=30 da margen
+        // extra al track para que no se recorte por el overflow:hidden del mapcol
+        // tras el translateX(8px) del canvas (p425.22). Canvas 248px internos →
+        // en pantalla ~133px del mapcol post-p425.25. Con padR=30 los puntos GPS
+        // se distribuyen hasta x=218 en canvas = ~117 en pantalla, tras
+        // translateX(8) = ~125, más halo radio ~3px = ~128, dentro del mapcol
+        // (133) con 5px de aire real. Solución más quirúrgica que aumentar
+        // mapcol (que comprime stats) o eliminar overflow:hidden (que invadiría
+        // el área de los datos). Álvaro tras p425.25: "se sigue viendo cortado
+        // el minitrack". Este fix termina el corte definitivamente.
         const pad = 12;
-        const scale = Math.min((W - 2*pad) / dLon, (H - 2*pad) / dLat);
-        const offX = (W - dLon * scale) / 2;
+        const padR = 30;
+        const scale = Math.min((W - pad - padR) / dLon, (H - 2*pad) / dLat);
+        const offX = pad + (W - pad - padR - dLon * scale) / 2;
         const offY = (H - dLat * scale) / 2;
         const xy = pts.map(r => ({
             x: offX + (r.lon - minLon) * scale,
@@ -65193,10 +65205,48 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // Refresca visibilidad de la fila #row-raceday
         // [Álvaro 28 ago 2026] Sublínea eliminada — la fila muestra solo "Race day"
         // (mismo shape que el resto de mr-rrow). El detalle vive en el sheet.
+        // [v2.30.1-p425.26] Fix "susto de muerte" Álvaro: la fila Race Day
+        // desapareció temporalmente. CAUSA RAÍZ: _rdGetActivePlan() puede
+        // devolver null momentáneamente durante race conditions (boot muy
+        // temprano antes de que activePlan se hidrate, hidratación tardía
+        // desde Supabase tras SIGNED_IN, tab-switch que dispara refresh
+        // antes de que localStorage responda, tras webhook Strava que
+        // resetea temporalmente estructuras). En esos momentos el
+        // _raceDayRefreshRow oculta la fila hasta el próximo trigger.
+        // FIX defensivo: si _rdGetActivePlan devuelve null PERO localStorage
+        // tiene mr_plan grabado (indicio de que existe un plan aunque el
+        // fetch temporal falle), PRESERVAR el estado visual actual en vez
+        // de asumir "no eligible" y ocultar de golpe. Solo ocultar si
+        // estamos SEGUROS de que no hay plan (localStorage vacío también).
+        // Además log en consola para diagnóstico futuro por si vuelve
+        // a pasar. Zero cambios en el flow normal: si hay plan válido
+        // en memoria, se calcula eligibilidad como antes.
         window._raceDayRefreshRow = function() {
             try {
                 var row = document.getElementById('row-raceday');
                 if (!row) return;
+                var ap = _rdGetActivePlan();
+                if (!ap) {
+                    // Sin plan detectado en memoria → verificar si es transitorio
+                    try {
+                        var uk = (typeof _uk === 'function') ? _uk('mr_plan') : 'mr_plan';
+                        var raw = localStorage.getItem(uk);
+                        if (raw) {
+                            // Hay plan en localStorage pero _rdGetActivePlan no lo
+                            // devolvió → race condition. PRESERVAR estado actual
+                            // (si estaba visible sigue visible, si oculto sigue oculto).
+                            // El próximo trigger tras hidratación completa lo pintará
+                            // correctamente. Evita el "susto" de que Race Day desaparezca
+                            // de repente en la vista Runner sin motivo aparente.
+                            try { console.warn('[Race Day] _rdGetActivePlan() null pero mr_plan existe en localStorage — preservando visibility (posible race condition en boot/hidratación)'); } catch(_){}
+                            return;
+                        }
+                    } catch(_){}
+                    // Realmente no hay plan (memoria ni localStorage) → ocultar
+                    row.style.display = 'none';
+                    return;
+                }
+                // Plan detectado → chequear eligibilidad normal
                 var eligible = window._raceDayIsEligible();
                 row.style.display = eligible ? 'flex' : 'none';
             } catch(_){}
