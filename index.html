@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p425.51'; // [v2.30.1-p425.51] Cierre Plan: text-stroke 1.2px (max legibilidad) + pill KM contorno #000 puro + aplanado barras Semanas por carga vista mes (gradient 4-tonos + box-shadow inset/glow QUITADOS, pillColor plano + border 1.5px .28/.22 detect theme runtime). Alvaro: 'con eso ya genial plan'. Baseline p425.50 md5 69ac86168ec14e31fffe71dece1289b3.
+            window.__MR_VERSION = 'v2.30.1-p425.52'; // [v2.30.1-p425.52] FIX persistencia Fuerza + text-stroke titulo entreno adaptativo + text-stroke pill negro. Alvaro: 'como podemos hacer que al marcar como completada una sesion de fuerza persista para siempre porque cada vez que se recachea la app o algo asi creo que se van las completadas y deberia guardarse para siempre. Quiero ver como se ven el texto del tipo de entreno y la distancia o tiempo dentro de la pill de cada entreno de cada dia con el contorno que le hemos puesto a la cabecera, en este caso negro en light y blanco en dark o asi que se vera mejor, el dentro de la pill puede ser como el de la cabecera de negro siempre'. 2 FRENTES: (1) FIX BUG persistencia Fuerza L60037+: al hidratar desde Supabase con `_mrApplyProfileFromSupabase`, ahora se sincroniza TAMBIEN el localStorage `mr_strength_done` (antes: solo actualizaba `profileData.strengthDoneDates` pero `_mrIsStrengthDone(dateStr)` lee del localStorage — en dispositivo nuevo o tras cache purge, localStorage vacio hacia que las Fuerza completadas parecieran perdidas aunque estaban en Supabase). Ahora al hidratar profile, si row.strength_done_dates es array, se hace `localStorage.setItem(_uk('mr_strength_done'), JSON.stringify(row.strength_done_dates))`. Bug resuelto: las Fuerza completadas persisten para siempre entre sesiones/dispositivos/cache-purges. (2) Text-stroke titulo entreno + pill L56616+: (2a) Titulo del entreno (Easy Run/Series/Long Run/Fuerza/etc): añadido `-webkit-text-stroke: 0.6px ${_titleStroke}` + `paint-order: stroke fill` donde `_titleStroke = document.body.classList.contains('dark-mode') ? '#fff' : '#000'` (ADAPTATIVO negro light / blanco dark con deteccion runtime). Grosor 0.6px para font-size 17px (sutil pero refuerza el color del tipo sobre bg de la card). (2b) Pill (numero + unit, ej: 10 KM, 2h34, 30 MIN): añadido al span padre `-webkit-text-stroke: 0.5px #000` + `paint-order: stroke fill`. Grosor 0.5px para font-size 13px numero + 9px unit. NEGRO SIEMPRE (coherente con cabecera de fase). Se aplica al padre y los sub-spans heredan text-stroke y paint-order. box-shadow de la pill preservado (Alvaro no pidio aplanarla ahora). Aplica UNIVERSALMENTE a las cards del plan semanal (running + Fuerza + long + series + recovery + race + test) porque el renderer L56370+ es unificado con _isStrengthCard. Baseline p425.51 md5 `df62de0f5e170931534b292cb0dd8909`. PLAN CERRADO tras p425.51.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -56613,6 +56613,15 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     ? `<div style="position:absolute;left:0;top:0;bottom:0;width:5px;background:${_typeColHex};box-shadow:0 0 8px rgba(${_typeRGB},.45);z-index:2;pointer-events:none;"></div>`
                     : '';
 
+                // [v2.30.1-p425.52] Text-stroke en el título del entreno + pill.
+                // Alvaro: "el texto del tipo de entreno y la distancia o tiempo
+                // dentro de la pill de cada entreno de cada dia con el contorno
+                // que le hemos puesto a la cabecera, en este caso negro en light
+                // y blanco en dark o asi que se vera mejor, el dentro de la pill
+                // puede ser como el de la cabecera de negro siempre".
+                // Título: adaptativo negro light / blanco dark (deteccion runtime).
+                // Pill: negro siempre (coherente con cabecera de fase).
+                const _titleStroke = document.body.classList.contains('dark-mode') ? '#fff' : '#000';
                 const _msHTML = _msBuild(sess, _isStrengthCard);
                 let html = _todaySidebar + _checkBadge + `<div class="mr-day-header" style="display:flex;align-items:center;padding:7px 10px 7px 14px;gap:8px;position:relative;cursor:pointer;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;transition:transform .12s ease-out;">`
                     + _dateHTML
@@ -56621,7 +56630,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     //   Fila 2: desc/resumen SIEMPRE debajo (aunque quepa en la 1)
                     + `<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;">`
                     +   `<div style="display:flex;align-items:center;gap:7px;">`
-                    +     `<span style="font-size:17px;font-weight:800;color:${_typeCol};letter-spacing:-.2px;display:inline-flex;align-items:center;${_isSkipped?'text-decoration:line-through;text-decoration-color:var(--tm);text-decoration-thickness:1.5px;opacity:.72;':''}">${_typeLabelText}</span>`
+                    +     `<span style="font-size:17px;font-weight:800;color:${_typeCol};letter-spacing:-.2px;display:inline-flex;align-items:center;-webkit-text-stroke:0.6px ${_titleStroke};paint-order:stroke fill;${_isSkipped?'text-decoration:line-through;text-decoration-color:var(--tm);text-decoration-thickness:1.5px;opacity:.72;':''}">${_typeLabelText}</span>`
                     // [FASE 6 prep · Plan premium] Pill V4 tinted:
                     //   - fondo blanco con sombra interna suave
                     //   - borde fino del color del workout (~40-45% alpha)
@@ -56630,7 +56639,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                     // [v2.30.1-p322] Álvaro: pill un poco más grande + texto interior también.
                     //   padding 2/10/2/9 → 4px 12px (más aire vertical y horizontal, cabeza cuadrada).
                     //   font-size número 10→13. Unit 7.5→9 · letter-spacing 1.2→1.
-                    +     `<span style="background:${_isLongTime?'#7c3aed':_typeGrad};color:#fff;border-radius:7px;padding:4px 12px;font-size:13px;font-weight:800;display:inline-flex;align-items:baseline;gap:4px;box-shadow:${_isLongTime?'0 2px 8px rgba(124,58,237,.3)':'0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25)'};">`
+                    +     `<span style="background:${_isLongTime?'#7c3aed':_typeGrad};color:#fff;border-radius:7px;padding:4px 12px;font-size:13px;font-weight:800;display:inline-flex;align-items:baseline;gap:4px;box-shadow:${_isLongTime?'0 2px 8px rgba(124,58,237,.3)':'0 1px 3px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.25)'};-webkit-text-stroke:0.5px #000;paint-order:stroke fill;">`
                     +       `<span style="font-variant-numeric:tabular-nums;letter-spacing:-.1px;">${_pillNum}</span>`
                     +       `<span style="font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:.85;">${_pillUnit}</span>`
                     +     `</span>`
@@ -60036,6 +60045,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 }
                 if (Array.isArray(row.strength_done_dates)) {
                     profileData.strengthDoneDates = row.strength_done_dates;
+                    // [v2.30.1-p425.52] FIX BUG persistencia Fuerza: sincronizar
+                    // TAMBIEN el localStorage `mr_strength_done` que es el que
+                    // consulta `_mrIsStrengthDone(dateStr)`. Antes: solo se
+                    // hidrataba `profileData.strengthDoneDates` pero _mrIsStrengthDone
+                    // lee del localStorage — en dispositivo nuevo o tras cache
+                    // purge, localStorage estaba vacio y las Fuerza completadas
+                    // parecian perdidas aunque estaban en Supabase. Alvaro: "al
+                    // marcar como completada una sesion de fuerza persista para
+                    // siempre porque cada vez que se recachea la app o algo asi
+                    // creo que se van las completadas y deberia guardarse para
+                    // siempre".
+                    try {
+                        if (typeof _uk === 'function') {
+                            localStorage.setItem(_uk('mr_strength_done'), JSON.stringify(row.strength_done_dates));
+                        }
+                    } catch(_){}
                 }
                 // [p133] Hidratar display_name (nombre visible del user) desde
                 // profiles.display_name — antes solo se sync via saveProfile UI
