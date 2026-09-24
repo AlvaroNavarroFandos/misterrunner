@@ -1220,13 +1220,16 @@ function _renderClubRecordSection(container, def, rows, myId, profilesById, myIs
     var section = document.createElement('div');
     section.className = 'mr-club-record-section';
     section.dataset.type = def.type;
+    // [v2.30.1-p425.65] Cards mas contrastadas: border dorado sutil premium
+    // + shadow mas marcada para elevar del bg rojo/dorado club. Alvaro: "lo
+    // de abajo no contraste mucho cada record, mejoralo porfa".
     section.style.cssText = 'background:var(--card);margin:0 15px 14px;'
-        + 'border:1px solid var(--border);border-radius:16px;'
-        + 'overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);';
+        + 'border:1px solid rgba(196,136,30,.30);border-radius:16px;'
+        + 'overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.20),0 1px 3px rgba(0,0,0,.10),inset 0 1px 0 rgba(255,225,160,.20);';
 
     // ── Header de la sección ──
     var header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px 10px;border-bottom:1px solid var(--border);';
+    header.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 14px 10px;border-bottom:1px solid rgba(196,136,30,.20);';
 
     var medalWrap = document.createElement('div');
     medalWrap.style.cssText = 'width:42px;height:48px;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
@@ -1456,15 +1459,25 @@ async function renderClubRecordsRanking() {
         wrap.style.cssText = 'padding:0 0 80px;';
 
         // Sub-toggle Global / Siguiendo
+        // [v2.30.1-p425.65] Premium: glassmorphism oscuro sobre bg club dorado
+        // (patron consistente con el glass del nombre/stats de la cabecera club
+        // p425.57). Activo con bg card solido + border dorado + shadow marcada
+        // + peso 900 para maxima diferenciacion. Inactivo blanco 65% opacidad
+        // para verse legible sobre glass oscuro. Alvaro: "no se sabe ni en que
+        // parte estas si global o siguiendo".
         var scopeRow = document.createElement('div');
-        scopeRow.style.cssText = 'margin:10px 15px 12px;display:flex;background:var(--card);'
-            + 'border:1px solid var(--border);border-radius:10px;padding:3px;';
+        scopeRow.style.cssText = 'margin:10px 15px 14px;display:flex;background:rgba(0,0,0,.35);'
+            + 'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);'
+            + 'border:1px solid rgba(196,136,30,.35);border-radius:12px;padding:4px;';
         var btnGlobal = document.createElement('button');
         var btnFollow = document.createElement('button');
-        var scopeBase = 'flex:1;height:30px;border:none;border-radius:8px;background:transparent;'
-            + 'font-family:var(--f);font-size:11px;font-weight:700;letter-spacing:.3px;cursor:pointer;color:var(--tm);'
-            + 'transition:background .2s ease, color .2s ease;';
-        var scopeActive = 'background:var(--bg);color:var(--tw);box-shadow:0 1px 3px rgba(0,0,0,.08);';
+        var scopeBase = 'flex:1;height:34px;border:none;border-radius:9px;background:transparent;'
+            + 'font-family:var(--f);font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;'
+            + 'color:rgba(255,255,255,.65);'
+            + 'transition:background .2s ease, color .2s ease, box-shadow .2s ease, transform .12s ease;';
+        var scopeActive = 'background:var(--card);color:var(--tw);font-weight:900;'
+            + 'box-shadow:0 2px 8px rgba(0,0,0,.30),inset 0 1px 0 rgba(255,225,160,.35);'
+            + 'border:1px solid rgba(196,136,30,.55);';
         btnGlobal.style.cssText = scopeBase + (scope === 'global' ? scopeActive : '');
         btnFollow.style.cssText = scopeBase + (scope === 'following' ? scopeActive : '');
         btnGlobal.textContent = 'Global';
