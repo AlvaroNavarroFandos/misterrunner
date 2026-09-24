@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p425.53'; // [v2.30.1-p425.53] Revertido text-stroke titulo entreno y pill (Alvaro: 'revierte lo del contorno para el texto del tipo de entreno, lo de las pills quitalo tambien'). FRENTE UNICO: revertir F2 de p425.52. Titulo del entreno (Easy Run/Series/Long Run/Fuerza) vuelve a color plano sin -webkit-text-stroke ni paint-order. Pill (numero + unit) idem sin text-stroke. Se elimina const _titleStroke y su definicion. FIX BUG persistencia Fuerza (F1 de p425.52) PRESERVADO — Alvaro solo pidio revertir los 2 text-strokes, no la persistencia que sigue siendo el fix necesario. Baseline p425.52 md5 0e98df0cad32860e1fbd6e93d140176e.
+            window.__MR_VERSION = 'v2.30.1-p425.54'; // [v2.30.1-p425.54] Tinta verde Fuerza completada + 'Completed' verde + FIX BUG tiempo pill long runs. Alvaro: 'en la vista de plan semanal, al completar un entreno de fuerza que se tinte un poco de verde la fila igual que los entrenos de running al completarlos. Que ponga al lado de banda elastica Completed con el mismo verde que pone los stats del entreno completado en los de running. He detectado un bug importante y es que tocamos la distancia de los long runs hace uno dias, ahora que las distancias estan ajustadas hay que ajustar los tiempos que pone en las pills moradas porque eso no se cambió y hay discrepancia es imposible que 21k a ese ritmo sean 3h'. 3 FRENTES: (1) Tinta verde mas visible cards completadas (running matched + strength done): renderer unificado L56503 opacity `rgba(34,197,94,.06)` → `rgba(34,197,94,.12)` (2x mas visible, ya se veia sutil ahora es claro). Renderer strength separado L55558: mismo cambio. (2) 'Completed' verde al lado del equipLabel para Fuerza done: renderer unificado L56605+: cuando `_isStrengthCard && _isStrengthDone`, se añade ` · <span style=color:#22c55e;font-weight:700;>Completed</span>` después del `_descOneLine(_detailShort)` (ej: 'Banda elástica · Completed'). Renderer strength separado L55577: mismo tratamiento con `_strDoneLocal`. Color #22c55e (mismo verde que los stats reales de running matched). (3) FIX BUG tiempo pill long runs L56406+: cuando cambiaron distancias de long hace dias, sess.durStr no se recalculo → discrepancia con dist actual (ej: 21km a 5:51/km = 2h03 pero pill mostraba 2h56). Fix defensivo en runtime: nuevo `_longDurStrLive` que si tenemos dist + pace, calcula `fmtLongDur(sess.dist * sess.pace)`. Exacto para long simple (taper con pace easy uniforme), aproximado para mpFinish y progressive con bloques mixed pace pero MUCHO mas correcto que el valor viejo desactualizado. Fallback a sess.durStr si falta algo. Aplicado solo al _pillNum de la pill morada (Alvaro pidio especificamente 'pills moradas'). Aplicacion cliente-only. Sube solo index.html. Total: 5 str_replaces. Baseline p425.53 md5 b6a9742e0c1d34ea50178f10d360c883.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -55555,7 +55555,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             var _sideBar = _strDoneLocal
                 ? '#22c55e'
                 : '#c4881e';
-            var _cardBgDone = _strDoneLocal ? 'background:rgba(34,197,94,.06);' : '';
+            var _cardBgDone = _strDoneLocal ? 'background:rgba(34,197,94,.12);' : '';
             var _greenDot = _strDoneLocal
                 ? '<div style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 1.5px var(--card),0 0 6px rgba(34,197,94,.7);z-index:3;pointer-events:none;" aria-label="Completada"></div>'
                 : '';
@@ -55574,7 +55574,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 +       '<span style="display:inline-flex;align-items:baseline;gap:3px;background:var(--card);border:1px solid rgba(196,136,30,.45);border-radius:6px;padding:2px 8px;"><span style="font-size:11px;font-weight:900;color:#c4881e;font-variant-numeric:tabular-nums;">30</span><span style="font-size:8px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;">min</span></span>'
                 +       '<span style="margin-left:auto;flex-shrink:0;display:inline-flex;align-items:center;">'+chevSvg+'</span>'
                 +     '</div>'
-                +     '<div style="font-size:10px;color:var(--ts);font-weight:500;">'+_equipLabel+'</div>'
+                +     '<div style="font-size:10px;color:var(--ts);font-weight:500;">'+_equipLabel+(_strDoneLocal?' · <span style="color:#22c55e;font-weight:700;">Completed</span>':'')+'</div>'
                 +   '</div>'
                 + '</div>'
                 + '<div class="mr-str-body" style="display:none;padding:2px 12px 9px 15px;">'+blocksHtml+'</div>';
@@ -56403,8 +56403,22 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 // [FASE 6 prep · Plan premium] Pill V4: pill blanca con
                 // borde y sublabel del color del workout (tinted). Separamos
                 // num + unit para poder estilizar la unidad pequeña en color.
-                const _isLongTime = (sess.type === 'long' && sess.durStr);
-                const _pillNum  = _isStrengthCard ? '30'  : (_isLongTime ? sess.durStr : (sess.dist != null ? String(sess.dist) : ''));
+                // [v2.30.1-p425.54] Fix bug tiempo long runs: cuando se tocaron las
+                // distancias hace dias, no se recalcularon los tiempos (sess.durStr
+                // sigue con el valor viejo). Alvaro: "tocamos la distancia de los
+                // long runs hace uno dias, ahora que las distancias estan ajustadas
+                // hay que ajustar los tiempos que pone en las pills moradas porque
+                // eso no se cambio y hay discrepancia es imposible que 21k a ese
+                // ritmo sean 3h". Fix defensivo en runtime: si tenemos dist + pace,
+                // recalcular fmtLongDur(dist * pace) — exacto para long simple,
+                // aproximado para mpFinish/progressive con bloques mixed pace pero
+                // MUCHO mas correcto que el valor viejo desactualizado. Fallback a
+                // sess.durStr si no hay datos suficientes.
+                const _isLongTime = (sess.type === 'long' && (sess.durStr || (sess.dist && sess.pace)));
+                const _longDurStrLive = (_isLongTime && sess.dist && sess.pace && typeof fmtLongDur === 'function')
+                    ? fmtLongDur(sess.dist * sess.pace)
+                    : (sess.durStr || '');
+                const _pillNum  = _isStrengthCard ? '30'  : (_isLongTime ? _longDurStrLive : (sess.dist != null ? String(sess.dist) : ''));
                 const _pillUnit = _isStrengthCard ? 'min' : (_isLongTime ? '' : 'km');
                 // [Legacy] _pillValue se mantiene por si alguna otra lógica lo lee
                 const _pillValue = _pillNum + ' ' + _pillUnit;
@@ -56498,9 +56512,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 const _isStrengthDone = _isStrengthCard && typeof window._mrIsStrengthDone === 'function'
                     ? window._mrIsStrengthDone(sess.dateStr) : false;
                 const _isCompleted = matched || _isStrengthDone;
+                // [v2.30.1-p425.54] Alvaro: "al completar un entreno de fuerza que se
+                // tinte un poco de verde la fila igual que los entrenos de running al
+                // completarlos". Subida opacity tinta verde de .06 (muy sutil, casi
+                // invisible) a .12 (visible pero sutil). Aplica a running matched y
+                // strength done por igual.
                 const _cardBg = _isToday
                     ? `linear-gradient(90deg, rgba(${_typeRGB},.15) 0%, rgba(${_typeRGB},.04) 55%, transparent 100%)`
-                    : (_isCompleted ? 'rgba(34,197,94,.06)' : (_typeTint || 'var(--card2)'));
+                    : (_isCompleted ? 'rgba(34,197,94,.12)' : (_typeTint || 'var(--card2)'));
                 const _cardOpacity = _isPastNotDone ? '.55' : '1';
                 const card = document.createElement('div');
                 card.style.cssText = `position:relative;z-index:1;background:${_cardBg};opacity:${_cardOpacity};`;
@@ -56603,7 +56622,13 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                         + (_realHr > 0 ? `<span style="color:var(--tm);">·</span><b style="color:#22c55e;font-weight:700;">FC ${_realHr}</b>` : '')
                         + `</span>`;
                 } else if (_detailShort) {
-                    _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}</span>`;
+                    // [v2.30.1-p425.54] Alvaro: "Que ponga al lado de banda elastica
+                    // 'Completed' con el mismo verde que pone los stats del entreno
+                    // completado en los de running". Solo cuando strength done.
+                    const _completedTag = (_isStrengthCard && _isStrengthDone)
+                        ? ` · <span style="color:#22c55e;font-weight:700;">Completed</span>`
+                        : '';
+                    _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}${_completedTag}</span>`;
                 }
 
                 // [Plan HOY V4] Sidebar 5px verde con glow inyectado como elemento HTML
