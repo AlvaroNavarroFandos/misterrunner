@@ -102,7 +102,7 @@
         // (inspeccionable en consola con `window.__MR_VERSION` si hace falta
         // debug puntual, pero sin mierda visual ni logs cosmetic).
         try {
-            window.__MR_VERSION = 'v2.30.1-p425.54'; // [v2.30.1-p425.54] Tinta verde Fuerza completada + 'Completed' verde + FIX BUG tiempo pill long runs. Alvaro: 'en la vista de plan semanal, al completar un entreno de fuerza que se tinte un poco de verde la fila igual que los entrenos de running al completarlos. Que ponga al lado de banda elastica Completed con el mismo verde que pone los stats del entreno completado en los de running. He detectado un bug importante y es que tocamos la distancia de los long runs hace uno dias, ahora que las distancias estan ajustadas hay que ajustar los tiempos que pone en las pills moradas porque eso no se cambió y hay discrepancia es imposible que 21k a ese ritmo sean 3h'. 3 FRENTES: (1) Tinta verde mas visible cards completadas (running matched + strength done): renderer unificado L56503 opacity `rgba(34,197,94,.06)` → `rgba(34,197,94,.12)` (2x mas visible, ya se veia sutil ahora es claro). Renderer strength separado L55558: mismo cambio. (2) 'Completed' verde al lado del equipLabel para Fuerza done: renderer unificado L56605+: cuando `_isStrengthCard && _isStrengthDone`, se añade ` · <span style=color:#22c55e;font-weight:700;>Completed</span>` después del `_descOneLine(_detailShort)` (ej: 'Banda elástica · Completed'). Renderer strength separado L55577: mismo tratamiento con `_strDoneLocal`. Color #22c55e (mismo verde que los stats reales de running matched). (3) FIX BUG tiempo pill long runs L56406+: cuando cambiaron distancias de long hace dias, sess.durStr no se recalculo → discrepancia con dist actual (ej: 21km a 5:51/km = 2h03 pero pill mostraba 2h56). Fix defensivo en runtime: nuevo `_longDurStrLive` que si tenemos dist + pace, calcula `fmtLongDur(sess.dist * sess.pace)`. Exacto para long simple (taper con pace easy uniforme), aproximado para mpFinish y progressive con bloques mixed pace pero MUCHO mas correcto que el valor viejo desactualizado. Fallback a sess.durStr si falta algo. Aplicado solo al _pillNum de la pill morada (Alvaro pidio especificamente 'pills moradas'). Aplicacion cliente-only. Sube solo index.html. Total: 5 str_replaces. Baseline p425.53 md5 b6a9742e0c1d34ea50178f10d360c883.
+            window.__MR_VERSION = 'v2.30.1-p425.55'; // [v2.30.1-p425.55] Opcion A cabecera sobria bg oscuro fase. Alvaro: 'es que ahora con los contornos en cabecera se lee muy bien pero se me queda muy comic entonces o le damos mas sobriedad a la cabecera sin contornos ni nada pero que se lea perfecto o nos metemos a hacer mas estilo comic en las cards' → Alvaro elige A. 4 FRENTES: (1) Bg cabecera hCard L56106: `background:_phaseCol` (color vivo saturado dorado/verde/azul/morado/rojo) → `background:_phaseDark` (version oscura). Contraste natural con texto blanco puro sin necesidad de contorno negro. Border se queda en `_phaseDark` (mismo color = invisible, look sobrio sin border visible). (2) Quitar text-stroke 1.2px #000 + paint-order:stroke fill de los 4 elementos de cabecera: titulo maraton _planNameLine L56114 + Sem N + BUILD + fechas (4 spans dentro del innerHTML). Texto blanco puro limpio sobre bg oscuro. (3) Pill KM L56178: border `#000` puro → `rgba(0,0,0,.35)` sutil (menos agresivo sobre bg oscuro, mantiene contorno visible pero elegante no comic). (4) Progress dots outline menos agresivo: base future outline `1.5px .5` → `1px .35` heredado por done + skipped. HOY outline `2px .5` → `1.5px .35`. Menos agresivo sobre bg oscuro sobrio. Aplicacion cliente-only. Sube solo index.html. Total: 4 str_replaces (1 hCard + 1 bulk text-stroke + 1 pill KM + 1 CSS bloque 4 dots). Baseline p425.54 md5 1be531ce42f9dce280f8dacc2f70b060.
             window.__MR_BUILD_AT = '2026-09-07T16:00:00Z';
         } catch(_){}
 
@@ -46154,7 +46154,7 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
             border-radius: 2px;
             background: rgba(255,255,255,.14);
             border: 1px solid rgba(255,255,255,.35); /* [v2.30.1-p425.47] Subido de .20 a .35 para más definición */
-            outline: 1.5px solid rgba(0,0,0,.5); /* [v2.30.1-p425.50] Contorno premium grueso: 1px .4 → 1.5px .5 (mas grosor y mas opacidad) */
+            outline: 1px solid rgba(0,0,0,.35); /* [v2.30.1-p425.55] Opcion A sobria: 1.5px .5 → 1px .35 (menos agresivo sobre bg oscuro de fase) */
             box-sizing: border-box;
         }
         .mr-plan-progress-dot.done {
@@ -46181,12 +46181,11 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                para mas grueso. Border 2px blanco + outline oscuro
                semi-transparente para dar contorno visible sobre el bg del
                color de fase (dorado BUILD, azul BASE, etc).
-               [v2.30.1-p425.50] Outline subido de 1.5px .4 a 2px .5 para
-               consistencia con el nuevo outline premium base 1.5px .5 +
-               mantener HOY con outline mas grueso que el resto (identidad). */
+               [v2.30.1-p425.55] Opcion A sobria: outline 2px .5 → 1.5px .35
+               (menos agresivo sobre bg oscuro de fase). */
             background: #fff;
             border: 2px solid #fff;
-            outline: 2px solid rgba(0,0,0,.5);
+            outline: 1.5px solid rgba(0,0,0,.35);
             height: 12px;
         }
         /* [v2.30.1-p342] Row semana por carga · variante D + barra metalica B
@@ -56103,15 +56102,24 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
         // contraste). (3) box-shadow 0 6px 20px _phaseShadow drop del color de
         // la fase → quitado. Se preserva touch-action + swipe + transition +
         // radius 10px + padding condicional.
-        hCard.style.cssText = 'background:'+_phaseCol+';'
+        // [v2.30.1-p425.55] Opcion A · Cabecera sobria con bg oscuro de fase.
+        // Alvaro: "es que ahora con los contornos en cabecera se lee muy bien
+        // pero se me queda muy comic... o le damos mas sobriedad a la cabecera
+        // sin contornos ni nada pero que se lea perfecto". Cambio: bg
+        // _phaseCol (color vivo saturado dorado/verde/azul/morado/rojo) →
+        // _phaseDark (version oscura). Texto blanco puro se lee perfecto sobre
+        // bg oscuro sin necesidad de contorno negro. Border se queda en
+        // _phaseDark (mismo color que bg = invisible, look sobrio sin border).
+        hCard.style.cssText = 'background:'+_phaseDark+';'
             + 'border:2px solid '+_phaseDark+';border-radius:10px;padding:'+(_planNameStr?'6px 14px 10px':'12px 14px')+';margin-bottom:0;'
             + 'touch-action:pan-y;position:relative;overflow:hidden;cursor:grab;'
             + 'user-select:none;-webkit-user-select:none;will-change:transform;'
             + 'transition:transform .25s cubic-bezier(.22,.61,.36,1);'
             + 'display:flex;flex-direction:column;gap:4px;';
 
+        // [v2.30.1-p425.55] Sin text-stroke (bg oscuro da contraste natural).
         var _planNameLine = _planNameStr
-            ? `<div style="text-align:center;font-size:9.5px;font-weight:900;color:#fff;letter-spacing:1.2px;text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 8px;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;">${_planNameStr}</div>`
+            ? `<div style="text-align:center;font-size:9.5px;font-weight:900;color:#fff;letter-spacing:1.2px;text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 8px;">${_planNameStr}</div>`
             : '';
 
         // [v2.30.1-p340] Calcular estado por día (L M X J V S D) para la fila
@@ -56168,14 +56176,14 @@ window.__MR_LOGO_DATA_URI__ = "data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD
                 </div>
                 <!-- Centro: Semana + Phase + Fechas -->
                 <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap;min-width:0;flex:1;justify-content:center;text-align:center;position:relative;overflow:hidden;">
-                    <span style="font-size:14px;font-weight:900;color:#fff;letter-spacing:-.3px;white-space:nowrap;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;">Sem ${wk.n}</span>
+                    <span style="font-size:14px;font-weight:900;color:#fff;letter-spacing:-.3px;white-space:nowrap;">Sem ${wk.n}</span>
                     <span style="font-size:10px;color:rgba(255,255,255,.85);">·</span>
-                    <span style="font-size:10px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:1.3px;white-space:nowrap;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;">${wk.phase}</span>
+                    <span style="font-size:10px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:1.3px;white-space:nowrap;">${wk.phase}</span>
                     <span style="font-size:10px;color:rgba(255,255,255,.85);">·</span>
-                    <span style="font-size:10px;color:#fff;font-weight:600;white-space:nowrap;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;">${_wDatesLbl}</span>
+                    <span style="font-size:10px;color:#fff;font-weight:600;white-space:nowrap;">${_wDatesLbl}</span>
                 </div>
                 <!-- KM pill blanca con número tintado del color de la fase -->
-                <div style="display:inline-flex;align-items:baseline;gap:4px;background:#fff;border:2px solid #000;border-radius:6px;padding:5px 12px;flex-shrink:0;position:relative;">
+                <div style="display:inline-flex;align-items:baseline;gap:4px;background:#fff;border:2px solid rgba(0,0,0,.35);border-radius:6px;padding:5px 12px;flex-shrink:0;position:relative;">
                     <span style="font-size:14px;font-weight:900;color:${_phaseCol};letter-spacing:-.3px;font-variant-numeric:tabular-nums;">${totalKm}</span>
                     <span style="font-size:8.5px;color:#52525b;font-weight:800;letter-spacing:.8px;text-transform:uppercase;">km</span>
                 </div>
