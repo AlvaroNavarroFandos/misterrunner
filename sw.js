@@ -1,9 +1,37 @@
 /* MisterRunner Service Worker — Production */
 /* Bloque K — Auditoría SW (K.1 + K.2) — 17 mayo 2026 */
+/* v3.4 — Auditoría fluidez p425.83 — 29 sep 2026:
+   · APIs de datos (clima, geocoding, radar, Strava, Anthropic) → SIEMPRE red,
+     nunca caché: antes se servía la respuesta vieja guardada (clima/radar
+     desactualizados) y se refrescaba por detrás.
+   · Teselas de mapa y radar → caché propia con tope de entradas (antes crecía
+     sin límite y iOS podía vaciar TODA la caché de la app por espacio).
+   · index.html → red primero con tope de 3,5 s: con mala cobertura abre la
+     copia guardada al momento y la versión nueva queda lista para la próxima. */
 
-const CACHE_VERSION = 'mr-v3.3-2026-06-11';
+const CACHE_VERSION = 'mr-v3.4-2026-09-29';
 const CACHE_STATIC  = `${CACHE_VERSION}-static`;
 const CACHE_PAGES   = `${CACHE_VERSION}-pages`;
+const CACHE_TILES   = `${CACHE_VERSION}-tiles`;
+const TILES_MAX     = 400;
+const NAV_TIMEOUT_MS = 3500;
+
+/* Hosts de DATOS: siempre red, el SW no los toca. */
+const NETWORK_ONLY_HOSTS = [
+  'api.open-meteo.com',
+  'geocoding-api.open-meteo.com',
+  'archive-api.open-meteo.com',
+  'api.bigdatacloud.net',
+  'api.rainviewer.com',
+  'api.anthropic.com',
+  'www.strava.com'
+];
+/* Hosts de TESELAS de mapa/radar: caché limitada. */
+function isTileHost(host) {
+  return host.endsWith('basemaps.cartocdn.com') ||
+         host === 'tiles.openfreemap.org' ||
+         host.endsWith('tilecache.rainviewer.com');
+}
 
 const SUPABASE_URL = 'https://wlvtxmqjteswatndovji.supabase.co';
 
@@ -48,7 +76,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys => {
-      const valid = new Set([CACHE_STATIC, CACHE_PAGES]);
+      const valid = new Set([CACHE_STATIC, CACHE_PAGES, CACHE_TILES]);
       return Promise.all(
         keys.filter(k => !valid.has(k)).map(k => caches.delete(k))
       );
@@ -66,6 +94,15 @@ self.addEventListener('fetch', e => {
 
   /* Filtro global: si no es cacheable, dejar pasar sin interceptar. */
   if (!isCacheable(request)) return;
+
+  /* v3.4 · APIs de datos → red directa, sin caché del SW. */
+  if (NETWORK_ONLY_HOSTS.indexOf(url.hostname) !== -1) return;
+
+  /* v3.4 · Teselas de mapa/radar → caché propia con tope. */
+  if (isTileHost(url.hostname)) {
+    e.respondWith(tileCache(request));
+    return;
+  }
 
   /* Navegación / index.html → NETWORK-FIRST */
   if (isNavigationRequest(request)) {
@@ -87,18 +124,29 @@ self.addEventListener('fetch', e => {
 /* ── Estrategias ──────────────────────────────────────────────────── */
 
 /* NETWORK-FIRST: red primero, caché si falla. Usada para index.html.
-   Tras una respuesta de red válida, actualizamos la copia en caché. */
+   Tras una respuesta de red válida, actualizamos la copia en caché.
+   v3.4: si la red tarda más de NAV_TIMEOUT_MS y hay copia guardada, se abre
+   la copia; la descarga sigue en segundo plano y actualiza la caché. */
 async function networkFirst(request) {
-  try {
-    const fresh = await fetch(request);
+  const netP = fetch(request).then(fresh => {
     if (fresh && fresh.status === 200 && (fresh.type === 'basic' || fresh.type === 'cors')) {
       const clone = fresh.clone();
       caches.open(CACHE_PAGES).then(c => {
-        // Doble check: solo cacheamos URLs http(s)
         if (request.url.startsWith('http')) c.put(request, clone);
       }).catch(() => {});
     }
     return fresh;
+  });
+  try {
+    const cachedEarly = await caches.match(request) || await caches.match('/');
+    if (cachedEarly) {
+      const timeoutP = new Promise(res => setTimeout(() => res(null), NAV_TIMEOUT_MS));
+      const winner = await Promise.race([netP.catch(() => null), timeoutP]);
+      if (winner) return winner;
+      netP.catch(() => {}); /* sigue en background actualizando la caché */
+      return cachedEarly;
+    }
+    return await netP;
   } catch (err) {
     /* Offline o red caída → buscar en caché */
     const cached = await caches.match(request);
@@ -141,6 +189,25 @@ async function cacheFirst(request) {
     if (shell) return shell;
     throw err;
   }
+}
+
+/* TESELAS: caché primero (una tesela no cambia), red si falta. Tope de
+   entradas: al pasar de TILES_MAX se borran las más antiguas. */
+async function tileCache(request) {
+  const cache = await caches.open(CACHE_TILES);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  const fresh = await fetch(request);
+  if (fresh && fresh.status === 200 && (fresh.type === 'basic' || fresh.type === 'cors')) {
+    cache.put(request, fresh.clone()).then(() => trimCache(cache, TILES_MAX)).catch(() => {});
+  }
+  return fresh;
+}
+async function trimCache(cache, max) {
+  const keys = await cache.keys();
+  if (keys.length <= max) return;
+  const extra = keys.length - max;
+  for (let i = 0; i < extra; i++) await cache.delete(keys[i]);
 }
 
 /* ── Push Notifications ───────────────────────────────────────────── */
