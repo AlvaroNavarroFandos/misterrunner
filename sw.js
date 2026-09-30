@@ -1,5 +1,12 @@
 /* MisterRunner Service Worker — Production */
 /* Bloque K — Auditoría SW (K.1 + K.2) — 17 mayo 2026 */
+/* v3.5 — Cierre split MR (p425.91) — 30 sep 2026:
+   · Bump CACHE_VERSION para limpiar caches viejos y forzar
+     recache de /app.css y /app.js (ambos nuevos externalizados
+     en Fase 1 y Fase 2 del split). Sin cambios de lógica del SW.
+   · Splash mínimo subido a 3s desde p425.89 (comportamiento HTML,
+     no del SW, se anota aquí solo para trazabilidad).
+*/
 /* v3.4 — Auditoría fluidez p425.83 — 29 sep 2026:
    · APIs de datos (clima, geocoding, radar, Strava, Anthropic) → SIEMPRE red,
      nunca caché: antes se servía la respuesta vieja guardada (clima/radar
@@ -9,7 +16,7 @@
    · index.html → red primero con tope de 3,5 s: con mala cobertura abre la
      copia guardada al momento y la versión nueva queda lista para la próxima. */
 
-const CACHE_VERSION = 'mr-v3.4-2026-09-29';
+const CACHE_VERSION = 'mr-v3.5-2026-09-30';
 const CACHE_STATIC  = `${CACHE_VERSION}-static`;
 const CACHE_PAGES   = `${CACHE_VERSION}-pages`;
 const CACHE_TILES   = `${CACHE_VERSION}-tiles`;
