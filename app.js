@@ -65818,7 +65818,7 @@ window.addEventListener('DOMContentLoaded', function() {
             var sx = 0, sy = 0, dragging = false, tracking = false;
             var btns = [], icons = [], rects = [], navLeft = 0, pillW = 0, startIdx = -1, peekIdx = -1;
             var curX = 0, lastX = 0, lastT = 0, vel = 0, stretch = 1, raf = 0;
-            var TH = 8;
+            var TH = 3; // [v2.30.1-p425.92] antes 8: umbral menor = drag más inmediato
             function idxAt(x) {
                 var best = 0, bd = 1e9;
                 for (var i = 0; i < rects.length; i++) {
@@ -65882,7 +65882,12 @@ window.addEventListener('DOMContentLoaded', function() {
                     ind.classList.add('is-ready');
                     btns.forEach(function(b){ b.classList.remove('nb-peek'); });
                     curX = t.clientX;
-                    raf = requestAnimationFrame(render);
+                    // [v2.30.1-p425.92] primer paint SÍNCRONO en el momento en que
+                    // se activa el drag: antes se esperaba al siguiente rAF (~16 ms
+                    // percibidos como pequeño lag inicial). setPeek también aquí
+                    // para que el peek de la pestaña bajo el dedo aparezca ya.
+                    setPeek(idxAt(t.clientX));
+                    render();
                 }
                 e.preventDefault();
                 e.stopPropagation();
@@ -65904,6 +65909,12 @@ window.addEventListener('DOMContentLoaded', function() {
                 btns.forEach(function(b){ b.classList.remove('nb-peek'); });
                 icons.forEach(function(ic){ if (ic) ic.style.transform = ''; });
                 navEl.classList.remove('mr-nav-dragging');
+                // [v2.30.1-p425.92] transición de encaje post-drag más rápida:
+                // durante 320 ms se aplican transiciones abreviadas al indicador y al
+                // label de la pestaña destino. Un tap normal (sin drag) NO añade esta
+                // clase, así que su spring de 420 ms sigue intacto.
+                navEl.classList.add('mr-nav-settling');
+                setTimeout(function(){ navEl.classList.remove('mr-nav-settling'); }, 320);
                 if (!cancel && target >= 0 && target !== startIdx && btns[target]) {
                     // [v2.30.1-p425.80] destino pendiente → la burbuja encaja directa aquí
                     window.__mrNavDragTarget = btns[target];
