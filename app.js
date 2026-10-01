@@ -20558,21 +20558,15 @@
         ].map(function(r){ return '<tr' + (r[2] ? ' class="cur"' : '') + '><td>' + r[0] + (r[2] ? '<span class="mrwv-yo">AHORA</span>' : '') + '</td><td>' + r[1] + '</td></tr>'; }).join('');
         html += '<div class="mrwxsh-block-title"><span>Cuánto te penaliza</span><span class="mrwxsh-block-hint">a esfuerzo constante</span></div>'
              +  '<div class="mrwxsh-blk"><table class="mrwv-tab">' + rows + '</table></div>';
-        // Guía
-        var acc = function(t, b, loc){ return '<div class="mrwv-acc"><button type="button" class="mrwv-acc-h"><b>' + t + '</b>' + (loc ? '<span class="mrwv-acc-loc">' + loc + '</span>' : '') + _MRWV_CHEV + '</button><div class="mrwv-acc-b">' + b + '</div></div>'; };
-        var guide =
-            (near ? acc('El cierzo', '<p>Viento de componente <strong>noroeste</strong> típico del valle del Ebro. Se forma por el contraste entre altas presiones en el Cantábrico y bajas en el Mediterráneo, y el valle lo encajona y acelera.</p><p>Sopla más fuerte en <strong>invierno y primavera</strong> (rachas típicas de 40-80 km/h) y puede durar días seguidos. En la zona de Zaragoza aparece cerca del <strong>40% de los días del año</strong>, con una media de 19 km/h. No es la excepción: es la norma.</p><p>En verano aparece también el <strong>bochorno</strong> (SE): menos frecuente, pero con calor y humedad.</p>', 'ZARAGOZA') : '')
-          + acc('Ajuste por tipo de sesión', '<h4>Easy</h4><p>Corre por FC, no por ritmo.</p><h4>Series</h4><p>Zona protegida o pista. Expuesto, los tiempos no significan nada.</p><h4>Tempo / umbral</h4><p>Por sensación o FC. Un tempo con 30 km/h en contra a ritmo de tempo se vuelve anaeróbico: prioriza el estímulo, no el número.</p><h4>Long run</h4><p>Ida contra el viento, vuelta a favor.</p><h4>Fuerza</h4><p>No le afecta. Buen día para moverla si el viento arruina la de correr.</p>')
-          + acc('Estrategias tácticas', '<ul><li><strong>Empieza por lo peor:</strong> en ida y vuelta, la ida contra el viento.</li><li><strong>En grupo, turnaos:</strong> ir a rueda ahorra un 15-30% del esfuerzo aerodinámico. Rotad cada 500 m-1 km.</li><li><strong>Postura:</strong> ligera inclinación hacia delante y brazos más pegados.</li><li><strong>Cadencia +5%:</strong> zancadas más cortas y frecuentes; el viento castiga la zancada larga.</li><li><strong>Ropa ajustada:</strong> nada de sudaderas anchas ni chubasqueros sueltos, hacen vela. Cortavientos ceñido.</li></ul><p>El viento a favor <strong>no compensa</strong> al contrario: recuperas en torno al 60% de lo que pierdes. Y la resistencia del aire crece con el cuadrado de la velocidad relativa: al doble de velocidad, 4 veces más resistencia y unas 8 veces más potencia para vencerla. El lateral penaliza menos el ritmo, pero <strong>desgasta</strong> por la postura compensatoria.</p>')
-          + acc('Cuándo NO entrenar (o cambiar la sesión)', '<ul><li><strong>Rachas de más de 50 km/h con series</strong> → mueve la sesión.</li><li><strong>Viento con polvo o arenilla</strong> (frecuente en primavera) → protege ojos y vías, o tira a cinta.</li><li><strong>Long run de más de 2h30 con viento fuerte constante</strong> → si puedes retrasar 24 h, hazlo.</li><li><strong>Tempos o tests</strong> → siempre en día calmo, o los resultados no son comparables.</li></ul>')
-          + (near ? acc('Rutas de Zaragoza según el viento', '<h4>Con cierzo · evitar (muy expuesto)</h4><ul><li>Paseo del Ebro, tramo Almozara-La Cartuja</li><li>Riberas abiertas sin arbolado</li><li>Puentes largos (Tercer Milenio, Almozara)</li><li>Canal Imperial en tramos sin arbolado</li></ul><h4>Con cierzo · más protegido</h4><ul><li><strong>Parque Grande José Antonio Labordeta</strong>: el arbolado corta bien el viento</li><li><strong>Centro urbano</strong>: los edificios altos lo cortan (con semáforos)</li><li><strong>Parque del Agua</strong>, circuito interior</li><li><strong>Canal Imperial con arbolado</strong> (Casablanca hacia Miralbueno)</li></ul><h4>Series con cierzo</h4><ul><li>Pista Corona de Aragón</li><li>Pista Salduba</li><li>Parque Grande, circuito interior, si no puedes ir a pista</li></ul><h4>Con bochorno (SE, verano)</h4><p>Prioridad: entrenar temprano, antes de las 8 h. La ribera del Ebro en sentido este es más llevadera.</p>', 'ZARAGOZA') : '')
-          + (vlc ? acc('Regla de oro para Valencia', '<p>En el maratón de Valencia puede haber viento cambiante junto al mar. <strong>Entrenar con cierzo es la mejor preparación posible.</strong></p><p>Los días de cierzo brutal en los que otros se rinden y tú sales igual, ganas algo que no sale en el ritmo: <strong>resiliencia mental</strong> para los km 30-42, cuando todo pesa. Cada long run con 40 km/h vale doble.</p>', 'TU PLAN') : '');
-        html += '<div class="mrwxsh-block-title"><span>Guía</span></div><div class="mrwxsh-blk">' + guide + '</div>';
-
+        // [v2.30.1-p425.94] Sección Guía eliminada (Álvaro): los 5 acordeones
+        // (El cierzo · Ajuste por sesión · Estrategias tácticas · Cuándo NO
+        // entrenar · Rutas de Zaragoza · Regla de oro para Valencia) salen del
+        // sheet. Si eres de Zaragoza ya te lo sabes. Las demás secciones del
+        // sheet (Ahora/compass, Tu sesión de hoy, Próximas horas, Cuánto te
+        // penaliza) se mantienen intactas. _MRWV_CHEV, _mrWvHasValenciaPlan y
+        // la variable `vlc` quedan sin uso en este render pero se dejan en
+        // scope por si se recupera la sección en el futuro.
         box.innerHTML = html;
-        box.querySelectorAll('.mrwv-acc-h').forEach(function(b){
-            b.addEventListener('click', function(){ b.parentNode.classList.toggle('open'); });
-        });
     }
 
     async function _mrHydrateWeatherSheet() {
