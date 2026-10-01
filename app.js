@@ -65974,6 +65974,18 @@ window.addEventListener('DOMContentLoaded', function() {
                     // [v2.30.1-p425.80] destino pendiente → la burbuja encaja directa aquí
                     window.__mrNavDragTarget = btns[target];
                     setTimeout(function(){ window.__mrNavDragTarget = null; }, 1200);
+                    // [v2.30.1-p425.98] Burbuja AL TOQUE tras drag release:
+                    // cambiamos .active del nav Y movemos el indicador YA MISMO,
+                    // antes del click(). El click dispara el handler que (al
+                    // haber swipeDir) usa carrusel de VISTA (_useNavFx=true) y
+                    // DIFIERE _applyViewSwitch 420 ms vía transitionend —
+                    // ahí vive el lag que notaba Álvaro, porque _applyViewSwitch
+                    // es quien cambiaba .active + llamaba _mrUpdateNavIndicator.
+                    // Haciendo el switch manual aquí, el indicador se mueve
+                    // instantáneo (settling=0s activa). _applyViewSwitch sigue
+                    // ejecutándose al final del carrusel pero es idempotente.
+                    btns.forEach(function(b){ b.classList.remove('active'); });
+                    btns[target].classList.add('active');
                     try { window._mrUpdateNavIndicator(); } catch(_){}
                     var appEl = document.getElementById('app');
                     if (appEl) appEl.dataset.swipeDir = (target > startIdx) ? 'l' : 'r';
