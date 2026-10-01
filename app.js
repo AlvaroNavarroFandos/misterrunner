@@ -65858,152 +65858,16 @@ window.addEventListener('DOMContentLoaded', function() {
             bindNavListeners();
         })();
 
-        // [v2.30.1-p425.79] Burbuja de la navbar ARRASTRABLE (estilo WhatsApp/Instagram
-        // iOS 26). Pulsa en la barra y desliza en horizontal: la burbuja sigue
-        // al dedo, la pestaña bajo el dedo se previsualiza y al soltar se
-        // navega a ella (misma ruta que un tap: btn.click() + dirección de
-        // animación). Un tap normal sigue funcionando igual (umbral 8 px).
-        // Distinto del swipe sobre la nav que se quitó en p112: aquí solo se
-        // mueve la burbuja y la navegación ocurre al soltar sobre una pestaña.
-        (function setupNavBubbleDrag(){
-            // [v2.30.1-p425.81] Render por requestAnimationFrame (mismo motor que el
-            // preview aprobado): el touchmove solo guarda la posición y la
-            // velocidad; cada frame se pinta 1 vez → movimiento continuo a 60 fps.
-            var navEl = null, ind = null;
-            var sx = 0, sy = 0, dragging = false, tracking = false;
-            var btns = [], icons = [], rects = [], navLeft = 0, pillW = 0, startIdx = -1, peekIdx = -1;
-            var curX = 0, lastX = 0, lastT = 0, vel = 0, stretch = 1, raf = 0;
-            var TH = 3; // [v2.30.1-p425.92] antes 8: umbral menor = drag más inmediato
-            function idxAt(x) {
-                var best = 0, bd = 1e9;
-                for (var i = 0; i < rects.length; i++) {
-                    var d = Math.abs(x - (rects[i].left + rects[i].width / 2));
-                    if (d < bd) { bd = d; best = i; }
-                }
-                return best;
-            }
-            function setPeek(i) {
-                if (i === peekIdx) return;
-                if (peekIdx >= 0 && btns[peekIdx]) btns[peekIdx].classList.remove('nb-peek');
-                peekIdx = i;
-                if (i >= 0 && btns[i] && i !== startIdx) btns[i].classList.add('nb-peek');
-            }
-            function render() {
-                if (!dragging) return;
-                var r0 = rects[0], rN = rects[rects.length - 1];
-                var min = (r0.left - navLeft) + r0.width * 0.04;
-                var max = (rN.left - navLeft) + rN.width * 0.96 - pillW;
-                var left = Math.max(min, Math.min(max, curX - navLeft - pillW / 2));
-                // Líquida: se estira con la velocidad y se aplasta en vertical
-                var tgt = 1 + Math.min(0.45, Math.abs(vel) * 0.28);
-                stretch += (tgt - stretch) * 0.35;
-                var scx = 1.06 * stretch, scy = 1.06 / Math.sqrt(stretch);
-                ind.style.transform = 'translate3d(' + left + 'px, -50%, 0) scale(' + scx.toFixed(3) + ',' + scy.toFixed(3) + ')';
-                // Lupa: iconos crecen según cercanía al dedo
-                for (var i = 0; i < icons.length; i++) {
-                    if (!icons[i]) continue;
-                    var d = Math.abs(curX - (rects[i].left + rects[i].width / 2)) / rects[i].width;
-                    var sc = 1 + Math.max(0, 0.32 * (1 - d * 1.1));
-                    icons[i].style.transform = 'scale(' + sc.toFixed(3) + ')';
-                }
-                vel *= 0.82;
-                raf = requestAnimationFrame(render);
-            }
-            function onStart(e) {
-                if (!e.touches || e.touches.length !== 1) return;
-                if (document.body.classList.contains('sheet-open')) return;
-                navEl = document.getElementById('nav'); ind = document.getElementById('nav-indicator');
-                if (!navEl || !ind) return;
-                if (!ind.querySelector('.mr-nav-shine')) { var sh = document.createElement('div'); sh.className = 'mr-nav-shine'; ind.appendChild(sh); }
-                btns = Array.prototype.slice.call(navEl.querySelectorAll('.nb'));
-                if (!btns.length) return;
-                icons = btns.map(function(b){ return b.querySelector('.ni'); });
-                rects = btns.map(function(b){ return b.getBoundingClientRect(); });
-                navLeft = navEl.getBoundingClientRect().left;
-                startIdx = btns.indexOf(navEl.querySelector('.nb.active'));
-                pillW = rects[0].width * 0.92;
-                sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-                lastX = sx; lastT = performance.now(); vel = 0; stretch = 1;
-                tracking = true; dragging = false; peekIdx = -1;
-            }
-            function onMove(e) {
-                if (!tracking || !e.touches || !e.touches.length) return;
-                var t = e.touches[0], dx = t.clientX - sx, dy = t.clientY - sy;
-                if (!dragging) {
-                    if (Math.abs(dx) < TH || Math.abs(dx) < Math.abs(dy)) return;
-                    dragging = true;
-                    navEl.classList.add('mr-nav-dragging');
-                    ind.style.width = pillW + 'px';
-                    ind.classList.add('is-ready');
-                    btns.forEach(function(b){ b.classList.remove('nb-peek'); });
-                    curX = t.clientX;
-                    // [v2.30.1-p425.92] primer paint SÍNCRONO en el momento en que
-                    // se activa el drag: antes se esperaba al siguiente rAF (~16 ms
-                    // percibidos como pequeño lag inicial). setPeek también aquí
-                    // para que el peek de la pestaña bajo el dedo aparezca ya.
-                    setPeek(idxAt(t.clientX));
-                    render();
-                }
-                e.preventDefault();
-                e.stopPropagation();
-                var now = performance.now(), dt = Math.max(1, now - lastT);
-                vel = vel * 0.5 + ((t.clientX - lastX) / dt) * 0.5;
-                lastX = t.clientX; lastT = now; curX = t.clientX;
-                setPeek(idxAt(t.clientX));
-            }
-            function finish(e, cancel) {
-                if (!tracking) return;
-                tracking = false;
-                if (!dragging) return;
-                dragging = false;
-                cancelAnimationFrame(raf);
-                if (e && e.cancelable) e.preventDefault();
-                if (e) e.stopPropagation();
-                var target = peekIdx;
-                setPeek(-1);
-                btns.forEach(function(b){ b.classList.remove('nb-peek'); });
-                icons.forEach(function(ic){ if (ic) ic.style.transform = ''; });
-                navEl.classList.remove('mr-nav-dragging');
-                // [v2.30.1-p425.92] transición de encaje post-drag más rápida:
-                // durante 320 ms se aplican transiciones abreviadas al indicador y al
-                // label de la pestaña destino. Un tap normal (sin drag) NO añade esta
-                // clase, así que su spring de 420 ms sigue intacto.
-                navEl.classList.add('mr-nav-settling');
-                setTimeout(function(){ navEl.classList.remove('mr-nav-settling'); }, 320);
-                if (!cancel && target >= 0 && target !== startIdx && btns[target]) {
-                    // [v2.30.1-p425.80] destino pendiente → la burbuja encaja directa aquí
-                    window.__mrNavDragTarget = btns[target];
-                    setTimeout(function(){ window.__mrNavDragTarget = null; }, 1200);
-                    // [v2.30.1-p425.98] Burbuja AL TOQUE tras drag release:
-                    // cambiamos .active del nav Y movemos el indicador YA MISMO,
-                    // antes del click(). El click dispara el handler que (al
-                    // haber swipeDir) usa carrusel de VISTA (_useNavFx=true) y
-                    // DIFIERE _applyViewSwitch 420 ms vía transitionend —
-                    // ahí vive el lag que notaba Álvaro, porque _applyViewSwitch
-                    // es quien cambiaba .active + llamaba _mrUpdateNavIndicator.
-                    // Haciendo el switch manual aquí, el indicador se mueve
-                    // instantáneo (settling=0s activa). _applyViewSwitch sigue
-                    // ejecutándose al final del carrusel pero es idempotente.
-                    btns.forEach(function(b){ b.classList.remove('active'); });
-                    btns[target].classList.add('active');
-                    try { window._mrUpdateNavIndicator(); } catch(_){}
-                    var appEl = document.getElementById('app');
-                    if (appEl) appEl.dataset.swipeDir = (target > startIdx) ? 'l' : 'r';
-                    btns[target].click();
-                    if (appEl) requestAnimationFrame(function(){ if (appEl.dataset.swipeDir) delete appEl.dataset.swipeDir; });
-                }
-                requestAnimationFrame(function(){ try { window._mrUpdateNavIndicator(); } catch(_){} });
-            }
-            function bind() {
-                var n = document.getElementById('nav');
-                if (!n) { setTimeout(bind, 60); return; }
-                n.addEventListener('touchstart', onStart, { passive: true });
-                n.addEventListener('touchmove', onMove, { passive: false });
-                n.addEventListener('touchend', function(e){ finish(e, false); }, { passive: false });
-                n.addEventListener('touchcancel', function(e){ finish(e, true); }, { passive: false });
-            }
-            bind();
-        })();
+        // [v2.30.1-p425.99] Drag de la burbuja ELIMINADO (Álvaro). Causaba lag
+        // perceptible, carrusel con stutters e incluso pantalla en blanco
+        // ocasional en Safari iOS. La navegación entre pestañas es ahora
+        // exclusivamente por TAP (click en .nb), que funciona perfecto.
+        // El IIFE setupNavBubbleDrag (138 líneas) estaba aquí; retirado completo.
+        // Las clases CSS .mr-nav-dragging / .mr-nav-settling / .nb-peek del
+        // bloque del nav quedan sin uso pero se preservan por si en el futuro
+        // se recupera el drag — su presencia no afecta a nada en runtime.
+        // El bloque "destino pendiente" en _mrUpdateNavIndicator (L8364-8367)
+        // también queda sin efecto: window.__mrNavDragTarget nunca se setea.
     
 
 
