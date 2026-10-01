@@ -38393,24 +38393,85 @@
             renderPlanWeek(planCurrentWeek);updatePlanNav();renderMisterPlanCard();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();}}catch(e){}
     }
 
+    // [v2.30.1-p425.93] Guard "misma huella" por pestaña.
+    // Patrón replicado de _mrLibComputeSignature (biblioteca): la firma
+    // incluye TODOS los datos que afectan visualmente a esa pestaña. Si la
+    // firma coincide con la última pintada y la pestaña ya está poblada
+    // (__mr<tab>TabPainted === true), saltamos el re-render.
+    // Si algún dato futuro afecta a una pestaña pero no está en la firma,
+    // se puede añadir aquí. Firma conservadora y a prueba de errores: si
+    // algo casca en el cálculo, devolvemos Math.random() → nunca coincide
+    // con la firma previa → se re-renderea sí o sí.
+    function _mrTabSig(target) {
+        try {
+            var actLen  = (typeof activities !== 'undefined' && activities) ? activities.length : 0;
+            var actTop  = (actLen > 0) ? activities[0] : null;
+            var actLastId    = actTop ? String(actTop.id || '') : '';
+            var actLastDate  = actTop ? String(actTop.date || '') : '';
+            var actLastNota  = actTop ? String(actTop.nota || '') : '';
+            var actLastType  = actTop ? String(actTop.type || '') : '';
+            var actLastDist  = actTop ? String(actTop.distKm || '') : '';
+            var planId   = (typeof activePlan !== 'undefined' && activePlan)
+                ? String(activePlan.startDate || '') + '|' + String(activePlan.type || '') : '';
+            var planWeek = (typeof planCurrentWeek !== 'undefined') ? String(planCurrentWeek) : '';
+            var strId    = (typeof activeStrengthPlan !== 'undefined' && activeStrengthPlan)
+                ? String(activeStrengthPlan.startDate || activeStrengthPlan.id || '') : '';
+            var rehabId  = (typeof activeRehabPlan !== 'undefined' && activeRehabPlan)
+                ? String(activeRehabPlan.startDate || activeRehabPlan.id || '') + '|' + String(activeRehabPlan.status || '') : '';
+            var lt = String(window._userLtHr || '');
+            var mx = String(window._userMaxHr || '');
+            var pc = String(window._userPaceMinPerKm || '');
+            var dm = document.body.classList.contains('dark-mode') ? 'd' : 'l';
+            var user = (window.currentUser && window.currentUser.id) ? String(window.currentUser.id) : '';
+            var shoesLen = (typeof shoes !== 'undefined' && shoes) ? shoes.length : 0;
+            var injLen   = (typeof injuries !== 'undefined' && injuries) ? injuries.length : 0;
+            var rdn = String(window._rdnLastScore || '');
+            var common = dm + '|' + user + '|' + lt + '|' + mx + '|' + pc;
+            if (target === 'home')   return 'h|' + common + '|' + actLen + '|' + actLastId + '|' + actLastDate + '|' + actLastNota + '|' + actLastType + '|' + actLastDist + '|' + planId + '|' + planWeek + '|' + rdn + '|' + shoesLen + '|' + strId + '|' + rehabId;
+            if (target === 'runner') return 'r|' + common + '|' + actLen + '|' + actLastId + '|' + shoesLen + '|' + injLen;
+            if (target === 'mister') return 'm|' + common + '|' + planId + '|' + planWeek + '|' + strId + '|' + rehabId + '|' + actLen + '|' + actLastId;
+            if (target === 'cal')    return 'c|' + common + '|' + planId + '|' + planWeek + '|' + strId + '|' + rehabId;
+            return '';
+        } catch(_) { return String(Math.random()); }
+    }
+    window._mrTabSig = _mrTabSig;
+
     document.addEventListener('click',e=>{
         const btn=e.target.closest('.nb[data-target]');
         if(!btn) return;
-        if(btn.dataset.target==='home')    setTimeout(renderHome, 50);
-        if(btn.dataset.target==='mister')  setTimeout(()=>{initEvalSelect();renderMisterPlanCard();renderMisterAnalysis();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();updateStrengthActiveBanner();updateRehabUI();try{refreshStrengthSyncToggle();}catch(_){}},50);
-        if(btn.dataset.target==='runner')  setTimeout(()=>{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); renderMedallero(); showThresholdValidation(); },50);
-        if(btn.dataset.target==='cal') setTimeout(()=>{
-            // Jump to current rehab week if only rehab plan active
-            var _rp   = activeRehabPlan && activeRehabPlan.status==='active';
-            var _runP = activePlan && activePlan.type!=='strength';
-            if(_rp && !_runP && !activeStrengthPlan) {
-                // Week index = floor(days elapsed / 7)
-                var _startMs = activeRehabPlan.startDate
-                    ? new Date(activeRehabPlan.startDate+'T00:00:00').getTime() : Date.now();
-                var _elapsed = Math.floor((Date.now()-_startMs)/(7*86400000));
-                planCurrentWeek = Math.max(0, Math.min(_elapsed, activeRehabPlan.totalWeeks-1));
+        var _tgt = btn.dataset.target;
+        // [v2.30.1-p425.93] Guard "misma huella". Skip si firma igual + pestaña
+        // ya poblada. Guardamos la firma ANTES del setTimeout para que dos taps
+        // rápidos sobre la misma pestaña no encolen dos renders. Si la firma
+        // devuelve Math.random() por un catch, nunca coincide → re-render.
+        try {
+            var _sig = _mrTabSig(_tgt);
+            var _sigKey = '__mr' + _tgt + 'TabLastSig';
+            var _pntKey = '__mr' + _tgt + 'TabPainted';
+            if (window[_pntKey] === true && window[_sigKey] === _sig) {
+                return; // huella igual → nada que hacer
             }
-            _renderActivePlanWeek(planCurrentWeek); updatePlanNav(); updateStrengthActiveBanner();
+            window[_sigKey] = _sig;
+        } catch(_){}
+        if(btn.dataset.target==='home')    setTimeout(function(){ try{ renderHome(); } finally { window.__mrhomeTabPainted = true; } }, 50);
+        if(btn.dataset.target==='mister')  setTimeout(function(){ try{ initEvalSelect();renderMisterPlanCard();renderMisterAnalysis();if(typeof _mrRenderEvalIABlock==='function')_mrRenderEvalIABlock();updateStrengthActiveBanner();updateRehabUI();try{refreshStrengthSyncToggle();}catch(_){} } finally { window.__mrmisterTabPainted = true; } },50);
+        if(btn.dataset.target==='runner')  setTimeout(function(){ try{ renderStorageInfo(); renderInjuries(); renderWarmupSummaryRunner(); renderMedallero(); showThresholdValidation(); } finally { window.__mrrunnerTabPainted = true; } },50);
+        if(btn.dataset.target==='cal') setTimeout(function(){
+            try {
+                // Jump to current rehab week if only rehab plan active
+                var _rp   = activeRehabPlan && activeRehabPlan.status==='active';
+                var _runP = activePlan && activePlan.type!=='strength';
+                if(_rp && !_runP && !activeStrengthPlan) {
+                    // Week index = floor(days elapsed / 7)
+                    var _startMs = activeRehabPlan.startDate
+                        ? new Date(activeRehabPlan.startDate+'T00:00:00').getTime() : Date.now();
+                    var _elapsed = Math.floor((Date.now()-_startMs)/(7*86400000));
+                    planCurrentWeek = Math.max(0, Math.min(_elapsed, activeRehabPlan.totalWeeks-1));
+                }
+                _renderActivePlanWeek(planCurrentWeek); updatePlanNav(); updateStrengthActiveBanner();
+            } finally {
+                window.__mrcalTabPainted = true;
+            }
         },50);
     });
     // Robust init: run immediately if DOM ready, otherwise wait for DOMContentLoaded
