@@ -14117,7 +14117,7 @@
         const tempEl = document.getElementById('imp-temp');
         if(tempEl) tempEl.value = (data.avgTemp != null && data.avgTemp > 0) ? data.avgTemp : '';
         if(typeof clearImportPhoto==='function') clearImportPhoto();
-        outfitState = { shirtStyle:'plain', shirtSleeve:'short', shirtColor1:'#0057FF', shirtColor2:'#F5F5F5', bottomsType:'short', shortsColor:'#1C1C1E', sockType:'long', socksColor:'#F5F5F5' };
+        outfitState = { shirtStyle:'plain', shirtSleeve:'short', shirtColor1:'#0057FF', shirtColor2:'#F5F5F5', bottomsType:'short', shortsColor:'#1C1C1E', sockType:'long', socksColor:'#F5F5F5', vest:'none' };
         initOutfitSelector();
         // Carrera oficial: reset + listener visibility
         (function() {
@@ -14743,6 +14743,7 @@
         shortsColor: '#1C1C1E',  // color de shorts O mallas (según bottomsType)
         sockType:    'long',     // 'short' | 'long'   (v2.30.1-p85 Álvaro)
         socksColor:  '#F5F5F5',
+        vest:        'none',     // [v2.30.1-p425.104] 'none'|'black'|'gray'|'cream' chaleco hidratación
     };
 
     // v2.30.1-p85 · Helpers para leer los campos del outfit con fallback a los
@@ -14791,6 +14792,7 @@
         setShirtSleeve(outfitState.shirtSleeve || 'short');
         setBottomsType(outfitState.bottomsType || 'short');
         setSockType(outfitState.sockType || 'long');
+        setVest(outfitState.vest || 'none');
         // Color 2 visible solo si pattern es rayas
         const wrap = document.getElementById('shirt-color2-wrap');
         if (wrap) wrap.style.display = (outfitState.shirtStyle === 'plain') ? 'none' : '';
@@ -14859,6 +14861,20 @@
     function pickShirtColor2(hex) { outfitState.shirtColor2 = hex; renderColorSwatches('shirt-color2-swatches', hex, 'pickShirtColor2', SHIRT_COLORS); renderOutfitPreview(); }
     function pickShortsColor(hex) { outfitState.shortsColor = hex; renderColorSwatches('shorts-color-swatches', hex, 'pickShortsColor', SHORTS_COLORS); renderOutfitPreview(); }
     function pickSocksColor(hex)  { outfitState.socksColor  = hex; renderColorSwatches('socks-color-swatches',  hex, 'pickSocksColor',  SOCKS_COLORS);  renderOutfitPreview(); }
+    // [v2.30.1-p425.104] setVest · importador manual
+    function setVest(v) {
+        outfitState.vest = v;
+        ['none','black','gray','cream'].forEach(function(opt){
+            var b = document.getElementById('outfit-vest-' + opt);
+            if (!b) return;
+            var active = (v === opt);
+            b.style.background  = active ? 'var(--crimson)' : 'var(--card)';
+            b.style.color       = active ? '#fff' : 'var(--ts)';
+            b.style.borderColor = active ? 'var(--crimson)' : 'var(--border)';
+        });
+        renderOutfitPreview();
+    }
+    window.setVest = setVest;
 
     // [FASE 5.7.4-b] Stroke adaptativo para prendas del outfit.
     // Sobre fondo negro (card biblioteca), las prendas oscuras (negro,
@@ -14961,6 +14977,63 @@
         </svg>`;
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // [v2.30.1-p425.104] CHALECO DE HIDRATACIÓN · superpuesto sobre camiseta
+    // Álvaro usa Terrex: silueta compacta (acaba a mitad del torso), cordones
+    // zigzag en el centro, cordones automáticos por color del chaleco (naranja
+    // para negro/gris, negro para crema). viewBox 100x104 — mismo que shirtSVG
+    // para superponer limpio como un overlay absolute.
+    // ══════════════════════════════════════════════════════════════════
+    function _outfitVest(o){
+        if (!o) return 'none';
+        var v = o.vest;
+        if (v === 'black' || v === 'gray' || v === 'cream') return v;
+        return 'none';
+    }
+
+    function vestSVG(vest, w, h) {
+        if (!vest || vest === 'none') return '';
+        var VC = {
+            black: { body: '#1C1C1E', cord: '#FF6B1A', stroke: 'rgba(255,255,255,.25)' },
+            gray:  { body: '#6B7280', cord: '#FF6B1A', stroke: 'rgba(0,0,0,.5)' },
+            cream: { body: '#E8DDC8', cord: '#1C1C1E', stroke: 'rgba(0,0,0,.35)' }
+        }[vest];
+        if (!VC) return '';
+        // Dos lados simétricos (izq + dcha) con una apertura central donde van
+        // los cordones cruzados. Hombros en y=22 (igual que shirtSVG), base en
+        // y=72 (acaba a ~mitad del torso de la camiseta cuyo bajo es y=102-104).
+        var pathLeft =
+            'M 26,22 L 14,30 Q 10,32 10,36 L 10,68 Q 10,72 14,72 L 36,72 L 42,30 L 36,22 Z';
+        var pathRight =
+            'M 74,22 L 86,30 Q 90,32 90,36 L 90,68 Q 90,72 86,72 L 64,72 L 58,30 L 64,22 Z';
+        // Cordones zigzag entre los dos lados en la apertura central
+        var cordones =
+              '<path d="M 42,34 L 58,40 L 42,46 L 58,52 L 42,58 L 58,64 L 42,70" '
+            +   'stroke="' + VC.cord + '" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+            // Tiradores (bungee pulls) laterales inferiores
+            + '<circle cx="20" cy="68" r="1.8" fill="' + VC.cord + '"/>'
+            + '<circle cx="80" cy="68" r="1.8" fill="' + VC.cord + '"/>';
+        return '<svg width="' + (w||48) + '" height="' + (h||52) + '" viewBox="0 0 100 104" '
+             + 'xmlns="http://www.w3.org/2000/svg" '
+             + 'style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible;">'
+             + '<path d="' + pathLeft + '" fill="' + VC.body + '" stroke="' + VC.stroke + '" stroke-width="1.2" stroke-linejoin="round"/>'
+             + '<path d="' + pathRight + '" fill="' + VC.body + '" stroke="' + VC.stroke + '" stroke-width="1.2" stroke-linejoin="round"/>'
+             + cordones
+             + '</svg>';
+    }
+
+    // Combina shirtSVG + vestSVG como overlay cuando el outfit tiene chaleco.
+    // Si vest==='none' devuelve solo el shirtSVG tal cual (zero coste).
+    function shirtWithVestHTML(o, w, h) {
+        var sleeve = _outfitSleeve(o);
+        var pattern = _outfitPattern(o);
+        var shirt = shirtSVG(pattern, o.shirtColor1, o.shirtColor2, w, h, sleeve);
+        var vest = _outfitVest(o);
+        if (vest === 'none') return shirt;
+        return '<div style="position:relative;display:inline-block;width:' + w + 'px;height:' + h + 'px;line-height:0;vertical-align:top;">'
+             + shirt + vestSVG(vest, w, h) + '</div>';
+    }
+
     // ── SHORTS SVG ──
     function shortsSVG(color, w=38, h=28) {
         // [v2.30.1-p425.40] Aplicada variante S1 aprobada por Álvaro tras preview:
@@ -15050,7 +15123,7 @@
         var pattern = _outfitPattern(o);
         var bottomsH = (_outfitBottomsType(o) === 'tights') ? 34 : 17;
         return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:space-evenly;gap:1px;height:100%;width:100%;">'
-            + shirtSVG(pattern, o.shirtColor1, o.shirtColor2, 34, 34, sleeve)
+            + shirtWithVestHTML(o, 34, 34)
             + _outfitRenderBottoms(o, 26, bottomsH)
             + _outfitSockWrap(o, _outfitRenderSocks(o))
             + '</div>';
@@ -15077,7 +15150,7 @@
         var pattern = _outfitPattern(o);
         var bottomsH = (_outfitBottomsType(o) === 'tights') ? 32 : 16;
         return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;height:100%;width:100%;padding-top:2px;">'
-            + shirtSVG(pattern, o.shirtColor1, o.shirtColor2, 30, 30, sleeve)
+            + shirtWithVestHTML(o, 30, 30)
             + _outfitRenderBottoms(o, 24, bottomsH)
             + _outfitSockWrap(o, _outfitRenderSocks(o))
             + '<div style="margin-top:1px;">' + shoePair + '</div>'
@@ -15258,7 +15331,7 @@
         var shoeRow = '<div style="display:flex;gap:3px;align-items:center;">' + buildShoeSVG(sc, true) + buildShoeSVG(sc, false) + '</div>';
         if (!o) return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">' + shoeRow + '</div>';
         return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">'
-            + '<div style="display:flex;justify-content:center;">' + shirtSVG(o.shirtStyle, o.shirtColor1, o.shirtColor2, 22) + '</div>'
+            + '<div style="display:flex;justify-content:center;">' + shirtWithVestHTML(o, 22, 22) + '</div>'
             + '<div style="display:flex;justify-content:center;">' + shortsSVG(o.shortsColor, 20, 14) + '</div>'
             + '<div style="display:flex;gap:0;align-items:flex-end;">' + oneSockSVG(o.socksColor, true) + oneSockSVG(o.socksColor, false) + '</div>'
             + shoeRow + '</div>';
@@ -15280,7 +15353,7 @@
         const socksLbl = (_outfitSockType(s) === 'short') ? 'Calc. cortos' : 'Calc. largos';
         el.innerHTML =
             `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-                ${shirtSVG(_outfitPattern(s), s.shirtColor1, s.shirtColor2, 52, 52, _outfitSleeve(s))}
+                ${shirtWithVestHTML(s, 52, 52)}
                 <span style="font-size:7px;color:var(--tm);text-transform:uppercase;letter-spacing:.6px;">Camiseta</span>
             </div>
             <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
@@ -22807,6 +22880,16 @@
                             <div class="field-label">Color de los calcetines</div>
                             <div id="aedit-socks-sw" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
                         </div>
+                        <!-- CHALECO HIDRATACIÓN [v2.30.1-p425.104] -->
+                        <div style="margin-bottom:10px;">
+                            <div class="field-label">Chaleco de hidratación</div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;">
+                                <button type="button" id="aedit-vest-none"  onclick="aeditSetVest('none')"  style="padding:8px 2px;border-radius:9px;border:2px solid var(--crimson);background:var(--crimson);color:#fff;font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Sin</button>
+                                <button type="button" id="aedit-vest-black" onclick="aeditSetVest('black')" style="padding:8px 2px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Negro</button>
+                                <button type="button" id="aedit-vest-gray"  onclick="aeditSetVest('gray')"  style="padding:8px 2px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Gris</button>
+                                <button type="button" id="aedit-vest-cream" onclick="aeditSetVest('cream')" style="padding:8px 2px;border-radius:9px;border:2px solid var(--border);background:var(--card);color:var(--ts);font-family:var(--f);font-size:9px;font-weight:700;cursor:pointer;">Crema</button>
+                            </div>
+                        </div>
                         <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
                             <div class="field-label" style="margin-bottom:6px;">Preview</div>
                             <div id="aedit-outfit-preview" style="display:flex;align-items:flex-end;gap:8px;"></div>
@@ -22832,8 +22915,9 @@
             });
         }
         // Init outfit editor state from existing activity outfit
-        const ao = act.outfit || { shirtStyle:'plain', shirtSleeve:'short', shirtColor1:'#0057FF', shirtColor2:'#F5F5F5', bottomsType:'short', shortsColor:'#1C1C1E', sockType:'long', socksColor:'#F5F5F5' };
+        const ao = act.outfit || { shirtStyle:'plain', shirtSleeve:'short', shirtColor1:'#0057FF', shirtColor2:'#F5F5F5', bottomsType:'short', shortsColor:'#1C1C1E', sockType:'long', socksColor:'#F5F5F5', vest:'none' };
         window._aeditOutfit = { ...ao };
+        if (!window._aeditOutfit.vest) window._aeditOutfit.vest = 'none';
         // Render swatches
         function _aeditSwatch(containerId, selected, colorList, onPick) {
             const c = document.getElementById(containerId); if(!c) return;
@@ -22850,7 +22934,7 @@
             const s = window._aeditOutfit;
             const bottomsLbl = (_outfitBottomsType(s) === 'tights') ? 'Mallas' : 'Pantalón';
             const socksLbl = (_outfitSockType(s) === 'short') ? 'Calc. cortos' : 'Calc. largos';
-            el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${shirtSVG(_outfitPattern(s),s.shirtColor1,s.shirtColor2,52,52,_outfitSleeve(s))}<span style="font-size:7px;color:var(--tm);">Camiseta</span></div>`
+            el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${shirtWithVestHTML(s,52,52)}<span style="font-size:7px;color:var(--tm);">Camiseta</span></div>`
                 +`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${_outfitRenderBottoms(s,40,(_outfitBottomsType(s)==='tights'?62:30))}<span style="font-size:7px;color:var(--tm);">${bottomsLbl}</span></div>`
                 +`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">${socksSVG(s.socksColor,52,40)}<span style="font-size:7px;color:var(--tm);">${socksLbl}</span></div>`;
         }
@@ -22904,6 +22988,19 @@
                 b.style.background = active?'var(--crimson)':'var(--card)';
                 b.style.color = active?'#fff':'var(--ts)';
                 b.style.borderColor = active?'var(--crimson)':'var(--border)';
+            });
+            aeditRenderPreview();
+        };
+        // [v2.30.1-p425.104] aeditSetVest · editor de actividad
+        window.aeditSetVest = function(v) {
+            window._aeditOutfit.vest = v;
+            ['none','black','gray','cream'].forEach(function(opt){
+                const b = document.getElementById('aedit-vest-' + opt);
+                if (!b) return;
+                const active = v===opt;
+                b.style.background  = active ? 'var(--crimson)' : 'var(--card)';
+                b.style.color       = active ? '#fff' : 'var(--ts)';
+                b.style.borderColor = active ? 'var(--crimson)' : 'var(--border)';
             });
             aeditRenderPreview();
         };
