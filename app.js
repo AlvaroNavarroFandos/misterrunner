@@ -14783,6 +14783,8 @@
     }
 
     function initOutfitSelector() {
+        // [v2.30.1-p425.105] Restaurar último outfit del importador antes de pintar
+        _mrRestoreLastOutfit();
         renderColorSwatches('shirt-color1-swatches', outfitState.shirtColor1, 'pickShirtColor1', SHIRT_COLORS);
         renderColorSwatches('shirt-color2-swatches', outfitState.shirtColor2, 'pickShirtColor2', SHIRT_COLORS);
         renderColorSwatches('shorts-color-swatches', outfitState.shortsColor, 'pickShortsColor', SHORTS_COLORS);
@@ -15002,17 +15004,22 @@
         // Dos lados simétricos (izq + dcha) con una apertura central donde van
         // los cordones cruzados. Hombros en y=22 (igual que shirtSVG), base en
         // y=72 (acaba a ~mitad del torso de la camiseta cuyo bajo es y=102-104).
+        // [v2.30.1-p425.105] Álvaro: subir chaleco al borde superior camiseta
+        // (y -4u, de y=22 a y=18 hombros) y centrarlo más (lado izq exterior
+        // 10→14, lado dcha exterior 90→86: -4u cada lado = -8u total ancho).
+        // Resultado: chaleco 72u ancho vs 80u antes (10% más estrecho,
+        // visualmente más proporcionado sobre la camiseta de 48u torso).
         var pathLeft =
-            'M 26,22 L 14,30 Q 10,32 10,36 L 10,68 Q 10,72 14,72 L 36,72 L 42,30 L 36,22 Z';
+            'M 28,18 L 16,26 Q 14,28 14,32 L 14,64 Q 14,68 16,68 L 36,68 L 42,26 L 36,18 Z';
         var pathRight =
-            'M 74,22 L 86,30 Q 90,32 90,36 L 90,68 Q 90,72 86,72 L 64,72 L 58,30 L 64,22 Z';
-        // Cordones zigzag entre los dos lados en la apertura central
+            'M 72,18 L 84,26 Q 86,28 86,32 L 86,64 Q 86,68 84,68 L 64,68 L 58,26 L 64,18 Z';
+        // Cordones zigzag entre los dos lados en la apertura central (subidos 4u también)
         var cordones =
-              '<path d="M 42,34 L 58,40 L 42,46 L 58,52 L 42,58 L 58,64 L 42,70" '
+              '<path d="M 42,30 L 58,36 L 42,42 L 58,48 L 42,54 L 58,60 L 42,66" '
             +   'stroke="' + VC.cord + '" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
             // Tiradores (bungee pulls) laterales inferiores
-            + '<circle cx="20" cy="68" r="1.8" fill="' + VC.cord + '"/>'
-            + '<circle cx="80" cy="68" r="1.8" fill="' + VC.cord + '"/>';
+            + '<circle cx="24" cy="64" r="1.8" fill="' + VC.cord + '"/>'
+            + '<circle cx="76" cy="64" r="1.8" fill="' + VC.cord + '"/>';
         return '<svg width="' + (w||48) + '" height="' + (h||52) + '" viewBox="0 0 100 104" '
              + 'xmlns="http://www.w3.org/2000/svg" '
              + 'style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible;">'
@@ -15033,6 +15040,65 @@
         return '<div style="position:relative;display:inline-block;width:' + w + 'px;height:' + h + 'px;line-height:0;vertical-align:top;">'
              + shirt + vestSVG(vest, w, h) + '</div>';
     }
+
+    // [v2.30.1-p425.105] Álvaro: tras editar activity o importar nueva, el
+    // chaleco (o cualquier cambio de outfit) no se veía en las minicards sin
+    // recargar la app. Causa: guard "misma huella" por pestaña (p425.93) y
+    // _mrLibLastSig de biblioteca no incluían `vest`. Fix: invalidador central
+    // que resetea flags Painted + LibSig, y si el usuario está en Home o
+    // Biblioteca, dispara repintado inmediato. Se llama tras saveActivityEdit
+    // y tras _saveImportedActivityCore.
+    // [v2.30.1-p425.105] Persistencia del último outfit elegido en el
+    // IMPORTADOR MANUAL. El editor aedit NO usa esto: ya guarda outfit en BD
+    // por cada activity. Esto solo recuerda la ÚLTIMA selección del importador
+    // para que al abrir el modal de import no tengas que volver a elegir todo
+    // (camiseta, pantalón, calcetines, chaleco). Clave en localStorage:
+    // `mr_lastOutfit`.
+    function _mrSaveLastOutfit() {
+        try {
+            if (typeof outfitState === 'object' && outfitState !== null) {
+                localStorage.setItem('mr_lastOutfit', JSON.stringify(outfitState));
+            }
+        } catch(_){}
+    }
+    function _mrRestoreLastOutfit() {
+        try {
+            var saved = localStorage.getItem('mr_lastOutfit');
+            if (!saved) return;
+            var o = JSON.parse(saved);
+            if (!o || typeof o !== 'object') return;
+            // Mergear SOLO campos conocidos con validación suave
+            if (['plain','vstripes','hstripes'].indexOf(o.shirtStyle) !== -1) outfitState.shirtStyle = o.shirtStyle;
+            if (['short','long'].indexOf(o.shirtSleeve) !== -1)              outfitState.shirtSleeve = o.shirtSleeve;
+            if (typeof o.shirtColor1 === 'string')                           outfitState.shirtColor1 = o.shirtColor1;
+            if (typeof o.shirtColor2 === 'string')                           outfitState.shirtColor2 = o.shirtColor2;
+            if (['short','tights'].indexOf(o.bottomsType) !== -1)            outfitState.bottomsType = o.bottomsType;
+            if (typeof o.shortsColor === 'string')                           outfitState.shortsColor = o.shortsColor;
+            if (['short','long'].indexOf(o.sockType) !== -1)                 outfitState.sockType = o.sockType;
+            if (typeof o.socksColor === 'string')                            outfitState.socksColor = o.socksColor;
+            if (['none','black','gray','cream'].indexOf(o.vest) !== -1)      outfitState.vest = o.vest;
+        } catch(_){}
+    }
+    window._mrSaveLastOutfit = _mrSaveLastOutfit;
+    window._mrRestoreLastOutfit = _mrRestoreLastOutfit;
+
+    window._mrInvalidateCardsAndTabs = function() {
+        try {
+            window.__mrhomeTabPainted   = false;
+            window.__mrrunnerTabPainted = false;
+            window.__mrmisterTabPainted = false;
+            window.__mrcalTabPainted    = false;
+            window.__mrLibLastSig       = null;
+            // Repintar YA la pestaña visible si es Home o Biblioteca
+            var activeTab = document.querySelector('.nb.active');
+            var tgt = activeTab ? activeTab.dataset.target : null;
+            if (tgt === 'home' && typeof renderHome === 'function') {
+                try { renderHome(); window.__mrhomeTabPainted = true; } catch(_){}
+            } else if (tgt === 'activities' && typeof renderActivities === 'function') {
+                try { renderActivities(); } catch(_){}
+            }
+        } catch(_){}
+    };
 
     // ── SHORTS SVG ──
     function shortsSVG(color, w=38, h=28) {
@@ -15364,6 +15430,8 @@
                 ${socksSVG(s.socksColor, 52, 40)}
                 <span style="font-size:7px;color:var(--tm);text-transform:uppercase;letter-spacing:.6px;">${socksLbl}</span>
             </div>`;
+        // [v2.30.1-p425.105] Persistir último outfit elegido
+        try { _mrSaveLastOutfit(); } catch(_){}
     }
 
     const TYPE_LABELS = { easy:'Easy Run', recovery:'Recovery', series:'Series', long:'Long Run', race:'Carrera', strength:'💪 Fuerza', maintenance:'Mantenimiento' };
@@ -18605,6 +18673,9 @@
         pendingFitData = null;
         var _deferHeavyImport = function() {
             try { renderActivities(); } catch(e) { console.warn('[MR][P2-Fix] renderActivities:', e); }
+            // [v2.30.1-p425.105] Invalidar flags TabPainted tras import para que
+            // Home/Mi año muestren cambios (ej. chaleco) sin recargar.
+            try { if (typeof window._mrInvalidateCardsAndTabs === 'function') window._mrInvalidateCardsAndTabs(); } catch(_){}
             try { saveAppState(); }    catch(e) { console.warn('[MR][P2-Fix] saveAppState:', e); }
             // [FIX widgets Home post-import · v2.30.1-p84]
             // Sin esto, TrainingLoad/Readiness/VO2max/VDOT/Stamina/LastActivity
@@ -23235,6 +23306,10 @@
                     }
                 })
                 .catch(function(err){ console.warn('[MR][PR·HITO] recalc post-edit fail:', err); });
+        }
+        // [v2.30.1-p425.105] Forzar refresh de minicards tras editar
+        if (typeof window._mrInvalidateCardsAndTabs === 'function') {
+            try { window._mrInvalidateCardsAndTabs(); } catch(_){}
         }
     }
 
