@@ -396,26 +396,33 @@
         border-color: rgba(255,255,255,.22);
         box-shadow: none;
     }
-    /* [v2.30.1-p425.39] Fix definitivo pixel blanco esquinas barra vertical
-       biblio + home-last + Mi año. Diagnóstico: el `.mr-lib-card-inner` YA tiene
-       gradient `linear-gradient(to right, var(--tb-d) 0 12px, ...)` (p425.17)
-       que pinta la barra respetando su border-radius:12. Pero el wrap
-       `.act-swipe-wrap` NO tiene el color del tipo en su bg → en las esquinas
-       curvas del inner (donde el border-radius:12 del inner elimina pixels),
-       se ve el bg de la app (blanco/beige light) a través del wrap. Fix: (1)
-       propagar `_libTypebarStyle` al wrap desde los 3 renderers (biblio JS +
-       home-last string + Mi año string) — ahora --tb-c/-h/-d están definidas
-       en el wrap. (2) Aplicar aquí el mismo bg gradient al wrap. El wrap
-       tiene border-radius:12 + overflow:hidden propios, así el gradient se
-       pinta en toda su superficie incluidas las esquinas curvas. En los
-       pixels donde el inner deja ver el wrap (esquinas), el bg del wrap
-       tiene el color del tipo → tapa el bg de la app. Selector aplica a los
-       3 sitios (biblio via #activities-list, home-last via #home-last-activity,
-       Mi año via .mya-day-detail). */
+    /* [v2.30.1-p425.100] Álvaro: el color del tipo se "escapaba" por el borde
+       derecho de las minicards. Causa: la regla previa (p425.39) aplicaba un
+       `background: linear-gradient` al `.act-swipe-wrap` para tapar pixels
+       blancos en las esquinas curvas del inner. Como el background se pinta
+       bajo el border (background-clip: border-box por defecto) y el border
+       del wrap es semi-transparente (.28 light / .22 dark), el color del
+       tipo se filtraba a través del border — visible en forma de "franja"
+       sutil en los 4 lados, especialmente notoria en el borde derecho (donde
+       no debería haber color alguno).
+       Nueva solución: SIN background del color del tipo en el wrap. En su
+       lugar, el `border-left-color` del wrap pasa a ser `var(--tb-d)` opaco.
+       El border de 2 px sigue la curva del `border-radius: 12 px`, con lo que
+       cubre exactamente los pixels de las esquinas curvas top/bottom-left
+       que el gradient original pretendía tapar — pero sin derramar nada en
+       el borde derecho. Resultado: color del tipo visible edge-to-edge en
+       la izquierda (2 px del border + 7 px del ::before = 9 px); borde
+       derecho limpio con solo el contorno gris/claro normal. */
     #activities-list .act-swipe-wrap,
     #home-last-activity .act-swipe-wrap,
     #mya-day-detail .act-swipe-wrap {
-        background: linear-gradient(to right, var(--tb-d, transparent) 0 12px, transparent 12px) !important;
+        background: transparent !important;
+        border-left-color: var(--tb-d, rgba(0,0,0,.28)) !important;
+    }
+    body.dark-mode #activities-list .act-swipe-wrap,
+    body.dark-mode #home-last-activity .act-swipe-wrap,
+    body.dark-mode #mya-day-detail .act-swipe-wrap {
+        border-left-color: var(--tb-d, rgba(255,255,255,.22)) !important;
     }
     /* [v2.30.1-p425.39.2] Álvaro tras p425.39.1: "sigue igual tio" con imagen
        Mi año. Diagnóstico: en Mi año/home-last había DOBLE border — wrap con
