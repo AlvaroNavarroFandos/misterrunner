@@ -34616,8 +34616,27 @@
             const timeEl = document.getElementById('active-plan-time');
             if(timeEl) timeEl.textContent = goalStr;
             // Ritmo objetivo (race pace) calculado a partir del tiempo
+            // [v2.30.1-p425.106] Álvaro: salía 4'44" para 3:10:00 (3:10/42.195=4'30").
+            // Causa: _applyVDOTRecalibration (L29993) sobrescribe plan.goalSecs tras
+            // recalibrar VDOT pero NO toca plan.goalHMS → desincronización.
+            // goalHMS mantiene el objetivo original INMUTABLE (3:10:00); goalSecs
+            // se recalibra y mete el tiempo-forma-actual (~3:19:43). Usamos goalHMS
+            // como fuente de verdad del objetivo (inmutable salvo edición explícita
+            // del plan) parseando a segundos localmente. plan.goalSecs sigue siendo
+            // usado por otros consumers (desfase, etc.) — no tocamos el schema aquí.
             const paceEl = document.getElementById('active-plan-pace');
-            if(paceEl) paceEl.textContent = runPlan.goalSecs ? fmtPace(pacesFromGoal(runPlan.goalSecs, runPlan.planDist).race) : '—';
+            if (paceEl) {
+                var _goalSecsTrue = null;
+                if (typeof runPlan.goalHMS === 'string') {
+                    var _m = runPlan.goalHMS.trim().match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
+                    if (_m) {
+                        if (_m[3] != null) _goalSecsTrue = Number(_m[1])*3600 + Number(_m[2])*60 + Number(_m[3]);
+                        else               _goalSecsTrue = Number(_m[1])*60   + Number(_m[2]);
+                    }
+                }
+                if (_goalSecsTrue == null) _goalSecsTrue = runPlan.goalSecs;
+                paceEl.textContent = _goalSecsTrue ? fmtPace(pacesFromGoal(_goalSecsTrue, runPlan.planDist).race) : '—';
+            }
             // Días hasta la carrera
             const daysEl = document.getElementById('active-plan-days');
             if(daysEl){
