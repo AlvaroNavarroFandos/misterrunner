@@ -30601,15 +30601,35 @@
 
 
         // ── VDOT paces: calibrated from Jack Daniels' tables ─────────
-    function estimateVDOT(goalTimeSecs) {
-        // Marathon VDOT lookup [minutes, vdot]
+    function estimateVDOT(goalTimeSecs, dist) {
+        // [v2.30.1-p425.109] FIX bug VDOT inicial del plan:
+        //   Antes esta función asumía que `goalTimeSecs` era SIEMPRE tiempo de
+        //   maratón. Al crear un plan de HM con objetivo 1:30:00 (= 5400s = 90min)
+        //   la tabla no tenía entry para t<120 min → caía al fallback
+        //   `return t<120?85:37` → devolvía VDOT 85 (élite mundial) para
+        //   cualquier objetivo HM/10K/5K. Fix idéntico al de vdotFromResult:
+        //   proyectar primero a tiempo-maratón equivalente usando Riegel
+        //   (exp 1.06), después buscar en la tabla.
+        //   `dist` nuevo parámetro opcional ('first_5k' | '10k' | 'half' |
+        //   'marathon' | 'marathon_xl' | 'marathon_intermediate'). Si no se
+        //   pasa, asume maratón (comportamiento legacy pre-bug).
+        if (!goalTimeSecs || goalTimeSecs <= 0) return 50;
         const tbl=[[120,85],[130,79],[140,74],[150,70],[160,66],[170,63],[180,60],[190,57],[200,55],[210,52],[220,50],[240,46],[270,41],[300,37]];
-        const t=goalTimeSecs/60;
+        const distKmMap={ 'first_5k':5, '5k':5, '10k':10, 'half':21.0975, 'marathon':42.195, 'marathon_xl':42.195, 'marathon_intermediate':42.195 };
+        const distKm = distKmMap[dist] || 42.195;
+        const distM = distKm * 1000;
+        // Proyectar a maratón via Riegel (misma fn que vdotFromResult)
+        const mSecs = (typeof _riegelProject === 'function')
+            ? _riegelProject(goalTimeSecs, distM, 42195)
+            : goalTimeSecs; // fallback si _riegelProject no está en scope
+        const t = mSecs / 60;
+        if (t < tbl[0][0]) return tbl[0][1];
+        if (t >= tbl[tbl.length-1][0]) return tbl[tbl.length-1][1];
         for(let i=0;i<tbl.length-1;i++){
             const[t0,v0]=tbl[i],[t1,v1]=tbl[i+1];
             if(t>=t0&&t<t1) return v0+(v1-v0)*(t-t0)/(t1-t0);
         }
-        return t<120?85:37;
+        return 37;
     }
 
     // Pace derivation: race pace from goal time, others as ratios
@@ -33298,7 +33318,7 @@
 
         const totalWeeks=Math.ceil(Math.round((raceDate-startDate)/86400000)/7);
         const paces = pacesFromGoal(goalSecs, planDist);
-        const vdot  = estimateVDOT(goalSecs);
+        const vdot  = estimateVDOT(goalSecs, planDist);  // [v2.30.1-p425.109] pasar planDist
         const lt=(typeof ltValue!=='undefined')?ltValue:170;
 
         // v2.4.0-p1 · Rama first_5k · plan fijo 6 semanas, sin periodización dinámica.
@@ -33314,7 +33334,7 @@
             }
             if (!goalSecs5k || goalSecs5k < 600) goalSecs5k = _deriveFirstFivekGoal();
             const paces5k = pacesFromGoal(goalSecs5k, 'first_5k');
-            const vdot5k  = estimateVDOT(goalSecs5k);
+            const vdot5k  = estimateVDOT(goalSecs5k, 'first_5k');  // [v2.30.1-p425.109] pasar dist
             const p5k = generateFirst5kPlan({
                 startDate: startDate,
                 raceDate: raceDate,
