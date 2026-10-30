@@ -399,33 +399,59 @@
 
                     /* ── Parser de fecha Strava (en-US) ────────────────── */
                     var MONTH_MAP = {
+                        // EN
                         Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
-                        Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11
+                        Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
+                        // ES [v2.30.1-p425.107]
+                        Ene:0, Abr:3, Ago:7, Dic:11
+                        // may/jun/jul/sep/oct/nov coinciden con EN
                     };
                     function _parseStravaDate(s) {
                         if (!s || typeof s !== 'string') return null;
                         s = s.trim();
                         if (!s) return null;
+                        var mon = null, day, year, hour, minute, second, ampm = null;
+                        // Formato EN: "Oct 27, 2026, 5:50:42 PM"
                         var m = s.match(/^([A-Za-z]{3})\s+(\d{1,2}),\s+(\d{4}),\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?$/i);
-                        if (!m) return null;
-                        var monKey = m[1].charAt(0).toUpperCase() + m[1].slice(1, 3).toLowerCase();
-                        var mon = MONTH_MAP[monKey];
-                        if (mon === undefined) return null;
-                        var hour = parseInt(m[4], 10);
-                        var ampm = m[7] ? m[7].toUpperCase() : null;
+                        if (m) {
+                            var monKey = m[1].charAt(0).toUpperCase() + m[1].slice(1, 3).toLowerCase();
+                            mon = MONTH_MAP[monKey];
+                            if (mon === undefined) return null;
+                            day = parseInt(m[2], 10); year = parseInt(m[3], 10);
+                            hour = parseInt(m[4], 10); minute = parseInt(m[5], 10); second = parseInt(m[6], 10);
+                            ampm = m[7] ? m[7].toUpperCase() : null;
+                        } else {
+                            // [v2.30.1-p425.107] Formato ES: "27 oct 2026, 17:50:42" (día mes año, 24h)
+                            m = s.match(/^(\d{1,2})\s+([A-Za-z]{3,4})\.?\s+(\d{4}),\s+(\d{1,2}):(\d{2}):(\d{2})$/i);
+                            if (!m) return null;
+                            var monKey2 = m[2].charAt(0).toUpperCase() + m[2].slice(1, 3).toLowerCase();
+                            mon = MONTH_MAP[monKey2];
+                            if (mon === undefined) return null;
+                            day = parseInt(m[1], 10); year = parseInt(m[3], 10);
+                            hour = parseInt(m[4], 10); minute = parseInt(m[5], 10); second = parseInt(m[6], 10);
+                        }
                         if (ampm === 'PM' && hour < 12) hour += 12;
                         else if (ampm === 'AM' && hour === 12) hour = 0;
-                        var d = new Date(Date.UTC(
-                            parseInt(m[3], 10), mon, parseInt(m[2], 10),
-                            hour, parseInt(m[5], 10), parseInt(m[6], 10)
-                        ));
+                        var d = new Date(Date.UTC(year, mon, day, hour, minute, second));
                         if (isNaN(d.getTime())) return null;
                         return d.toISOString();
                     }
 
                     function _toFloat(s) {
                         if (s === undefined || s === null || s === '') return null;
-                        var n = parseFloat(s);
+                        // [v2.30.1-p425.107] i18n: Strava exporta CSV con coma decimal
+                        // en idiomas europeos ("11,01" en vez de "11.01"). Normalizar.
+                        var str = String(s).trim();
+                        if (str.indexOf(',') !== -1) {
+                            if (str.indexOf('.') !== -1) {
+                                // formato europeo con miles: "1.234,56" → "1234.56"
+                                str = str.replace(/\./g, '').replace(',', '.');
+                            } else {
+                                // decimal europeo sin miles: "11,01" → "11.01"
+                                str = str.replace(',', '.');
+                            }
+                        }
+                        var n = parseFloat(str);
                         return isNaN(n) ? null : n;
                     }
                     function _toInt(s) {
@@ -441,31 +467,36 @@
                     }
 
                     var headers = lines[0].map(function(h) { return (h || '').trim(); });
-                    function findCol(name) {
-                        var lower = name.toLowerCase();
-                        for (var i = 0; i < headers.length; i++) {
-                            if (headers[i].toLowerCase() === lower) return i;
+                    // [v2.30.1-p425.107] i18n: Strava traduce las cabeceras del CSV
+                    // según el idioma de la cuenta. Aceptamos aliases ES además de EN.
+                    function findCol(nameOrNames) {
+                        var names = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
+                        for (var n = 0; n < names.length; n++) {
+                            var lower = names[n].toLowerCase();
+                            for (var i = 0; i < headers.length; i++) {
+                                if (headers[i].toLowerCase() === lower) return i;
+                            }
                         }
                         return -1;
                     }
                     var idx = {
-                        activityId:   findCol('Activity ID'),
-                        activityDate: findCol('Activity Date'),
-                        activityName: findCol('Activity Name'),
-                        activityType: findCol('Activity Type'),
-                        elapsedTime:  findCol('Elapsed Time'),
-                        movingTime:   findCol('Moving Time'),
-                        distance:     findCol('Distance'),          // km
-                        elevGain:     findCol('Elevation Gain'),    // m
-                        elevLoss:     findCol('Elevation Loss'),    // m
-                        maxHr:        findCol('Max Heart Rate'),
-                        avgHr:        findCol('Average Heart Rate'),
-                        calories:     findCol('Calories'),
-                        filename:     findCol('Filename'),
-                        commute:      findCol('Commute'),
+                        activityId:   findCol(['Activity ID',    'ID de actividad']),
+                        activityDate: findCol(['Activity Date',  'Fecha de la actividad']),
+                        activityName: findCol(['Activity Name',  'Nombre de la actividad']),
+                        activityType: findCol(['Activity Type',  'Tipo de actividad']),
+                        elapsedTime:  findCol(['Elapsed Time',   'Tiempo transcurrido']),
+                        movingTime:   findCol(['Moving Time',    'Tiempo en movimiento']),
+                        distance:     findCol(['Distance',       'Distancia']),               // km
+                        elevGain:     findCol(['Elevation Gain', 'Desnivel positivo']),        // m
+                        elevLoss:     findCol(['Elevation Loss', 'Desnivel negativo']),        // m
+                        maxHr:        findCol(['Max Heart Rate',     'Frecuencia cardiaca máxima']),
+                        avgHr:        findCol(['Average Heart Rate', 'Frecuencia cardiaca promedio']),
+                        calories:     findCol(['Calories',       'Calorías']),
+                        filename:     findCol(['Filename',       'Nombre del archivo']),
+                        commute:      findCol(['Commute',        'Desplazamiento']),
                         /* FASE 4.1: columnas para fotos y zapatillas */
-                        media:        findCol('Media'),
-                        activityGear: findCol('Activity Gear')
+                        media:        findCol(['Media',          'Multimedia']),
+                        activityGear: findCol(['Activity Gear',  'Equipamiento de la actividad'])
                     };
                     if (idx.activityType === -1) {
                         warnings.push('Falta columna "Activity Type" — no se puede filtrar Runs');
@@ -492,7 +523,11 @@
                         totalActivities++;
 
                         var type = (line[idx.activityType] || '').trim();
-                        if (type !== 'Run' && type !== 'Trail Run') continue;
+                        // [v2.30.1-p425.107] i18n: Strava traduce el valor según
+                        // idioma. Aceptamos aliases ES de "Run" y "Trail Run".
+                        if (type !== 'Run' && type !== 'Trail Run'
+                            && type !== 'Carrera' && type !== 'Carrera por sendero'
+                            && type !== 'Trail') continue;
                         runCount++;
 
                         var distance = idx.distance >= 0 ? _toFloat(line[idx.distance]) : null;
