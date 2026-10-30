@@ -56905,6 +56905,64 @@ async function connectStrava() {
 window.connectStrava = connectStrava;
 
 /* ═══════════════════════════════════════════════════════════════════
+   [v2.30.1-p425.108] Strava · Desconectar cuenta (sheet Conexiones)
+   ═══════════════════════════════════════════════════════════════════
+   Álvaro: añadir una fila para desconectar Strava equivalente a la de
+   COROS, para asegurarse de que la conexión está sana (desconectar +
+   reconectar como "reset" rápido si algo va mal).
+
+   Scope: cleanup CLIENTE (borrar el flag localStorage usado por los
+   indicadores de la UI). NO existe endpoint /disconnect en la edge
+   function `strava-api` (solo /list-recent, /fetch-activity, /log-import),
+   así que no se intenta revocar remotamente — el toast indica al usuario
+   que si quiere revocar los permisos COMPLETOS en Strava debe ir a
+   strava.com/settings/apps.
+
+   Flujo:
+     1. Reconcile al abrir el sheet (hook en onclick #row-conexiones): mira
+        localStorage['mr_strava_connected_v1'] y muestra u oculta la fila
+        "Desconectar cuenta".
+     2. Al pulsarla → confirm nativo → borra el flag + fxToast + reconcile.
+*/
+function _reconcileStravaConnCard() {
+    try {
+        var row = document.getElementById('row-strava-disconnect');
+        if (!row) return;
+        var connected = false;
+        try { connected = (localStorage.getItem('mr_strava_connected_v1') === '1'); } catch(_) {}
+        row.style.display = connected ? 'flex' : 'none';
+    } catch(_){}
+}
+window._reconcileStravaConnCard = _reconcileStravaConnCard;
+
+function _stravaPromptDisconnect() {
+    try {
+        var ok = window.confirm(
+            'Desconectar Strava de MisterRunner.\n\n' +
+            'Esto deja de usar tu cuenta de Strava en la app. ' +
+            'Para revocar los permisos COMPLETOS, ve a strava.com/settings/apps y retira MisterRunner.\n\n' +
+            '¿Seguir?'
+        );
+        if (!ok) return;
+        try { localStorage.setItem('mr_strava_connected_v1', '0'); } catch(_) {}
+        _reconcileStravaConnCard();
+        // Refrescar indicadores de UI que dependen del flag (botón AUTO SYNC, etc.)
+        try { if (typeof window._updateAutoSyncIcon === 'function') window._updateAutoSyncIcon(); } catch(_) {}
+        try { if (typeof window._renderAutosyncCard === 'function') window._renderAutosyncCard(); } catch(_) {}
+        if (typeof window.fxToast === 'function') {
+            window.fxToast('Strava desconectada. Para revocar permisos completos, ve a strava.com/settings/apps', { variant: 'info', duration: 6000 });
+        }
+    } catch (e) {
+        console.warn('[MR][Strava] disconnect falló:', e);
+        if (typeof window.fxToast === 'function') {
+            window.fxToast('Error al desconectar Strava', { variant: 'error' });
+        }
+    }
+}
+window._stravaPromptDisconnect = _stravaPromptDisconnect;
+
+
+/* ═══════════════════════════════════════════════════════════════════
    Strava integration · OAuth return handler · Paso 5c (Sesión Strava #2)
    ═══════════════════════════════════════════════════════════════════
    Tras el redirect de la Edge Function `strava-callback` el usuario
