@@ -3750,6 +3750,14 @@
         const loaded = loadAppState();
         loadStrengthPlanOnBoot();
         loadRehabPlanOnBoot();
+        // [v2.30.1-p425.111] Migración de planes con VDOT inflado (p108-).
+        // Ejecuta UNA vez por plan (flag plan.vdotMigrated_p110) y solo si
+        // hay fuente fisiológica real; silenciosa (solo console.log).
+        try {
+            if (typeof _mrMigrateInflatedVdot === 'function') {
+                setTimeout(function(){ try { _mrMigrateInflatedVdot(); } catch(_){} }, 300);
+            }
+        } catch(_){}
 
         // Async: load activities from IndexedDB then fusión con BD bulk
         // (FASE 5.2) y re-render. Estrategia: IDB es fuente para
@@ -30744,6 +30752,92 @@
         return Math.round(v);
     }
     window._mrEstimateInitialVDOT = _mrEstimateInitialVDOT;
+
+    // ═══════════════════════════════════════════════════════════════
+    // [v2.30.1-p425.111] Migración automática de VDOT inflado legacy
+    // ═══════════════════════════════════════════════════════════════
+    // Planes creados con app p425.108 o anteriores pueden tener plan.vdot = 85
+    // (nivel élite mundial) por el bug de estimateVDOT que no proyectaba a
+    // maratón. Esta función detecta planes stale y los recalibra una vez
+    // usando la cascada (_mrEstimateInitialVDOT).
+    //
+    // Defensiva en 4 niveles:
+    //   1. Idempotente: marca plan.vdotMigrated_p110=true para no re-migrar.
+    //   2. Solo migra si plan.vdot > 75 (improbable salvo élite real).
+    //   3. Solo migra si hay fuente fisiológica real (PR, umbral, VO2max),
+    //      para no caer en el fallback del objetivo que DARÍA EL MISMO VALOR.
+    //   4. Solo migra si el nuevo VDOT es < 75 (sanity).
+    //
+    // Se llama desde bootApp justo después de loadAppState().
+    function _mrMigrateInflatedVdot() {
+        try {
+            var plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null;
+            if (!plan) return false;
+            if (plan.vdotMigrated_p110) return false;
+            if (!plan.vdot || plan.vdot <= 75) return false;
+
+            // Verificar que hay al menos una fuente fisiológica fiable
+            var hasPhysio = false;
+            try {
+                if (profileData && profileData.marcas) {
+                    var keys = ['5k','10k','hm','m'];
+                    for (var i = 0; i < keys.length; i++) {
+                        var v = profileData.marcas[keys[i]];
+                        if (v && v !== '—' && String(v).indexOf(':') !== -1) { hasPhysio = true; break; }
+                    }
+                }
+            } catch(_){}
+            try {
+                if (!hasPhysio && profileData && profileData.vo2max) {
+                    var vo2 = Number(profileData.vo2max);
+                    if (vo2 >= 25 && vo2 <= 85) hasPhysio = true;
+                }
+            } catch(_){}
+            try {
+                if (!hasPhysio) {
+                    var tp = (typeof window._userPaceMinPerKm === 'number' && window._userPaceMinPerKm > 0)
+                        ? window._userPaceMinPerKm
+                        : (typeof paceValue !== 'undefined' ? paceValue : null);
+                    // 262 s/km es el default (4'22"/km): descartar para no
+                    // migrar basándonos en un valor que el user nunca tocó.
+                    if (tp && tp >= 170 && tp <= 420 && tp !== 262) hasPhysio = true;
+                }
+            } catch(_){}
+            if (!hasPhysio) {
+                // Sin datos fisiológicos: la cascada caería en el fallback
+                // del objetivo del plan, que daría el mismo VDOT que ahora
+                // (probablemente 85). NO migrar — el user debe meter una PR,
+                // VO2max o umbral manual.
+                console.log('[MR][migrate] plan.vdot=' + plan.vdot + ' pero sin fuente fisiológica → NO migrar');
+                return false;
+            }
+
+            var oldVdot = plan.vdot;
+            var newVdot = _mrEstimateInitialVDOT(plan.goalSecs, plan.planDist);
+            if (!newVdot || newVdot >= 75 || newVdot === oldVdot) {
+                console.log('[MR][migrate] VDOT nuevo=' + newVdot + ' no mejora, skip');
+                return false;
+            }
+
+            plan.vdot = newVdot;
+            plan.vdotMigrated_p110 = true;
+            console.log('[MR][migrate] plan.vdot ' + oldVdot + ' → ' + newVdot + ' (cascada de fuentes · p425.111)');
+
+            // Persistir cambio
+            try { if (typeof savePlanToStorage === 'function') savePlanToStorage(); } catch(_){}
+            try { if (typeof saveAppState === 'function') saveAppState(); } catch(_){}
+
+            // Refrescar UI (card Mister, evolución VDOT) si están pintadas
+            try { if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard(); } catch(_){}
+            try { if (typeof _mrRenderVdotRow === 'function') _mrRenderVdotRow(); } catch(_){}
+
+            return true;
+        } catch (e) {
+            console.warn('[MR][migrate] falló:', e);
+            return false;
+        }
+    }
+    window._mrMigrateInflatedVdot = _mrMigrateInflatedVdot;
 
     // Pace derivation: race pace from goal time, others as ratios
     // Uses Jack Daniels' VDOT equivalency factors per distance
