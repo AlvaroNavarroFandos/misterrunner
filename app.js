@@ -30632,6 +30632,119 @@
         return 37;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // [v2.30.1-p425.110] VDOT inicial del plan · cascada de fuentes
+    // ═══════════════════════════════════════════════════════════════
+    // Álvaro: el VDOT no debe derivarse del OBJETIVO del plan (que es una
+    // intención futura, no una medida de forma actual). Hay que usar los
+    // datos de forma ACTUAL que ya tenemos. Orden de prioridad:
+    //
+    //   1. PRs (profileData.marcas) → el MEJOR VDOT de los PRs del user.
+    //      Es lo más fiable: una marca registrada es rendimiento real.
+    //   2. Ritmo umbral del perfil (paceValue seg/km) → tabla T-pace Daniels.
+    //      El umbral es rendimiento sostenible REAL (COROS lo mide o el user
+    //      lo configura manual con tests). Más fiable que VO2max del reloj.
+    //   3. VO2max del reloj (profileData.vo2max) → VDOT ≈ VO2max.
+    //      Garmin/COROS tienden a inflar VO2max (sesgo optimista), pero es
+    //      el mejor dato cuando no hay umbral ni PRs.
+    //   4. ÚLTIMO recurso: objetivo del plan vía estimateVDOT (comportamiento
+    //      pre-cascada, ya con fix p425.109 de proyección Riegel).
+    //
+    // Devuelve VDOT redondeado (entero). Cada fuente anota {vdot, source}
+    // en console.log para trazabilidad.
+    function _mrEstimateInitialVDOT(goalSecs, planDist) {
+        // ── Fuente 1 · PRs del perfil ────────────────────────────────
+        try {
+            if (typeof profileData !== 'undefined' && profileData && profileData.marcas) {
+                const m = profileData.marcas;
+                const parseT = function(s) {
+                    if (!s || s === '—') return null;
+                    const p = String(s).trim().split(':').map(Number);
+                    if (p.some(isNaN)) return null;
+                    if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+                    if (p.length === 2) return p[0]*60 + p[1];
+                    return null;
+                };
+                // Distancia por key. Sanity: mínimo tiempo razonable para descartar errores.
+                const srcs = [
+                    { key:'5k',  distM:5000,    minSecs:600  },  // > 10 min (6'00"/km)
+                    { key:'10k', distM:10000,   minSecs:1200 },  // > 20 min
+                    { key:'hm',  distM:21097.5, minSecs:3600 },  // > 60 min
+                    { key:'m',   distM:42195,   minSecs:7200 }   // > 2 h
+                ];
+                const prVdots = [];
+                for (let i = 0; i < srcs.length; i++) {
+                    const t = parseT(m[srcs[i].key]);
+                    if (t && t > srcs[i].minSecs) {
+                        const v = vdotFromResult(t, srcs[i].distM);
+                        if (v && v > 0 && v <= 85) prVdots.push({ v: v, src: srcs[i].key, t: t });
+                    }
+                }
+                if (prVdots.length) {
+                    // El MEJOR VDOT entre PRs. Si tienes 5K 20:00 y HM 1:45, el 5K da mejor VDOT.
+                    const best = prVdots.reduce(function(a, b){ return b.v > a.v ? b : a; });
+                    console.log('[MR][VDOT] fuente: PR ' + best.src + ' → ' + Math.round(best.v));
+                    return Math.round(best.v);
+                }
+            }
+        } catch(_){}
+
+        // ── Fuente 2 · Ritmo umbral del perfil ──────────────────────
+        try {
+            // paceValue (seg/km) está declarado en el IIFE de zonas pero expuesto
+            // como window._userPaceMinPerKm para lecturas cross-módulo.
+            let tPaceS = null;
+            if (typeof window._userPaceMinPerKm === 'number' && window._userPaceMinPerKm > 0) {
+                tPaceS = window._userPaceMinPerKm;
+            } else if (typeof paceValue !== 'undefined' && paceValue > 0) {
+                tPaceS = paceValue;
+            }
+            // Sanity: ritmo umbral entre 2'50"/km (élite) y 7'00"/km (principiante)
+            if (tPaceS && tPaceS >= 170 && tPaceS <= 420) {
+                // Tabla T-pace Daniels (seg/km → VDOT). Interpolación inversa.
+                const tTbl = [
+                    [329, 35], [310, 38], [293, 40], [280, 43], [268, 45],
+                    [258, 48], [248, 50], [239, 53], [231, 55], [224, 58],
+                    [218, 60], [213, 63], [207, 65], [202, 68], [197, 70]
+                ];
+                let vdot = null;
+                if (tPaceS >= tTbl[0][0]) vdot = tTbl[0][1];
+                else if (tPaceS <= tTbl[tTbl.length-1][0]) vdot = tTbl[tTbl.length-1][1];
+                else {
+                    for (let i = 0; i < tTbl.length-1; i++) {
+                        const p0 = tTbl[i][0],  v0 = tTbl[i][1];
+                        const p1 = tTbl[i+1][0], v1 = tTbl[i+1][1];
+                        if (tPaceS <= p0 && tPaceS > p1) {
+                            vdot = v0 + (v1 - v0) * (p0 - tPaceS) / (p0 - p1);
+                            break;
+                        }
+                    }
+                }
+                if (vdot) {
+                    console.log('[MR][VDOT] fuente: ritmo umbral ' + tPaceS + 's/km → ' + Math.round(vdot));
+                    return Math.round(vdot);
+                }
+            }
+        } catch(_){}
+
+        // ── Fuente 3 · VO2max del reloj ──────────────────────────────
+        try {
+            if (typeof profileData !== 'undefined' && profileData && profileData.vo2max) {
+                const vo2 = Number(profileData.vo2max);
+                if (vo2 >= 25 && vo2 <= 85) {
+                    console.log('[MR][VDOT] fuente: VO2max reloj → ' + Math.round(vo2));
+                    return Math.round(vo2);
+                }
+            }
+        } catch(_){}
+
+        // ── Fuente 4 · ÚLTIMO recurso: objetivo del plan ─────────────
+        const v = estimateVDOT(goalSecs, planDist);
+        console.log('[MR][VDOT] fuente: objetivo del plan (fallback) → ' + Math.round(v));
+        return Math.round(v);
+    }
+    window._mrEstimateInitialVDOT = _mrEstimateInitialVDOT;
+
     // Pace derivation: race pace from goal time, others as ratios
     // Uses Jack Daniels' VDOT equivalency factors per distance
     function pacesFromGoal(goalSecs, dist) {
@@ -33318,7 +33431,7 @@
 
         const totalWeeks=Math.ceil(Math.round((raceDate-startDate)/86400000)/7);
         const paces = pacesFromGoal(goalSecs, planDist);
-        const vdot  = estimateVDOT(goalSecs, planDist);  // [v2.30.1-p425.109] pasar planDist
+        const vdot  = _mrEstimateInitialVDOT(goalSecs, planDist);  // [v2.30.1-p425.110] cascada PRs > VO2max > umbral > objetivo
         const lt=(typeof ltValue!=='undefined')?ltValue:170;
 
         // v2.4.0-p1 · Rama first_5k · plan fijo 6 semanas, sin periodización dinámica.
@@ -33334,7 +33447,7 @@
             }
             if (!goalSecs5k || goalSecs5k < 600) goalSecs5k = _deriveFirstFivekGoal();
             const paces5k = pacesFromGoal(goalSecs5k, 'first_5k');
-            const vdot5k  = estimateVDOT(goalSecs5k, 'first_5k');  // [v2.30.1-p425.109] pasar dist
+            const vdot5k  = _mrEstimateInitialVDOT(goalSecs5k, 'first_5k');  // [v2.30.1-p425.110] cascada
             const p5k = generateFirst5kPlan({
                 startDate: startDate,
                 raceDate: raceDate,
