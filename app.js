@@ -28165,9 +28165,72 @@
     // en desc/blocks de sesiones cuya dateStr > fromDate. Respeta las
     // pasadas, saltea type='test' y type='race' (no tienen pace target).
     // Regex single-pass evita colisiones cuando newEasy iguala oldMarathon.
-    function _updateFuturePlanPaces(plan, newPaces, fromDate) {
+    // [v2.30.1-p425.114] Escanea descs/blocks de sesiones futuras y devuelve
+    // los paces visibles por zona (easy, marathon, threshold, interval). Esta
+    // es la fuente de verdad para "oldPaces" cuando plan.paces está
+    // desincronizado (porque un cambio anterior mutó plan.paces sin reescribir
+    // descs). Por zona toma el pace MÁS FRECUENTE en las strings visibles.
+    function _mrDetectVisiblePaces(plan, fromDate) {
+        if (!plan || !plan.weeks || !fromDate) return {};
+        var paceRe = /(\d)\s*'\s*(\d{2})\s*"\s*\/\s*km/;
+        var counts = { easy: {}, marathon: {}, threshold: {}, interval: {} };
+        function parsePace(str) {
+            if (!str || typeof str !== 'string') return null;
+            var m = str.match(paceRe);
+            if (!m) return null;
+            var s = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+            return (s > 150 && s < 500) ? s : null;
+        }
+        function bump(zone, p) {
+            if (!p || !zone) return;
+            counts[zone][p] = (counts[zone][p] || 0) + 1;
+        }
+        function zoneOf(text) {
+            text = String(text || '').toLowerCase();
+            if (/\bmp\b|marat[oó]n|ritmo\s*m\b|activaci[oó]n\s*mp/.test(text)) return 'marathon';
+            if (/umbral|threshold|tempo/.test(text)) return 'threshold';
+            if (/vo2|vo₂|intervalo|\binterval\b/.test(text)) return 'interval';
+            if (/f[aá]cil|rodaje|easy|long|largo|suave|calent|vuelta\s*a\s*la\s*calma|recup/.test(text)) return 'easy';
+            return null;
+        }
+        (plan.weeks || []).forEach(function(w) {
+            (w.sessions || []).forEach(function(s) {
+                if (!s.dateStr || s.dateStr <= fromDate) return;
+                if (s.type === 'test' || s.type === 'race') return;
+                var sessZone = zoneOf((s.type || '') + ' ' + (s.name || '') + ' ' + (s.desc || ''));
+                var sessPace = parsePace(s.desc);
+                if (sessZone && sessPace) bump(sessZone, sessPace);
+                (s.blocks || []).forEach(function(b) {
+                    var bZone = zoneOf((b.name || '') + ' ' + (b.detail || '')) || sessZone;
+                    var bPace = parsePace(b.detail || '');
+                    if (bZone && bPace) bump(bZone, bPace);
+                    (b.reps || []).forEach(function(r) {
+                        var rZone = zoneOf((r.name || '') + ' ' + (r.detail || '')) || bZone;
+                        var rPace = parsePace(r.detail || '');
+                        if (rZone && rPace) bump(rZone, rPace);
+                    });
+                });
+            });
+        });
+        var out = {};
+        Object.keys(counts).forEach(function(z) {
+            var best = null, bc = 0;
+            Object.keys(counts[z]).forEach(function(k) {
+                if (counts[z][k] > bc) { bc = counts[z][k]; best = parseInt(k, 10); }
+            });
+            if (best) out[z] = best;
+        });
+        return out;
+    }
+    window._mrDetectVisiblePaces = _mrDetectVisiblePaces;
+
+        function _updateFuturePlanPaces(plan, newPaces, fromDate) {
         if (!plan || !plan.weeks || !newPaces || !fromDate) return { updated: 0, weeksTouched: 0 };
-        var oldPaces = plan.paces || {};
+        // [v2.30.1-p425.114] oldPaces = paces VISIBLES en descs/blocks (fuente de
+        // verdad). Fallback a plan.paces para zonas sin match (repeat, race).
+        var basePaces = plan.paces || {};
+        var visible = (typeof _mrDetectVisiblePaces === 'function') ? _mrDetectVisiblePaces(plan, fromDate) : {};
+        var oldPaces = Object.assign({}, basePaces, visible);
         var DELTAS = { easy: 15, marathon: 10, threshold: 8, interval: 5 };
         function _fmtPaceLoc(secs) {
             var m = Math.floor(secs/60), s = secs%60;
@@ -30160,9 +30223,12 @@
             if (plan.finalGoalSecs != null) plan.finalGoalSecs = newGoalSecs;
             plan.paces = newPaces;
 
-            console.log('[MR][p113] objetivo ' + oldGoalHMS + ' → ' + newGoalHMS +
+            var _vis = {};
+            try { _vis = (typeof _mrDetectVisiblePaces === 'function') ? _mrDetectVisiblePaces(plan, todayStr) : {}; } catch(_){}
+            console.log('[MR][p114] objetivo ' + oldGoalHMS + ' → ' + newGoalHMS +
                         ' · sesiones actualizadas: ' + upd.updated +
-                        ' · semanas tocadas: ' + upd.weeksTouched);
+                        ' · semanas tocadas: ' + upd.weeksTouched +
+                        ' · paces visibles detectados: ' + JSON.stringify(_vis));
 
             // Persistir
             try { if (typeof savePlanToStorage === 'function') savePlanToStorage(); } catch(_){}
