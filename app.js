@@ -30046,6 +30046,7 @@
     //   5. plan.paces = nuevos paces (ritmos de referencia)
     //   6. _updateFuturePlanPaces() reescribe paces en sesiones futuras
     //   7. Guardamos + refrescamos UI
+    // Abre el sheet premium con steppers H/M/S + preview de ritmo
     function _mrChangeGoalOnly() {
         try {
             var plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null;
@@ -30053,64 +30054,122 @@
                 alert('No hay un plan de running activo.');
                 return;
             }
-            var currentHMS = plan.goalHMS ||
-                (plan.goalSecs ? (typeof secsToHMS === 'function' ? secsToHMS(plan.goalSecs) : '') : '');
-            var msg = 'Cambiar objetivo del plan\n\n' +
-                      'Objetivo actual: ' + (currentHMS || '—') + '\n\n' +
-                      'Introduce el NUEVO tiempo objetivo (formato H:MM:SS):';
-            var input = prompt(msg, currentHMS);
-            if (input == null) return; // cancelado
-            input = String(input).trim();
-            if (!input) return;
-            // Parseo H:MM:SS o MM:SS
-            var parts = input.split(':').map(function(s){ return Number(s.trim()); });
-            if (parts.some(isNaN)) { alert('Formato no válido. Usa H:MM:SS (ej: 3:10:00)'); return; }
-            var newGoalSecs = 0;
-            if (parts.length === 3)      newGoalSecs = parts[0]*3600 + parts[1]*60 + parts[2];
-            else if (parts.length === 2) newGoalSecs = parts[0]*60 + parts[1];
-            else { alert('Formato no válido. Usa H:MM:SS (ej: 3:10:00)'); return; }
-            // Sanity
+            var currentSecs = plan.goalSecs || 0;
+            var h = Math.floor(currentSecs/3600);
+            var m = Math.floor((currentSecs%3600)/60);
+            var s = currentSecs%60;
+            var inpH = document.getElementById('mr-cg-h');
+            var inpM = document.getElementById('mr-cg-m');
+            var inpS = document.getElementById('mr-cg-s');
+            if (inpH) inpH.value = String(h);
+            if (inpM) inpM.value = String(m).padStart(2,'0');
+            if (inpS) inpS.value = String(s).padStart(2,'0');
+            _mrCgUpdatePreview();
+            if (typeof openSheet === 'function') openSheet('mr-change-goal-sheet');
+        } catch(e) { console.warn('[MR][p113] _mrChangeGoalOnly:', e); }
+    }
+    window._mrChangeGoalOnly = _mrChangeGoalOnly;
+
+    // Lee los 3 steppers y devuelve { secs, hms, paceStr }
+    function _mrCgReadGoalSecs() {
+        var h = parseInt((document.getElementById('mr-cg-h')||{}).value, 10) || 0;
+        var m = parseInt((document.getElementById('mr-cg-m')||{}).value, 10) || 0;
+        var s = parseInt((document.getElementById('mr-cg-s')||{}).value, 10) || 0;
+        if (m < 0) m = 0; if (m > 59) m = 59;
+        if (s < 0) s = 0; if (s > 59) s = 59;
+        if (h < 0) h = 0; if (h > 10) h = 10;
+        return h*3600 + m*60 + s;
+    }
+
+    // Actualiza el preview "Ritmo objetivo: X'XX"/km"
+    function _mrCgUpdatePreview() {
+        try {
+            var el = document.getElementById('mr-cg-pace-preview');
+            var totalEl = document.getElementById('mr-cg-total-preview');
+            if (!el && !totalEl) return;
+            var plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null;
+            var secs = _mrCgReadGoalSecs();
+            var distKmMap = { 'first_5k':5, '5k':5, '10k':10, 'half':21.0975, 'marathon':42.195, 'marathon_xl':42.195, 'marathon_intermediate':42.195 };
+            var distKm = distKmMap[(plan && plan.planDist) || 'marathon'] || 42.195;
+            if (totalEl) {
+                var h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), ss = secs%60;
+                var pad = function(n){ return String(n).padStart(2,'0'); };
+                totalEl.textContent = h > 0 ? (h + ':' + pad(m) + ':' + pad(ss)) : (m + ':' + pad(ss));
+            }
+            if (el) {
+                if (!secs || secs < 600) { el.textContent = '—'; return; }
+                var paceS = Math.round(secs / distKm);
+                var pm = Math.floor(paceS/60), ps = paceS%60;
+                el.textContent = pm + '\'' + String(ps).padStart(2,'0') + '"/km';
+            }
+        } catch(_){}
+    }
+    window._mrCgUpdatePreview = _mrCgUpdatePreview;
+
+    // Incrementa/decrementa un stepper (campo id + delta)
+    function _mrCgStep(field, delta) {
+        var el = document.getElementById('mr-cg-' + field);
+        if (!el) return;
+        var v = parseInt(el.value, 10); if (isNaN(v)) v = 0;
+        v += delta;
+        if (field === 'h') { if (v < 0) v = 0; if (v > 10) v = 10; el.value = String(v); }
+        else { if (v < 0) v = 59; if (v > 59) v = 0; el.value = String(v).padStart(2,'0'); }
+        _mrCgUpdatePreview();
+    }
+    window._mrCgStep = _mrCgStep;
+
+    // Aplica el cambio (botón "Aplicar" del sheet)
+    function _mrCgApply() {
+        try {
+            var plan = (typeof activePlan !== 'undefined' && activePlan) ? activePlan : null;
+            if (!plan || plan.type === 'strength') { alert('No hay un plan de running activo.'); return; }
+            var newGoalSecs = _mrCgReadGoalSecs();
             if (newGoalSecs < 600 || newGoalSecs > 25200) {
                 alert('El objetivo debe estar entre 10 minutos y 7 horas.');
                 return;
             }
-            // Formato HMS limpio (coincide con secsToHMS)
             var h = Math.floor(newGoalSecs/3600);
             var m = Math.floor((newGoalSecs%3600)/60);
             var s = newGoalSecs%60;
             var pad2 = function(n){ return String(n).padStart(2,'0'); };
             var newGoalHMS = h > 0 ? (h + ':' + pad2(m) + ':' + pad2(s)) : (m + ':' + pad2(s));
-
             var planDist = plan.planDist || 'marathon';
             var newPaces = (typeof pacesFromGoal === 'function')
                 ? pacesFromGoal(newGoalSecs, planDist) : null;
             if (!newPaces) { alert('Error calculando los ritmos. Inténtalo de nuevo.'); return; }
-
-            // Guardar valores viejos para confirmación visual
             var oldGoalHMS = plan.goalHMS || '—';
 
-            // Mutaciones manuales (contrato del user, como quiere Álvaro)
+            // [v2.30.1-p425.113] FIX orden: ANTES de mutar plan.paces, llamar a
+            // _updateFuturePlanPaces para que lea los paces VIEJOS (con pacesFromGoal
+            // del plan actual) y los sustituya por newPaces en los descs/blocks.
+            // El bug de p112: mutábamos plan.paces primero → _updateFuturePlanPaces
+            // leía oldPaces=newPaces → oldP===newP → 0 reemplazos → descs/blocks
+            // con los paces viejos quedaban como "4'44" (ritmo marathon hardcoded
+            // en el string al generar el plan originalmente).
+            var todayStr = new Date().toISOString().slice(0, 10);
+            var upd = { updated: 0, weeksTouched: 0 };
+            if (typeof _updateFuturePlanPaces === 'function') {
+                try { upd = _updateFuturePlanPaces(plan, newPaces, todayStr) || upd; } catch(e) {
+                    console.warn('[MR][p113] _updateFuturePlanPaces falló:', e);
+                }
+            }
+
+            // Mutar DESPUÉS de reescribir descs
             plan.goalSecs = newGoalSecs;
             plan.goalHMS = newGoalHMS;
             if (plan.finalGoalSecs != null) plan.finalGoalSecs = newGoalSecs;
             plan.paces = newPaces;
 
-            // Reescribir ritmos en sesiones futuras (sin tocar tipos/bloques)
-            var todayStr = new Date().toISOString().slice(0, 10);
-            var upd = { updated: 0, weeksTouched: 0 };
-            if (typeof _updateFuturePlanPaces === 'function') {
-                try { upd = _updateFuturePlanPaces(plan, newPaces, todayStr) || upd; } catch(e) {
-                    console.warn('[MR][p112] _updateFuturePlanPaces falló:', e);
-                }
-            }
-
-            console.log('[MR][p112] objetivo cambiado ' + oldGoalHMS + ' → ' + newGoalHMS +
-                        ' · sesiones futuras actualizadas: ' + upd.updated +
+            console.log('[MR][p113] objetivo ' + oldGoalHMS + ' → ' + newGoalHMS +
+                        ' · sesiones actualizadas: ' + upd.updated +
                         ' · semanas tocadas: ' + upd.weeksTouched);
 
             // Persistir
             try { if (typeof savePlanToStorage === 'function') savePlanToStorage(); } catch(_){}
             try { if (typeof saveAppState === 'function') saveAppState(); } catch(_){}
+
+            // Cerrar sheet
+            try { if (typeof closeSheet === 'function') closeSheet('mr-change-goal-sheet'); } catch(_){}
 
             // Refrescar UI
             try { if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard(); } catch(_){}
@@ -30124,11 +30183,11 @@
                                upd.updated + ' sesiones re-ancladas', { variant:'success', duration: 4000 });
             }
         } catch (e) {
-            console.warn('[MR][p112] _mrChangeGoalOnly falló:', e);
+            console.warn('[MR][p113] _mrCgApply:', e);
             alert('Error al cambiar el objetivo. Inténtalo de nuevo.');
         }
     }
-    window._mrChangeGoalOnly = _mrChangeGoalOnly;
+    window._mrCgApply = _mrCgApply;
 
     // ═══════════════════════════════════════════════════════════════════
     // [v4.3 GAP 1 UI] Recalibración VDOT — capa de interfaz
