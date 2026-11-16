@@ -14198,6 +14198,18 @@
         if (!data || typeof data !== 'object') return false;
         pendingFitData = data;
         showImportModal(data);
+        // [v2.30.1-p425.116] Toggle del boton "Descartar": visible SOLO si estamos
+        // consumiendo cola Strava (consumingFromQueue activo con pendingId). En
+        // imports manuales queda oculto para no exponer esa accion sin contexto.
+        try {
+            var _dbtn = document.getElementById('btn-import-discard');
+            if (_dbtn) {
+                var _fromQueue = !!(window._stravaPendingState &&
+                                    window._stravaPendingState.consumingFromQueue &&
+                                    window._stravaPendingState.consumingFromQueue.pendingId);
+                _dbtn.style.display = _fromQueue ? '' : 'none';
+            }
+        } catch(_){}
         return true;
     }
     window._mrSetPendingFromStravaAndOpen = _mrSetPendingFromStravaAndOpen;
@@ -59082,10 +59094,16 @@ window._handleStravaReturn = _handleStravaReturn;
             var sess = await sb.auth.getSession();
             var uid = sess && sess.data && sess.data.session && sess.data.session.user && sess.data.session.user.id;
             if (!uid) return null;
+            // [v2.30.1-p425.116] Ventana de 7 dias desde created_at: las pendings
+            // mas antiguas se dejan como "fosiles" en BD pero no vuelven a contar
+            // al badge ni aparecer en la cola. Evita el limbo infinito de activities
+            // que el user no quiso importar (y canceladas sin consumir).
+            var cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
             var resp = await sb.from('strava_pending_imports')
                 .select('id, strava_activity_id, activity_payload, streams_payload, created_at')
                 .is('consumed_at', null)
                 .eq('user_id', uid)
+                .gte('created_at', cutoff7d)
                 .order('created_at', { ascending: true });
             if (resp.error) {
                 console.warn('[MR][Strava] fetchPending error:', resp.error.message);
@@ -59263,6 +59281,59 @@ window._handleStravaReturn = _handleStravaReturn;
         }
     }
     window._stravaOnAutoImportSaved = _stravaOnAutoImportSaved;
+
+    // [v2.30.1-p425.116] Descartar pending Strava en curso. Marca consumed_at
+    // en BD sin importar la activity → sale del badge/cola. Si quedan mas
+    // pendings, encadena con la siguiente (como un save). Si era la ultima,
+    // cierra el sheet y suelta toast neutro. Si NO estabamos en cola (import
+    // manual), es no-op defensivo que solo cierra el sheet.
+    async function _stravaDiscardCurrentPending() {
+        var state = _stravaPendingState.consumingFromQueue;
+        if (!state || !state.pendingId) {
+            // Defensivo: boton visible sin cola → simplemente cerrar
+            if (typeof window.closeSheet === 'function') window.closeSheet('import-modal');
+            return;
+        }
+        var pendingId = state.pendingId;
+
+        // 1. Marcar consumed_at (sin consumed_mr_activity_id: la activity no se guardo)
+        try {
+            var sb = window._sbClient;
+            if (sb) {
+                var nowIso = new Date().toISOString();
+                var resp = await sb.from('strava_pending_imports')
+                    .update({ consumed_at: nowIso })
+                    .eq('id', pendingId)
+                    .is('consumed_at', null);
+                if (resp.error) {
+                    console.warn('[MR][Strava] discard markConsumed error pending=' + pendingId + ':', resp.error.message);
+                } else {
+                    console.log('[MR][Strava] pending id=' + pendingId + ' DESCARTADA por el usuario');
+                }
+            }
+        } catch (e) {
+            console.warn('[MR][Strava] discard exception:', e);
+        }
+
+        // 2. Sacar del array local + refrescar badge
+        if (_stravaPendingState.pendings.length > 0) {
+            _stravaPendingState.pendings.shift();
+        }
+        _stravaUpdatePendingBadge(_stravaPendingState.pendings.length);
+
+        // 3. Cerrar sheet y encadenar si hay mas
+        if (typeof window.closeSheet === 'function') window.closeSheet('import-modal');
+
+        if (_stravaPendingState.pendings.length > 0) {
+            setTimeout(function() { _stravaConsumeNext(); }, 350);
+        } else {
+            _stravaPendingState.consumingFromQueue = null;
+            if (typeof window.fxToast === 'function') {
+                window.fxToast('Actividad descartada', { variant: 'info', duration: 2500 });
+            }
+        }
+    }
+    window._stravaDiscardCurrentPending = _stravaDiscardCurrentPending;
 
     // Tap handler del #home-strava-btn (estado 'connected').
     // [v2.30.1-p123] Ahora SIEMPRE abre el sheet #autosync-sheet (unificado
@@ -59507,10 +59578,12 @@ window._handleStravaReturn = _handleStravaReturn;
             if (!uid) return { strava: [], coros: [] };
 
             var results = await Promise.all([
+                // [v2.30.1-p425.116] Ventana 7d en AutoSync Strava (misma logica que _stravaFetchPendingImports)
                 sb.from('strava_pending_imports')
                     .select('id, strava_activity_id, activity_payload, created_at')
                     .is('consumed_at', null)
                     .eq('user_id', uid)
+                    .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
                     .order('created_at', { ascending: false }),
                 sb.from('coros_pending_imports')
                     .select('id, coros_label_id, raw_summary, discovered_at')
