@@ -56824,6 +56824,200 @@ function exportPlanToICS() {
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
+// [v2.30.1-p425.123] ═══════════════════════════════════════════
+// Export / Import plan de entreno (JSON)
+// ═══════════════════════════════════════════════════════════════
+// exportPlan: descarga activePlan completo (weeks, sessions, paces,
+// vdot, meta) como .json. Envuelto en una cabecera con version de
+// app y timestamp para trazabilidad.
+//
+// importPlan: lee un .json, valida que sea un plan MR y muestra un
+// modal custom con preview (nombre, distancia, fechas, semanas,
+// sesiones). Si el usuario acepta, reemplaza activePlan, persiste y
+// refresca la UI.
+// ═══════════════════════════════════════════════════════════════
+
+function exportPlan() {
+    try {
+        if (!activePlan || typeof activePlan !== 'object') {
+            if (typeof showToast === 'function') {
+                showToast('No hay plan activo para exportar', 3500);
+            } else {
+                alert('No hay plan activo para exportar');
+            }
+            return;
+        }
+        var payload = {
+            __mrFormat: 'mr-plan-export',
+            __mrVersion: (typeof window.__MR_VERSION === 'string') ? window.__MR_VERSION : 'unknown',
+            exportedAt: new Date().toISOString(),
+            plan: activePlan
+        };
+        var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        var safeName = String(activePlan.name || 'plan').replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40);
+        var ts = new Date().toISOString().slice(0, 10);
+        a.download = 'misterrunner-plan-' + safeName + '-' + ts + '.json';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function(){
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+        try { closeSheet('plan-io-sheet'); } catch(_){}
+        if (typeof showToast === 'function') showToast('Plan exportado ✓', 3000);
+    } catch (e) {
+        console.warn('[MR][p425.123] exportPlan error:', e);
+        alert('No se pudo exportar el plan: ' + (e && e.message ? e.message : e));
+    }
+}
+window.exportPlan = exportPlan;
+
+async function importPlan(input) {
+    try {
+        var file = input && input.files && input.files[0];
+        if (!file) return;
+        var text = await file.text();
+        // Reset del input para que pueda importarse el mismo archivo otra vez
+        try { input.value = ''; } catch(_){}
+
+        var payload;
+        try { payload = JSON.parse(text); }
+        catch (e) {
+            alert('El archivo no es un JSON válido');
+            return;
+        }
+
+        // Aceptamos dos formas: (a) nuestro formato { __mrFormat, plan: {...} }
+        // o (b) un objeto plan directo (por si lo exportaron sin envoltorio).
+        var plan = null;
+        if (payload && payload.__mrFormat === 'mr-plan-export' && payload.plan) {
+            plan = payload.plan;
+        } else if (payload && Array.isArray(payload.weeks)) {
+            plan = payload;
+        }
+
+        if (!plan || !Array.isArray(plan.weeks) || plan.weeks.length === 0) {
+            alert('El archivo no parece un plan de MisterRunner válido (falta weeks[]).');
+            return;
+        }
+
+        // Preview para confirmacion
+        var nSessions = 0;
+        plan.weeks.forEach(function(w){ if (w && Array.isArray(w.sessions)) nSessions += w.sessions.length; });
+        var _planDist = plan.planDist || plan.goal || 'maratón';
+        var _planName = plan.name || 'Plan importado';
+        var _raceDate = plan.raceDate || (plan.weeks[plan.weeks.length-1] && plan.weeks[plan.weeks.length-1].weekStart) || '—';
+        var _firstWeek = (plan.weeks[0] && plan.weeks[0].weekStart) || '—';
+        var _goal = plan.goalHMS || (plan.goalSecs ? secsToHMS(plan.goalSecs) : '—');
+
+        _mrShowPlanImportConfirm({
+            name: _planName,
+            dist: _planDist,
+            goal: _goal,
+            firstWeek: _firstWeek,
+            raceDate: _raceDate,
+            nWeeks: plan.weeks.length,
+            nSessions: nSessions,
+            exportedAt: payload.exportedAt || null,
+            exportedVer: payload.__mrVersion || null
+        }, function(accepted) {
+            if (!accepted) return;
+            try {
+                activePlan = plan;
+                // Persistir en localStorage (mismo patron que acceptPlan)
+                try {
+                    var _uk_key = (typeof _uk === 'function') ? _uk('mr_plan') : 'mr_plan';
+                    localStorage.setItem(_uk_key, JSON.stringify(activePlan));
+                } catch(_){}
+                try { if (typeof saveAppState === 'function') saveAppState(); } catch(_){}
+                try { if (typeof renderPlanWeek === 'function') renderPlanWeek(0); } catch(_){}
+                try { if (typeof renderHome === 'function') renderHome(); } catch(_){}
+                try { if (typeof renderMisterPlanCard === 'function') renderMisterPlanCard(); } catch(_){}
+                try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
+                try { closeSheet('plan-io-sheet'); } catch(_){}
+                try { closeSheet('config-sheet'); } catch(_){}
+                if (typeof showToast === 'function') showToast('Plan importado ✓ · ' + _planName, 4500);
+            } catch (e) {
+                console.warn('[MR][p425.123] importPlan apply error:', e);
+                alert('No se pudo aplicar el plan: ' + (e && e.message ? e.message : e));
+            }
+        });
+    } catch (e) {
+        console.warn('[MR][p425.123] importPlan error:', e);
+        alert('No se pudo leer el archivo: ' + (e && e.message ? e.message : e));
+    }
+}
+window.importPlan = importPlan;
+
+// Modal premium de confirmacion del plan a importar.
+// info = { name, dist, goal, firstWeek, raceDate, nWeeks, nSessions, exportedAt, exportedVer }
+// cb(accepted)
+function _mrShowPlanImportConfirm(info, cb) {
+    try {
+        var existing = document.getElementById('mr-plan-import-confirm');
+        if (existing) existing.remove();
+
+        var modal = document.createElement('div');
+        modal.id = 'mr-plan-import-confirm';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;animation:mrfade .22s ease;';
+
+        var card = document.createElement('div');
+        card.style.cssText = 'width:100%;max-width:480px;background:var(--surface);border-radius:20px 20px 0 0;padding:20px 18px 22px;box-shadow:0 -4px 24px rgba(0,0,0,.25);animation:mrslideup .28s cubic-bezier(.2,.8,.2,1);';
+
+        var _fmtDate = function(iso) {
+            try {
+                if (!iso || iso === '—') return '—';
+                var d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''));
+                if (isNaN(d)) return iso;
+                return d.toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' });
+            } catch(_) { return iso; }
+        };
+
+        card.innerHTML =
+            '<div style="display:flex;justify-content:center;margin-bottom:14px;"><div style="width:40px;height:4px;background:var(--border);border-radius:2px;"></div></div>' +
+            '<div style="font-size:17px;font-weight:800;color:var(--tw);letter-spacing:-.3px;margin-bottom:4px;">Importar plan</div>' +
+            '<div style="font-size:12px;color:var(--ts);margin-bottom:16px;line-height:1.45;">Revisa el resumen antes de aplicar. Reemplazará tu plan activo actual.</div>' +
+            '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:16px;">' +
+                '<div style="font-size:14px;font-weight:700;color:var(--tw);letter-spacing:-.2px;margin-bottom:10px;">' + (info.name || 'Plan') + '</div>' +
+                '<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;">' +
+                    '<div style="color:var(--ts);">Distancia</div><div style="color:var(--tw);font-weight:600;">' + (info.dist || '—') + '</div>' +
+                    '<div style="color:var(--ts);">Objetivo</div><div style="color:var(--tw);font-weight:600;font-variant-numeric:tabular-nums;">' + (info.goal || '—') + '</div>' +
+                    '<div style="color:var(--ts);">Inicio</div><div style="color:var(--tw);font-weight:600;">' + _fmtDate(info.firstWeek) + '</div>' +
+                    '<div style="color:var(--ts);">Carrera</div><div style="color:var(--tw);font-weight:600;">' + _fmtDate(info.raceDate) + '</div>' +
+                    '<div style="color:var(--ts);">Semanas</div><div style="color:var(--tw);font-weight:600;font-variant-numeric:tabular-nums;">' + info.nWeeks + '</div>' +
+                    '<div style="color:var(--ts);">Sesiones</div><div style="color:var(--tw);font-weight:600;font-variant-numeric:tabular-nums;">' + info.nSessions + '</div>' +
+                '</div>' +
+                (info.exportedAt ? ('<div style="font-size:10px;color:var(--tm);margin-top:10px;padding-top:9px;border-top:1px dashed var(--border);">Exportado ' + _fmtDate(info.exportedAt.slice(0,10)) + (info.exportedVer ? ' · ' + info.exportedVer : '') + '</div>') : '') +
+            '</div>' +
+            '<div style="display:flex;gap:10px;">' +
+                '<button id="mr-pic-cancel" class="btn btn-secondary" style="flex:1;">Cancelar</button>' +
+                '<button id="mr-pic-apply" class="btn btn-primary" style="flex:1;">Aplicar plan</button>' +
+            '</div>';
+
+        modal.appendChild(card);
+        document.body.appendChild(modal);
+
+        var close = function(accepted) {
+            try { modal.remove(); } catch(_){}
+            try { cb(accepted); } catch(_){}
+        };
+        card.querySelector('#mr-pic-cancel').onclick = function(){ close(false); };
+        card.querySelector('#mr-pic-apply').onclick  = function(){ close(true); };
+        modal.addEventListener('click', function(ev){ if (ev.target === modal) close(false); });
+    } catch (e) {
+        console.warn('[MR][p425.123] _mrShowPlanImportConfirm error:', e);
+        // Fallback: confirm nativo
+        var ok = confirm('Importar plan "' + (info.name || 'Plan') + '"?\n' +
+                         (info.nWeeks || 0) + ' semanas · ' + (info.nSessions || 0) + ' sesiones\n' +
+                         'Reemplazará tu plan actual.');
+        try { cb(ok); } catch(_){}
+    }
+}
+window._mrShowPlanImportConfirm = _mrShowPlanImportConfirm;
+
 async function exportBackup() {
     // [FASE 6 · Backup audit] Toast inmediato de feedback. Si el proceso
     // tarda (291+ activities + IDB lento) el usuario sabe que se está
