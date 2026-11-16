@@ -31747,19 +31747,52 @@
                 desc:'Long ' + fmtLongDur(_realSec) + ' · ' + Math.round(_totalKm) + 'km · ' + _repCount + '×' + _repSize + 'km a RM ' + fmtPace(paces.marathon) + '/km'
             };
         }
-        // progressive
-        var progAvgPace = (paces.easy + paces.marathon) / 2;
-        var pEasyKm = Math.max(1, Math.round((targetSec * 0.75) / paces.easy));
-        var progKm  = Math.max(1, Math.round((targetSec * 0.25) / progAvgPace));
-        var pEasySec = pEasyKm * paces.easy, progSec = progKm * progAvgPace;
-        var pTotalKm = pEasyKm + progKm, pRealSec = pEasySec + progSec;
+        // [v2.30.1-p425.121] progressive · reescrito a bloques intervalados.
+        // Antes: entrada easy 75% + "progresivo final" 25% subiendo a MP (todo
+        // continuo a tiron). Ahora: misma filosofia bloques+cooldown que mpFinish
+        // pero en tamanos mas pequenos para mantener el contraste par/impar en
+        // el ciclo (par = suave, impar = fuerte).
+        //   BUILD progressive: 2x2 km MP
+        //   PEAK  progressive: 2x3 km MP
+        // Estructura: entrada easy + N x M km @ MP con rec 3' easy + 1 km cooldown.
+        var _repCountP, _repSizeP;
+        var _phP = (meta && meta.ph) || '';
+        if (_phP === 'build') {
+            _repCountP = 2; _repSizeP = 2;
+        } else {
+            // peak u otras fases defensivas (base/taper no llegan a este branch)
+            _repCountP = 2; _repSizeP = 3;
+        }
+        var _mpTotalKmP  = _repCountP * _repSizeP;
+        var _mpTotalSecP = _mpTotalKmP * paces.marathon;
+        var _recSecPerBlockP = 180; // 3 min easy entre reps
+        var _recKmPerBlockP  = Math.max(0.3, Math.round((_recSecPerBlockP / paces.easy) * 10) / 10);
+        var _recTotalSecP = _recSecPerBlockP * _repCountP;
+        var _recTotalKmP  = _recKmPerBlockP * _repCountP;
+        var _cdKmP = 1;
+        var _cdSecP = _cdKmP * paces.easy;
+        var _remSecP = targetSec - _mpTotalSecP - _recTotalSecP - _cdSecP;
+        var _easyKmP = Math.max(1, Math.round(_remSecP / paces.easy));
+        var _easySecP = _easyKmP * paces.easy;
+        var _totalKmP = _easyKmP + _mpTotalKmP + _recTotalKmP + _cdKmP;
+        var _realSecP = _easySecP + _mpTotalSecP + _recTotalSecP + _cdSecP;
         return {
-            type:'long', dist:pTotalKm, pace:paces.easy, fc:meta.fcE, longSec:pRealSec, durStr:fmtLongDur(pRealSec), long:meta,
+            type:'long', dist:Math.round(_totalKmP), pace:paces.marathon, fc:meta.fcM, longSec:_realSecP, durStr:fmtLongDur(_realSecP), long:meta,
             blocks:[
-                { label:'Long fácil', detail:easyRange(paces) + '/km', color:P, km:pEasyKm, durStr:_fmtBlockDur(pEasySec) },
-                { label:'Progresivo final', detail:'hasta ' + marathonRange(paces) + '/km', color:G, km:progKm, durStr:_fmtBlockDur(progSec), _rampMP:paces.marathon }
+                { label:'Entrada fácil', detail:easyRange(paces) + '/km · base aerobica', color:P, km:_easyKmP, durStr:_fmtBlockDur(_easySecP) },
+                {
+                    label: 'Bloque MP ' + _repCountP + '×' + _repSizeP + 'km',
+                    detail: 'Ritmo Maratón · rec 3\' easy · toque suave de calidad',
+                    color: G, km: 0,
+                    repeat: _repCountP,
+                    reps: [
+                        { label: _repSizeP + 'km @ MP', detail: marathonRange(paces) + '/km', color: G, km: _repSizeP, durStr: _fmtBlockDur(_repSizeP * paces.marathon), _rampMP: paces.marathon },
+                        { label: "Recuperación 3'", detail: 'trote easy · ≈ ' + _recKmPerBlockP + ' km', color: '#60a5fa', km: _recKmPerBlockP, durSec: _recSecPerBlockP }
+                    ]
+                },
+                { label:'Enfriamiento', detail:'1 km easy · relax final', color:'#60a5fa', km:_cdKmP, durStr:_fmtBlockDur(_cdSecP) }
             ],
-            desc:'Long ' + fmtLongDur(pRealSec) + ' · ' + pTotalKm + 'km · últimos ' + progKm + 'km a RM'
+            desc:'Long ' + fmtLongDur(_realSecP) + ' · ' + Math.round(_totalKmP) + 'km · ' + _repCountP + '×' + _repSizeP + 'km a RM ' + fmtPace(paces.marathon) + '/km'
         };
     }
     window._buildLongSession = _buildLongSession;
