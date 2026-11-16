@@ -3759,6 +3759,18 @@
             }
         } catch(_){}
 
+        // [v2.30.1-p425.117] Safety net: si loadActivitiesFromIDB
+        // nunca resuelve (promesa rechazada, IDB bloqueado, bug raro),
+        // marcar hydrated=true tras 10s para que el usuario al menos
+        // vea el empty state real en vez de skeletons infinitos.
+        setTimeout(function(){
+            if (!window._mrActivitiesHydrated) {
+                console.warn('[MR][p425.117] safety net: forzando _mrActivitiesHydrated=true tras 10s');
+                window._mrActivitiesHydrated = true;
+                try { if (typeof renderActivities === 'function') renderActivities({force:true}); } catch(_){}
+            }
+        }, 10000);
+
         // Async: load activities from IndexedDB then fusión con BD bulk
         // (FASE 5.2) y re-render. Estrategia: IDB es fuente para
         // single-imports; Supabase es fuente para bulk-imports. Fusión
@@ -3773,6 +3785,18 @@
                 _refreshResult = await _refreshActivitiesFromBD();
             } catch(e) {
                 console.warn('[MR][FASE 5.2] hidratación BD falló:', e);
+            }
+            // [v2.30.1-p425.117] Marcar activities como hidratadas. A partir
+            // de este punto renderActivities PUEDE mostrar el empty state
+            // real ("Tu historial empieza en 0 km"). Antes de este punto
+            // renderActivities pinta skeletons para no asustar al usuario
+            // con un falso empty state (bug microinfarto Biblioteca vacia).
+            try { window._mrActivitiesHydrated = true; } catch(_){}
+            // Si tras hidratar sigue en [] (usuario sin acts o errores BD)
+            // y el usuario ya esta en Biblioteca, forzar un render para
+            // sustituir los skeletons por el empty state real.
+            if (!Array.isArray(activities) || activities.length === 0) {
+                try { if (typeof renderActivities === 'function') renderActivities({force:true}); } catch(_){}
             }
             // [FASE 6 · Fix doble render]
             // Antes se llamaba renderActivities/renderHome INCONDICIONALMENTE
@@ -21359,7 +21383,27 @@
         const _myToken = window.__mrLibRenderToken;
         const filtered = getFilteredActivities();
         updateSummary(filtered);
-        if (!activities.length) { empty.style.display = ''; return; }
+        if (!activities.length) {
+            // [v2.30.1-p425.117] Si la hidratacion inicial aun no termino,
+            // NO mostrar el empty state "nuevo usuario" (da microinfarto
+            // cuando tienes 300 acts cargando). Mostrar skeletons locales
+            // en su lugar. Cuando _mrActivitiesHydrated=true se dispara un
+            // renderActivities forzado desde el .then del load inicial.
+            if (!window._mrActivitiesHydrated) {
+                empty.style.display = 'none';
+                try {
+                    for (var _m117i = 0; _m117i < 6; _m117i++) {
+                        var _m117s = document.createElement('div');
+                        _m117s.className = 'mr-lib-skel';
+                        _m117s.innerHTML = (typeof _mrSkelCardHTML === 'function') ? _mrSkelCardHTML() : '';
+                        list.appendChild(_m117s);
+                    }
+                } catch(_){}
+                return;
+            }
+            empty.style.display = '';
+            return;
+        }
         empty.style.display = 'none';
 
         const _mrLibSorted = [...filtered].sort((a, b) => new Date(b.dateStr + "T12:00:00") - new Date(a.dateStr + "T12:00:00"));
