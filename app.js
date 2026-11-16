@@ -46192,15 +46192,19 @@
     // "tacks" del dial; con purple lila brillante se convertían en puntitos
     // molestos. Icono queda con arco + aguja + centro → más limpio, más
     // premium por simplicidad.
-    // [v2.30.1-p425.77] Icono Forma = corredor (variante B aprobada) con el degradado
-    // de la paleta fitness. id de gradiente único por llamada (la card se
-    // repinta y podría convivir con el del sheet). Nombre de función conservado.
+    // [v2.30.1-p425.124] Icono Forma = CIMA (montaña con punto en el pico).
+    // Reemplaza al corredor de p425.77. Mantiene el mismo degradado de la
+    // paleta fitness (--fitness-c1 -> --fitness-c1b -> --fitness-c2), pero
+    // orientado VERTICAL (abajo arriba): base de la montaña morada, cima rosa.
+    // id de gradiente único por llamada. Nombre de función _mrEfSpeedoSVG
+    // preservado para no romper callers (card Home + cabecera del sheet).
     var _mrEfIconSeq = 0;
     function _mrEfSpeedoSVG(size){
-        var gid = 'mrFmRunG' + (++_mrEfIconSeq);
-        return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="url(#'+gid+')" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="overflow:visible;" aria-hidden="true">'
-             + '<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--fitness-c1)"/><stop offset=".55" style="stop-color:var(--fitness-c1b)"/><stop offset="1" style="stop-color:var(--fitness-c2)"/></linearGradient></defs>'
-             + '<circle cx="15.2" cy="3.9" r="2.1" fill="url(#'+gid+')" stroke="none"/><path d="M13.6 8.2 11 13.4l3.6 2.8 -1.1 5.3"/><path d="M11 13.4 9.3 17.2 5 18.4"/><path d="M7.2 9.6 10 7.7h3.6l2.2 3.2 3.2 1"/>'
+        var gid = 'mrFmPkG' + (++_mrEfIconSeq);
+        return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="url(#'+gid+')" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="overflow:visible;" aria-hidden="true">'
+             + '<defs><linearGradient id="'+gid+'" x1="0" y1="1" x2="0" y2="0"><stop offset="0" style="stop-color:var(--fitness-c1)"/><stop offset=".55" style="stop-color:var(--fitness-c1b)"/><stop offset="1" style="stop-color:var(--fitness-c2)"/></linearGradient></defs>'
+             + '<path d="M2.5 20 L8 10 L12 15 L16 5 L21.5 20 Z"/>'
+             + '<circle cx="16" cy="5" r="1.5" fill="url(#'+gid+')" stroke="none"/>'
              + '</svg>';
     }
 
