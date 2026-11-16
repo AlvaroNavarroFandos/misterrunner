@@ -31690,11 +31690,24 @@
             //   <=150 min (<=2h30)      -> 2 x 5 km
             //   151-165 min (2h30-2h45) -> 2 x 6 km
             //   >=166 min (>2h45)       -> 3 x 5 km
+            // [v2.30.1-p425.120] Tabla POR FASE. En build reps mas cortas (3-4 km)
+            // para acumulacion sin saturar. En peak reps mas largas (5-6 km) para
+            // especificidad real de carrera. Tope duro: 6 km/rep en el long.
+            //   BUILD:  <=160 -> 2x3 | 161-180 -> 2x4 | 181+ -> 3x4
+            //   PEAK:   <=150 -> 2x5 | 151-165 -> 2x6 | 166+ -> 3x5
             var _tgMin = targetSec / 60;
             var _repCount, _repSize;
-            if (_tgMin <= 150)       { _repCount = 2; _repSize = 5; }
-            else if (_tgMin <= 165)  { _repCount = 2; _repSize = 6; }
-            else                     { _repCount = 3; _repSize = 5; }
+            var _phLong = (meta && meta.ph) || '';
+            if (_phLong === 'build') {
+                if (_tgMin <= 160)       { _repCount = 2; _repSize = 3; }
+                else if (_tgMin <= 180)  { _repCount = 2; _repSize = 4; }
+                else                     { _repCount = 3; _repSize = 4; }
+            } else {
+                // peak (u otras fases defensivas)
+                if (_tgMin <= 150)       { _repCount = 2; _repSize = 5; }
+                else if (_tgMin <= 165)  { _repCount = 2; _repSize = 6; }
+                else                     { _repCount = 3; _repSize = 5; }
+            }
 
             var _mpTotalKm  = _repCount * _repSize;
             var _mpTotalSec = _mpTotalKm * paces.marathon;
@@ -33832,8 +33845,24 @@
 
             // Determine if this should be a recovery/deload week
             // Every 4th week (after 3 hard weeks) gets reduced volume, except taper and race weeks
-            const isDeloadWeek = !isRaceWeek && !isTaper && hardWeekCount >= 3;
-            if(isDeloadWeek) hardWeekCount = 0;
+            // [v2.30.1-p425.120] Skip deload en el cruce build→peak. Si cae en la
+            // ultima build o la primera peak, saltamos (y reseteamos contador como
+            // si la hubieramos hecho). Motivo: ambas son semanas clave (long largo
+            // final de build / primera sesion especifica de peak) y una deload ahi
+            // tira al traste un estimulo que no se recupera. Durante el resto del
+            // plan sigue cada 4 semanas como antes.
+            const _nextPhase = (w+1 < totalWeeks) ? weekPhase(w+1) : phase;
+            const _prevPhase = (w > 0) ? weekPhase(w-1) : phase;
+            const _isLastBuild = phase === 'build' && _nextPhase === 'peak';
+            const _isFirstPeak = phase === 'peak'  && _prevPhase === 'build';
+            const _isCruceBP   = _isLastBuild || _isFirstPeak;
+            const isDeloadWeek = !isRaceWeek && !isTaper && hardWeekCount >= 3 && !_isCruceBP;
+            if(_isCruceBP && hardWeekCount >= 3) {
+                // Se iba a hacer deload en el cruce: saltamos + reset. La proxima
+                // deload natural caera 4 semanas despues (en mitad de peak o taper).
+                hardWeekCount = 0;
+            }
+            else if(isDeloadWeek) hardWeekCount = 0;
             else if(!isRaceWeek && !isTaper) hardWeekCount++;
 
             // In race week, remove any training day that lands on race day or day before
