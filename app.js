@@ -32932,6 +32932,50 @@
             }
         } catch(_) {}
 
+        // [v2.30.1-p425.122] Check 1b: Maraton/media reciente en activities.
+        // Defensa para cuando el user ha borrado el plan anterior antes de
+        // generar el nuevo (caso Valencia -> Sevilla). Solo suma si el
+        // Check 1 original NO ya puntuo (evitar doble conteo).
+        try {
+            var _hadCheck1Signal = signals.some(function(s){ return /Plan .+ completado/.test(s.label); });
+            if (!_hadCheck1Signal && Array.isArray(activities) && activities.length > 0 && typeof RUNNING_TYPES !== 'undefined') {
+                var _nowMs122 = Date.now();
+                var _eightWMs  = 56 * 86400000;
+                var _sixteenWMs = 112 * 86400000;
+                var _fourWMs   = 28 * 86400000;
+                var _bestMarathon = null;
+                var _bestHalf = null;
+                for (var _i = 0; _i < activities.length; _i++) {
+                    var _a = activities[_i];
+                    if (!_a || !_a.dateStr || !_a.distKm) continue;
+                    if (!RUNNING_TYPES.has(String(_a.type||'').toLowerCase())) continue;
+                    var _dms = new Date(_a.dateStr+'T12:00:00').getTime();
+                    var _ago = _nowMs122 - _dms;
+                    if (_ago < 0) continue;
+                    if (_a.distKm >= 41.5 && _a.distKm <= 42.5 && _ago <= _sixteenWMs) {
+                        if (!_bestMarathon || _ago < _bestMarathon.ago) _bestMarathon = { ago: _ago };
+                    }
+                    if (_a.distKm >= 20.5 && _a.distKm <= 21.5 && _ago <= _fourWMs) {
+                        if (!_bestHalf || _ago < _bestHalf.ago) _bestHalf = { ago: _ago };
+                    }
+                }
+                if (_bestMarathon) {
+                    var _wksM = Math.max(1, Math.round(_bestMarathon.ago / (7 * 86400000)));
+                    if (_bestMarathon.ago <= _eightWMs) {
+                        points += 2;
+                        signals.push({ label: 'Maratón corrido hace ' + _wksM + ' sem (Biblioteca)', weight: 2 });
+                    } else {
+                        points += 1;
+                        signals.push({ label: 'Maratón corrido hace ' + _wksM + ' sem (Biblioteca)', weight: 1 });
+                    }
+                } else if (_bestHalf) {
+                    var _wksH = Math.max(1, Math.round(_bestHalf.ago / (7 * 86400000)));
+                    points += 1;
+                    signals.push({ label: 'Media maratón corrida hace ' + _wksH + ' sem (Biblioteca)', weight: 1 });
+                }
+            }
+        } catch(_) {}
+
         // Check 2 y 3: Volumen crónico + long run reciente (últimas 4 semanas)
         let weeklyKm = 0;
         let hasLongRun = false;
@@ -33812,25 +33856,45 @@
         const peakW  = Math.max(1, Math.round(periodWeeks*0.16));
         const taperW = Math.max(1, periodWeeks - baseW - buildW - peakW);
 
-        // ─── [v5.2 GAP 7] Detección de baseline y skip de fases ───
-        // Si el atleta tiene historial consolidado, ofrecemos saltar parcial o
-        // totalmente la fase base. El sheet muestra las señales detectadas y
-        // pide confirmación antes de aplicar. Ante rechazo o fallo → arranque estándar.
+        // ─── [v5.2 GAP 7 + v2.30.1-p425.122] Toggle manual + detección baseline ───
+        // Si el user marcó el checkbox "Ya tengo base aerobica", bypassear
+        // la detección automática y aplicar skipBase=full directamente, sin
+        // modal de confirmación (ya confirmó con el toggle). Safety: solo si
+        // totalWeeks>=10 y planDist!=first_5k.
+        //
+        // Si NO está marcado, flujo original: detectar baseline, si hay señales
+        // mostrar sheet de confirmación y aplicar si acepta.
         try {
-            const _baseline = detectAthleteBaseline(planDist, totalWeeks);
-            if (_baseline && _baseline.skipBase !== 'none' && !_baseline.forced) {
-                // Restaurar botón para que el usuario vea que estamos en pausa
-                if (btn) { btn.disabled = false; btn.textContent = '⏳ Esperando confirmación...'; }
-                const _accepted = await showBaselineDetectionSheet(_baseline);
-                if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
-                if (_accepted) {
-                    const _adj = computeSkippedPhases(_baseline.skipBase, baseW, buildW);
-                    baseW = _adj.newBaseW;
-                    buildW = _adj.newBuildW;
-                    setTimeout(() => {
-                        const _skipLabel = _baseline.skipBase === 'full' ? 'Base saltada' : 'Base reducida';
-                        showToast(`✓ ${_skipLabel} · ${_adj.transferredWeeks} sem transferidas a Build`, 5000);
-                    }, 300);
+            var _skipBaseManual = false;
+            try {
+                var _sbEl = document.getElementById('plan-skip-base');
+                _skipBaseManual = !!(_sbEl && _sbEl.checked);
+            } catch(_){}
+
+            if (_skipBaseManual && totalWeeks >= 10 && planDist !== 'first_5k') {
+                // Bypass: aplicar full directamente sin modal
+                const _adj = computeSkippedPhases('full', baseW, buildW);
+                baseW = _adj.newBaseW;
+                buildW = _adj.newBuildW;
+                setTimeout(() => {
+                    showToast('✓ Base saltada (manual) · ' + _adj.transferredWeeks + ' sem transferidas a Build', 5000);
+                }, 300);
+            } else {
+                const _baseline = detectAthleteBaseline(planDist, totalWeeks);
+                if (_baseline && _baseline.skipBase !== 'none' && !_baseline.forced) {
+                    // Restaurar botón para que el usuario vea que estamos en pausa
+                    if (btn) { btn.disabled = false; btn.textContent = '⏳ Esperando confirmación...'; }
+                    const _accepted = await showBaselineDetectionSheet(_baseline);
+                    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
+                    if (_accepted) {
+                        const _adj = computeSkippedPhases(_baseline.skipBase, baseW, buildW);
+                        baseW = _adj.newBaseW;
+                        buildW = _adj.newBuildW;
+                        setTimeout(() => {
+                            const _skipLabel = _baseline.skipBase === 'full' ? 'Base saltada' : 'Base reducida';
+                            showToast(`✓ ${_skipLabel} · ${_adj.transferredWeeks} sem transferidas a Build`, 5000);
+                        }, 300);
+                    }
                 }
             }
         } catch(_eBase) {
