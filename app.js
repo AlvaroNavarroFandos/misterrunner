@@ -31681,18 +31681,57 @@
             };
         }
         if (v === 'mpFinish') {
-            var mpRatio = meta.mpRatio || 0.4;
-            var easyKm = Math.max(1, Math.round((targetSec * (1 - mpRatio)) / paces.easy));
-            var mpKm   = Math.max(1, Math.round((targetSec * mpRatio) / paces.marathon));
-            var easySec = easyKm * paces.easy, mpSec = mpKm * paces.marathon;
-            var totalKm = easyKm + mpKm, realSec = easySec + mpSec;
+            // [v2.30.1-p425.119] RM INTERVALADO. Antes: bloque MP continuo al
+            // final (mpRatio * targetSec km seguidos). Ahora: tabla adaptive por
+            // duracion del long, reps de 5-6 km con 3' easy de recuperacion entre
+            // y 1 km easy de enfriamiento al final. Filosofia Pfitzinger: sigues
+            // haciendo los km MP con piernas cansadas, pero con respiro entre
+            // bloques y cierre en relax. mpRatio se ignora en esta variante.
+            //   <=150 min (<=2h30)      -> 2 x 5 km
+            //   151-165 min (2h30-2h45) -> 2 x 6 km
+            //   >=166 min (>2h45)       -> 3 x 5 km
+            var _tgMin = targetSec / 60;
+            var _repCount, _repSize;
+            if (_tgMin <= 150)       { _repCount = 2; _repSize = 5; }
+            else if (_tgMin <= 165)  { _repCount = 2; _repSize = 6; }
+            else                     { _repCount = 3; _repSize = 5; }
+
+            var _mpTotalKm  = _repCount * _repSize;
+            var _mpTotalSec = _mpTotalKm * paces.marathon;
+            // Recuperacion: 3 min easy entre reps (incluida tras ultima rep, el
+            // patron repeat+reps replica la pareja [work, rec] N veces; en la
+            // practica se funde con el cooldown final).
+            var _recSecPerBlock = 180;
+            var _recKmPerBlock  = Math.max(0.3, Math.round((_recSecPerBlock / paces.easy) * 10) / 10);
+            var _recTotalSec = _recSecPerBlock * _repCount;
+            var _recTotalKm  = _recKmPerBlock * _repCount;
+            // Cooldown fijo 1 km easy
+            var _cdKm = 1;
+            var _cdSec = _cdKm * paces.easy;
+            // Entrada easy: ajusta para completar targetSec
+            var _remSec = targetSec - _mpTotalSec - _recTotalSec - _cdSec;
+            var _easyKm = Math.max(1, Math.round(_remSec / paces.easy));
+            var _easySec = _easyKm * paces.easy;
+            var _totalKm = _easyKm + _mpTotalKm + _recTotalKm + _cdKm;
+            var _realSec = _easySec + _mpTotalSec + _recTotalSec + _cdSec;
+
             return {
-                type:'long', dist:totalKm, pace:paces.marathon, fc:meta.fcM, longSec:realSec, durStr:fmtLongDur(realSec), long:meta,
+                type:'long', dist:Math.round(_totalKm), pace:paces.marathon, fc:meta.fcM, longSec:_realSec, durStr:fmtLongDur(_realSec), long:meta,
                 blocks:[
-                    { label:'Entrada fácil', detail:easyRange(paces) + '/km', color:P, km:easyKm, durStr:_fmtBlockDur(easySec) },
-                    { label:'Ritmo Maratón (MP)', detail:marathonRange(paces) + '/km · acostumbrar al cuerpo al ritmo objetivo', color:G, km:mpKm, durStr:_fmtBlockDur(mpSec), _rampMP:paces.marathon }
+                    { label:'Entrada fácil', detail:easyRange(paces) + '/km · llegar al bloque MP con piernas cansadas', color:P, km:_easyKm, durStr:_fmtBlockDur(_easySec) },
+                    {
+                        label: 'Bloque MP ' + _repCount + '×' + _repSize + 'km',
+                        detail: 'Ritmo Maratón · rec 3\' easy · respiro entre bloques',
+                        color: G, km: 0,
+                        repeat: _repCount,
+                        reps: [
+                            { label: _repSize + 'km @ MP', detail: marathonRange(paces) + '/km · ritmo objetivo', color: G, km: _repSize, durStr: _fmtBlockDur(_repSize * paces.marathon), _rampMP: paces.marathon },
+                            { label: "Recuperación 3'", detail: 'trote easy · ≈ ' + _recKmPerBlock + ' km', color: '#60a5fa', km: _recKmPerBlock, durSec: _recSecPerBlock }
+                        ]
+                    },
+                    { label:'Enfriamiento', detail:'1 km easy · relax final', color:'#60a5fa', km:_cdKm, durStr:_fmtBlockDur(_cdSec) }
                 ],
-                desc:'Long ' + fmtLongDur(realSec) + ' · ' + totalKm + 'km · últimos ' + mpKm + 'km a RM ' + fmtPace(paces.marathon) + '/km'
+                desc:'Long ' + fmtLongDur(_realSec) + ' · ' + Math.round(_totalKm) + 'km · ' + _repCount + '×' + _repSize + 'km a RM ' + fmtPace(paces.marathon) + '/km'
             };
         }
         // progressive
@@ -46995,22 +47034,44 @@
                         var raw = localStorage.getItem(uk);
                         if (raw) {
                             // Hay plan en localStorage pero _rdGetActivePlan no lo
-                            // devolvió → race condition. PRESERVAR estado actual
-                            // (si estaba visible sigue visible, si oculto sigue oculto).
-                            // El próximo trigger tras hidratación completa lo pintará
-                            // correctamente. Evita el "susto" de que Race Day desaparezca
-                            // de repente en la vista Runner sin motivo aparente.
+                            // devolvió → race condition. PRESERVAR estado actual.
                             try { console.warn('[Race Day] _rdGetActivePlan() null pero mr_plan existe en localStorage — preservando visibility (posible race condition en boot/hidratación)'); } catch(_){}
                             return;
                         }
                     } catch(_){}
-                    // Realmente no hay plan (memoria ni localStorage) → ocultar
+                    // Realmente no hay plan (memoria ni localStorage) → ocultar + reset sticky
                     row.style.display = 'none';
+                    window._mrRaceDayWasVisible = false;
                     return;
                 }
                 // Plan detectado → chequear eligibilidad normal
                 var eligible = window._raceDayIsEligible();
-                row.style.display = eligible ? 'flex' : 'none';
+                if (eligible) {
+                    row.style.display = 'flex';
+                    // [v2.30.1-p425.119] Marcar sticky: una vez visible en esta sesión
+                    // no se oculta por lecturas transitorias de planDist/goal.
+                    window._mrRaceDayWasVisible = true;
+                    return;
+                }
+                // ap existe pero NO eligible → distinguir "final" vs "transitorio".
+                // [v2.30.1-p425.119] Si ap.type es strength O planDist es 5k/first_5k/10k,
+                // es decisión FINAL del usuario (plan no apto para Race Day). Ocultar + reset.
+                // Si planDist viene vacio, undefined o valor raro → es transitorio
+                // (migracion, hidratacion incompleta); preservar estado si antes era visible.
+                var _pd = String(ap.planDist || '').trim().toLowerCase();
+                var _FINAL_NON_ELIG = { '5k':1, 'first_5k':1, '10k':1 };
+                var _isFinalNonEligible = (ap.type === 'strength') || !!_FINAL_NON_ELIG[_pd];
+                if (_isFinalNonEligible) {
+                    row.style.display = 'none';
+                    window._mrRaceDayWasVisible = false;
+                    return;
+                }
+                // Transitorio (planDist vacio/desconocido). Preservar si fue visible antes.
+                if (window._mrRaceDayWasVisible) {
+                    try { console.warn('[Race Day] planDist transitorio ("' + _pd + '") — preservando visibility (sticky p425.119)'); } catch(_){}
+                    return;
+                }
+                row.style.display = 'none';
             } catch(_){}
         };
 
