@@ -28165,6 +28165,45 @@
     // en desc/blocks de sesiones cuya dateStr > fromDate. Respeta las
     // pasadas, saltea type='test' y type='race' (no tienen pace target).
     // Regex single-pass evita colisiones cuando newEasy iguala oldMarathon.
+    // [v2.30.1-p425.115] Heurística: determina la zona (easy/marathon/threshold/
+    // interval) a partir del texto de una sesión, bloque o repetición. Usa
+    // palabras clave en español/inglés del plan actual. Devuelve null si no
+    // hay match (el caller hereda la zona del contexto padre).
+    function _mrZoneOfText(text) {
+        if (!text) return null;
+        var t = String(text).toLowerCase();
+        // Marathon primero: 'activación MP' y 'MP strides' antes que easy
+        if (/\bmp\b|marat[oó]n|ritmo\s*m\b/.test(t)) return 'marathon';
+        if (/umbral|threshold|tempo/.test(t)) return 'threshold';
+        if (/vo2|vo₂|intervalo|\binterval\b/.test(t)) return 'interval';
+        if (/f[aá]cil|rodaje|easy|long|largo|suave|calent|vuelta|recup|trote|activaci[oó]n/.test(t)) return 'easy';
+        return null;
+    }
+    window._mrZoneOfText = _mrZoneOfText;
+
+    // [v2.30.1-p425.115] Renormaliza paces y rangos dentro de un string según
+    // la zona. Reemplaza CUALQUIER pace o rango con el valor correcto para la
+    // zona + newPaces. Independiente de lo que haya escrito antes: fuente de
+    // verdad es la zona + newPaces, no el pace viejo.
+    function _mrRenormalizePaces(str, zone, newPaces, DELTAS, fmtPace, fmtRange) {
+        if (!str || typeof str !== 'string') return str;
+        if (!zone || !newPaces || !newPaces[zone]) return str;
+        var newP = newPaces[zone];
+        var delta = (DELTAS && DELTAS[zone] != null) ? DELTAS[zone] : 10;
+        var newRange = fmtRange(newP, delta);
+        var newPace = fmtPace(newP);
+        // Un solo paso con alternativa: el motor regex intenta primero el
+        // rango (más largo, va antes en la alternativa); si no match prueba
+        // el pace suelto. El flag g avanza más allá del match consumido, así
+        // que los paces de dentro de un rango ya reemplazado NO se re-procesan.
+        var combined = /(\d{1,2})\s*'\s*(\d{2})\s*"\s*[\u2013\u2014\-]\s*(\d{1,2})\s*'\s*(\d{2})\s*"|(\d{1,2})\s*'\s*(\d{2})\s*"/g;
+        str = str.replace(combined, function(match, g1, g2, g3) {
+            return (g3 !== undefined) ? newRange : newPace;
+        });
+        return str;
+    }
+    window._mrRenormalizePaces = _mrRenormalizePaces;
+
     // [v2.30.1-p425.114] Escanea descs/blocks de sesiones futuras y devuelve
     // los paces visibles por zona (easy, marathon, threshold, interval). Esta
     // es la fuente de verdad para "oldPaces" cuando plan.paces está
@@ -28172,7 +28211,7 @@
     // descs). Por zona toma el pace MÁS FRECUENTE en las strings visibles.
     function _mrDetectVisiblePaces(plan, fromDate) {
         if (!plan || !plan.weeks || !fromDate) return {};
-        var paceRe = /(\d)\s*'\s*(\d{2})\s*"\s*\/\s*km/;
+        var paceRe = /(\d{1,2})\s*'\s*(\d{2})\s*"\s*\/\s*km/;
         var counts = { easy: {}, marathon: {}, threshold: {}, interval: {} };
         function parsePace(str) {
             if (!str || typeof str !== 'string') return null;
@@ -28226,11 +28265,9 @@
 
         function _updateFuturePlanPaces(plan, newPaces, fromDate) {
         if (!plan || !plan.weeks || !newPaces || !fromDate) return { updated: 0, weeksTouched: 0 };
-        // [v2.30.1-p425.114] oldPaces = paces VISIBLES en descs/blocks (fuente de
-        // verdad). Fallback a plan.paces para zonas sin match (repeat, race).
-        var basePaces = plan.paces || {};
-        var visible = (typeof _mrDetectVisiblePaces === 'function') ? _mrDetectVisiblePaces(plan, fromDate) : {};
-        var oldPaces = Object.assign({}, basePaces, visible);
+        // [v2.30.1-p425.115] Enfoque zona-aware: renormalizar paces/rangos en
+        // cada string según su zona detectada. Independiente del estado anterior
+        // (los descs podían estar corruptos por reemplazos parciales previos).
         var DELTAS = { easy: 15, marathon: 10, threshold: 8, interval: 5 };
         function _fmtPaceLoc(secs) {
             var m = Math.floor(secs/60), s = secs%60;
@@ -28241,46 +28278,27 @@
             var hi = secs + delta;
             return _fmtPaceLoc(lo) + '\u2013' + _fmtPaceLoc(hi);
         }
-        function _escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-        var replacements = [];
-        Object.keys(DELTAS).forEach(function(zone) {
-            var oldP = oldPaces[zone], newP = newPaces[zone];
-            if (!oldP || !newP || oldP === newP) return;
-            replacements.push({ from: _fmtRangeLoc(oldP, DELTAS[zone]), to: _fmtRangeLoc(newP, DELTAS[zone]) });
-            replacements.push({ from: _fmtPaceLoc(oldP), to: _fmtPaceLoc(newP) });
-        });
-        ['repeat', 'race'].forEach(function(z) {
-            if (oldPaces[z] && newPaces[z] && oldPaces[z] !== newPaces[z]) {
-                replacements.push({ from: _fmtPaceLoc(oldPaces[z]), to: _fmtPaceLoc(newPaces[z]) });
-            }
-        });
+        // paceValueMap para s.pace numérico. Usa visible paces como fuente,
+        // fallback a plan.paces para zonas no visibles (repeat, race).
+        var basePaces = plan.paces || {};
+        var visible = (typeof _mrDetectVisiblePaces === 'function') ? _mrDetectVisiblePaces(plan, fromDate) : {};
+        var oldPacesForMap = Object.assign({}, basePaces, visible);
         var paceValueMap = {};
         ['easy','marathon','threshold','interval','repeat','race'].forEach(function(z) {
-            if (oldPaces[z] && newPaces[z]) paceValueMap[oldPaces[z]] = newPaces[z];
+            if (oldPacesForMap[z] && newPaces[z]) paceValueMap[oldPacesForMap[z]] = newPaces[z];
         });
-        var lookup = {};
-        replacements.forEach(function(r) { lookup[r.from] = r.to; });
-        var allFrom = replacements.map(function(r) { return _escRe(r.from); });
-        var pattern = allFrom.length > 0 ? new RegExp('(' + allFrom.join('|') + ')', 'g') : null;
-        function replaceInString(s) {
-            if (!s || typeof s !== 'string' || !pattern) return s;
-            return s.replace(pattern, function(m) { return lookup[m] || m; });
-        }
-        function updateBlock(b) {
-            if (!b) return;
-            b.detail = replaceInString(b.detail);
-            if (Array.isArray(b.reps)) {
-                b.reps.forEach(function(r) { r.detail = replaceInString(r.detail); });
-            }
-        }
+        // También mapear todos los enteros de plan.paces vía matching por valor
+        // (por si s.pace coincide con un pace "desplazado" por mutaciones previas)
+        var reZone = (typeof _mrZoneOfText === 'function') ? _mrZoneOfText : function(){ return null; };
+        var reNorm = (typeof _mrRenormalizePaces === 'function') ? _mrRenormalizePaces : null;
+
         var updated = 0, weeksTouched = 0;
         (plan.weeks || []).forEach(function(w) {
             var wt = false;
             (w.sessions || []).forEach(function(s) {
                 if (!s.dateStr || s.dateStr <= fromDate) return;
                 if (s.type === 'test' || s.type === 'race') return;
-                // [v5.3 Long tiempo · D3A] Long por tiempo → re-derivar entero desde
-                // targetSec + nuevos ritmos (mantiene el tiempo en pie; km se recalculan).
+                // [v5.3 Long tiempo · D3A] Long por tiempo → rebuild entero
                 if (s.type === 'long' && s.long && typeof window._buildLongSession === 'function') {
                     try {
                         var rebuilt = window._buildLongSession(s.long, newPaces);
@@ -28293,17 +28311,35 @@
                         }
                     } catch(e) { console.warn('[MR][Long] re-derive:', e); }
                 }
+                // s.pace numérico: mapear si coincide con viejo pace
                 if (s.pace && paceValueMap[s.pace]) s.pace = paceValueMap[s.pace];
-                // [p140] Sanity check post-mapping: si sesión es easy/recovery
-                // pero pace acabó más rápido que el easy pace (stale de series
-                // o marathon), forzar al easy pace correcto.
+                // Sanity easy/recovery
                 if ((s.type === 'easy' || s.type === 'recovery') && s.pace && newPaces.easy && s.pace < newPaces.easy) {
                     s.pace = newPaces.easy;
                 }
-                s.desc = replaceInString(s.desc);
-                (s.blocks || []).forEach(updateBlock);
-                updated++;
-                wt = true;
+                // ── Renormalización zona-aware ──
+                if (!reNorm) { updated++; wt = true; return; }
+                var sessZone = reZone((s.type || '') + ' ' + (s.name || '') + ' ' + (s.desc || ''));
+                if (sessZone && s.desc) {
+                    s.desc = reNorm(s.desc, sessZone, newPaces, DELTAS, _fmtPaceLoc, _fmtRangeLoc);
+                }
+                (s.blocks || []).forEach(function(b) {
+                    if (!b) return;
+                    var bZone = reZone((b.name || '') + ' ' + (b.detail || '')) || sessZone;
+                    if (bZone && b.detail) {
+                        b.detail = reNorm(b.detail, bZone, newPaces, DELTAS, _fmtPaceLoc, _fmtRangeLoc);
+                    }
+                    if (Array.isArray(b.reps)) {
+                        b.reps.forEach(function(r) {
+                            if (!r) return;
+                            var rZone = reZone((r.name || '') + ' ' + (r.detail || '')) || bZone;
+                            if (rZone && r.detail) {
+                                r.detail = reNorm(r.detail, rZone, newPaces, DELTAS, _fmtPaceLoc, _fmtRangeLoc);
+                            }
+                        });
+                    }
+                });
+                updated++; wt = true;
             });
             if (wt) weeksTouched++;
         });
@@ -30225,10 +30261,11 @@
 
             var _vis = {};
             try { _vis = (typeof _mrDetectVisiblePaces === 'function') ? _mrDetectVisiblePaces(plan, todayStr) : {}; } catch(_){}
-            console.log('[MR][p114] objetivo ' + oldGoalHMS + ' → ' + newGoalHMS +
+            console.log('[MR][p115] objetivo ' + oldGoalHMS + ' → ' + newGoalHMS +
                         ' · sesiones actualizadas: ' + upd.updated +
                         ' · semanas tocadas: ' + upd.weeksTouched +
-                        ' · paces visibles detectados: ' + JSON.stringify(_vis));
+                        ' · paces nuevos: ' + JSON.stringify(newPaces) +
+                        ' · paces visibles previos: ' + JSON.stringify(_vis));
 
             // Persistir
             try { if (typeof savePlanToStorage === 'function') savePlanToStorage(); } catch(_){}
