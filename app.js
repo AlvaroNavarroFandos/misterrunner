@@ -44322,20 +44322,29 @@
                 if (!_longMin && sess.dist) _longMin = Math.round(sess.dist * 5.5); // fallback ~5:30/km
                 var _nutriData = null;
                 if (_longMin >= 60) {
+                    // [v2.30.1-p425.127] Tabla recalculada: el ULTIMO gel debe
+                    // caer a >= 20 min del final para que haga efecto. Spacing
+                    // uniforme cada 40' en todos los tramos (mas simple de
+                    // llevar + ritmo digestivo constante).
+                    //   60-100  → 1 gel (a 40')              último: 20-60' del final
+                    //   100-140 → 2 geles (40', 80')         último: 20-60' del final
+                    //   140-180 → 3 geles (40', 80', 120')   último: 20-60' del final
+                    //   180-220 → 4 geles (40', 80', 120', 160')
+                    //   >220    → floor((min-20)/40), spacing 40'
                     var geles, geleSpacing, aguaMl, salesMg;
-                    if (_longMin < 90) {
-                        geles = 1;      geleSpacing = 'a los 45\'';       aguaMl = 500;  salesMg = 500;
-                    } else if (_longMin < 120) {
-                        geles = 2;      geleSpacing = 'cada 45\'';        aguaMl = 750;  salesMg = 700;
-                    } else if (_longMin < 150) {
-                        geles = 3;      geleSpacing = 'cada 40\'';        aguaMl = 900;  salesMg = 1000;
+                    if (_longMin < 100) {
+                        geles = 1;      geleSpacing = 'a los 40\'';       aguaMl = 500;  salesMg = 400;
+                    } else if (_longMin < 140) {
+                        geles = 2;      geleSpacing = 'cada 40\'';        aguaMl = 700;  salesMg = 600;
                     } else if (_longMin < 180) {
-                        geles = 4;      geleSpacing = 'cada 35\'';        aguaMl = 1100; salesMg = 1300;
+                        geles = 3;      geleSpacing = 'cada 40\'';        aguaMl = 900;  salesMg = 900;
+                    } else if (_longMin < 220) {
+                        geles = 4;      geleSpacing = 'cada 40\'';        aguaMl = 1100; salesMg = 1200;
                     } else {
-                        geles = Math.ceil(_longMin / 35);
-                        geleSpacing = 'cada 30-35\'';
-                        aguaMl = Math.ceil(_longMin / 60 * 400);
-                        salesMg = Math.ceil(_longMin / 60 * 600);
+                        geles = Math.max(5, Math.floor((_longMin - 20) / 40));
+                        geleSpacing = 'cada 40\'';
+                        aguaMl = Math.ceil(_longMin / 60 * 400 / 50) * 50;
+                        salesMg = Math.ceil(_longMin / 60 * 500 / 50) * 50;
                     }
                     var _hh = Math.floor(_longMin / 60);
                     var _mm = _longMin % 60;
