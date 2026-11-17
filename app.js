@@ -44367,22 +44367,32 @@
                     html +=         '<div style="font-size:8.5px;color:var(--tm);font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:3px;">Agua</div>';
                     html +=         '<div style="font-size:8.5px;color:var(--ts);font-weight:600;margin-top:2px;">a sorbos</div>';
                     html +=       '</div>';
-                    // [v2.30.1-p159] Álvaro 7 sep 2026: Sales en CÁPSULAS en vez
-                    // de mg de sodio. Estándar del mercado: 250 mg de sodio por
-                    // cápsula (SaltStick, Precision Fuel & Hydration, HIGH5 ZERO,
-                    // Native Salt Stick, etc.). División ceil(salesMg / 250).
-                    // Ejemplos con paces típicos:
-                    //   60-90min → 2 cápsulas   (500 mg)
-                    //   90-120min → 3 cápsulas  (700 mg)
-                    //   2h-2h30 → 4 cápsulas    (1000 mg)
-                    //   2h30-3h → 6 cápsulas    (1300 mg)
-                    //   >3h → escalado ~600 mg/h
-                    var _salesCaps = Math.max(1, Math.ceil(_nutriData.salesMg / 250));
+                    // [v2.30.1-p425.126] Sales capsulas = numero de geles. Ambos
+                    // se toman cada 40-45' en el MISMO evento de carrera (gel +
+                    // capsula + sorbo de agua), asi que el nº es identico. Mas
+                    // simple de llevar en el short y mas coherente. El ratio de
+                    // sodio por hora cae ligeramente pero queda en rango
+                    // fisiologico (300-400 mg/h) asumiendo agua con un toque de
+                    // electrolitos. El spacing se muestra tambien aqui para
+                    // reforzar visualmente que van de la mano con los geles.
+                    //
+                    // Antes (p159):
+                    //   60-90min → 2 capsulas (500 mg)
+                    //   90-120min → 3 capsulas (700 mg)
+                    //   2h-2h30 → 4 capsulas (1000 mg)
+                    //   2h30-3h → 6 capsulas (1300 mg)
+                    // Ahora (p425.126):
+                    //   60-90min → 1 capsula (=1 gel)
+                    //   90-120min → 2 capsulas (=2 geles)
+                    //   2h-2h30 → 3 capsulas (=3 geles)
+                    //   2h30-3h → 4 capsulas (=4 geles)
+                    //   >3h → ceil(min/35) (mismo escalado que geles)
+                    var _salesCaps = _nutriData.geles;
                     html +=       '<div style="text-align:center;padding:8px 4px 7px;background:var(--card2);border:1px solid var(--border);border-radius:10px;">';
                     html +=         '<div style="font-size:18px;line-height:1;margin-bottom:3px;">🧂</div>';
                     html +=         '<div style="font-size:16px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;line-height:1;">' + _salesCaps + '</div>';
                     html +=         '<div style="font-size:8.5px;color:var(--tm);font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:3px;">Sales</div>';
-                    html +=         '<div style="font-size:8.5px;color:var(--ts);font-weight:600;margin-top:2px;">' + (_salesCaps === 1 ? 'cápsula' : 'cápsulas') + '</div>';
+                    html +=         '<div style="font-size:8.5px;color:var(--ts);font-weight:600;margin-top:2px;">' + _nutriData.spacing + '</div>';
                     html +=       '</div>';
                     html +=     '</div>';
                     html +=   '</div>';
