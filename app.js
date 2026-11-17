@@ -8503,6 +8503,13 @@
             // [v2.30.1-p112] Deslizar el nav-indicator sliding al nuevo tab.
             try { if (typeof window._mrUpdateNavIndicator === 'function') window._mrUpdateNavIndicator(); } catch(_){}
             const t = btn.dataset.target;
+            // [v2.30.1-p425.125] Trigger de Race Day sticky al cambiar a Runner.
+            // Cubre el caso de que una lectura transitoria tras boot dejara la
+            // fila oculta sin que ningun otro refresh la volviera a disparar.
+            if (t === 'runner') {
+                try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){}
+                setTimeout(function(){ try { if (typeof window._raceDayRefreshRow === 'function') window._raceDayRefreshRow(); } catch(_){} }, 500);
+            }
             document.querySelectorAll('.view').forEach(v => {
                 const on = v.id === 'view-' + t;
                 v.classList.toggle('active', on);
@@ -38114,6 +38121,30 @@
                                 _pace = _p.pace;
                                 _km   = _blockKm ? (Math.round(_blockKm*10)/10 + ' km') : '';
                             }
+                            // [v2.30.1-p425.125] Render PRO para sesiones SIMPLES.
+                            // Si la sesion tiene 1 solo bloque sin reps y es de
+                            // tipo easy/recovery/long/maintenance, el label y los
+                            // km repiten lo del titulo. Sustituimos por contenido
+                            // fisiologico (intencion + FC + proposito corto),
+                            // dejamos el pace a la derecha y quitamos el km.
+                            // Sesiones con reps (series, long intervalado) NO se tocan.
+                            const _isSimpleSolo = (sess.blocks.length === 1 && !_hasReps && !_isHtml
+                                && (sess.type === 'easy' || sess.type === 'recovery'
+                                    || sess.type === 'long' || sess.type === 'maintenance'));
+                            if (_isSimpleSolo) {
+                                const _p2 = _parseBlk(b.detail);
+                                const _fc = _p2.fc; // rango ya extraido (ej "136-155 ppm")
+                                const _MR_SIMPLE_CFG = {
+                                    easy:        { lbl: 'Zona aeróbica · base', tip: 'Debes poder conversar' },
+                                    recovery:    { lbl: 'Recuperación activa',  tip: 'Pulso bajo · regeneración' },
+                                    long:        { lbl: 'Long aeróbico · base', tip: 'Resistencia pura · sin esfuerzo' },
+                                    maintenance: { lbl: 'Mantenimiento aeróbico', tip: 'Volumen general · sin intensidad' }
+                                };
+                                const _cfg = _MR_SIMPLE_CFG[sess.type] || _MR_SIMPLE_CFG.easy;
+                                _lbl = _cfg.lbl;
+                                _note = _fc ? ('FC ' + _fc + (/ppm/i.test(_fc) ? '' : ' ppm') + ' · ' + _cfg.tip) : _cfg.tip;
+                                _km = '';
+                            }
                             if (!(_isHtml && !_hasReps)) _note = _clampNote(_note, _noteBudget(_pace, _km));
                             detail += `<div style="position:relative;padding:3px 10px ${_isLast?'1px':'3px'} 12px;${_bord}">`
                                 + `<div style="display:flex;align-items:center;gap:9px;">`
@@ -47204,6 +47235,24 @@
                 row.style.display = 'none';
             } catch(_){}
         };
+
+        // [v2.30.1-p425.125] Trigger extra al volver la pestaña a visible:
+        // tras suspension del navegador, la primera lectura puede quedar
+        // transitoria. Forzamos un refresh al reactivar para rescatar la fila.
+        try {
+            if (!window.__mrRdVisListener) {
+                window.__mrRdVisListener = true;
+                document.addEventListener('visibilitychange', function(){
+                    try {
+                        if (document.visibilityState === 'visible'
+                            && typeof window._raceDayRefreshRow === 'function') {
+                            window._raceDayRefreshRow();
+                            setTimeout(function(){ try { window._raceDayRefreshRow(); } catch(_){} }, 400);
+                        }
+                    } catch(_){}
+                });
+            }
+        } catch(_){}
 
         // Helper de consola para debug rápido: window.__raceDayDebug()
         window.__raceDayDebug = function() {
