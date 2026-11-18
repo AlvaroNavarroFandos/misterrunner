@@ -38212,16 +38212,14 @@
                                 + `</div>`;
                         } else {
                             // ── Reps NO uniformes: línea del bloque + desglose ──
-                            // [v2.30.1-p425.130] Header minimal: solo pill grande Nx + chip zona.
-                            // Eliminados el icono grande y el label del bloque padre
-                            // ('Tempo 2×4km', 'Bloque MP 2×2km') por ser redundantes con
-                            // lo que ya dicen las reps hijas debajo ('4km @ Umbral', etc.).
-                            // La pill se agranda (15px, padding 4/14) para destacar como
-                            // ancla visual del bucle.
+                            // [v2.30.1-p425.131] Header minimal MAX: solo pill [N×] grande.
+                            // Eliminado el chip de zona (UMBRAL/MP/VO2MAX...) porque
+                            // las reps hijas debajo ya dicen '@ Umbral' o '@ MP' con
+                            // el ritmo. Redundancia total. Queda la pill sola como
+                            // ancla visual del bucle, sin ruido.
                             detail += `<div style="position:relative;padding:4px 10px ${_isLast?'1px':'4px'} 12px;${_bord}">`
                                 + `<div style="display:flex;align-items:center;gap:10px;min-height:28px;">`
                                 +   `<span style="font-size:15px;font-weight:900;padding:4px 14px;border-radius:7px;color:#fff;background:${_grad};flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.20);letter-spacing:-.3px;line-height:1;">${b.repeat}\u00d7</span>`
-                                +   _chipHtml
                                 + `</div>`
                                 + `<div style="margin:6px 0 2px 14px;padding-left:15px;border-left:2px dashed var(--border);">`;
                             b.reps.forEach(r => {
