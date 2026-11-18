@@ -19228,11 +19228,11 @@
 + '.mrwx-best{padding:8px 14px 12px;background:var(--card2);}'
 + '.mrwx-best-title{font-size:9.5px;font-weight:800;color:var(--tm);text-transform:uppercase;letter-spacing:1.3px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-family:var(--f);}'
 + '.mrwx-best-title .plan-hint{color:#c4881e;font-weight:700;letter-spacing:.4px;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
-+ '.mrwx-slot{display:grid;grid-template-columns:20px 44px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);}'
++ '.mrwx-slot{display:grid;grid-template-columns:20px 58px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);}'
 + '.mrwx-slot:last-child{border-bottom:none;padding-bottom:3px;}'
 + '.mrwx-slot-medal{font-size:16px;line-height:1;text-align:center;}'
-+ '.mrwx-slot-hour{font-size:14px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1;font-family:var(--f);}'
-+ '.mrwx-slot-hour small{display:block;font-size:8.5px;font-weight:700;color:var(--tm);letter-spacing:.5px;text-transform:uppercase;margin-top:2px;}'
++ '.mrwx-slot-hour{font-size:14px;font-weight:900;color:var(--tw);font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1;font-family:var(--f);white-space:nowrap;}'
++ '.mrwx-slot-hour small{display:inline;font-size:9.5px;font-weight:700;color:var(--tm);letter-spacing:.4px;text-transform:uppercase;margin-top:0;margin-left:4px;vertical-align:baseline;}'
 + '.mrwx-slot-info{font-size:10.5px;color:var(--ts);font-weight:600;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-variant-numeric:tabular-nums;font-family:var(--f);}'
 + '.mrwx-slot-info .sep{color:var(--tt);font-weight:400;}'
 + '.mrwx-slot-info b{color:var(--tw);font-weight:800;}'
@@ -38134,15 +38134,19 @@
                             if (_isSimpleSolo) {
                                 const _p2 = _parseBlk(b.detail);
                                 const _fc = _p2.fc; // rango ya extraido (ej "136-155 ppm")
+                                // [v2.30.1-p425.128] Minimal PRO: solo label corto + FC.
+                                // Sin tip ('Debes poder conversar', etc.) para que
+                                // quede limpio. El propio pill del titulo + icono +
+                                // color ya comunican la intensidad.
                                 const _MR_SIMPLE_CFG = {
-                                    easy:        { lbl: 'Zona aeróbica · base', tip: 'Debes poder conversar' },
-                                    recovery:    { lbl: 'Recuperación activa',  tip: 'Pulso bajo · regeneración' },
-                                    long:        { lbl: 'Long aeróbico · base', tip: 'Resistencia pura · sin esfuerzo' },
-                                    maintenance: { lbl: 'Mantenimiento aeróbico', tip: 'Volumen general · sin intensidad' }
+                                    easy:        { lbl: 'Zona aeróbica' },
+                                    recovery:    { lbl: 'Recuperación activa' },
+                                    long:        { lbl: 'Long aeróbico' },
+                                    maintenance: { lbl: 'Mantenimiento' }
                                 };
                                 const _cfg = _MR_SIMPLE_CFG[sess.type] || _MR_SIMPLE_CFG.easy;
                                 _lbl = _cfg.lbl;
-                                _note = _fc ? ('FC ' + _fc + (/ppm/i.test(_fc) ? '' : ' ppm') + ' · ' + _cfg.tip) : _cfg.tip;
+                                _note = _fc ? ('FC ' + _fc + (/ppm/i.test(_fc) ? '' : ' ppm')) : '';
                                 _km = '';
                             }
                             if (!(_isHtml && !_hasReps)) _note = _clampNote(_note, _noteBudget(_pace, _km));
