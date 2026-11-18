@@ -37874,13 +37874,28 @@
                         + (_realHr > 0 ? `<span style="color:var(--tm);">·</span><b style="color:#22c55e;font-weight:700;">FC ${_realHr}</b>` : '')
                         + `</span>`;
                 } else if (_detailShort) {
-                    // [v2.30.1-p425.54] Alvaro: "Que ponga al lado de banda elastica
-                    // 'Completed' con el mismo verde que pone los stats del entreno
-                    // completado en los de running". Solo cuando strength done.
-                    const _completedTag = (_isStrengthCard && _isStrengthDone)
-                        ? ` · <span style="color:#22c55e;font-weight:700;">Completed</span>`
-                        : '';
-                    _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}${_completedTag}</span>`;
+                    // [v2.30.1-p425.129] Mostrar el desc replegado SOLO en sesiones
+                    // con bloques intensivos (series, long con reps/MP finish, test,
+                    // race). En simples (easy, recovery, long base/taper, maintenance,
+                    // strength) la fila queda limpia con solo titulo + pill — el
+                    // detalle vive en el despliegue (donde p128 ya lo dejo premium).
+                    // Excepciones que mantienen el desc: strength DONE (Completed tag)
+                    // y cualquier sesion con bloques intensivos.
+                    const _hasIntensiveBlocks = sess.blocks && sess.blocks.some(function(b){
+                        return (Array.isArray(b.reps) && b.repeat > 0) || b._rampMP;
+                    });
+                    const _showDescCollapsed = (
+                        sess.type === 'series' || sess.type === 'test' || sess.type === 'race'
+                        || (sess.type === 'long' && _hasIntensiveBlocks)
+                        || (_isStrengthCard && _isStrengthDone)  // Fuerza completada: mantener para mostrar 'Completed'
+                    );
+                    if (_showDescCollapsed) {
+                        const _completedTag = (_isStrengthCard && _isStrengthDone)
+                            ? ` · <span style="color:#22c55e;font-weight:700;">Completed</span>`
+                            : '';
+                        _detailHTML = `<span style="font-size:10.5px;color:var(--ts);font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_descOneLine(_detailShort)}${_completedTag}</span>`;
+                    }
+                    // else: _detailHTML queda vacio → fila limpia replegada
                 }
 
                 // [Plan HOY V4] Sidebar 5px verde con glow inyectado como elemento HTML
@@ -38079,12 +38094,42 @@
                         const _lc = String(c || '').toLowerCase();
                         return (_lc === '#c9a84c' || _lc === '#d9a441') ? '#f87171' : c;
                     };
+                    // [v2.30.1-p425.129] Chip de zona para bloques intensivos.
+                    // Mapa keywords -> {text, color}. Devuelve null si no es
+                    // un bloque de calidad (WU, CD, recovery, rodaje) o si
+                    // no detecta zona.
+                    const _mrBlockZoneTag = function(b) {
+                        if (!b) return null;
+                        const _lbl = String(b.label||'').toLowerCase();
+                        const _det = String(b.detail||'').toLowerCase();
+                        const _str = _lbl + ' ' + _det;
+                        // Excluir bloques auxiliares (WU, CD, recovery)
+                        if (/calentam|\bwu\b|\bcd\b|vuelta a la calma|\bcalma\b|enfriam|recuper|recovery|rodaje|rodaje\s*f[aá]cil|trote\s*easy/.test(_lbl)) {
+                            if (!(/@\s*mp|@\s*umbral|@\s*interval|@\s*hm/.test(_lbl))) return null;
+                        }
+                        // Detectar zona por keywords (orden de prioridad)
+                        if (/umbral|threshold|cruise|tempo\s*pir|tempo\s+\d/.test(_str)) return { text:'UMBRAL', color:'#ef4444' };
+                        if (/vo2|\binterv|repetic/.test(_str)) return { text:'VO2MAX', color:'#dc2626' };
+                        if (/hm\s*pace|ritmo\s*(?:media|hm)/.test(_str)) return { text:'HM', color:'#a78bfa' };
+                        if (/\bmp\b|ritmo\s*marat|ritmo\s*m\b|@\s*mp|rm\b|simulaci[oó]n\s*marat/.test(_str)) return { text:'MP', color:'#C9A84C' };
+                        if (/fartlek/.test(_lbl)) return { text:'FARTLEK', color:'#ef4444' };
+                        if (/strid|acelera/.test(_lbl)) return { text:'STRIDES', color:'#a78bfa' };
+                        if (/progres/.test(_lbl)) return { text:'PROGRES', color:'#C9A84C' };
+                        return null;
+                    };
+                    const _mrChipHtml = function(zt) {
+                        if (!zt) return '';
+                        return '<span style="font-size:8.5px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;padding:2px 7px;border-radius:5px;color:#fff;background:'+zt.color+';flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.18);line-height:1.1;align-self:center;">'+zt.text+'</span>';
+                    };
+
                     sess.blocks.forEach((b, _bi) => {
                         const _bColor = _fixColor(b.color);
                         const _grad = _gradForBlock(_bColor);
-                        const _hasReps = Array.isArray(b.reps) && b.reps.length > 0 && b.repeat > 0;
+                        const _hasReps = Array.isArray(b.reps) && b.repeat > 0 && b.reps.length > 0;
                         const _blockKm = _computeBlockKm(b);
                         const _isHtml = !!b.detailHtml;
+                        const _zoneTag = _mrBlockZoneTag(b);
+                        const _chipHtml = _mrChipHtml(_zoneTag);
                         const _isLast = _bi === _nTop - 1;
                         /* [p239] Separador arquitectónico "Opción C" entre resumen y bloques.
                            Solo en el primer bloque: banda 3px del color del tipo + hairline a
@@ -38155,7 +38200,10 @@
                                 +   _badge
                                 +   (!_isHtml ? `<div style="width:26px;height:26px;border-radius:6px;background:${_grad};display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 2px 5px rgba(0,0,0,.18);">${_icoBig(b)}</div>` : '')
                                 +   `<div style="${_COL}">`
-                                +     `<div style="${_LBL}">${_lbl}</div>`
+                                +     `<div style="${_LBL};display:flex;align-items:center;gap:6px;">`
+                                +       `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${_lbl}</span>`
+                                +       _chipHtml
+                                +     `</div>`
                                 +     (_note ? `<div style="${_noteStyle(_isHtml && !_hasReps)}">${_note}</div>` : '')
                                 +   `</div>`
                                 +   (_pace ? `<span class="mr-blk-pace" style="${_paceVars(_bColor)}${_MONO}font-size:11.5px;font-weight:700;color:var(--tw);flex-shrink:0;">${_pace}</span>` : '')
@@ -38168,7 +38216,7 @@
                                 + `<div style="display:flex;align-items:center;gap:9px;min-height:24px;">`
                                 +   `<span style="font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6px;color:#fff;background:${_grad};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.18);">${b.repeat}\u00d7</span>`
                                 +   `<div style="width:26px;height:26px;border-radius:6px;background:${_grad};display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 2px 5px rgba(0,0,0,.18);">${_icoBig(b)}</div>`
-                                +   `<div style="flex:1;min-width:0;"><div style="${_LBL}">${_shortLabel(b.label)}</div></div>`
+                                +   `<div style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;"><div style="${_LBL};min-width:0;overflow:hidden;text-overflow:ellipsis;">${_shortLabel(b.label)}</div>${_chipHtml}</div>`
                                 + `</div>`
                                 + `<div style="margin:4px 0 2px 14px;padding-left:15px;border-left:2px dashed var(--border);">`;
                             b.reps.forEach(r => {
