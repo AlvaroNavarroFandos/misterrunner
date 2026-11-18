@@ -7542,11 +7542,10 @@ function _buildPRGridCard(type, rec, isDark) {
             }
             if (!_paceSec || _paceSec <= 0 || !isFinite(_paceSec)) return '';
             var _paceStr = _fmtPace(_paceSec) + '/km';
-            // [v2.30.1-p425.133] Color verde en lugar de dorado para que destaque.
-            // Fondo rgba(34,197,94,.14), border rgba(34,197,94,.36), texto #22c55e.
-            return '<span style="flex-shrink:0;align-self:center;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.36);">'
-                 +   '<span style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;">pace</span>'
-                 +   '<span style="font-size:10.5px;font-weight:700;color:#22c55e;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">' + _paceStr + '</span>'
+            // [v2.30.1-p425.134] Chip minimal: solo el valor '3:52/km' en verde,
+            // sin label 'pace'. Mas compacto y limpio.
+            return '<span style="flex-shrink:0;align-self:center;display:inline-flex;align-items:center;padding:4px 10px;border-radius:6px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.36);">'
+                 +   '<span style="font-size:11px;font-weight:800;color:#22c55e;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">' + _paceStr + '</span>'
                  + '</span>';
         })();
         if (_mrPrsPaceChipHtml) {
