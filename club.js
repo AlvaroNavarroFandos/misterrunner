@@ -7513,8 +7513,11 @@ function _buildPRGridCard(type, rec, isDark) {
                 'best_1k': 1,
                 'best_100m': 0.1
             };
-            var _fmtPace = (typeof window.fmtPace === 'function') ? window.fmtPace : function(s){
+            // [v2.30.1-p425.133] Forzar fn interna sin decimales (ignora window.fmtPace
+            // porque en ciertas ramas devuelve fracciones). M:SS siempre entero.
+            var _fmtPace = function(s){
                 var m = Math.floor(s/60), r = Math.round(s%60);
+                if (r === 60) { m += 1; r = 0; }
                 return m + ':' + (r<10?'0':'') + r;
             };
             var _paceSec = null;
@@ -7539,9 +7542,11 @@ function _buildPRGridCard(type, rec, isDark) {
             }
             if (!_paceSec || _paceSec <= 0 || !isFinite(_paceSec)) return '';
             var _paceStr = _fmtPace(_paceSec) + '/km';
-            return '<span style="flex-shrink:0;align-self:center;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:rgba(196,136,30,.14);border:1px solid rgba(196,136,30,.32);">'
+            // [v2.30.1-p425.133] Color verde en lugar de dorado para que destaque.
+            // Fondo rgba(34,197,94,.14), border rgba(34,197,94,.36), texto #22c55e.
+            return '<span style="flex-shrink:0;align-self:center;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.36);">'
                  +   '<span style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;">pace</span>'
-                 +   '<span style="font-size:10.5px;font-weight:700;color:var(--gold,#c4881e);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">' + _paceStr + '</span>'
+                 +   '<span style="font-size:10.5px;font-weight:700;color:#22c55e;font-variant-numeric:tabular-nums;letter-spacing:-.2px;">' + _paceStr + '</span>'
                  + '</span>';
         })();
         if (_mrPrsPaceChipHtml) {
