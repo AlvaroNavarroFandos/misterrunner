@@ -7496,6 +7496,63 @@ function _buildPRGridCard(type, rec, isDark) {
     info.appendChild(valEl);
     row.appendChild(info);
 
+    // [v2.30.1-p425.132] Chip pace dorado entre tiempo/valor y pill de fecha.
+    // Solo para distancias fijas + longest_run + best_ascent. Formato:
+    //   [pace] [M:SS/km]
+    // Fondo dorado .14, border dorado .32, texto dorado. Alineado vertical
+    // con el resto de la fila (align-self:center).
+    try {
+        var _mrPrsPaceChipHtml = (function() {
+            if (!marked || !rec || rec.value == null) return '';
+            var _DIST_KM = {
+                'best_marathon': 42.195,
+                'best_half': 21.0975,
+                'best_10k': 10,
+                'best_5k': 5,
+                'best_3000m': 3,
+                'best_1k': 1,
+                'best_100m': 0.1
+            };
+            var _fmtPace = (typeof window.fmtPace === 'function') ? window.fmtPace : function(s){
+                var m = Math.floor(s/60), r = Math.round(s%60);
+                return m + ':' + (r<10?'0':'') + r;
+            };
+            var _paceSec = null;
+            if (_DIST_KM[type]) {
+                _paceSec = Number(rec.value) / _DIST_KM[type];
+            } else if (type === 'longest_run' || type === 'best_ascent') {
+                try {
+                    var _acts = (typeof window._getActivities === 'function') ? window._getActivities() : [];
+                    var _a = null;
+                    var _tid = String(rec.activity_local_id || '');
+                    if (_tid) {
+                        for (var _i = 0; _i < _acts.length; _i++) {
+                            if (_acts[_i] && String(_acts[_i].id) === _tid) { _a = _acts[_i]; break; }
+                        }
+                    }
+                    if (_a && _a.durationSec && _a.distKm) {
+                        _paceSec = Number(_a.durationSec) / Number(_a.distKm);
+                    }
+                } catch(_){}
+            } else {
+                return '';
+            }
+            if (!_paceSec || _paceSec <= 0 || !isFinite(_paceSec)) return '';
+            var _paceStr = _fmtPace(_paceSec) + '/km';
+            return '<span style="flex-shrink:0;align-self:center;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;background:rgba(196,136,30,.14);border:1px solid rgba(196,136,30,.32);">'
+                 +   '<span style="font-size:9px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;">pace</span>'
+                 +   '<span style="font-size:10.5px;font-weight:700;color:var(--gold,#c4881e);font-variant-numeric:tabular-nums;letter-spacing:-.2px;">' + _paceStr + '</span>'
+                 + '</span>';
+        })();
+        if (_mrPrsPaceChipHtml) {
+            var _pacePillEl = document.createElement('div');
+            _pacePillEl.innerHTML = _mrPrsPaceChipHtml;
+            // El div envoltorio no debe heredar margin; el inner span ya tiene estilos
+            _pacePillEl.style.cssText = 'display:flex;align-items:center;flex-shrink:0;';
+            row.appendChild(_pacePillEl);
+        }
+    } catch(_e132){ /* silent: sin chip si algo falla */ }
+
     // ── Pill derecha (fecha dorada / "Sin marcar" / "Sin desbloquear") ─
     // [v2.30.1-p349] Variante C: pill marked con gradient dorado vertical
     // (.22 -> .10) + border mas marcado (.42) + radius 999 -> 8 (esquinas
