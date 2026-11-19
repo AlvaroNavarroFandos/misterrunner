@@ -52705,12 +52705,6 @@
         // por ejercicio; fallback a cue si no hay entrada específica.
         window.MR_EX_DESC = {
             // ═══ Fuerza runner con banda (STRENGTH_HOME_BAND · DÍA A) ═══
-            'Squat con banda': {
-                muscle: '🦵',
-                setup: 'De pie con los pies a la anchura de los hombros y la banda por encima de las rodillas.',
-                movement: 'Baja como si fueras a sentarte, con espalda recta y pecho arriba. Sube apretando glúteos.',
-                key: 'Empuja siempre las rodillas hacia fuera contra la banda durante todo el movimiento.'
-            },
             'Zancadas con banda': {
                 muscle: '🦵',
                 setup: 'De pie con la banda por encima de las rodillas, tronco erguido.',
@@ -53321,7 +53315,10 @@
         // Bloques A-F (nuevo F — Equilibrio). 1-2 días/sem.
         // ═══════════════════════════════════════════════════════════
         // ── DÍA A · fuerza + cadena posterior + estabilidad ───────
-        {name:'Squat con banda',              day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
+        // v2.30.1-p425.139 · Alvaro (19 nov 2026): Squat con banda ELIMINADO.
+        // Movimiento bilateral de baja transferencia a running (que es 100%
+        // unilateral). Zancadas (dinamico) + Split squat (estatico) cubren
+        // el trabajo de pierna con mejor transferencia funcional.
         {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:''},
         {name:'Hip thrust con banda',         day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, cadera alta 1 seg arriba, aprieta el gluteo',                   phase:'A',videoUrl:''},
         {name:'Split squat con banda',        day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'B',videoUrl:''},
@@ -53579,36 +53576,59 @@
                  : (strengthDays === 1 ? [2] : (strengthDays === 3 ? [2,4,6] : [2,4]));
         if(!days.length) { alert('Selecciona al menos un dia de fuerza.'); return; }
 
-        // v2.30.1-p87 · Preview home_band muestra Día A como ejemplo
-        var sampleDayLetter = (strengthEquip === 'home_band') ? 'A' : null;
-        var session  = buildStrengthSession(strengthEquip, null, sampleDayLetter);
         var equipLbl = _strengthEquipLabel(strengthEquip);
+        var isHomeBand = (strengthEquip === 'home_band');
 
-        // Build preview HTML — show one sample week
+        // v2.30.1-p425.139 · Para home_band generamos ambos dias (A y B) y los
+        // mostramos SEPARADOS como dos secciones de ejemplo. Para gym / home
+        // sin banda, una sola sesion replicada en cada dia seleccionado.
+        var sessionsPreview;
+        if (isHomeBand) {
+            sessionsPreview = [
+                { letter: 'A', session: buildStrengthSession(strengthEquip, null, 'A') },
+                { letter: 'B', session: buildStrengthSession(strengthEquip, null, 'B') }
+            ];
+        } else {
+            sessionsPreview = [{ letter: null, session: buildStrengthSession(strengthEquip, null, null) }];
+        }
+
         var dayNames = ['','L','M','X','J','V','S','D'];
-        var dayFull  = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
         var prev = document.getElementById('strength-preview');
         if(!prev) return;
 
-        var html2 = '<div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">'
-            +'<div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:8px;">Vista previa — sesión semanal ('+equipLbl+(sampleDayLetter?' · Día '+sampleDayLetter+' de ejemplo':'')+')</div>';
+        // Mapeo de que dia de la semana toca que letra (para mostrar en header)
+        // Replica _homeBandDayLetter sobre la primera semana (w=0 → semana par).
+        var daySlotLabels = [];
+        if (isHomeBand) {
+            days.forEach(function(dow, i){
+                var letter = (i % 2 === 0) ? 'A' : 'B';
+                daySlotLabels.push(dayNames[dow] + '=' + letter);
+            });
+        }
 
-        // Bloques dinámicos: derivar de los ejercicios reales (no fijos ABCDE)
-        var previewBlocks = {};
-        session.forEach(function(e){ if (e.phase) previewBlocks[e.phase] = 1; });
-        var previewBlockList = Object.keys(previewBlocks).sort();
+        var html2 = '<div style="background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;">';
+        html2 += '<div style="font-size:10px;color:var(--tm);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:4px;">Vista previa — catálogo semanal (' + equipLbl + ')</div>';
+        if (isHomeBand && daySlotLabels.length) {
+            html2 += '<div style="font-size:9.5px;color:var(--tm);font-weight:700;margin-bottom:10px;letter-spacing:.3px;">Alternancia semana actual: ' + daySlotLabels.join(' · ') + ' · se invierte cada semana</div>';
+        }
 
-        days.forEach(function(dow) {
-            html2 += '<div style="margin-bottom:8px;">'
-                +'<div style="font-size:11px;font-weight:700;color:var(--tw);margin-bottom:4px;">'+dayNames[dow]+' — Fuerza 30min</div>';
-            previewBlockList.forEach(function(ph) {
+        sessionsPreview.forEach(function(entry) {
+            var session = entry.session;
+            var letterHdr = entry.letter ? ('Día ' + entry.letter + ' — Fuerza 30 min') : ('Sesión — Fuerza 30 min');
+            html2 += '<div style="margin-bottom:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;">'
+                +'<div style="font-size:11.5px;font-weight:800;color:var(--tw);margin-bottom:8px;letter-spacing:.3px;">' + letterHdr
+                +' <span style="color:var(--tm);font-weight:700;font-size:10px;">· ' + session.length + ' ejercicios</span></div>';
+            var sessionBlocks = {};
+            session.forEach(function(e){ if (e.phase) sessionBlocks[e.phase] = 1; });
+            var sessionBlockList = Object.keys(sessionBlocks).sort();
+            sessionBlockList.forEach(function(ph) {
                 var bd  = BLOCK_DESC[ph];
                 if (!bd) return;
                 var exs = session.filter(function(e){ return e.phase===ph; });
                 if (!exs.length) return;
-                html2 += '<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:3px;">'
-                    +'<div style="width:8px;height:8px;border-radius:2px;background:'+bd.color+';flex-shrink:0;margin-top:2px;"></div>'
-                    +'<div style="font-size:10px;color:var(--ts);">'
+                html2 += '<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px;">'
+                    +'<div style="width:8px;height:8px;border-radius:2px;background:'+bd.color+';flex-shrink:0;margin-top:3px;"></div>'
+                    +'<div style="font-size:10px;color:var(--ts);line-height:1.45;">'
                     + exs.map(function(e){ return '<b style="color:var(--tw);">'+e.name+'</b> '+e.sets+'×'+e.reps+' <span style="color:var(--tm);">— '+e.cue+'</span>'; }).join(' · ')
                     +'</div></div>';
             });
