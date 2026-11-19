@@ -52710,23 +52710,11 @@
                 movement: 'Empuja el suelo con los talones y sube la cadera hasta línea recta hombros-rodillas. Aguanta 1 segundo arriba. Baja controlado.',
                 key: 'Aprieta glúteos arriba y empuja las rodillas hacia fuera contra la banda todo el rato.'
             },
-            'Nordic Curl (excéntrico)': {
-                muscle: '🦵',
-                setup: 'De rodillas con los talones enganchados bajo el sofá o algo pesado (o alguien te sujeta los tobillos). Cuerpo recto de rodillas a hombros.',
-                movement: 'Baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo justo antes de tocar.',
-                key: 'Es el ejercicio con más evidencia científica para prevenir lesiones de isquios en corredores (Van Dyk 2019).'
-            },
             'Nordic Curl (excentrico)': {
                 muscle: '🦵',
                 setup: 'De rodillas con los talones enganchados bajo el sofá (o alguien te sujeta). Cuerpo recto de rodillas a hombros.',
                 movement: 'Baja el tronco al suelo lo más lento posible (4-5 segundos), aguantando la caída con los isquios. Amortigua con las manos abajo.',
                 key: 'Es el ejercicio con más evidencia científica para prevenir lesiones de isquios en corredores.'
-            },
-            'Kickbacks con banda': {
-                muscle: '🍑',
-                setup: 'Cuadrupedia (a cuatro patas) con la banda entre el pie de una pierna y la mano del brazo opuesto.',
-                movement: 'Manteniendo la rodilla doblada, patea hacia atrás y arriba extendiendo la cadera. Aguanta 1 segundo arriba. Vuelve controlado.',
-                key: 'La cadera se queda cuadrada al suelo — no rotes la pelvis para ganar rango.'
             },
             'Monster walks laterales': {
                 muscle: '🍑',
@@ -52752,12 +52740,6 @@
                 movement: 'Abre la pierna de arriba como una almeja, sin rotar la cadera ni mover la pelvis. Aguanta arriba 1 segundo. Baja controlado.',
                 key: 'La pelvis siempre estable — no ruedes hacia atrás para ganar rango.'
             },
-            'A-skips (skipping alto)': {
-                muscle: '⚡',
-                setup: 'De pie, en marcha ligera. Brazos coordinados con las piernas.',
-                movement: 'Skipping donde subes la rodilla hasta la altura de la cadera (o más) en cada paso. Ritmo constante, aterrizaje con el mediopié.',
-                key: 'Piensa "pisar y despegar rápido" — tiempo mínimo de contacto con el suelo.'
-            },
             'Pogo hops': {
                 muscle: '⚡',
                 setup: 'De pie con los pies juntos, brazos ligeramente doblados a los lados.',
@@ -52765,12 +52747,6 @@
                 key: 'Como si fueras un muelle — mínimo tiempo de contacto con el suelo, máxima rigidez del tobillo.'
             },
             // ═══ Fuerza runner con banda (STRENGTH_HOME_BAND · DÍA B) ═══
-            'Bulgarian Split Squat cargado': {
-                muscle: '🦵',
-                setup: 'Pie de atrás elevado en un banco/silla/sofá, pie delantero adelantado. Sujeta una mochila cargada (5-15 kg) o dos mancuernas a los lados.',
-                movement: 'Baja recto 3 segundos hasta que la rodilla trasera casi toque el suelo, rodilla delantera alineada sobre el tobillo. Empuja con el talón delantero para volver. Cambia de pierna.',
-                key: 'Este ejercicio pesado unilateral mejora la economía de carrera 2-4% en corredores entrenados (Blagrove 2018 meta-análisis).'
-            },
             'Split squat con banda': {
                 muscle: '🦵',
                 setup: 'Postura de zancada estática (una pierna delante, otra detrás) con banda por encima de las rodillas.',
@@ -52783,47 +52759,42 @@
                 movement: 'Baja recto 3 segundos, rodilla delantera sobre el tobillo, tronco erguido. Sube apretando el glúteo. Cambia de pierna.',
                 key: 'Rodilla delantera SIEMPRE alineada con el tobillo — no dejes que se colapse hacia dentro.'
             },
-            'Band knee drive': {
-                muscle: '🦵',
-                setup: 'De pie con la banda alrededor de los tobillos. Agárrate a algo si necesitas equilibrio.',
-                movement: 'Sube una rodilla al pecho contra la resistencia de la banda, brazo contrario activo. Aguanta 1 segundo arriba. Baja controlado.',
-                key: 'Ideal para activar flexores de cadera — clave en el mecanismo del skipping y la potencia de zancada.'
-            },
-            'Standing hip abduction': {
-                muscle: '🍑',
-                setup: 'De pie con la banda alrededor de los tobillos. Agárrate a algo estable si necesitas equilibrio.',
-                movement: 'Abre una pierna lateralmente contra la resistencia de la banda, sin inclinar el tronco. Baja controlado. Cambia de pierna.',
-                key: 'El tronco se queda vertical — no te ladees hacia el otro lado para hacer trampa.'
-            },
-            'Fire hydrants con banda': {
-                muscle: '🍑',
-                setup: 'Cuadrupedia con banda por encima de las rodillas.',
-                movement: 'Manteniendo la rodilla doblada 90°, abre la pierna lateralmente (como un perro en una boca de incendios) sin rotar la pelvis. Aguanta 1 segundo arriba.',
-                key: 'La cadera se queda cuadrada al suelo — no rotes la pelvis para ganar rango.'
-            },
-            'Bird dog con banda': {
-                muscle: '🧘',
-                setup: 'Cuadrupedia con banda entre la mano y el pie opuestos.',
-                movement: 'Extiende simultáneamente el brazo hacia delante y la pierna hacia atrás hasta línea recta, manteniendo la cadera estable y la lumbar neutra. Aguanta 2 segundos. Alterna lados.',
-                key: 'Mantén la cadera cuadrada al suelo — es un ejercicio de estabilidad, no de rango.'
-            },
-            'Estiramiento cadera con banda': {
-                muscle: '🧘',
-                setup: 'Túmbate boca arriba con la banda alrededor de la planta de un pie, con las manos sujetando el otro extremo.',
-                movement: 'Estira la pierna hacia arriba tirando suavemente de la banda, manteniendo la lumbar pegada al suelo. Aguanta 30 segundos por pierna sin rebotar.',
-                key: 'Respira profundo y relaja el músculo cada exhalación — no fuerces el estiramiento.'
-            },
-            'Bounding': {
-                muscle: '⚡',
-                setup: 'De pie, en marcha ligera. Brazos activos coordinados.',
-                movement: 'Zancadas amplias saltando de un pie al otro, buscando máxima distancia y suspensión en el aire. Aterrizaje con el mediopié. 12 pasos por serie.',
-                key: 'Piensa "cubre más terreno con menos pasos" — busca amplitud y potencia máxima en cada salto.'
-            },
             'Single leg hop': {
                 muscle: '⚡',
                 setup: 'De pie sobre una pierna, la otra ligeramente levantada.',
                 movement: 'Saltos verticales a una sola pierna. Aterrizaje suave y estable sin dejar caer la rodilla hacia dentro. Absorbe con cadera y rodilla, rebota controlado.',
                 key: 'La rodilla NUNCA se debe colapsar hacia dentro — sí lo hace, reduce altura del salto.'
+            },
+            // ═══ Nuevos p425.137 · Fuerza runner con banda (DÍA A/B) ═══
+            'Single Leg RDL con banda': {
+                muscle: '🍑',
+                setup: 'De pie sobre una pierna, el extremo de la banda bajo el pie de apoyo y el otro extremo sujeto con la mano opuesta.',
+                movement: 'Bisagra de cadera a una pierna: baja el tronco al frente mientras la pierna libre se extiende detrás, hasta espinilla o donde llegue tu rango. Espalda recta. Sube apretando glúteo. Cambia de pierna.',
+                key: 'La cadera queda cuadrada al suelo — no rotes hacia el lado de la pierna libre. Reemplaza al Nordic Curl con el mismo trabajo de isquio y menos riesgo articular.'
+            },
+            'Dead bug': {
+                muscle: '🧘',
+                setup: 'Túmbate boca arriba con brazos apuntando al techo y piernas en posición de mesa (caderas y rodillas a 90°).',
+                movement: 'Extiende simultáneamente un brazo por detrás de la cabeza y la pierna contraria hacia delante (sin tocar el suelo), manteniendo la lumbar pegada al suelo. Vuelve. Alterna lados.',
+                key: 'Exhala al extender — si la lumbar se despega del suelo, reduce rango. El core trabaja con la lumbar ancla, no con la velocidad del movimiento.'
+            },
+            '90/90 hip switch': {
+                muscle: '🧘',
+                setup: 'Sentado en el suelo con ambas piernas formando 90°: una delante y hacia el lado (muslo paralelo al cuerpo), la otra doblada hacia el lado opuesto. Forma una "Z" con las piernas.',
+                movement: 'Despega ambas rodillas del suelo y gíralas al lado contrario como las agujas de un reloj, aterrizando en el 90/90 espejado. El tronco se queda centrado. Pausa 2 segundos en cada lado antes de cambiar.',
+                key: 'Movilidad activa de rotación interna y externa de cadera — el ejercicio con mejor retorno por minuto para runners que trabajan sentados o de pie estático.'
+            },
+            'Y-Balance Reach': {
+                muscle: '🧘',
+                setup: 'De pie sobre una sola pierna con media sentadilla (rodilla a 15°). Imagina una "Y" en el suelo: 12h al frente, 7h atrás-fuera, 5h atrás-dentro.',
+                movement: 'Con la pierna libre, toca el suelo lo más lejos que puedas en las 3 direcciones (anterior, posterolateral, posteromedial). El talón de la pierna de apoyo no se despega. 5 toques por dirección = 15 toques por pierna.',
+                key: 'Rodilla de apoyo alineada con el pie (no cae hacia dentro). Mide una vez al mes la distancia por lado — diferencia >10% entre piernas = asimetría de riesgo, dedica más volumen a la pierna floja.'
+            },
+            'World\'s Greatest Stretch': {
+                muscle: '🧘',
+                setup: 'Partida en plancha alta (manos bajo hombros, cuerpo en línea).',
+                movement: 'Zancada: pie derecho al lado de la mano derecha, cadera abajo (pausa 2 seg). Rotación: apoya mano izquierda, levanta la derecha al techo abriendo el pecho (2 seg). Isquios: empuja la cadera atrás, pierna delantera recta (2 seg). Vuelve a plancha y repite al otro lado.',
+                key: 'Movilidad global en un solo ejercicio — flexor de cadera, aductor, isquio, torácico y pectoral. Ideal como cierre de sesión. Lento con pausas en cada fase, no rápido.'
             },
             // ═══ Fuerza casa sin equipo (STRENGTH_HOME clásicos) ═══
             'Puente unilateral (pierna extendida)': {
@@ -53254,30 +53225,33 @@
     // hasta que Álvaro suba los GIFs específicos a bucket exercise-demos.
     // ══════════════════════════════════════════════════════════════
     var STRENGTH_HOME_BAND = [
-        // ── DÍA A · cadena posterior + horizontal ─────────────────
-        {name:'Squat con banda',              day:'A',sets:'3',reps:'12 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
+        // ═══════════════════════════════════════════════════════════
+        // v2.30.1-p425.137 · Álvaro (19 nov 2026): REESCRITURA COMPLETA
+        // tras revisión ejercicio a ejercicio. 13 ejercicios curados:
+        // mínimo desgaste, no lesivos, máximo retorno para runners en casa.
+        // Bloques A-F (nuevo F — Equilibrio). 1-2 días/sem.
+        // ═══════════════════════════════════════════════════════════
+        // ── DÍA A · fuerza + cadena posterior + estabilidad ───────
+        {name:'Squat con banda',              day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, empuja las rodillas hacia fuera todo el movimiento',            phase:'A',videoUrl:''},
         {name:'Zancadas con banda',           day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, tronco erguido, empuja con el talon delantero',                 phase:'A',videoUrl:''},
         {name:'Hip thrust con banda',         day:'A',sets:'3',reps:'15 reps',    cue:'Banda encima de rodillas, cadera alta 1 seg arriba, aprieta el gluteo',                   phase:'A',videoUrl:''},
-        // v2.30.1-p87 · Álvaro (23 ago 2026): Nordic Curl añadido — mejor ejercicio
-        // con evidencia para prevención isquios en runners (Van Dyk 2019).
-        {name:'Nordic Curl (excéntrico)',     day:'A',sets:'3',reps:'5 reps',     cue:'Talones enganchados bajo el sofa, bajada muy lenta 4-5 seg, amortigua con las manos abajo', phase:'B',videoUrl:''},
-        {name:'Kickbacks con banda',          day:'A',sets:'3',reps:'12/pierna',  cue:'Cuadrupedia, banda entre pie y mano opuesta, patada atras extendiendo la cadera',         phase:'A',videoUrl:''},
+        {name:'Split squat con banda',        day:'A',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'B',videoUrl:''},
         {name:'Monster walks laterales',      day:'A',sets:'3',reps:'12/lado',    cue:'Banda encima de rodillas, postura atletica, pasos amplios sin colapsar rodillas',         phase:'C',videoUrl:''},
         {name:'Clamshell con banda',          day:'A',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
-        {name:'A-skips (skipping alto)',      day:'A',sets:'3',reps:'20 pasos',   cue:'Rodilla arriba al pecho, brazos activos, ritmo constante, aterrizaje mediopie',           phase:'D',videoUrl:''},
         {name:'Pogo hops',                    day:'A',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
-        // ── DÍA B · unilateral + estabilidad + movilidad ──────────
-        // v2.30.1-p87 · Álvaro (23 ago 2026): Bulgarian Split Squat cargado añadido
-        // — fuerza pesada unilateral, +2-4% economía de carrera (Blagrove 2018).
-        {name:'Bulgarian Split Squat cargado',day:'B',sets:'3',reps:'8/pierna',   cue:'Pie trasero elevado, mochila cargada (5-15kg) o mancuernas, descenso 3 seg, empuja con el talon',phase:'B',videoUrl:''},
-        {name:'Split squat con banda',        day:'B',sets:'3',reps:'10/pierna',  cue:'Banda encima de rodillas, descenso 3 seg, rodilla delantera sobre el tobillo',            phase:'A',videoUrl:''},
-        {name:'Band knee drive',              day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, sube una rodilla al pecho contra la resistencia de la banda',  phase:'A',videoUrl:''},
-        {name:'Standing hip abduction',       day:'B',sets:'3',reps:'15/pierna',  cue:'De pie, banda en tobillos, abre pierna lateral sin inclinar el tronco',                   phase:'C',videoUrl:''},
-        {name:'Fire hydrants con banda',      day:'B',sets:'3',reps:'12/lado',    cue:'Cuadrupedia, banda encima rodillas, abre pierna lateral manteniendo cadera cuadrada',     phase:'C',videoUrl:''},
-        {name:'Bird dog con banda',           day:'B',sets:'3',reps:'10/lado',    cue:'Cuadrupedia, banda entre mano y pie opuesto, extiende brazo y pierna contrarios',         phase:'C',videoUrl:''},
-        {name:'Estiramiento cadera con banda',day:'B',sets:'2',reps:'30 seg/lado',cue:'Tumbado, banda alrededor del pie, estira pierna arriba manteniendo lumbar en el suelo',   phase:'A',videoUrl:''},
-        {name:'Bounding',                     day:'B',sets:'3',reps:'12 pasos',   cue:'Zancadas amplias saltando de un pie a otro, brazos activos, maxima distancia por salto',  phase:'D',videoUrl:''},
-        {name:'Single leg hop',               day:'B',sets:'3',reps:'8/pierna',   cue:'Saltos verticales a una pierna, aterrizaje suave y estable sin caer rodilla adentro',     phase:'D',videoUrl:''},
+        {name:'Dead Bug',                     day:'A',sets:'3',reps:'10 alt.',    cue:'Lumbar pegada al suelo, contralateral lento, exhala al extender',                         phase:'E',videoUrl:''},
+        {name:'90/90 hip switch',             day:'A',sets:'2',reps:'8/lado',     cue:'Sentado, dos piernas en 90°, cambia de lado sin rotar el tronco, pausa 2 seg',            phase:'E',videoUrl:''},
+        {name:'Y-Balance Reach',              day:'A',sets:'2',reps:'5×3 dir/pie',cue:'Apoyo a una pierna, toca el suelo adelante / atras-fuera / atras-dentro (Y), talon fijo', phase:'F',videoUrl:''},
+        {name:'World\'s Greatest Stretch',    day:'A',sets:'2',reps:'5/lado',     cue:'Plancha → zancada con pie fuera de la mano → rotacion al techo → estira isquio, fluido', phase:'E',videoUrl:''},
+        // ── DÍA B · cadena posterior unilateral + pliometria + core ──
+        {name:'Single Leg RDL con banda',     day:'B',sets:'3',reps:'10/pierna',  cue:'Bisagra de cadera a una pierna, banda bajo el pie, espalda recta, baja hasta espinilla',  phase:'A',videoUrl:''},
+        {name:'Clamshell con banda',          day:'B',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
+        {name:'Pogo hops',                    day:'B',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
+        {name:'Single leg hop',               day:'B',sets:'3',reps:'10/pierna',  cue:'Saltos verticales a una pierna, aterrizaje suave y estable sin caer rodilla adentro',     phase:'D',videoUrl:''},
+        {name:'Dead Bug',                     day:'B',sets:'3',reps:'10 alt.',    cue:'Lumbar pegada al suelo, contralateral lento, exhala al extender',                         phase:'E',videoUrl:''},
+        {name:'90/90 hip switch',             day:'B',sets:'2',reps:'8/lado',     cue:'Sentado, dos piernas en 90°, cambia de lado sin rotar el tronco, pausa 2 seg',            phase:'E',videoUrl:''},
+        {name:'Y-Balance Reach',              day:'B',sets:'2',reps:'5×3 dir/pie',cue:'Apoyo a una pierna, toca el suelo adelante / atras-fuera / atras-dentro (Y), talon fijo', phase:'F',videoUrl:''},
+        {name:'World\'s Greatest Stretch',    day:'B',sets:'2',reps:'5/lado',     cue:'Plancha → zancada con pie fuera de la mano → rotacion al techo → estira isquio, fluido', phase:'E',videoUrl:''},
     ];
 
     // Helper alternancia día A/B según semana + posición sesión en la semana.
@@ -53292,7 +53266,8 @@
         B:{label:'Fuerza de rodilla (Cuadriceps + Excentrico)', color:'#10b981'},
         C:{label:'Estabilidad cadera (Gluteo medio)',     color:'#3b82f6'},
         D:{label:'Pliometria (Potencia + Reactividad)',   color:'#ef4444'},
-        E:{label:'Core runner (Anti-rotacion)',           color:'#8b5cf6'},
+        E:{label:'Core + Movilidad (Anti-rotacion + Cadera)', color:'#8b5cf6'},
+        F:{label:'Equilibrio (Propiocepcion + Simetria)', color:'#06b6d4'},
     };
 
     // ══════════════════════════════════════════════════════════════
