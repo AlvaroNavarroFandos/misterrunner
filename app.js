@@ -9789,6 +9789,13 @@
         { key: 'nike-vomero-18',         brand: 'nike', name: 'Vomero 18',          category: 'daily',       defaultMaxKm: 800 },
         { key: 'nike-structure-25',      brand: 'nike', name: 'Structure 25',       category: 'stability',   defaultMaxKm: 800 },
         { key: 'nike-invincible-3',      brand: 'nike', name: 'Invincible 3',       category: 'daily',       defaultMaxKm: 800 },
+        // [v2.30.1-p425.136] Nike · 6 modelos nuevos 2025-2026
+        { key: 'nike-vaporfly-4',        brand: 'nike', name: 'Vaporfly 4',         category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'nike-zoom-fly-6',        brand: 'nike', name: 'Zoom Fly 6',         category: 'super',       defaultMaxKm: 600 },
+        { key: 'nike-pegasus-42',        brand: 'nike', name: 'Pegasus 42',         category: 'daily',       defaultMaxKm: 800 },
+        { key: 'nike-infinity-run-5',    brand: 'nike', name: 'Infinity Run 5',     category: 'daily',       defaultMaxKm: 800 },
+        { key: 'nike-vomero-plus',       brand: 'nike', name: 'Vomero Plus',        category: 'daily',       defaultMaxKm: 800 },
+        { key: 'nike-vomero-19',         brand: 'nike', name: 'Vomero 19',          category: 'daily',       defaultMaxKm: 800 },
 
         // ADIDAS (8)
         { key: 'adidas-adios-pro-4',     brand: 'adidas', name: 'Adios Pro 4',      category: 'race-carbon', defaultMaxKm: 500 },
@@ -9799,6 +9806,14 @@
         { key: 'adidas-adistar-beyond',  brand: 'adidas', name: 'Adistar Beyond',   category: 'daily',       defaultMaxKm: 1000 },
         { key: 'adidas-supernova-rise-2', brand: 'adidas', name: 'Supernova Rise 2', category: 'daily',       defaultMaxKm: 800 },
         { key: 'adidas-ultraboost-5',    brand: 'adidas', name: 'Ultraboost 5',     category: 'daily',       defaultMaxKm: 800 },
+        // [v2.30.1-p425.136] Adidas · 7 modelos nuevos 2025-2026
+        { key: 'adidas-adios-pro-5',         brand: 'adidas', name: 'Adios Pro 5',          category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'adidas-adizero-prime-x-2-strung', brand: 'adidas', name: 'Adizero Prime X 2 Strung', category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'adidas-adizero-boston-13',   brand: 'adidas', name: 'Adizero Boston 13',    category: 'super',       defaultMaxKm: 700 },
+        { key: 'adidas-adizero-takumi-sen-11', brand: 'adidas', name: 'Adizero Takumi Sen 11', category: 'super',     defaultMaxKm: 500 },
+        { key: 'adidas-supernova-5',         brand: 'adidas', name: 'Supernova 5',          category: 'daily',       defaultMaxKm: 800 },
+        { key: 'adidas-supernova-stride',    brand: 'adidas', name: 'Supernova Stride',     category: 'stability',   defaultMaxKm: 800 },
+        { key: 'adidas-adistar-byd-2',       brand: 'adidas', name: 'Adistar BYD 2',        category: 'daily',       defaultMaxKm: 1000 },
 
         // ASICS (10)
         { key: 'asics-metaspeed-sky-paris',  brand: 'asics', name: 'Metaspeed Sky Paris',  category: 'race-carbon', defaultMaxKm: 500 },
@@ -9811,6 +9826,10 @@
         { key: 'asics-gel-kayano-31',        brand: 'asics', name: 'Gel-Kayano 31',        category: 'stability',   defaultMaxKm: 800 },
         { key: 'asics-gt-2000-13',           brand: 'asics', name: 'GT-2000 13',           category: 'stability',   defaultMaxKm: 800 },
         { key: 'asics-evoride-speed',        brand: 'asics', name: 'EvoRide Speed',        category: 'super',       defaultMaxKm: 700 },
+        // [v2.30.1-p425.136] Asics · 3 modelos nuevos 2025-2026
+        { key: 'asics-metaspeed-sky-ls',     brand: 'asics', name: 'Metaspeed Sky LS',     category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'asics-magic-speed-5',        brand: 'asics', name: 'Magic Speed 5',        category: 'super',       defaultMaxKm: 600 },
+        { key: 'asics-hyper-speed-4',        brand: 'asics', name: 'Hyper Speed 4',        category: 'super',       defaultMaxKm: 500 },
 
         // HOKA (8)
         { key: 'hoka-rocket-x-3',        brand: 'hoka', name: 'Rocket X 3',         category: 'race-carbon', defaultMaxKm: 500 },
@@ -9821,6 +9840,11 @@
         { key: 'hoka-bondi-9',           brand: 'hoka', name: 'Bondi 9',            category: 'daily',       defaultMaxKm: 800 },
         { key: 'hoka-skyflow',           brand: 'hoka', name: 'Skyflow',            category: 'daily',       defaultMaxKm: 800 },
         { key: 'hoka-arahi-8',           brand: 'hoka', name: 'Arahi 8',            category: 'stability',   defaultMaxKm: 800 },
+        // [v2.30.1-p425.136] Hoka · 4 modelos nuevos 2025-2026
+        { key: 'hoka-cielo-x2',          brand: 'hoka', name: 'Cielo X2',           category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'hoka-mach-7',            brand: 'hoka', name: 'Mach 7',             category: 'super',       defaultMaxKm: 600 },
+        { key: 'hoka-mach-x-3',          brand: 'hoka', name: 'Mach X 3',           category: 'super',       defaultMaxKm: 600 },
+        { key: 'hoka-clifton-11',        brand: 'hoka', name: 'Clifton 11',         category: 'daily',       defaultMaxKm: 800 },
 
         // SAUCONY (8)
         { key: 'saucony-endorphin-pro-4',   brand: 'saucony', name: 'Endorphin Pro 4',   category: 'race-carbon', defaultMaxKm: 500 },
@@ -9870,6 +9894,11 @@
         { key: 'on-cloudrunner-2',       brand: 'on', name: 'Cloudrunner 2',       category: 'daily',       defaultMaxKm: 800 },
         { key: 'on-cloudsurfer-7',       brand: 'on', name: 'Cloudsurfer 7',       category: 'daily',       defaultMaxKm: 800 },
         { key: 'on-cloudflyer-4',        brand: 'on', name: 'Cloudflyer 4',        category: 'stability',   defaultMaxKm: 800 },
+        // [v2.30.1-p425.136] ON · 4 modelos nuevos 2025-2026
+        { key: 'on-cloudboom-echo-4',    brand: 'on', name: 'Cloudboom Echo 4',    category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'on-cloudsurfer-2',       brand: 'on', name: 'Cloudsurfer 2',       category: 'daily',       defaultMaxKm: 800 },
+        { key: 'on-cloudmonster-hyper',  brand: 'on', name: 'Cloudmonster Hyper',  category: 'super',       defaultMaxKm: 600 },
+        { key: 'on-cloudmonster-3',      brand: 'on', name: 'Cloudmonster 3',      category: 'daily',       defaultMaxKm: 800 },
 
         // PUMA (6)
         { key: 'puma-fast-r-nitro-elite-2',     brand: 'puma', name: 'Fast-R Nitro Elite 2',     category: 'race-carbon', defaultMaxKm: 500 },
@@ -9877,7 +9906,11 @@
         { key: 'puma-deviate-nitro-3',          brand: 'puma', name: 'Deviate Nitro 3',          category: 'super',       defaultMaxKm: 600 },
         { key: 'puma-velocity-nitro-3',         brand: 'puma', name: 'Velocity Nitro 3',         category: 'daily',       defaultMaxKm: 700 },
         { key: 'puma-magmax-nitro',             brand: 'puma', name: 'MagMax Nitro',             category: 'daily',       defaultMaxKm: 800 },
-        { key: 'puma-foreverrun-nitro-2',       brand: 'puma', name: 'ForeverRun Nitro 2',       category: 'stability',   defaultMaxKm: 800 }
+        { key: 'puma-foreverrun-nitro-2',       brand: 'puma', name: 'ForeverRun Nitro 2',       category: 'stability',   defaultMaxKm: 800 },
+        // [v2.30.1-p425.136] Puma · 3 modelos nuevos 2025-2026
+        { key: 'puma-fast-r-nitro-elite-3',     brand: 'puma', name: 'Fast-R Nitro Elite 3',     category: 'race-carbon', defaultMaxKm: 500 },
+        { key: 'puma-deviate-nitro-4',          brand: 'puma', name: 'Deviate Nitro 4',          category: 'super',       defaultMaxKm: 600 },
+        { key: 'puma-magmax-nitro-2',           brand: 'puma', name: 'MagMax Nitro 2',           category: 'daily',       defaultMaxKm: 800 }
     ];
 
     // Helper: lookups por key. Devuelven null si no encuentran (no asumir existencia).
