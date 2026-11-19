@@ -44242,7 +44242,7 @@
             var tCol = _TYPE_COLOR[t] || '#fff';
             var icon = _TYPE_ICON_WHITE[t] || '';
             var typeLbl = (typeof getTypeLabel === 'function') ? getTypeLabel(t) : (t.charAt(0).toUpperCase()+t.slice(1));
-            var distLbl = isStr ? '30 min' : (sess.dist || 0) + ' km';
+            var distLbl = isStr ? ((window._mrEstStrengthMinutes && sess.exercises) ? ('~' + window._mrEstStrengthMinutes(sess.exercises) + ' min') : '30 min') : (sess.dist || 0) + ' km';
             var equipLbl = isStr && sess.strengthEquip ? _strengthEquipLabel(sess.strengthEquip) : '';
 
             var durTxt = '';
@@ -44250,7 +44250,7 @@
             else if (sess.longSec) {
                 var totalMin = Math.round(sess.longSec / 60);
                 durTxt = totalMin < 60 ? totalMin + ' min' : Math.floor(totalMin/60) + 'h ' + (totalMin % 60) + 'min';
-            } else if (isStr) durTxt = '30 min';
+            } else if (isStr) durTxt = (window._mrEstStrengthMinutes && sess.exercises) ? ('~' + window._mrEstStrengthMinutes(sess.exercises) + ' min') : '30 min';
 
             var divStyle = isFirst ? '' : 'border-top:1px solid var(--border);margin-top:16px;padding-top:16px;';
             var html = '<div style="' + divStyle + '">';
@@ -44327,64 +44327,76 @@
                 html += '</div>';    // /mr-sess-section
             }
 
-            // ── STRENGTH LISTA DE EJERCICIOS con CHECK individual ──
-            // [v2.30.1-p425.138] Álvaro 19 nov 2026: reemplaza la vista de Bloques
-            // + botón "Ver ejercicios". Ahora al abrir el sheet strength se ven
-            // directamente los ejercicios, cada uno con su check para marcar hecho.
-            // Persistencia por fecha+equip en localStorage. Barra lateral fina con
-            // el color del bloque como indicador visual del grupo muscular.
+            // ── STRENGTH LISTA DE EJERCICIOS agrupada por bloque ──
+            // [v2.30.1-p425.140] Álvaro 19 nov 2026: rediseño sin checks individuales.
+            // Lista agrupada visualmente por bloque (sub-header con nombre del bloque
+            // + color), un solo botón grande al final "Marcar entreno completado",
+            // persistencia del completado como objeto {done:true,ts,count}, barra
+            // de progreso binaria (0 o 100%), pill de estado en el header.
             if (isStr && sess.exercises && sess.exercises.length > 0) {
                 var _strUid = 'strex-' + (isFirst ? 'a' : 'b') + '-' + Date.now();
                 var _dateKey = sess.dateStr || (typeof localDateStr === 'function' ? localDateStr(new Date()) : '');
                 var _equipKey = sess.strengthEquip || 'default';
-                var _storageKey = 'mr_strex_done_' + _dateKey + '_' + _equipKey;
                 var _escA = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;'); };
                 var _escJ = function(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); };
-                // Restaurar estado desde localStorage
-                var _doneSet = {};
-                try {
-                    var _raw = localStorage.getItem(_storageKey);
-                    if (_raw) { var _arr = JSON.parse(_raw); if (Array.isArray(_arr)) _arr.forEach(function(n){ _doneSet[n] = 1; }); }
-                } catch(_) {}
+                // Estado de completado persistente (objeto {done:true,ts,count} del p140)
+                var _isSessDone = !!(window._mrStrexIsDone && window._mrStrexIsDone(_dateKey, _equipKey));
                 var _totalEx = sess.exercises.length;
-                var _doneCount = 0;
-                sess.exercises.forEach(function(e){ if (_doneSet[e.name]) _doneCount++; });
-                html += '<div class="mr-sess-section">';
+                // Agrupar ejercicios por bloque (phase) manteniendo orden natural de aparición
+                var _groupOrder = [];
+                var _grouped = {};
+                sess.exercises.forEach(function(e){
+                    var ph = e.phase || '?';
+                    if (!_grouped[ph]) { _grouped[ph] = []; _groupOrder.push(ph); }
+                    _grouped[ph].push(e);
+                });
+                html += '<div class="mr-sess-section mr-strex-wrap' + (_isSessDone ? ' mr-strex-done' : '') + '" data-date="' + _escA(_dateKey) + '" data-equip="' + _escA(_equipKey) + '" data-ex-count="' + _totalEx + '">';
                 html +=   '<div class="mr-sess-section-lbl">';
                 html +=     '<span class="mr-sess-section-dot"></span>';
                 html +=     '<span>Ejercicios</span>';
-                html +=     '<span id="' + _strUid + '-cnt" style="margin-left:auto;font-size:9.5px;color:var(--tm);font-weight:800;letter-spacing:.3px;text-transform:none;font-variant-numeric:tabular-nums;">' + _doneCount + ' / ' + _totalEx + '</span>';
+                html +=     '<span class="mr-strex-state-pill" style="margin-left:auto;font-size:9.5px;color:' + (_isSessDone ? '#22c55e' : 'var(--tm)') + ';font-weight:800;letter-spacing:.3px;text-transform:none;font-variant-numeric:tabular-nums;">' + (_isSessDone ? 'Completado \u2713' : 'Pendiente') + '</span>';
+                html +=   '</div>';
+                // Progress bar (binaria 0% o 100%)
+                html +=   '<div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin:4px 2px 10px;">';
+                html +=     '<div class="mr-strex-progress-fill" style="height:100%;width:' + (_isSessDone ? '100%' : '0%') + ';background:' + (_isSessDone ? '#22c55e' : 'var(--gold)') + ';transition:width .4s ease, background .3s;"></div>';
                 html +=   '</div>';
                 html +=   '<div class="mr-sess-section-body" id="' + _strUid + '-body">';
-                sess.exercises.forEach(function(e, i) {
-                    var _bd = (typeof BLOCK_DESC !== 'undefined' && e.phase) ? BLOCK_DESC[e.phase] : null;
+                var _exIdx = 0;
+                _groupOrder.forEach(function(ph, gIdx) {
+                    var _bd = (typeof BLOCK_DESC !== 'undefined') ? BLOCK_DESC[ph] : null;
                     var _bColor = (_bd && _bd.color) || '#94a3b8';
-                    var _bTag = (_bd && _bd.label) ? _bd.label.split(' (')[0] : '';
-                    var _emoji = (window.MR_EX_DESC && window.MR_EX_DESC[e.name] && window.MR_EX_DESC[e.name].muscle) || '💪';
-                    var _isDone = !!_doneSet[e.name];
-                    html += '<div class="mr-strex-row' + (_isDone ? ' done' : '') + '" data-ex-name="' + _escA(e.name) + '" data-key="' + _escA(_storageKey) + '" data-uid="' + _strUid + '" style="position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;transition:opacity .2s, background .2s;' + (_isDone ? 'opacity:.5;' : '') + '">';
-                    html +=   '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + _bColor + ';border-radius:10px 0 0 10px;"></div>';
-                    // Checkbox tappable
-                    html +=   '<div onclick="window._mrStrexToggle(this)" style="width:26px;height:26px;border-radius:50%;border:2px solid ' + (_isDone ? '#22c55e' : 'var(--border)') + ';background:' + (_isDone ? '#22c55e' : 'var(--card2)') + ';flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;">';
-                    html +=     '<svg class="chk" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:' + (_isDone ? '1' : '0') + ';transition:opacity .15s;"><polyline points="20 6 9 17 4 12"/></svg>';
-                    html +=   '</div>';
-                    // Content clickable → modal info
-                    html +=   '<div onclick="window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" style="flex:1;min-width:0;cursor:pointer;">';
-                    html +=     '<div class="nm" style="font-size:12.5px;font-weight:800;color:var(--tw);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (_isDone ? 'text-decoration:line-through;color:var(--tm);' : '') + '">' + (i+1) + '. ' + _escA(e.name) + '</div>';
-                    html +=     '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px;font-weight:700;">';
-                    html +=       '<span style="font-variant-numeric:tabular-nums;color:var(--ts);">' + _escA(e.sets) + ' × ' + _escA(e.reps) + '</span>';
-                    if (_bTag) {
-                        html +=   '<span style="color:var(--tm);">·</span>';
-                        html +=   '<span style="color:' + _bColor + ';font-weight:800;font-size:9px;text-transform:uppercase;letter-spacing:.4px;">' + _escA(_bTag) + '</span>';
-                    }
-                    html +=     '</div>';
-                    html +=   '</div>';
-                    // Info button (subtle, right side)
-                    html +=   '<button onclick="event.stopPropagation();window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" aria-label="Info" style="flex-shrink:0;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--card2);color:var(--tm);font-family:var(--f);font-size:11px;font-weight:900;font-style:italic;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;">i</button>';
+                    var _bTag = (_bd && _bd.label) ? _bd.label.split(' (')[0] : ('Bloque ' + ph);
+                    // Mini-header del bloque
+                    html += '<div style="display:flex;align-items:center;gap:6px;margin:' + (gIdx === 0 ? '0' : '12px') + ' 2px 6px;">';
+                    html +=   '<div style="width:8px;height:8px;border-radius:2px;background:' + _bColor + ';flex-shrink:0;"></div>';
+                    html +=   '<div style="font-size:9.5px;font-weight:800;color:' + _bColor + ';text-transform:uppercase;letter-spacing:.6px;">' + _escA(_bTag) + '</div>';
+                    html +=   '<div style="flex:1;height:1px;background:var(--border);margin-left:4px;"></div>';
+                    html +=   '<div style="font-size:9px;font-weight:700;color:var(--tm);font-variant-numeric:tabular-nums;">' + _grouped[ph].length + '</div>';
                     html += '</div>';
+                    _grouped[ph].forEach(function(e) {
+                        _exIdx++;
+                        html += '<div class="mr-strex-row" style="position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;transition:opacity .2s;' + (_isSessDone ? 'opacity:.55;' : '') + '">';
+                        html +=   '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + _bColor + ';border-radius:10px 0 0 10px;"></div>';
+                        // Number badge
+                        html +=   '<div style="width:22px;height:22px;border-radius:50%;background:var(--card2);border:1px solid var(--border);color:var(--tm);font-size:10.5px;font-weight:900;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums;">' + _exIdx + '</div>';
+                        // Content clickable → modal info
+                        html +=   '<div onclick="window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" style="flex:1;min-width:0;cursor:pointer;">';
+                        html +=     '<div class="nm" style="font-size:12.5px;font-weight:800;color:var(--tw);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (_isSessDone ? 'text-decoration:line-through;' : '') + '">' + _escA(e.name) + '</div>';
+                        html +=     '<div style="margin-top:3px;font-size:10px;font-weight:700;color:var(--ts);font-variant-numeric:tabular-nums;">' + _escA(e.sets) + ' × ' + _escA(e.reps) + '</div>';
+                        html +=   '</div>';
+                        // Info button
+                        html +=   '<button onclick="event.stopPropagation();window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" aria-label="Info" style="flex-shrink:0;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--card2);color:var(--tm);font-family:var(--f);font-size:11px;font-weight:900;font-style:italic;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;">i</button>';
+                        html += '</div>';
+                    });
                 });
-                // Reset row
-                html += '<button onclick="window._mrStrexReset(\'' + _escJ(_storageKey) + '\',\'' + _strUid + '\')" style="width:100%;margin-top:6px;padding:9px;background:transparent;border:1px dashed var(--border);border-radius:8px;color:var(--tm);font-family:var(--f);font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 3 3 12 12 12"/></svg><span>Reiniciar</span></button>';
+                // Botón grande "Marcar entreno completado" (o "Entreno completado · toca para desmarcar" si done)
+                html += '<button class="mr-strex-mark-btn" onclick="window._mrStrexToggleSession(this)" style="width:100%;margin-top:10px;padding:13px;background:' + (_isSessDone ? '#22c55e' : 'var(--gold)') + ';border:1px solid ' + (_isSessDone ? '#22c55e' : 'var(--gold)') + ';border-radius:12px;color:' + (_isSessDone ? '#fff' : '#1a1305') + ';font-family:var(--f);font-size:12px;font-weight:800;letter-spacing:.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;">';
+                if (_isSessDone) {
+                    html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>Entreno completado · toca para desmarcar';
+                } else {
+                    html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>Marcar entreno completado';
+                }
+                html += '</button>';
                 html +=   '</div>';  // /mr-sess-section-body
                 html += '</div>';    // /mr-sess-section
 
@@ -52779,6 +52791,12 @@
                 movement: 'Bisagra de cadera a una pierna: baja el tronco al frente mientras la pierna libre se extiende detrás, hasta espinilla o donde llegue tu rango. Espalda recta. Sube apretando glúteo. Cambia de pierna.',
                 key: 'La cadera queda cuadrada al suelo — no rotes hacia el lado de la pierna libre. Reemplaza al Nordic Curl con el mismo trabajo de isquio y menos riesgo articular.'
             },
+            'Elevación de gemelo a una pierna': {
+                muscle: '🦶',
+                setup: 'De pie sobre una sola pierna (apóyate con la mano en una pared si necesitas equilibrio). Opcional: pie en el borde de un escalón para ganar rango.',
+                movement: 'Sube en puntilla con la pierna de apoyo todo lo alto que puedas (1 segundo arriba apretando el gemelo), luego baja controlado en 2 segundos a rango completo. Si usas escalón, baja también por debajo del nivel del escalón. 15 reps y cambias pierna.',
+                key: 'Rango completo cada repetición — es el ejercicio con mejor evidencia para prevención de fascitis plantar, tendinopatía de Aquiles y periostitis tibial en runners. Imprescindible.'
+            },
             'Dead bug': {
                 muscle: '🧘',
                 setup: 'Túmbate boca arriba con brazos apuntando al techo y piernas en posición de mesa (caderas y rodillas a 90°).',
@@ -53219,6 +53237,92 @@
             }
         } catch(err) { try { console.warn('_mrStrexToggle', err); } catch(_){} }
     };
+    // v2.30.1-p425.140 · estimador tiempo + helpers sesion completada.
+    window._mrEstStrengthMinutes = function(exercises) {
+        if (!exercises || !exercises.length) return 30;
+        var sum = 0;
+        exercises.forEach(function(e){
+            // Fuerza (A,B) y Pliometría (D) → ~3.5 min cada uno (3 sets × ~45s trabajo + descansos)
+            // Estabilidad (C), Core/Movilidad (E) y Equilibrio (F) → ~2.5 min cada uno
+            if (e.phase === 'A' || e.phase === 'B' || e.phase === 'D') sum += 3.5;
+            else sum += 2.5;
+        });
+        return Math.max(15, Math.round(sum));
+    };
+    window._mrStrexIsDone = function(dateStr, equip) {
+        try {
+            var k = 'mr_strex_done_' + (dateStr || '') + '_' + (equip || 'default');
+            var v = localStorage.getItem(k);
+            if (!v) return false;
+            // Compatibilidad p138 (array) y p140+ (objeto {done:true,ts})
+            try { var p = JSON.parse(v); if (p && p.done === true) return true; } catch(_){}
+            return false;
+        } catch(_){ return false; }
+    };
+    window._mrStrexMarkDone = function(dateStr, equip, exercises) {
+        try {
+            var k = 'mr_strex_done_' + (dateStr || '') + '_' + (equip || 'default');
+            var payload = { done: true, ts: Date.now(), count: (exercises && exercises.length) || 0 };
+            localStorage.setItem(k, JSON.stringify(payload));
+        } catch(_){}
+    };
+    window._mrStrexUnmarkDone = function(dateStr, equip) {
+        try {
+            var k = 'mr_strex_done_' + (dateStr || '') + '_' + (equip || 'default');
+            localStorage.removeItem(k);
+        } catch(_){}
+    };
+    window._mrStrexToggleSession = function(btn) {
+        try {
+            var row = btn && btn.closest ? btn.closest('.mr-strex-wrap') : null;
+            if (!row) return;
+            var date = row.getAttribute('data-date') || '';
+            var equip = row.getAttribute('data-equip') || '';
+            var isDone = row.classList.contains('mr-strex-done');
+            if (isDone) {
+                window._mrStrexUnmarkDone(date, equip);
+                row.classList.remove('mr-strex-done');
+                _mrStrexPaintSessionState(row, false);
+                if (typeof fxToast === 'function') fxToast('Entreno desmarcado', { variant:'info', duration: 1600 });
+            } else {
+                var exCount = parseInt(row.getAttribute('data-ex-count')||'0', 10);
+                window._mrStrexMarkDone(date, equip, { length: exCount });
+                row.classList.add('mr-strex-done');
+                _mrStrexPaintSessionState(row, true);
+                if (typeof fxToast === 'function') fxToast('💪 Entreno de fuerza completado', { variant:'success', duration: 2600 });
+                else if (typeof showToast === 'function') showToast('💪 Entreno de fuerza completado', 2600);
+            }
+        } catch(err){ try{ console.warn('_mrStrexToggleSession', err); }catch(_){} }
+    };
+    function _mrStrexPaintSessionState(wrap, done) {
+        if (!wrap) return;
+        var btn = wrap.querySelector('.mr-strex-mark-btn');
+        var bar = wrap.querySelector('.mr-strex-progress-fill');
+        var pill = wrap.querySelector('.mr-strex-state-pill');
+        if (btn) {
+            if (done) {
+                btn.style.background = '#22c55e';
+                btn.style.color = '#fff';
+                btn.style.borderColor = '#22c55e';
+                btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>Entreno completado · toca para desmarcar';
+            } else {
+                btn.style.background = 'var(--gold)';
+                btn.style.color = '#1a1305';
+                btn.style.borderColor = 'var(--gold)';
+                btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><polyline points="20 6 9 17 4 12"/></svg>Marcar entreno completado';
+            }
+        }
+        if (bar) { bar.style.width = done ? '100%' : '0%'; bar.style.background = done ? '#22c55e' : 'var(--gold)'; }
+        if (pill) { pill.textContent = done ? 'Completado ✓' : 'Pendiente'; pill.style.color = done ? '#22c55e' : 'var(--tm)'; }
+        // Dim ejercicios si done
+        wrap.querySelectorAll('.mr-strex-row').forEach(function(r){
+            r.style.opacity = done ? '.55' : '';
+            var nm = r.querySelector('.nm');
+            if (nm) { nm.style.textDecoration = done ? 'line-through' : 'none'; }
+        });
+    }
+    window._mrStrexPaintSessionState = _mrStrexPaintSessionState;
+
     window._mrStrexReset = function(key, uid) {
         try {
             if (!key) return;
@@ -53329,8 +53433,12 @@
         {name:'90/90 hip switch',             day:'A',sets:'2',reps:'8/lado',     cue:'Sentado, dos piernas en 90°, cambia de lado sin rotar el tronco, pausa 2 seg',            phase:'E',videoUrl:''},
         {name:'Y-Balance Reach',              day:'A',sets:'2',reps:'5×3 dir/pie',cue:'Apoyo a una pierna, toca el suelo adelante / atras-fuera / atras-dentro (Y), talon fijo', phase:'F',videoUrl:''},
         {name:'World\'s Greatest Stretch',    day:'A',sets:'2',reps:'5/lado',     cue:'Plancha → zancada con pie fuera de la mano → rotacion al techo → estira isquio, fluido', phase:'E',videoUrl:''},
-        // ── DÍA B · cadena posterior unilateral + pliometria + core ──
+        // ── DÍA B · cadena posterior unilateral + pliometria + core + gemelo ──
         {name:'Single Leg RDL con banda',     day:'B',sets:'3',reps:'10/pierna',  cue:'Bisagra de cadera a una pierna, banda bajo el pie, espalda recta, baja hasta espinilla',  phase:'A',videoUrl:''},
+        // v2.30.1-p425.140 · Alvaro: Elevacion de gemelo unilateral. Previene fascitis plantar,
+        // tendinopatia Aquiles y periostitis tibial. Flag _bothDaysIf1 → si solo hay 1 dia de
+        // fuerza por semana, buildStrengthSession lo incluye tambien en el Dia A (siempre va).
+        {name:'Elevación de gemelo a una pierna', day:'B',sets:'3',reps:'15/pierna', cue:'De pie sobre una pierna (opcional en escalon), sube en puntilla 1 seg arriba, bajada controlada 2 seg, rango completo', phase:'B', _bothDaysIf1:true, videoUrl:''},
         {name:'Clamshell con banda',          day:'B',sets:'3',reps:'15/lado',    cue:'Tumbado de lado, banda sobre rodillas, abre la pierna de arriba sin mover la cadera',     phase:'C',videoUrl:''},
         {name:'Pogo hops',                    day:'B',sets:'3',reps:'20 saltos',  cue:'Saltos verticales seguidos sin flexionar rodillas, empuje solo con tobillos, silencioso',phase:'D',videoUrl:''},
         {name:'Single leg hop',               day:'B',sets:'3',reps:'10/pierna',  cue:'Saltos verticales a una pierna, aterrizaje suave y estable sin caer rodilla adentro',     phase:'D',videoUrl:''},
@@ -53435,9 +53543,20 @@
     // v2.30.1-p87 · equip='home_band' (Álvaro 22 ago 2026): esquema día A/B
     // alternante, retorna directamente los 8 ejercicios del día (6 fuerza + 2 plyo).
     function buildStrengthSession(equip, mode, dayLetter) {
-        // Modalidad casa con banda: día A o B según dayLetter (default A)
+        // Modalidad casa con banda: día A o B según dayLetter (default A).
+        // v2.30.1-p425.140 · Si strengthDays===1 (solo 1 día de fuerza por semana
+        // → alterna A/B semanalmente), los ejercicios marcados _bothDaysIf1:true
+        // se replican en AMBOS días para que el runner no se los pierda nunca
+        // (ej. Elevación de gemelo: prevención crítica, no puede faltar). Con 2
+        // o 3 días/sem se respeta su día nativo.
         if (equip === 'home_band') {
             var day = dayLetter || 'A';
+            var _nDaysWk = (typeof strengthDays === 'number' && strengthDays > 0) ? strengthDays : 2;
+            if (_nDaysWk === 1) {
+                return STRENGTH_HOME_BAND.filter(function(e){
+                    return e.day === day || e._bothDaysIf1 === true;
+                });
+            }
             return STRENGTH_HOME_BAND.filter(function(e){ return e.day === day; });
         }
         var lib = (equip === 'gym') ? STRENGTH_GYM : STRENGTH_HOME;
@@ -53706,8 +53825,14 @@
             activePlan.weeks.forEach(function(wk) {
                 wk.sessions = wk.sessions.filter(function(s){ return !s.isStrength; });
             });
-            activePlan.weeks.forEach(function(wk) {
-                days.forEach(function(dow) {
+            // v2.30.1-p425.140 · FIX A/B: antes se usaba el `session` del scope
+            // superior en TODOS los días (siempre Día A para home_band) →
+            // Single leg hop (solo Día B) nunca aparecía en el plan de running
+            // con fuerza sincronizada. Ahora dentro del forEach recalculamos
+            // session con la letra correcta usando _homeBandDayLetter(wkIdx, sessIdxInWeek)
+            // — mismo patrón que buildStrengthWeeks standalone (L53509).
+            activePlan.weeks.forEach(function(wk, wkIdx) {
+                days.forEach(function(dow, sessIdxInWeek) {
                     var ref = null;
                     for(var i=0;i<wk.sessions.length;i++){ if(wk.sessions[i].dateStr){ ref=wk.sessions[i]; break; } }
                     if(!ref) return;
@@ -53718,27 +53843,30 @@
                     var sessDate = new Date(mon.getTime()+(dow-1)*86400000);
                     var dateStr  = localDateStr(sessDate);
                     var sessDOW  = sessDate.getDay();
-                    // v2.30.1-p87 · Filtrar bloques vacíos (sin ejercicios).
-                    // v2.30.1-p425.138 · Álvaro: derivar activeBlocks dinámicamente
-                    // desde los phases reales de los ejercicios (incluye F — Equilibrio
-                    // introducido en p137). Antes hardcode ['A','B','C','D','E']
-                    // dejaba fuera el bloque F.
+                    // Recalcular session por día si es home_band (alternancia A/B)
+                    var _dayLetter = (strengthEquip === 'home_band')
+                        ? _homeBandDayLetter(wkIdx, sessIdxInWeek) : null;
+                    var _sessPerDay = (strengthEquip === 'home_band')
+                        ? buildStrengthSession(strengthEquip, null, _dayLetter) : session;
+                    // Filtrar bloques vacíos (sin ejercicios). Deriva activeBlocks
+                    // dinámicamente desde los phases reales (incluye F — Equilibrio).
                     var _mergeSeen = {};
-                    session.forEach(function(e){ if (e.phase) _mergeSeen[e.phase] = 1; });
+                    _sessPerDay.forEach(function(e){ if (e.phase) _mergeSeen[e.phase] = 1; });
                     var _mergeBlockKeys = Object.keys(_mergeSeen).sort();
                     var blocks = _mergeBlockKeys.map(function(ph) {
-                        var bd=BLOCK_DESC[ph], exs=session.filter(function(e){return e.phase===ph;});
+                        var bd=BLOCK_DESC[ph], exs=_sessPerDay.filter(function(e){return e.phase===ph;});
                         if (!exs.length || !bd) return null;
                         return {label:bd.label,color:bd.color,km:0,detail:exs.map(function(e){return e.name+' '+e.sets+'x'+e.reps;}).join(' · '),detailHtml:_mrBuildStrengthDetailHtml(exs)};
                     }).filter(function(b){ return b !== null; });
-                    var descLines=['💪 Fuerza runner 30min · '+equipLbl];
-                    session.forEach(function(e,i){descLines.push((i+1)+'. '+e.name+' '+e.sets+'x'+e.reps+' — '+e.cue);});
+                    var descLines=['💪 Fuerza runner · '+equipLbl + (_dayLetter ? ' · Día ' + _dayLetter : '')];
+                    _sessPerDay.forEach(function(e,i){descLines.push((i+1)+'. '+e.name+' '+e.sets+'x'+e.reps+' — '+e.cue);});
                     wk.sessions.push({
                         dayOfWeek:sessDOW, dateStr:dateStr,
                         dayName:['D','L','M','X','J','V','S'][sessDOW],
                         type:'strength', dist:0, pace:0, fc:'—',
                         blocks:blocks, desc:descLines.join('\n'),
-                        isStrength:true, strengthEquip:strengthEquip, exercises:session
+                        isStrength:true, strengthEquip:strengthEquip, exercises:_sessPerDay,
+                        strengthDayLetter: _dayLetter
                     });
                 });
                 wk.sessions.sort(function(a,b){return new Date(a.dateStr+'T12:00:00')-new Date(b.dateStr+'T12:00:00');});
