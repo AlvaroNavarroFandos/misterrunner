@@ -37670,8 +37670,13 @@
                 const _longDurStrLive = (_isLongTime && sess.dist && sess.pace && typeof fmtLongDur === 'function')
                     ? fmtLongDur(sess.dist * sess.pace)
                     : (sess.durStr || '');
-                const _pillNum  = _isStrengthCard ? '30'  : (_isLongTime ? _longDurStrLive : (sess.dist != null ? String(sess.dist) : ''));
-                const _pillUnit = _isStrengthCard ? 'min' : (_isLongTime ? '' : 'km');
+                // [v2.30.1-p425.135] En long runs mostrar tiempo Y km juntos en la pill.
+                // Antes: '2h12' + '' → pill solo con tiempo, no se veian los km.
+                // Ahora: '2h12 · 28' + 'KM' → coherente con el resto de pills,
+                // se ve de un vistazo cuanto tiempo y cuantos km toca el long.
+                const _longKmRound = (_isLongTime && sess.dist != null) ? Math.round(sess.dist) : 0;
+                const _pillNum  = _isStrengthCard ? '30'  : (_isLongTime ? (_longDurStrLive + (_longKmRound ? ' · ' + _longKmRound : '')) : (sess.dist != null ? String(sess.dist) : ''));
+                const _pillUnit = _isStrengthCard ? 'min' : (_isLongTime ? (_longKmRound ? 'km' : '') : 'km');
                 // [Legacy] _pillValue se mantiene por si alguna otra lógica lo lee
                 const _pillValue = _pillNum + ' ' + _pillUnit;
                 // Color del borde y de la unidad para el tinted (alpha bajo en borde)
