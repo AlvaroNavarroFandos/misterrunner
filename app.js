@@ -44327,51 +44327,64 @@
                 html += '</div>';    // /mr-sess-section
             }
 
-            // ── STRENGTH BLOQUES COMPACTOS + BOTÓN "Ver ejercicios" (D2=B) ──
-            // [v2.30.1-p163] Álvaro 7 sep 2026: strength bloques también en html
-            if (isStr && sess.blocks && sess.blocks.length > 0) {
+            // ── STRENGTH LISTA DE EJERCICIOS con CHECK individual ──
+            // [v2.30.1-p425.138] Álvaro 19 nov 2026: reemplaza la vista de Bloques
+            // + botón "Ver ejercicios". Ahora al abrir el sheet strength se ven
+            // directamente los ejercicios, cada uno con su check para marcar hecho.
+            // Persistencia por fecha+equip en localStorage. Barra lateral fina con
+            // el color del bloque como indicador visual del grupo muscular.
+            if (isStr && sess.exercises && sess.exercises.length > 0) {
                 var _strUid = 'strex-' + (isFirst ? 'a' : 'b') + '-' + Date.now();
-                // [v2.30.1-p150] Envuelto en .mr-sess-section unificado
+                var _dateKey = sess.dateStr || (typeof localDateStr === 'function' ? localDateStr(new Date()) : '');
+                var _equipKey = sess.strengthEquip || 'default';
+                var _storageKey = 'mr_strex_done_' + _dateKey + '_' + _equipKey;
+                var _escA = function(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;'); };
+                var _escJ = function(s){ return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); };
+                // Restaurar estado desde localStorage
+                var _doneSet = {};
+                try {
+                    var _raw = localStorage.getItem(_storageKey);
+                    if (_raw) { var _arr = JSON.parse(_raw); if (Array.isArray(_arr)) _arr.forEach(function(n){ _doneSet[n] = 1; }); }
+                } catch(_) {}
+                var _totalEx = sess.exercises.length;
+                var _doneCount = 0;
+                sess.exercises.forEach(function(e){ if (_doneSet[e.name]) _doneCount++; });
                 html += '<div class="mr-sess-section">';
                 html +=   '<div class="mr-sess-section-lbl">';
                 html +=     '<span class="mr-sess-section-dot"></span>';
-                html +=     '<span>Bloques</span>';
+                html +=     '<span>Ejercicios</span>';
+                html +=     '<span id="' + _strUid + '-cnt" style="margin-left:auto;font-size:9.5px;color:var(--tm);font-weight:800;letter-spacing:.3px;text-transform:none;font-variant-numeric:tabular-nums;">' + _doneCount + ' / ' + _totalEx + '</span>';
                 html +=   '</div>';
-                html +=   '<div class="mr-sess-section-body">';
-                sess.blocks.forEach(function(b) {
-                    var bColor = b.color || '#94a3b8';
-                    var bLabel = b.label || 'Bloque';
-                    var bDur = b.durStr || '';
-                    var bTag = (b.tag || bLabel.charAt(0)).toUpperCase().slice(0,1);
-                    html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px 8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;position:relative;overflow:hidden;">';
-                    html += '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + bColor + ';"></div>';
-                    html += '<span style="font-size:8px;font-weight:900;background:' + bColor + '26;color:' + bColor + ';padding:2px 6px;border-radius:4px;letter-spacing:.5px;flex-shrink:0;">' + bTag + '</span>';
-                    html += '<span style="flex:1;min-width:0;font-size:12px;font-weight:700;color:var(--tw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + bLabel + '</span>';
-                    if (bDur) html += '<span style="font-size:10.5px;color:var(--tm);font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;">' + bDur + '</span>';
+                html +=   '<div class="mr-sess-section-body" id="' + _strUid + '-body">';
+                sess.exercises.forEach(function(e, i) {
+                    var _bd = (typeof BLOCK_DESC !== 'undefined' && e.phase) ? BLOCK_DESC[e.phase] : null;
+                    var _bColor = (_bd && _bd.color) || '#94a3b8';
+                    var _bTag = (_bd && _bd.label) ? _bd.label.split(' (')[0] : '';
+                    var _emoji = (window.MR_EX_DESC && window.MR_EX_DESC[e.name] && window.MR_EX_DESC[e.name].muscle) || '💪';
+                    var _isDone = !!_doneSet[e.name];
+                    html += '<div class="mr-strex-row' + (_isDone ? ' done' : '') + '" data-ex-name="' + _escA(e.name) + '" data-key="' + _escA(_storageKey) + '" data-uid="' + _strUid + '" style="position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;transition:opacity .2s, background .2s;' + (_isDone ? 'opacity:.5;' : '') + '">';
+                    html +=   '<div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:' + _bColor + ';border-radius:10px 0 0 10px;"></div>';
+                    // Checkbox tappable
+                    html +=   '<div onclick="window._mrStrexToggle(this)" style="width:26px;height:26px;border-radius:50%;border:2px solid ' + (_isDone ? '#22c55e' : 'var(--border)') + ';background:' + (_isDone ? '#22c55e' : 'var(--card2)') + ';flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;">';
+                    html +=     '<svg class="chk" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:' + (_isDone ? '1' : '0') + ';transition:opacity .15s;"><polyline points="20 6 9 17 4 12"/></svg>';
+                    html +=   '</div>';
+                    // Content clickable → modal info
+                    html +=   '<div onclick="window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" style="flex:1;min-width:0;cursor:pointer;">';
+                    html +=     '<div class="nm" style="font-size:12.5px;font-weight:800;color:var(--tw);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (_isDone ? 'text-decoration:line-through;color:var(--tm);' : '') + '">' + (i+1) + '. ' + _escA(e.name) + '</div>';
+                    html +=     '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;font-size:10px;font-weight:700;">';
+                    html +=       '<span style="font-variant-numeric:tabular-nums;color:var(--ts);">' + _escA(e.sets) + ' × ' + _escA(e.reps) + '</span>';
+                    if (_bTag) {
+                        html +=   '<span style="color:var(--tm);">·</span>';
+                        html +=   '<span style="color:' + _bColor + ';font-weight:800;font-size:9px;text-transform:uppercase;letter-spacing:.4px;">' + _escA(_bTag) + '</span>';
+                    }
+                    html +=     '</div>';
+                    html +=   '</div>';
+                    // Info button (subtle, right side)
+                    html +=   '<button onclick="event.stopPropagation();window._openMrExInfo(\'' + _escJ(e.name) + '\',\'' + _escJ(e.sets + '×' + e.reps) + '\',\'' + _escJ(e.cue || '') + '\')" aria-label="Info" style="flex-shrink:0;width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--card2);color:var(--tm);font-family:var(--f);font-size:11px;font-weight:900;font-style:italic;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;">i</button>';
                     html += '</div>';
                 });
-                // Botón "Ver ejercicios" — expande sección con detailHtml (GIFs + play).
-                html += '<button onclick="var d=document.getElementById(\'' + _strUid + '\');var b=this;if(d.style.display===\'none\'){d.style.display=\'block\';b.querySelector(\'.txt\').textContent=\'Ocultar ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(180deg)\';}else{d.style.display=\'none\';b.querySelector(\'.txt\').textContent=\'Ver ejercicios\';b.querySelector(\'.chev\').style.transform=\'rotate(0)\';}" style="width:100%;margin-top:6px;padding:10px;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--tw);font-family:var(--f);font-size:11.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><span class="txt">Ver ejercicios</span><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;"><polyline points="6 9 12 15 18 9"/></svg></button>';
-                html += '<div id="' + _strUid + '" style="display:none;margin-top:10px;display:none;">';
-                sess.blocks.forEach(function(b) {
-                    var bColor = b.color || '#94a3b8';
-                    var bDetailHtml = b.detailHtml || b.detail || '';
-                    // [Fix 2] Sin título redundante: el bloque compacto de arriba ya lo
-                    // muestra + barra lateral del color mantiene el reference. Solo
-                    // detailHtml con los ejercicios y GIFs.
-                    // [v2.30.1-p141] Álvaro 6 sep 2026: ELIMINADA la barra larga
-                    // izquierda + tint de fondo del wrapper (era 'background:
-                    // bColor14; border-left:3px solid bColor; border-radius:
-                    // 0 8px 8px 0; padding:6px 8px'). Cada ejercicio individual
-                    // dentro del detailHtml YA lleva su propia barrita corta
-                    // (.mr-ex-line::before, línea 63607) → la barra larga
-                    // duplicaba el indicador visual. Ahora solo margin-bottom
-                    // para separar bloques. Mismo look que la pestaña Plan. */
-                    html += '<div style="margin-bottom:8px;">';
-                    html += bDetailHtml;
-                    html += '</div>';
-                });
-                html +=   '</div>';  // /toggle inner container
+                // Reset row
+                html += '<button onclick="window._mrStrexReset(\'' + _escJ(_storageKey) + '\',\'' + _strUid + '\')" style="width:100%;margin-top:6px;padding:9px;background:transparent;border:1px dashed var(--border);border-radius:8px;color:var(--tm);font-family:var(--f);font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 3 3 12 12 12"/></svg><span>Reiniciar</span></button>';
                 html +=   '</div>';  // /mr-sess-section-body
                 html += '</div>';    // /mr-sess-section
 
@@ -53163,6 +53176,82 @@
     }
     window._mrBuildStrengthDetailHtml = _mrBuildStrengthDetailHtml;
 
+    // ══════════════════════════════════════════════════════════════
+    // [v2.30.1-p425.138] Strength sheet · checks por ejercicio
+    // ══════════════════════════════════════════════════════════════
+    // Persistencia por fecha + equip en localStorage. Tap en el check
+    // togglea done/undone y persiste. Tap en reset limpia el día.
+    window._mrStrexToggle = function(checkEl) {
+        try {
+            var row = checkEl && checkEl.closest ? checkEl.closest('.mr-strex-row') : null;
+            if (!row) return;
+            var name = row.getAttribute('data-ex-name') || '';
+            var key  = row.getAttribute('data-key') || '';
+            var uid  = row.getAttribute('data-uid') || '';
+            if (!name || !key) return;
+            // Toggle in localStorage
+            var arr = [];
+            try { var raw = localStorage.getItem(key); if (raw) { var p = JSON.parse(raw); if (Array.isArray(p)) arr = p; } } catch(_) {}
+            var idx = arr.indexOf(name);
+            var nowDone;
+            if (idx >= 0) { arr.splice(idx, 1); nowDone = false; }
+            else          { arr.push(name);     nowDone = true; }
+            try { localStorage.setItem(key, JSON.stringify(arr)); } catch(_) {}
+            // Visual toggle
+            row.classList.toggle('done', nowDone);
+            row.style.opacity = nowDone ? '.5' : '';
+            var chk = checkEl.querySelector('.chk');
+            if (chk) chk.style.opacity = nowDone ? '1' : '0';
+            checkEl.style.background = nowDone ? '#22c55e' : 'var(--card2)';
+            checkEl.style.borderColor = nowDone ? '#22c55e' : 'var(--border)';
+            var nm = row.querySelector('.nm');
+            if (nm) {
+                if (nowDone) { nm.style.textDecoration = 'line-through'; nm.style.color = 'var(--tm)'; }
+                else         { nm.style.textDecoration = 'none';         nm.style.color = 'var(--tw)'; }
+            }
+            // Counter update
+            if (uid) {
+                var cntEl = document.getElementById(uid + '-cnt');
+                var bodyEl = document.getElementById(uid + '-body');
+                if (cntEl && bodyEl) {
+                    var total = bodyEl.querySelectorAll('.mr-strex-row').length;
+                    var done  = bodyEl.querySelectorAll('.mr-strex-row.done').length;
+                    cntEl.textContent = done + ' / ' + total;
+                    if (done === total && total > 0 && nowDone) {
+                        if (typeof fxToast === 'function') fxToast('💪 Entreno de fuerza completado', { variant:'success', duration: 2600 });
+                        else if (typeof showToast === 'function') showToast('💪 Entreno de fuerza completado', 2600);
+                    }
+                }
+            }
+        } catch(err) { try { console.warn('_mrStrexToggle', err); } catch(_){} }
+    };
+    window._mrStrexReset = function(key, uid) {
+        try {
+            if (!key) return;
+            try { localStorage.removeItem(key); } catch(_) {}
+            if (!uid) return;
+            var bodyEl = document.getElementById(uid + '-body');
+            var cntEl  = document.getElementById(uid + '-cnt');
+            if (!bodyEl) return;
+            var rows = bodyEl.querySelectorAll('.mr-strex-row');
+            rows.forEach(function(row){
+                row.classList.remove('done');
+                row.style.opacity = '';
+                var checkEl = row.querySelector('div[onclick*="_mrStrexToggle"]');
+                if (checkEl) {
+                    checkEl.style.background = 'var(--card2)';
+                    checkEl.style.borderColor = 'var(--border)';
+                    var chk = checkEl.querySelector('.chk');
+                    if (chk) chk.style.opacity = '0';
+                }
+                var nm = row.querySelector('.nm');
+                if (nm) { nm.style.textDecoration = 'none'; nm.style.color = 'var(--tw)'; }
+            });
+            if (cntEl) cntEl.textContent = '0 / ' + rows.length;
+            if (typeof fxToast === 'function') fxToast('Ejercicios reiniciados', { variant:'info', duration: 1800 });
+        } catch(err) { try { console.warn('_mrStrexReset', err); } catch(_){} }
+    };
+
     var STRENGTH_GYM = [
         {name:'Hip Thrust con barra',         sets:'4',reps:'8 reps',   cue:'Pausa 1 seg arriba, aprieta gluteos, espalda en banco',              phase:'A',videoUrl:''},
         {name:'Romanian Deadlift (RDL)',       sets:'3',reps:'10 reps',  cue:'Bisagra de cadera, espalda recta, peso moderado',                    phase:'A',videoUrl:''},
@@ -53609,12 +53698,17 @@
                     var sessDate = new Date(mon.getTime()+(dow-1)*86400000);
                     var dateStr  = localDateStr(sessDate);
                     var sessDOW  = sessDate.getDay();
-                    // v2.30.1-p87 · Filtrar bloques vacíos (sin ejercicios). Antes
-                    // pintaba los 5 fijos → aparecía "Fuerza de rodilla" vacío en
-                    // sesiones home_band que no tienen phase B ni E.
-                    var blocks = ['A','B','C','D','E'].map(function(ph) {
+                    // v2.30.1-p87 · Filtrar bloques vacíos (sin ejercicios).
+                    // v2.30.1-p425.138 · Álvaro: derivar activeBlocks dinámicamente
+                    // desde los phases reales de los ejercicios (incluye F — Equilibrio
+                    // introducido en p137). Antes hardcode ['A','B','C','D','E']
+                    // dejaba fuera el bloque F.
+                    var _mergeSeen = {};
+                    session.forEach(function(e){ if (e.phase) _mergeSeen[e.phase] = 1; });
+                    var _mergeBlockKeys = Object.keys(_mergeSeen).sort();
+                    var blocks = _mergeBlockKeys.map(function(ph) {
                         var bd=BLOCK_DESC[ph], exs=session.filter(function(e){return e.phase===ph;});
-                        if (!exs.length) return null;
+                        if (!exs.length || !bd) return null;
                         return {label:bd.label,color:bd.color,km:0,detail:exs.map(function(e){return e.name+' '+e.sets+'x'+e.reps;}).join(' · '),detailHtml:_mrBuildStrengthDetailHtml(exs)};
                     }).filter(function(b){ return b !== null; });
                     var descLines=['💪 Fuerza runner 30min · '+equipLbl];
