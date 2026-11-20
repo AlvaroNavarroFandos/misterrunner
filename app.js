@@ -51172,8 +51172,15 @@
                 // hizo visibility:visible → usuario ve un tirón visible al volver a Home.
                 let _snapT;
                 let _mounting = true;
+                // v2.30.1-p425.141 · flag que bloquea el snap handler durante el
+                // smooth scroll POST-CLICK para evitar que un calculo intermedio
+                // sobreescriba la seleccion ya aplicada en el click.
+                let _clickScrollingUntil = 0;
                 _roll.addEventListener('scroll', function(){
                     if (_mounting) return;
+                    // Durante los ~420ms de smooth scroll POST-CLICK, ignoramos
+                    // el snap handler: la seleccion ya se aplico en el click.
+                    if (Date.now() < _clickScrollingUntil) return;
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
                         const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
@@ -51186,11 +51193,34 @@
                         // Reposicionar focus tras el snap sobre la sel actual (por si el snap
                         // ajustó la posición y el user no cambió de celda, mantenerlo alineado).
                         else if (_sel != null && _roll.children[_sel]) _positionFocusOnCell(_roll.children[_sel]);
-                    }, 70);
+                    }, 50);
                 }, { passive: true });
-                // Tocar un día lo lleva al centro (el scroll dispara la selección).
+                // v2.30.1-p425.141 · FIX bug seleccion no responsiva + toque premium.
+                // Antes: click solo hacia _centerIdx(smooth=true), confiando en que el
+                // scroll handler iba a llamar _applySel. En Safari iOS el smooth scroll
+                // se corta si otro gesto ocurre o la celda ya esta cerca del centro →
+                // scroll event no se dispara → _applySel nunca se llama → seleccion
+                // visual queda fija en el dia anterior ("como que no se selecciona").
+                // Ahora: _applySel se ejecuta INMEDIATAMENTE con el idx de la celda
+                // tocada. La animacion del smooth scroll sigue ocurriendo para mantener
+                // la UX fluida, pero la seleccion ya es correcta aunque el scroll se
+                // interrumpa. Haptic feedback 10ms para feedback tactil premium.
                 [].forEach.call(_roll.children, function(el){
-                    el.addEventListener('click', function(){ _centerIdx(+el.dataset.ri, true); });
+                    el.addEventListener('click', function(){
+                        const _ri = +el.dataset.ri;
+                        if (isNaN(_ri)) return;
+                        // Haptic feedback (silencioso en navegadores sin soporte)
+                        if (_ri !== _sel) {
+                            try { if (navigator.vibrate) navigator.vibrate(10); } catch(_){}
+                        }
+                        // 1) Seleccion INMEDIATA visual (focus + card + clase .sel)
+                        _applySel(_ri);
+                        // 2) Smooth scroll para llevar la celda al centro — bloqueamos
+                        //    el snap handler durante la animacion (~420ms) para que no
+                        //    sobreescriba _sel con un calculo intermedio.
+                        _clickScrollingUntil = Date.now() + 420;
+                        _centerIdx(_ri, true);
+                    });
                 });
                 // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
                 // v2.30.1-p84 · Guards defensivos: si offsetWidth=0 (layout no aplicado),
@@ -51220,6 +51250,22 @@
                 //   4) Re-renders (renderHome llamado 2-3 veces en boot): flag
                 //      __mrPlanCarouselMounted ejecuta _doMount sync inmediato (layout caliente)
                 //      pero el doble rAF sigue vigente para evitar el titubeo.
+                // v2.30.1-p425.141 · inyeccion premium CSS (1 sola vez por session)
+                try {
+                    if (!window.__mrPlanCarouselPremiumCss) {
+                        var _pcCss = document.createElement('style');
+                        _pcCss.id = 'mr-pc-premium-css-v141';
+                        _pcCss.textContent = (
+                            '.mr-pc-roll-focus{transition:left .32s cubic-bezier(.22,1,.36,1),width .22s ease,height .22s ease,top .22s ease;will-change:left,transform;}' +
+                            '.mr-pc-roll .mr-pc-cell{transition:transform .18s cubic-bezier(.22,1,.36,1),opacity .18s ease;}' +
+                            '.mr-pc-roll .mr-pc-cell:active{transform:scale(.94);}' +
+                            '.mr-pc-roll .mr-pc-cell.sel{transform:scale(1.02);}' +
+                            '@media (prefers-reduced-motion: reduce){.mr-pc-roll-focus,.mr-pc-roll .mr-pc-cell{transition:none !important;}}'
+                        );
+                        document.head.appendChild(_pcCss);
+                        window.__mrPlanCarouselPremiumCss = true;
+                    }
+                } catch(_){}
                 var _isFirstMount = !window.__mrPlanCarouselMounted;
                 // v2.30.1-p84 · Aplicar scroll cacheado SÍNCRONO antes del _doMount.
                 // El roll arranca ya scrolleado al día HOY desde el primer paint tras
