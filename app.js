@@ -51172,15 +51172,16 @@
                 // hizo visibility:visible → usuario ve un tirón visible al volver a Home.
                 let _snapT;
                 let _mounting = true;
-                // v2.30.1-p425.141 · flag que bloquea el snap handler durante el
-                // smooth scroll POST-CLICK para evitar que un calculo intermedio
-                // sobreescriba la seleccion ya aplicada en el click.
-                let _clickScrollingUntil = 0;
+                // v2.30.1-p425.142 · Lock del snap handler durante CLICK scroll.
+                // Este lock NO es un tiempo fijo: se libera cuando scrollLeft
+                // lleva >=160ms sin cambiar (scroll realmente terminado) o
+                // cuando expira el tope de 1200ms. Garantiza estabilidad sea
+                // cual sea la duracion real del smooth scroll en el engine.
+                let _clickLockedIdx = -1;
                 _roll.addEventListener('scroll', function(){
                     if (_mounting) return;
-                    // Durante los ~420ms de smooth scroll POST-CLICK, ignoramos
-                    // el snap handler: la seleccion ya se aplico en el click.
-                    if (Date.now() < _clickScrollingUntil) return;
+                    // Durante click scroll (hasta estabilidad), snap handler NO actua.
+                    if (_clickLockedIdx >= 0) return;
                     clearTimeout(_snapT);
                     _snapT = setTimeout(function(){
                         const _mid = _roll.scrollLeft + _roll.clientWidth*0.20;
@@ -51195,31 +51196,56 @@
                         else if (_sel != null && _roll.children[_sel]) _positionFocusOnCell(_roll.children[_sel]);
                     }, 50);
                 }, { passive: true });
-                // v2.30.1-p425.141 · FIX bug seleccion no responsiva + toque premium.
-                // Antes: click solo hacia _centerIdx(smooth=true), confiando en que el
-                // scroll handler iba a llamar _applySel. En Safari iOS el smooth scroll
-                // se corta si otro gesto ocurre o la celda ya esta cerca del centro →
-                // scroll event no se dispara → _applySel nunca se llama → seleccion
-                // visual queda fija en el dia anterior ("como que no se selecciona").
-                // Ahora: _applySel se ejecuta INMEDIATAMENTE con el idx de la celda
-                // tocada. La animacion del smooth scroll sigue ocurriendo para mantener
-                // la UX fluida, pero la seleccion ya es correcta aunque el scroll se
-                // interrumpa. Haptic feedback 10ms para feedback tactil premium.
+                // v2.30.1-p425.142 · Click handler con lock por estabilidad.
+                // Antes (p141): _applySel inmediato + guard de tiempo FIJO 420ms. El
+                // smooth scroll en iOS puede durar 500-800ms → los ultimos 100-400ms
+                // el guard ya no bloquea → setTimeout 50ms recalcula _best en medio
+                // del scroll en movimiento → _best = celda intermedia (no la objetivo) →
+                // sobreescribe la seleccion correcta con una 2-3 celdas antes.
+                // Ahora: _applySel inmediato + lock por estabilidad. El lock
+                // _clickLockedIdx bloquea el snap handler. Un poller monitorea
+                // scrollLeft cada 40ms y libera el lock cuando scrollLeft queda
+                // estable 160ms (scroll termino) o al tope de 1200ms. Al liberar,
+                // verifica _sel === idx tocado; si no, re-aplica _applySel(idx).
                 [].forEach.call(_roll.children, function(el){
                     el.addEventListener('click', function(){
                         const _ri = +el.dataset.ri;
                         if (isNaN(_ri)) return;
-                        // Haptic feedback (silencioso en navegadores sin soporte)
+                        // Haptic feedback solo si cambia de dia (10ms sutil, Android)
                         if (_ri !== _sel) {
                             try { if (navigator.vibrate) navigator.vibrate(10); } catch(_){}
                         }
                         // 1) Seleccion INMEDIATA visual (focus + card + clase .sel)
                         _applySel(_ri);
-                        // 2) Smooth scroll para llevar la celda al centro — bloqueamos
-                        //    el snap handler durante la animacion (~420ms) para que no
-                        //    sobreescriba _sel con un calculo intermedio.
-                        _clickScrollingUntil = Date.now() + 420;
+                        // 2) Lock del snap handler + smooth scroll centrador
+                        _clickLockedIdx = _ri;
                         _centerIdx(_ri, true);
+                        // 3) Poller: libera el lock cuando scroll este estable (160ms
+                        //    sin cambios) o al tope de 1200ms. Safety: re-aplica
+                        //    _applySel(_ri) si _sel cambio durante el scroll.
+                        const _lockStart = Date.now();
+                        let _lastScrollLeft = _roll.scrollLeft;
+                        let _lastChangeAt = Date.now();
+                        function _pollStable(){
+                            // Si otro click tomo el relevo, salir
+                            if (_clickLockedIdx !== _ri) return;
+                            const _now = Date.now();
+                            const _curr = _roll.scrollLeft;
+                            if (_curr !== _lastScrollLeft) {
+                                _lastScrollLeft = _curr;
+                                _lastChangeAt = _now;
+                            }
+                            const _stableFor = _now - _lastChangeAt;
+                            const _elapsed = _now - _lockStart;
+                            if (_stableFor >= 160 || _elapsed >= 1200) {
+                                // Scroll terminado: liberar lock + verificar seleccion
+                                if (_sel !== _ri) _applySel(_ri);
+                                _clickLockedIdx = -1;
+                                return;
+                            }
+                            setTimeout(_pollStable, 40);
+                        }
+                        setTimeout(_pollStable, 40);
                     });
                 });
                 // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
