@@ -51196,21 +51196,29 @@
                         else if (_sel != null && _roll.children[_sel]) _positionFocusOnCell(_roll.children[_sel]);
                     }, 50);
                 }, { passive: true });
-                // v2.30.1-p425.142 · Click handler con lock por estabilidad.
-                // Antes (p141): _applySel inmediato + guard de tiempo FIJO 420ms. El
-                // smooth scroll en iOS puede durar 500-800ms → los ultimos 100-400ms
-                // el guard ya no bloquea → setTimeout 50ms recalcula _best en medio
-                // del scroll en movimiento → _best = celda intermedia (no la objetivo) →
-                // sobreescribe la seleccion correcta con una 2-3 celdas antes.
-                // Ahora: _applySel inmediato + lock por estabilidad. El lock
-                // _clickLockedIdx bloquea el snap handler. Un poller monitorea
-                // scrollLeft cada 40ms y libera el lock cuando scrollLeft queda
-                // estable 160ms (scroll termino) o al tope de 1200ms. Al liberar,
-                // verifica _sel === idx tocado; si no, re-aplica _applySel(idx).
+                // v2.30.1-p425.143 · Fix bug "pinchas un dia y te lleva a otro".
+                // El poller p142 media estabilidad desde el momento 0. Si el smooth
+                // scroll iOS tarda en ARRANCAR (RAF retrasado, scrollTo diferido),
+                // los primeros 100-200ms el scrollLeft no cambia → poller cree que
+                // scroll "estable" → libera lock a los 160ms → snap handler se
+                // reactiva EXACTAMENTE cuando el smooth scroll empieza → calcula
+                // _best con scrollLeft lejos del target → sobreescribe seleccion.
+                // Ahora el poller detecta PRIMERO que el scroll comenzo (al menos
+                // un cambio en scrollLeft) antes de medir estabilidad. Si nunca
+                // arranca en 300ms, es que ya estabamos centrados (no hay scroll
+                // que hacer) → libera limpio.
+                // Idx fuente de verdad: Array.prototype.indexOf.call(_roll.children, el)
+                // en vez de dataset.ri, por si el DOM muta entre mount y click.
                 [].forEach.call(_roll.children, function(el){
                     el.addEventListener('click', function(){
-                        const _ri = +el.dataset.ri;
-                        if (isNaN(_ri)) return;
+                        // Idx real: indexOf en children (fuente de verdad), con
+                        // fallback a dataset.ri si por lo que sea el children ya
+                        // no contiene este elemento.
+                        var _ri = Array.prototype.indexOf.call(_roll.children, el);
+                        if (_ri < 0) {
+                            _ri = +el.dataset.ri;
+                            if (isNaN(_ri)) return;
+                        }
                         // Haptic feedback solo si cambia de dia (10ms sutil, Android)
                         if (_ri !== _sel) {
                             try { if (navigator.vibrate) navigator.vibrate(10); } catch(_){}
@@ -51220,32 +51228,41 @@
                         // 2) Lock del snap handler + smooth scroll centrador
                         _clickLockedIdx = _ri;
                         _centerIdx(_ri, true);
-                        // 3) Poller: libera el lock cuando scroll este estable (160ms
-                        //    sin cambios) o al tope de 1200ms. Safety: re-aplica
-                        //    _applySel(_ri) si _sel cambio durante el scroll.
+                        // 3) Poller mejorado p143: detectar arranque de scroll
+                        //    antes de medir estabilidad.
                         const _lockStart = Date.now();
                         let _lastScrollLeft = _roll.scrollLeft;
                         let _lastChangeAt = Date.now();
+                        let _scrollStarted = false;
                         function _pollStable(){
-                            // Si otro click tomo el relevo, salir
+                            // Si otro click tomo el relevo, salir sin interferir
                             if (_clickLockedIdx !== _ri) return;
                             const _now = Date.now();
                             const _curr = _roll.scrollLeft;
                             if (_curr !== _lastScrollLeft) {
+                                _scrollStarted = true;
                                 _lastScrollLeft = _curr;
                                 _lastChangeAt = _now;
                             }
                             const _stableFor = _now - _lastChangeAt;
                             const _elapsed = _now - _lockStart;
-                            if (_stableFor >= 160 || _elapsed >= 1200) {
-                                // Scroll terminado: liberar lock + verificar seleccion
+                            // Condiciones de liberacion:
+                            //  (a) el scroll ARRANCO y lleva >=180ms sin cambios → termino
+                            //  (b) nunca arranco en 300ms → ya estabamos centrados
+                            //  (c) tope de seguridad 1500ms (fallback)
+                            const _shouldRelease =
+                                (_scrollStarted && _stableFor >= 180) ||
+                                (!_scrollStarted && _elapsed >= 300) ||
+                                (_elapsed >= 1500);
+                            if (_shouldRelease) {
+                                // Safety net: garantizar que _sel sigue en el target
                                 if (_sel !== _ri) _applySel(_ri);
                                 _clickLockedIdx = -1;
                                 return;
                             }
-                            setTimeout(_pollStable, 40);
+                            setTimeout(_pollStable, 30);
                         }
-                        setTimeout(_pollStable, 40);
+                        setTimeout(_pollStable, 30);
                     });
                 });
                 // (_focus, _pill, _FOC_B, _positionFocusOnCell declarados arriba)
@@ -51278,18 +51295,18 @@
                 //      pero el doble rAF sigue vigente para evitar el titubeo.
                 // v2.30.1-p425.141 · inyeccion premium CSS (1 sola vez por session)
                 try {
-                    if (!window.__mrPlanCarouselPremiumCss) {
+                    if (!window.__mrPlanCarouselPremiumCssV143) {
                         var _pcCss = document.createElement('style');
-                        _pcCss.id = 'mr-pc-premium-css-v141';
+                        _pcCss.id = 'mr-pc-premium-css-v143';
                         _pcCss.textContent = (
                             '.mr-pc-roll-focus{transition:left .32s cubic-bezier(.22,1,.36,1),width .22s ease,height .22s ease,top .22s ease;will-change:left,transform;}' +
-                            '.mr-pc-roll .mr-pc-cell{transition:transform .18s cubic-bezier(.22,1,.36,1),opacity .18s ease;}' +
-                            '.mr-pc-roll .mr-pc-cell:active{transform:scale(.94);}' +
-                            '.mr-pc-roll .mr-pc-cell.sel{transform:scale(1.02);}' +
-                            '@media (prefers-reduced-motion: reduce){.mr-pc-roll-focus,.mr-pc-roll .mr-pc-cell{transition:none !important;}}'
+                            '.mr-pc-roll .mr-pc-rcell{transition:transform .18s cubic-bezier(.22,1,.36,1),opacity .18s ease;}' +
+                            '.mr-pc-roll .mr-pc-rcell:active{transform:scale(.94);}' +
+                            '.mr-pc-roll .mr-pc-rcell.sel{transform:scale(1.03);}' +
+                            '@media (prefers-reduced-motion: reduce){.mr-pc-roll-focus,.mr-pc-roll .mr-pc-rcell{transition:none !important;}}'
                         );
                         document.head.appendChild(_pcCss);
-                        window.__mrPlanCarouselPremiumCss = true;
+                        window.__mrPlanCarouselPremiumCssV143 = true;
                     }
                 } catch(_){}
                 var _isFirstMount = !window.__mrPlanCarouselMounted;
