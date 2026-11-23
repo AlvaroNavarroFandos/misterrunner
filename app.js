@@ -51159,7 +51159,10 @@
                     _sel = idx;
                     [].forEach.call(_roll.children, function(el,i){ el.classList.toggle('sel', i === idx); });
                     _renderCard();
-                    _positionFocusOnCell(_roll.children[idx]);
+                    // v2.30.1-p425.144 · Focus FIJO visualmente. _applySel ya no
+                    // reposiciona el focus (antes llamaba a _positionFocusOnCell).
+                    // El focus se centra UNA vez en _fitFocus (mount) y se queda
+                    // ahi. Las celdas scrollean con _centerIdx para quedar debajo.
                 }
                 // El día que "cae" en el frame central = seleccionado (detecta al soltar el scroll).
                 // v2.30.1-p75 · CRÍTICO: el focus queda FIJO durante el swipe. Solo se
@@ -51191,9 +51194,9 @@
                             if (_d < _bd) { _bd = _d; _best = i; }
                         });
                         if (_best >= 0 && _best !== _sel) _applySel(_best);
-                        // Reposicionar focus tras el snap sobre la sel actual (por si el snap
-                        // ajustó la posición y el user no cambió de celda, mantenerlo alineado).
-                        else if (_sel != null && _roll.children[_sel]) _positionFocusOnCell(_roll.children[_sel]);
+                        // v2.30.1-p425.144 · Focus FIJO: no reposicionar tras snap.
+                        // El focus esta en posicion absoluta fija (20% del strip),
+                        // las celdas se alinean con el por scroll.
                     }, 50);
                 }, { passive: true });
                 // v2.30.1-p425.143 · Fix bug "pinchas un dia y te lleva a otro".
@@ -51271,10 +51274,38 @@
                 function _fitFocus(){
                     const _c0 = _roll.children[0];
                     if (!_focus || !_c0 || _c0.offsetWidth === 0) return;
-                    _focus.style.width  = (_c0.offsetWidth  + 2*_FOC_B) + 'px';
-                    _focus.style.height = (_c0.offsetHeight + 2*_FOC_B) + 'px';
-                    // v2.30.1-p76 · Pill HOY eliminada · top vuelve a (5 - _FOC_B) = 0.
-                    _focus.style.top    = (5 - _FOC_B) + 'px';
+                    const _cellW = _c0.offsetWidth;
+                    const _cellH = _c0.offsetHeight;
+                    const _fullW = _cellW + 2*_FOC_B;
+                    const _fullH = _cellH + 2*_FOC_B;
+                    const _top   = (5 - _FOC_B);
+                    _focus.style.width  = _fullW + 'px';
+                    _focus.style.height = _fullH + 'px';
+                    _focus.style.top    = _top + 'px';
+                    // v2.30.1-p425.144 · Focus FIJO. Antes el left lo manejaba
+                    // _positionFocusOnCell(cell) basandose en offsetLeft de la
+                    // celda seleccionada → el focus saltaba al sitio de la celda
+                    // tocada ANTES de que terminara el scroll → bloque visualmente
+                    // desalineado durante toda la animacion + ilusion de que
+                    // "iba al dia equivocado". Ahora el left se calcula aqui, UNA
+                    // vez por mount, en la posicion fija del 20% del ancho del
+                    // strip. Las celdas se scrollean para quedar debajo.
+                    // Formula: centro del focus en viewport = _roll.clientWidth * 0.20
+                    //          left del focus = centro - fullW/2 = _roll.clientWidth*0.20 - (_cellW+2*_FOC_B)/2
+                    // Nota: coincide con el _target de _centerIdx que scrollea la
+                    // celda hasta ese mismo punto.
+                    const _rollW = _roll.clientWidth;
+                    const _left = Math.round(_rollW * 0.20 - _fullW/2);
+                    _focus.style.left = _left + 'px';
+                    _focus.style.visibility = 'visible';
+                    // Cachear estilo COMPLETO para remounts (cambio de tab).
+                    try {
+                        window.__mrPlanFocusStyle = 'left:' + _left + 'px'
+                            + ';width:' + _fullW + 'px'
+                            + ';height:' + _fullH + 'px'
+                            + ';top:' + _top + 'px'
+                            + ';visibility:visible';
+                    } catch(_){}
                 }
                 // v2.30.1-p84 · Mount robusto (Álvaro 21 ago 2026):
                 //   Diagnóstico: en primer mount (Safari iOS + Home recién montado)
