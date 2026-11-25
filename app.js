@@ -15386,16 +15386,27 @@
         var opSole   = sc ? '.48' : '.2';
         var opBody   = sc ? '' : ' opacity=".3"';
         var opTongue = sc ? '.6' : '.18';
-        // [FASE 5.7.4-b] stroke adaptativo: si shoeColor es oscuro, perfila el
-        // body para que no se hunda sobre fondo negro. En otro caso, sin stroke
-        // (mantiene la estética actual de las zapatillas claras/coloridas).
-        var darkStroke = (sc && _outfitStroke(sc, null) === 'rgba(180,180,180,.55)')
-            ? ' stroke="rgba(180,180,180,.55)" stroke-width="2"'
-            : '';
+        // v2.30.1-p425.145 · Álvaro: stroke adaptativo BIDIRECCIONAL.
+        // Antes (FASE 5.7.4-b): solo stroke claro para zapatillas oscuras (modo dark).
+        // Las zapatillas blancas/cream se fundian con el fondo blanco de las minicards
+        // en modo light. Ahora:
+        //  - Color oscuro → stroke claro gris 'rgba(180,180,180,.55)' (destaca en dark)
+        //  - Color claro → stroke oscuro fino 'rgba(0,0,0,.42)' (destaca en light)
+        // _outfitStroke devuelve 'rgba(180,180,180,.55)' SOLO si el color es oscuro
+        // (luminancia <0.22). En cualquier otro caso usamos stroke oscuro fino.
+        var shoeStroke = '';
+        if (sc) {
+            var _s = _outfitStroke(sc, '__LIGHT__');
+            if (_s === 'rgba(180,180,180,.55)') {
+                shoeStroke = ' stroke="rgba(180,180,180,.55)" stroke-width="2"';
+            } else {
+                shoeStroke = ' stroke="rgba(0,0,0,.42)" stroke-width="1.4"';
+            }
+        }
         function shoe(flip) {
             return '<svg width="17" height="12" viewBox="0 0 56 38" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;' + (flip ? 'transform:scaleX(-1);' : '') + '">'
                 + '<ellipse cx="28" cy="34" rx="26" ry="4" fill="' + c + '" opacity="' + opSole + '"/>'
-                + '<path d="M4,28 Q2,18 8,14 L20,10 Q26,7 32,8 L50,12 Q54,13 54,17 L54,28 Z" fill="' + c + '"' + opBody + darkStroke + '/>'
+                + '<path d="M4,28 Q2,18 8,14 L20,10 Q26,7 32,8 L50,12 Q54,13 54,17 L54,28 Z" fill="' + c + '"' + opBody + shoeStroke + '/>'
                 + '<path d="M20,10 Q24,4 30,5 L38,8 Q32,8 26,11 Z" fill="' + c + '" opacity="' + opTongue + '"/>'
                 + '<path d="M4,28 L54,28 Q56,28 56,30 L56,32 Q56,34 54,34 L4,34 Q2,34 2,32 L2,30 Q2,28 4,28 Z" fill="rgba(255,255,255,.28)"/>'
                 + '</svg>';
