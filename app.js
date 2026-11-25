@@ -15408,7 +15408,7 @@
                 + '<ellipse cx="28" cy="34" rx="26" ry="4" fill="' + c + '" opacity="' + opSole + '"/>'
                 + '<path d="M4,28 Q2,18 8,14 L20,10 Q26,7 32,8 L50,12 Q54,13 54,17 L54,28 Z" fill="' + c + '"' + opBody + shoeStroke + '/>'
                 + '<path d="M20,10 Q24,4 30,5 L38,8 Q32,8 26,11 Z" fill="' + c + '" opacity="' + opTongue + '"/>'
-                + '<path d="M4,28 L54,28 Q56,28 56,30 L56,32 Q56,34 54,34 L4,34 Q2,34 2,32 L2,30 Q2,28 4,28 Z" fill="rgba(255,255,255,.28)"/>'
+                + '<path d="M4,28 L54,28 Q56,28 56,30 L56,32 Q56,34 54,34 L4,34 Q2,34 2,32 L2,30 Q2,28 4,28 Z" fill="rgba(255,255,255,.28)"' + (sc ? ' stroke="rgba(0,0,0,.35)" stroke-width="1"' : '') + '/>'
                 + '</svg>';
         }
         return '<div style="display:flex;gap:1px;align-items:center;flex-shrink:0;">' + shoe(false) + shoe(true) + '</div>';
